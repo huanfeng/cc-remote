@@ -36,7 +36,7 @@ cc-remote -- claude --resume <会话UUID>
 
 启动器读取 CC Remote 默认设置：命令行未给出 `--permission-mode`/`--dangerously-skip-permissions`/`--allow-dangerously-skip-permissions`、`--model`、`--effort` 时自动追加对应默认值，显式参数始终优先。原生 `--model`、`--permission-mode`、精确 UUID 的 `--resume/-r` 和 `--session-id` 可透传。为保证共享绑定，暂不接受 `--continue`、`--fork-session`、`-p`、覆盖 `--settings/--mcp-config/--channels`。旧的 `terminal` 子命令继续支持。
 
-- 原生终端共享会话：终端保持运行，网页通过 Claude Channels 向同一个 CC 进程发送消息、接收回复和工具审批。
+- 原生终端共享会话：终端保持运行，网页通过 Claude Channels 向同一个 CC 进程发送消息、接收回复和工具审批；AskUserQuestion 提问与 ExitPlanMode 计划确认可在网页和终端同时作答，先答先生效，另一端自动撤下。
 - 多个终端各自注册，共享会话自动出现在「会话」列表；显示在线/离线状态，沿用原会话标题。
 - 创建、切换多个会话，指定各自的宿主工作目录。
 - 流式回复、Markdown、代码块、工具调用和结果。
@@ -255,7 +255,8 @@ ccr --model sonnet           # 等同 cc-remote -- claude --model sonnet
 - 托管会话每轮由独立 `claude -p` 子进程执行，后续使用精确的 `--resume` ID；共享会话由原生交互式进程长期持有。
 - Channels 仍在官方研究预览阶段。自定义桥接使用 `--dangerously-load-development-channels server:cc-remote`，可能受账户/组织政策限制；需要支持 Channels 及审批转发的近期 Claude Code。启动器使用 CC Remote 默认权限模式（未设置时沿用 Claude 用户权限设置），也可显式传入 `--permission-mode`；用户已有工具允许/拒绝规则仍然生效。
 - Channel 消息通过 MCP 通知投递，回复通过 reply 工具返回；本地消息与工具过程从原生历史定期同步。它不是原生终端的逐帧镜像，也不保证字符级流式同步。
-- 共享会话暂不支持网页停止生成、原生多选提问/计划确认的双端交互；这些仍在原生终端处理。项目信任及 MCP 启用确认也留在终端。
+- 共享会话的提问与计划确认：启动器在临时 `--settings` 中注册 `PermissionRequest` Hook（matcher `AskUserQuestion|ExitPlanMode`，`cc-remote channel-ask-hook`，超时 1800 秒）。依赖 Claude Code 2.1.300 实测行为：该 Hook 与原生对话框**并行**运行，对话框保持可操作；网页先答则 Hook 输出决定（提问为 `updatedInput.answers`，多选标签以 `, ` 连接，可填自由文本；计划批准时附 `setMode`，可选「自动接受编辑 / 手动审批编辑 / 自动模式」，或带修改意见「继续规划」），终端先答则 Hook 通过轮询 transcript 发现 tool_result 后静默退出，网页卡片标记「已在终端回答」。网页「交给终端」撤回网页卡片，只在终端作答。Hook 一律 fail-open：会话不匹配（/resume、/clear 后）、宿主不可达或任何错误都不输出决定，原生对话框照常可用。Hook 连接宿主所需的令牌写在启动器临时配置目录的 0600 文件中（经 `CC_REMOTE_ASK_FILE` 定位），不进入环境变量。设置了 `disableAllHooks` 或组织 `allowManagedHooksOnly` 时该功能失效，只能在终端作答；后续 Claude Code 若改变并行行为也可能失效。
+- 共享会话暂不支持网页停止生成；项目信任及 MCP 启用确认也留在终端。
 - Channel 没有公开的审批撤销通知。本工具依据后续对应工具结果清理审批，断线/重连/超时也会使旧卡片失效；若终端先回答，网页可能短暂显示旧卡片，最终由 CC 校验请求 ID。
 - 消息队列仅存于当前宿主内存，投递确认后清除；连接丢失期间拒绝新消息。宿主重启后不重放旧命令，需要桥接重新注册；投递确认表示写入 MCP 通道，不代表模型已经执行。
 - 前端按事件序号每秒拉取增量，提供近实时流式展示；本版尚未使用 WebSocket。

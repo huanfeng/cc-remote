@@ -17,3 +17,13 @@ export const LogoutIcon = ({ size }: P) => <Svg size={size}><path d="M6 2.5H3.5a
 export const StatusIcon = ({ size }: P) => <Svg size={size}><path d="M1.5 8.5h3l1.7-4 3.2 7.5 1.8-3.5h3.3" /></Svg>;
 export const ChevronDownIcon = ({ size }: P) => <Svg size={size}><path d="M4 6l4 4 4-4" /></Svg>;
 export const CheckIcon = ({ size }: P) => <Svg size={size}><path d="M3.5 8.3 6.5 11.2 12.5 4.8" /></Svg>;
+export const WrenchIcon = ({ size }: P) => <Svg size={size}><path d="M10.2 2.2a3.3 3.3 0 0 0-3.7 4.4L2.4 10.7a1.4 1.4 0 0 0 2 2l4.1-4.1a3.3 3.3 0 0 0 4.4-3.7l-2 2-1.8-.5-.5-1.8z" /></Svg>;
+export const FileIcon = ({ size }: P) => <Svg size={size}><path d="M9 1.75H4.25a1 1 0 0 0-1 1v10.5a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V5.5zM9 1.75V5.5h3.75" /></Svg>;
+export const SearchIcon = ({ size }: P) => <Svg size={size}><circle cx="7" cy="7" r="4.25" /><path d="m10.2 10.2 3.3 3.3" /></Svg>;
+export const GlobeIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy="8" r="6" /><path d="M2 8h12M8 2c1.7 1.8 2.4 3.8 2.4 6S9.7 12.2 8 14C6.3 12.2 5.6 10.2 5.6 8S6.3 3.8 8 2z" /></Svg>;
+export const AgentIcon = ({ size }: P) => <Svg size={size}><path d="M8 1.75v2.5M8 11.75v2.5M1.75 8h2.5M11.75 8h2.5M3.6 3.6l1.7 1.7M10.7 10.7l1.7 1.7M3.6 12.4l1.7-1.7M10.7 5.3l1.7-1.7" /></Svg>;
+export const ListIcon = ({ size }: P) => <Svg size={size}><path d="M6 4h7.5M6 8h7.5M6 12h7.5M2.5 4h.5M2.5 8h.5M2.5 12h.5" /></Svg>;
+export const QuestionIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy="8" r="6" /><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.4M8 11.5h.01" /></Svg>;
+/** Two stacked chevrons: expand / collapse every tool group. */
+export const ExpandAllIcon = ({ size }: P) => <Svg size={size}><path d="M4.5 3.5 8 6.5l3.5-3M4.5 9.5 8 12.5l3.5-3" /></Svg>;
+export const CollapseAllIcon = ({ size }: P) => <Svg size={size}><path d="M4.5 6.5 8 3.5l3.5 3M4.5 12.5 8 9.5l3.5 3" /></Svg>;
