@@ -12,6 +12,7 @@ import { CloseIcon, CollapseAllIcon, ExpandAllIcon, GearIcon, LogoutIcon, MenuIc
 import { ToolGroup } from './ToolGroup';
 import { QuestionCard, type QuestionDraft } from './QuestionCard';
 import { groupTranscript, linkOutcomes, linkRequests, requestCall, requestSettled, stabilize, type ToolCall, type TranscriptItem } from './toolGroups';
+import { MAX_UI_CHARS, UI_KEY, UI_PREFIX, VIEW_KEY, deserialize, draftEmpty, emptyUI, forget, formatHash, mergeUI, parseHash, parseKey, parseViews, serialize, serializeViews, type Route, type SessionDraft, type UIState, type ViewState } from './persist';
 
 type Session = { id: string; title: string; cwd: string; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string };
 type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string };
@@ -23,6 +24,18 @@ const SEND_KEYS = [{ value: 'ctrl-enter', label: 'Ctrl / ⌘ + Enter', descripti
 const tabKey = (id: string, native: boolean) => `${native ? 'native' : 'session'}:${id}`;
 const statusLabel = (status?: string) => ({ running: '执行中', waiting: '等待回答', idle: '就绪', completed: '已完成', interrupted: '已停止', failed: '执行失败', stopped: '已停止', offline: '离线', error: '执行失败' }[status || ''] || status || '历史');
 const sessionLabel = (session?: Session) => session?.mode === 'channel' && !session.online ? '终端离线' : ['running', 'waiting'].includes(session?.status || '') ? statusLabel(session?.status) : session?.mode === 'channel' ? '终端在线' : statusLabel(session?.status || 'idle');
+
+function blankTab(key: string, id: string, native: boolean, session?: Session, saved?: SessionDraft, view?: ViewState): ConversationTab {
+  return { key, id, native, session, events: [], requests: [], draft: saved?.draft || '', attachments: saved?.attachments || [], scrollTop: view?.scrollTop || 0, nearBottom: view?.nearBottom ?? true, loaded: false, expandedTools: view?.expandedTools || [], expandedGroups: view?.expandedGroups || {}, answers: saved?.answers || {}, questionDrafts: saved?.questionDrafts || {} };
+}
+const pickDraft = (tab: Pick<ConversationTab, 'draft' | 'attachments' | 'questionDrafts' | 'answers'>) => ({ draft: tab.draft, attachments: tab.attachments, questionDrafts: tab.questionDrafts, answers: tab.answers });
+const cleanURL = () => location.pathname + location.search;
+// Storage can be missing or throw (private mode, quota, blocked site data); UI state is a convenience.
+function loadUI(): UIState { try { return deserialize(localStorage.getItem(UI_KEY), Date.now()); } catch { return emptyUI(); } }
+function saveUI(state: UIState) { for (const max of [MAX_UI_CHARS, MAX_UI_CHARS / 8]) { try { localStorage.setItem(UI_KEY, serialize(state, Date.now(), max)); return; } catch {} } }
+function loadViews(): Record<string, ViewState> { try { return parseViews(sessionStorage.getItem(VIEW_KEY)); } catch { return {}; } }
+function saveViews(text: string) { try { sessionStorage.setItem(VIEW_KEY, text); } catch {} }
+function clearUI() { for (const name of ['localStorage', 'sessionStorage'] as const) { try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith(UI_PREFIX)) storage.removeItem(key); } catch {} } }
 
 const NO_CALLS: number[] = [];
 const NO_DRAFT: QuestionDraft = {};
@@ -193,6 +206,126 @@ export default function App() {
     document.addEventListener('visibilitychange', refresh);
     return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
   }, [openKeys, connected, api, updateTab]);
+  // Refresh persistence: the hash routes (#/s/<id>, #/native/<id>), localStorage keeps the
+  // opened tabs and per-session drafts, sessionStorage keeps scroll and tool expansion.
+  const [restored, setRestored] = useState(false);
+  const [restoreTry, setRestoreTry] = useState(0);
+  const [routeNotice, setRouteNotice] = useState('');
+  const savedDrafts = useRef(new Map<string, string>());
+  const draftChanges = useRef<Record<string, SessionDraft | null>>({});
+  const savedLayout = useRef(''); const pendingLayout = useRef<Pick<UIState, 'open' | 'selected' | 'sidebarTab'> | undefined>(undefined);
+  const savedViews = useRef(''); const pendingViews = useRef('');
+  const persistTimer = useRef(0);
+  const replaceRoute = useRef(true);
+  const flush = useCallback(() => {
+    clearTimeout(persistTimer.current); persistTimer.current = 0;
+    if (pendingLayout.current || Object.keys(draftChanges.current).length) saveUI(mergeUI(loadUI(), pendingLayout.current, draftChanges.current));
+    if (pendingViews.current) saveViews(pendingViews.current);
+    pendingLayout.current = undefined; draftChanges.current = {}; pendingViews.current = '';
+  }, []);
+  const forgetDraft = (id: string) => { draftChanges.current[id] = null; savedDrafts.current.delete(id); };
+  useEffect(() => {
+    if (!connected || restored) return;
+    let active = true;
+    const stored = loadUI(); const views = loadViews();
+    const hash = location.hash === '#' ? '' : location.hash;
+    const target = hash ? parseHash(hash) : parseKey(stored.selected);
+    const wanted = [...stored.open.map(parseKey), target].filter((route): route is Route => !!route);
+    Promise.all([api<Session[]>('/api/sessions'), wanted.some(route => route.native) ? api<Session[]>('/api/native/sessions').catch(() => undefined) : undefined]).then(([managed, nativeList]) => {
+      if (!active) return;
+      // null: known to be gone; undefined: the list could not be read, keep it.
+      const lookup = (route: Route) => route.native ? nativeList && (nativeList.find(item => item.id === route.id) || null) : managed.find(item => item.id === route.id) || null;
+      let state = stored;
+      for (const id of Object.keys(state.drafts)) if (!managed.some(item => item.id === id)) state = forget(state, { id, native: false });
+      const restoredTabs: ConversationTab[] = [];
+      for (const route of wanted) {
+        const key = tabKey(route.id, route.native); const found = lookup(route);
+        if (found === null) { state = forget(state, route); continue; }
+        if (!restoredTabs.some(tab => tab.key === key)) restoredTabs.push(blankTab(key, route.id, route.native, found, route.native ? undefined : state.drafts[route.id], views[key]));
+      }
+      if (state !== stored) saveUI(state);
+      if (hash && (!target || lookup(target) === null)) setRouteNotice('会话不存在或已删除');
+      for (const tab of restoredTabs) if (!tab.native) savedDrafts.current.set(tab.id, JSON.stringify(pickDraft(tab)));
+      const fresh = !tabsRef.current.length;
+      setTabs(old => [...restoredTabs, ...old.filter(tab => !restoredTabs.some(item => item.key === tab.key))]);
+      if (fresh) {
+        const open = !!target && restoredTabs.some(tab => tab.key === tabKey(target.id, target.native));
+        setNative(open ? target!.native : state.sidebarTab === 'native'); setSelected(open ? target!.id : '');
+      }
+      replaceRoute.current = true; setRestored(true);
+    }).catch(err => { if (active) { setError((err as Error).message); window.setTimeout(() => setRestoreTry(n => n + 1), 3000); } });
+    return () => { active = false; };
+  }, [connected, restored, restoreTry, api]);
+  useEffect(() => {
+    if (!restored) return;
+    for (const tab of tabs) {
+      if (tab.native) continue;
+      const value = pickDraft(tab); const text = JSON.stringify(value);
+      if (savedDrafts.current.get(tab.id) === text) continue;
+      savedDrafts.current.set(tab.id, text);
+      draftChanges.current[tab.id] = draftEmpty(value) ? null : { ...value, updatedAt: Date.now() };
+    }
+    const layout = { open: tabs.map(tab => tab.key), selected: selected ? tabKey(selected, native) : '', sidebarTab: native ? 'native' as const : 'session' as const };
+    const layoutText = JSON.stringify(layout);
+    if (layoutText !== savedLayout.current) { savedLayout.current = layoutText; pendingLayout.current = layout; }
+    const viewsText = serializeViews(Object.fromEntries(tabs.map(tab => [tab.key, { scrollTop: tab.scrollTop, nearBottom: tab.nearBottom, expandedTools: tab.expandedTools, expandedGroups: tab.expandedGroups }])));
+    if (viewsText !== savedViews.current) { savedViews.current = viewsText; pendingViews.current = viewsText; }
+    if (!persistTimer.current && (pendingLayout.current || pendingViews.current || Object.keys(draftChanges.current).length)) persistTimer.current = window.setTimeout(flush, 300);
+  }, [restored, tabs, selected, native, flush]);
+  useEffect(() => {
+    const hidden = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', hidden);
+    return () => { window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', hidden); };
+  }, [flush]);
+  // Another browser tab wrote drafts: adopt them for open sessions without unsaved edits here,
+  // so a later write from this page never brings back stale text. Selection is not synced.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== UI_KEY || !event.newValue) return;
+      const stored = deserialize(event.newValue, Date.now());
+      for (const tab of tabsRef.current) {
+        if (tab.native || tab.id in draftChanges.current) continue;
+        const mine = JSON.stringify(pickDraft(tab));
+        if (savedDrafts.current.get(tab.id) !== mine) continue;
+        const theirs = pickDraft(stored.drafts[tab.id] || { draft: '', attachments: [], questionDrafts: {}, answers: {} });
+        const text = JSON.stringify(theirs);
+        if (text === mine) continue;
+        savedDrafts.current.set(tab.id, text);
+        updateTab(tab.key, old => ({ ...old, ...theirs }));
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [updateTab]);
+  useEffect(() => {
+    if (!restored) return;
+    const next = formatHash(selected, native);
+    if ((location.hash === '#' ? '' : location.hash) !== next) {
+      if (replaceRoute.current) history.replaceState(null, '', cleanURL() + next); else history.pushState(null, '', cleanURL() + next);
+    }
+    replaceRoute.current = false;
+  }, [restored, selected, native]);
+  const routeTo = useRef(() => {});
+  routeTo.current = () => {
+    if (!restored) return;
+    const route = parseHash(location.hash);
+    if (!route) { if (selected) setSelected(''); return; }
+    if (route.id === selected && route.native === native) return;
+    if (tabs.some(tab => tab.key === tabKey(route.id, route.native))) { choose(route.id, route.native); return; }
+    api<Session[]>(route.native ? '/api/native/sessions' : '/api/sessions').then(items => {
+      const found = items.find(item => item.id === route.id);
+      if (found) { choose(route.id, route.native, found); return; }
+      setRouteNotice('会话不存在或已删除');
+      if (!route.native) forgetDraft(route.id);
+      setTabs(old => old.filter(tab => tab.key !== tabKey(route.id, route.native)));
+      setSelected(''); history.replaceState(null, '', cleanURL());
+    }).catch(err => setError((err as Error).message));
+  };
+  useEffect(() => {
+    const handler = () => routeTo.current();
+    window.addEventListener('hashchange', handler); window.addEventListener('popstate', handler);
+    return () => { window.removeEventListener('hashchange', handler); window.removeEventListener('popstate', handler); };
+  }, []);
   useLayoutEffect(() => {
     const element = scroll.current;
     if (!element || !activeTab) return;
@@ -282,13 +415,17 @@ export default function App() {
   const updateQuestionDraft = useCallback((id: string, update: (old: QuestionDraft) => QuestionDraft) => updateTab(activeKey, tab => ({ ...tab, questionDrafts: { ...tab.questionDrafts, [id]: update(tab.questionDrafts[id] || {}) } })), [activeKey, updateTab]);
   const sharedCard = (call: ToolCall | undefined, request: Request) => <SharedQuestion key={request.id} request={request} call={call} busy={busy} draft={activeTab?.questionDrafts[request.id]} onAnswer={answerRequest} onDraft={updateQuestionDraft} />;
   const linkedIds = new Set([...linked.values()].map(request => request.id));
-  function choose(id: string, nativeSession = native) {
+  function choose(id: string, nativeSession = native, item?: Session) {
     const key = tabKey(id, nativeSession);
-    setTabs(old => old.some(tab => tab.key === key) ? old : [...old, { key, id, native: nativeSession, session: sessions.find(item => item.id === id), events: [], requests: [], draft: '', attachments: [], scrollTop: 0, nearBottom: true, loaded: false, expandedTools: [], expandedGroups: {}, answers: {}, questionDrafts: {} }]);
-    setNative(nativeSession); setSelected(id); setDrawer(false); setError('');
+    // A draft saved earlier (or by another browser tab) comes back when the session is reopened.
+    const saved = nativeSession || tabs.some(tab => tab.key === key) ? undefined : loadUI().drafts[id];
+    if (saved) savedDrafts.current.set(id, JSON.stringify(pickDraft(saved)));
+    setTabs(old => old.some(tab => tab.key === key) ? old : [...old, blankTab(key, id, nativeSession, item || sessions.find(entry => entry.id === id), saved)]);
+    setNative(nativeSession); setSelected(id); setDrawer(false); setError(''); setRouteNotice('');
   }
   function closeTab(key: string) {
     const index = tabs.findIndex(tab => tab.key === key);
+    if (tabs[index] && !tabs[index].native) forgetDraft(tabs[index].id);
     const remaining = tabs.filter(tab => tab.key !== key);
     setTabs(remaining);
     if (activeKey === key) { const next = remaining[Math.min(index, remaining.length - 1)]; setSelected(next?.id || ''); if (next) setNative(next.native); }
@@ -296,6 +433,7 @@ export default function App() {
   async function deleteSession(item: Session, stop: boolean) {
     await api(`/api/sessions/${encodeURIComponent(item.id)}${stop ? '?stop=1' : ''}`, { method: 'DELETE' });
     const key = tabKey(item.id, false);
+    forgetDraft(item.id);
     setTabs(old => old.filter(tab => tab.key !== key));
     if (!listView.current) setSessions(old => old.filter(entry => entry.id !== item.id));
     if (!native && selected === item.id) setSelected('');
@@ -324,7 +462,7 @@ export default function App() {
   if (!connected) return <main className="login"><form className="login-card" onSubmit={event => { event.preventDefault(); if (token === credential) api<Info>('/api/info').then(data => { setInfo(data); setConnected(true); setError(''); localStorage.setItem('cc-token', token); }).catch(err => setError(err.message)); else { setError(''); setToken(credential.trim()); } }}><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1><p>从手机继续你的 Claude Code 工作。</p><label>宿主访问令牌<input type="password" value={credential} onChange={event => setCredential(event.target.value)} placeholder="输入启动宿主时配置的令牌" autoComplete="current-password" required /></label>{error && <div className="error" role="alert">{error}</div>}<button className="primary">连接宿主 <span>→</span></button><small>连接至当前地址 · 令牌保存在此设备，退出登录时清除</small></form></main>;
   return <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--sidebar-width': `${sidebar.width}px` } as CSSProperties}>
     {drawer && <button className="backdrop" aria-label="关闭会话列表" onClick={() => setDrawer(false)} />}
-    <aside className={`sidebar ${drawer ? 'open' : ''}`}><div className="brand"><div className="brand-symbol">↗</div><div className="brand-text"><div className="brand-name"><span>CC Remote</span><span className="version-pill" title={`宿主版本 ${hostVersion}`}>{hostVersion}</span></div><span className="brand-status" title={info?.claudeVersion || (info?.claudeAvailable ? 'Claude Code 已连接' : '未找到 Claude Code')}><span className={`dot ${info?.claudeAvailable ? 'idle' : 'error'}`} /><span>{info?.claudeAvailable ? 'Claude Code 已连接' : '未找到 Claude Code'}</span></span></div><button className="icon brand-action" title="退出登录" aria-label="退出登录" onClick={() => { localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); setToken(''); setConnected(false); setCredential(''); setError(''); setSelected(''); setSessions([]); setTabs([]); }}><LogoutIcon size={16} /></button><button className="mobile icon brand-action" aria-label="关闭会话列表" onClick={() => setDrawer(false)}><CloseIcon size={18} /></button></div>
+    <aside className={`sidebar ${drawer ? 'open' : ''}`}><div className="brand"><div className="brand-symbol">↗</div><div className="brand-text"><div className="brand-name"><span>CC Remote</span><span className="version-pill" title={`宿主版本 ${hostVersion}`}>{hostVersion}</span></div><span className="brand-status" title={info?.claudeVersion || (info?.claudeAvailable ? 'Claude Code 已连接' : '未找到 Claude Code')}><span className={`dot ${info?.claudeAvailable ? 'idle' : 'error'}`} /><span>{info?.claudeAvailable ? 'Claude Code 已连接' : '未找到 Claude Code'}</span></span></div><button className="icon brand-action" title="退出登录" aria-label="退出登录" onClick={() => { localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); clearTimeout(persistTimer.current); persistTimer.current = 0; draftChanges.current = {}; pendingLayout.current = undefined; pendingViews.current = ''; savedDrafts.current.clear(); savedLayout.current = ''; savedViews.current = ''; clearUI(); setRestored(false); setRouteNotice(''); history.replaceState(null, '', cleanURL()); setToken(''); setConnected(false); setCredential(''); setError(''); setSelected(''); setSessions([]); setTabs([]); }}><LogoutIcon size={16} /></button><button className="mobile icon brand-action" aria-label="关闭会话列表" onClick={() => setDrawer(false)}><CloseIcon size={18} /></button></div>
       <div className="sidebar-actions"><button className="new-session primary-action" title="新建会话" aria-label="新建会话" onClick={() => setCreate(true)}><PlusIcon size={15} /><span>新建</span></button><button className="new-session" title="连接原生终端" aria-label="连接原生终端" onClick={() => setSharing(true)}><TerminalIcon size={15} /><span>连接终端</span></button></div>
       <div className="tabs"><button className={!native ? 'active' : ''} onClick={() => switchTab(false)}>会话</button><button className={native ? 'active' : ''} onClick={() => switchTab(true)}>终端历史</button></div>
       <input className="session-search" aria-label="搜索会话" placeholder="搜索名称或项目目录" value={search} onChange={event => setSearch(event.target.value)} />
@@ -347,8 +485,9 @@ export default function App() {
     <main className="workspace"><header className="topbar"><button className="desktop icon" aria-label={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'} title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'} onClick={() => setSidebarCollapsed(old => { localStorage.setItem('cc-sidebar-collapsed', String(!old)); return !old; })}><MenuIcon size={18} /></button><button className="mobile icon" aria-label="打开会话列表" onClick={() => setDrawer(true)}><MenuIcon size={18} /></button><div className="header-title"><h1>{current?.title || '工作空间'}</h1><div className="header-sub">{current && !native && <SessionChips session={current} defaults={defaults} open={() => setSessionSettingsOpen(true)} />}<p title={current?.cwd || info?.cwd}>{current?.cwd || info?.cwd}</p></div></div><span className="badge">{native ? '只读历史' : sessionLabel(current)}</span>{selected && <button className={`icon${toolsExpanded ? ' active' : ''}`} title={toolsExpanded ? '折叠全部工具调用' : '展开全部工具调用'} aria-label={toolsExpanded ? '折叠全部工具调用' : '展开全部工具调用'} aria-pressed={toolsExpanded} onClick={toggleAllTools}>{toolsExpanded ? <CollapseAllIcon size={17} /> : <ExpandAllIcon size={17} />}</button>}<button className="icon" title="刷新会话" aria-label="刷新会话" onClick={() => action(list)}><RefreshIcon size={17} /></button>{current && !native && <button className="icon" title="会话设置" aria-label="会话设置" onClick={() => setSessionSettingsOpen(true)}><GearIcon size={17} /></button>}</header>
       {plainHttp && <div className="plain-http-banner banner" role="status">当前通过明文 HTTP 访问（{location.host}），访问令牌和会话内容会在网络中明文传输。建议改用 HTTPS 反向代理或 VPN。<button className="icon-button" onClick={dismissPlainHttp} aria-label="关闭明文访问提示"><CloseIcon size={14} /></button></div>}
       {error && <div className="error banner" role="alert">{error}<button className="icon-button" onClick={() => setError('')} aria-label="关闭错误"><CloseIcon size={14} /></button></div>}
+      {routeNotice && <div className="command-notice" role="status"><span>{routeNotice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setRouteNotice('')}><CloseIcon size={14} /></button></div>}
       {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label="关闭命令结果" onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} close={() => setSettingsOpen(false)} />}{statusOpen && <StatusPanel api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{sessionSettingsOpen && current && !native && <SessionSettings api={api} session={current} defaults={defaults} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>把工作带到身边。</h2><p>选择一个会话，或在项目目录中开始新的任务。<br/>会话持续在宿主运行，关闭页面也可以稍后回来。</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />新建会话</button><button className="secondary" onClick={() => setSharing(true)}><TerminalIcon size={15} />连接原生终端</button></div>{!info?.claudeAvailable && <p className="error">请先在宿主安装 Claude Code 并完成登录。</p>}</div> : <>
-        <div className="conversation" ref={scroll} onScroll={() => { const element = scroll.current; if (element) { nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120; updateTab(activeKey, tab => ({ ...tab, scrollTop: element.scrollTop, nearBottom: nearBottom.current })); } }}>
+        <div className="conversation" ref={scroll} onScroll={() => { const element = scroll.current; if (element && !loading) { nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120; updateTab(activeKey, tab => ({ ...tab, scrollTop: element.scrollTop, nearBottom: nearBottom.current })); } }}>
           {loading && <div className="muted loading">正在加载会话…</div>}
           {!loading && events.length === 0 && <div className="conversation-empty"><h2>准备开始</h2><p>描述你的任务，Claude 会在这个项目目录中工作。</p></div>}
           {/* One child list: a shared card keyed by its request id moves between the transcript and the pending list without remounting. */}
