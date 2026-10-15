@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -21,19 +23,81 @@ import (
 	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
 	"cc-remote/internal/hostlock"
+	"cc-remote/internal/listen"
+	"cc-remote/internal/logfile"
 	"cc-remote/internal/server"
+	"cc-remote/internal/service"
 	"cc-remote/internal/store"
+	"cc-remote/internal/update"
 	webui "cc-remote/web"
 )
 
+// version is replaced at build time: go build -ldflags "-X main.version=1.2.3".
+var version = "dev"
+
+const usage = `CC Remote: remote web UI for Claude Code.
+
+usage:
+  cc-remote [host flags]                  run the host (web UI and API)
+  cc-remote [--data-dir D] -- claude ...  start native Claude Code shared with the web UI
+  ccr [claude args]                       same as "cc-remote -- claude [claude args]"
+
+commands:
+  service    install/config/uninstall/start/stop/restart/status/logs the background service
+  alias      install/uninstall/status the ccr launcher
+  terminal   start a shared terminal session (legacy form of "--")
+  update     update cc-remote to the latest release
+  version    print version information
+  help       show this help
+
+host flags:
+`
+
+type stringList []string
+
+func (s *stringList) String() string     { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
+
 func main() {
-	if err := run(); err != nil {
+	err := run()
+	var exit service.ExitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.Code)
+	}
+	if err != nil {
 		log.Fatal(err)
 	}
 }
+
+// isCCR reports whether the executable was invoked under the ccr alias name.
+func isCCR(argv0 string) bool {
+	base := filepath.Base(strings.ReplaceAll(argv0, `\`, "/"))
+	return strings.EqualFold(strings.TrimSuffix(base, filepath.Ext(base)), "ccr")
+}
+
 func run() error {
-	if len(os.Args) > 1 && os.Args[1] == "terminal" {
-		return channel.Launch(os.Args[2:])
+	if isCCR(os.Args[0]) {
+		return channel.Launch(append([]string{"--claude", "claude", "--"}, os.Args[1:]...))
+	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version":
+			fmt.Printf("cc-remote %s\n%s %s/%s\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+			return nil
+		case "help", "-h", "--help", "-help":
+			fs, _ := hostFlags()
+			fs.SetOutput(os.Stdout)
+			fs.Usage()
+			return nil
+		case "service":
+			return service.Main(os.Args[2:], version)
+		case "alias":
+			return service.AliasMain(os.Args[2:])
+		case "update":
+			return update.Run(version, os.Args[2:])
+		case "terminal":
+			return channel.Launch(os.Args[2:])
+		}
 	}
 	for i, arg := range os.Args[1:] {
 		if arg == "--" {
@@ -57,16 +121,113 @@ func run() error {
 			return channel.Run()
 		case "channel-session-hook":
 			return channel.SessionHook()
-		case "terminal":
-			return channel.Launch(os.Args[2:])
 		}
 	}
-	listen := flag.String("listen", "127.0.0.1:8787", "HTTP listen address (use 0.0.0.0:8787 for remote access)")
-	dataDir := flag.String("data-dir", config.DefaultDataDir(), "SQLite and access-token directory (or CC_REMOTE_DATA_DIR)")
-	claudeBin := flag.String("claude", "claude", "Claude Code executable path")
-	configDir := flag.String("claude-config-dir", "", "Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)")
-	flag.Parse()
-	absData, err := filepath.Abs(*dataDir)
+	return runHost(os.Args[1:])
+}
+
+type hostOptions struct {
+	listen                                                 stringList
+	dataDir, claudeBin, configDir, logFile, serviceManager *string
+	allowInsecureRemote                                    *bool
+}
+
+func hostFlags() (*flag.FlagSet, *hostOptions) {
+	fs := flag.NewFlagSet("cc-remote", flag.ExitOnError)
+	o := &hostOptions{}
+	fs.Var(&o.listen, "listen", "HTTP listen address, repeatable or comma separated (default 127.0.0.1:8787; lan:PORT = all private IPv4 addresses, all:PORT = 0.0.0.0)")
+	o.dataDir = fs.String("data-dir", config.DefaultDataDir(), "SQLite and access-token directory (or CC_REMOTE_DATA_DIR)")
+	o.claudeBin = fs.String("claude", "claude", "Claude Code executable path")
+	o.configDir = fs.String("claude-config-dir", "", "Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)")
+	o.logFile = fs.String("log-file", "", "also write logs to this file (rotated at 10 MiB, one backup)")
+	o.allowInsecureRemote = fs.Bool("allow-insecure-remote", false, "allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)")
+	o.serviceManager = fs.String("service-manager", "", "internal: set by the background service (schtasks, systemd, launchd)")
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), usage)
+		fs.PrintDefaults()
+	}
+	return fs, o
+}
+
+// conflict logs err and exits with service.ExitConflict so the Windows
+// supervisor can tell "another host owns this data dir or port" apart from a
+// crash and stop retrying.
+func conflict(err error) error {
+	log.Printf("%v", err)
+	return service.ExitError{Code: service.ExitConflict}
+}
+
+// addrInUse reports EADDRINUSE (WSAEADDRINUSE = 10048 on Windows).
+func addrInUse(err error) bool {
+	var errno syscall.Errno
+	return errors.Is(err, syscall.EADDRINUSE) || (errors.As(err, &errno) && errno == 10048)
+}
+
+// warnExposure logs a prominent warning for every bind reachable from other
+// machines: the API is plain HTTP and the token grants code execution.
+func warnExposure(bound []string) {
+	for _, addr := range bound {
+		if listen.IsLoopback(addr) {
+			continue
+		}
+		log.Printf("WARNING: %s is reachable from other machines over plain HTTP. Anyone with the access token can run code as this user; use only on a trusted LAN or behind HTTPS / a tunnel.", addr)
+		log.Printf("警告：%s 可被其它机器以明文 HTTP 访问。持有访问令牌即可以当前用户身份执行代码；仅在可信局域网使用，或置于 HTTPS 反代 / 隧道之后。", addr)
+	}
+}
+
+func runHost(argv []string) error {
+	fs, opts := hostFlags()
+	_ = fs.Parse(argv)
+	if *opts.logFile != "" {
+		path, err := filepath.Abs(*opts.logFile)
+		if err != nil {
+			return err
+		}
+		if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
+		w, err := logfile.Open(path, logfile.DefaultMaxSize)
+		if err != nil {
+			return err
+		}
+		defer w.Close()
+		if *opts.serviceManager != "" {
+			// Under a service manager stderr goes to launchd.log, the journal
+			// or the supervisor; copying every line there would duplicate
+			// host.log without its size limit.
+			log.SetOutput(w)
+		} else {
+			// File first: MultiWriter stops at the first failing writer.
+			log.SetOutput(io.MultiWriter(w, os.Stderr))
+		}
+		// Fatal runtime errors bypass the log package; keep them in host.log.
+		if err = w.SetCrashOutput(); err != nil {
+			log.Printf("crash output: %v", err)
+		}
+		*opts.logFile = path
+	}
+	// Read by the status endpoint; set explicitly so a host spawned from a
+	// managed host's children does not inherit the marker.
+	if *opts.serviceManager != "" {
+		os.Setenv("CC_REMOTE_SERVICE_MANAGER", *opts.serviceManager)
+	} else {
+		os.Unsetenv("CC_REMOTE_SERVICE_MANAGER")
+	}
+	specs := listen.Split(opts.listen)
+	if len(specs) == 0 {
+		specs = []string{"127.0.0.1:8787"}
+	}
+	if bad := listen.Insecure(specs); len(bad) > 0 && !*opts.allowInsecureRemote {
+		return fmt.Errorf("--listen %s binds every interface over plain HTTP; use lan:PORT or a specific address, or pass --allow-insecure-remote if you really mean it", strings.Join(bad, ","))
+	}
+	addrs, added, err := listen.Resolve(specs, nil)
+	if err != nil {
+		return err
+	}
+	if added != "" {
+		log.Printf("No loopback listen address configured; also listening on %s for local tools", added)
+	}
+	absData, err := filepath.Abs(*opts.dataDir)
 	if err != nil {
 		return err
 	}
@@ -75,7 +236,7 @@ func run() error {
 	}
 	release, err := hostlock.Acquire(absData)
 	if err != nil {
-		return err
+		return conflict(err)
 	}
 	defer release()
 	token := strings.TrimSpace(os.Getenv("CC_REMOTE_TOKEN"))
@@ -110,17 +271,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if *configDir == "" {
-		*configDir = os.Getenv("CLAUDE_CONFIG_DIR")
+	claudeBin, configDir := *opts.claudeBin, *opts.configDir
+	if configDir == "" {
+		configDir = os.Getenv("CLAUDE_CONFIG_DIR")
 	}
-	if *configDir == "" {
+	if configDir == "" {
 		home, e := os.UserHomeDir()
 		if e != nil {
 			return e
 		}
-		*configDir = filepath.Join(home, ".claude")
+		configDir = filepath.Join(home, ".claude")
 	}
-	*configDir, err = filepath.Abs(*configDir)
+	configDir, err = filepath.Abs(configDir)
 	if err != nil {
 		return err
 	}
@@ -129,11 +291,23 @@ func run() error {
 		return err
 	}
 	defer st.Close()
-	listener, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return err
+	var listeners []net.Listener
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
+	for _, addr := range addrs {
+		l, e := net.Listen("tcp", addr)
+		if e != nil {
+			e = fmt.Errorf("listen on %s: %w", addr, e)
+			if addrInUse(e) {
+				return conflict(e)
+			}
+			return e
+		}
+		listeners = append(listeners, l)
 	}
-	defer listener.Close()
 	// The public bind may be a LAN-only IP. A separate loopback listener keeps
 	// process-local hooks available without exposing run credentials remotely.
 	bridgeListener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -142,8 +316,23 @@ func run() error {
 	}
 	defer bridgeListener.Close()
 	channelURL := "http://" + bridgeListener.Addr().String()
-	if addr, ok := listener.Addr().(*net.TCPAddr); ok && (addr.IP.IsLoopback() || addr.IP.IsUnspecified()) {
-		channelURL = fmt.Sprintf("http://127.0.0.1:%d", addr.Port)
+	wildcardPort := 0
+	bound := make([]string, 0, len(listeners))
+	loopback := false
+	for _, l := range listeners {
+		bound = append(bound, l.Addr().String())
+		addr, ok := l.Addr().(*net.TCPAddr)
+		if !ok {
+			continue
+		}
+		if addr.IP.IsLoopback() && !loopback {
+			channelURL, loopback = "http://"+addr.String(), true
+		} else if addr.IP.IsUnspecified() && wildcardPort == 0 {
+			wildcardPort = addr.Port
+		}
+	}
+	if !loopback && wildcardPort != 0 {
+		channelURL = fmt.Sprintf("http://127.0.0.1:%d", wildcardPort)
 	}
 	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\"'\"'") + "'" }
 	prefix := ""
@@ -151,17 +340,22 @@ func run() error {
 		prefix = "& "
 		quote = func(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
 	}
-	terminalCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData) + " --claude-config-dir " + quote(*configDir) + " -- " + quote(*claudeBin)
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: *claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: *configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, Assets: webui.Files()})
-	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	errs := make(chan error, 2)
-	go func() { errs <- public.Serve(listener) }()
-	go func() { errs <- bridge.Serve(bridgeListener) }()
-	log.Printf("CC Remote listening at http://%s", listener.Addr())
-	log.Printf("Claude config: %s", *configDir)
+	terminalCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData) + " --claude-config-dir " + quote(configDir) + " -- " + quote(claudeBin)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop})
+	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	errs := make(chan error, len(listeners)+1)
+	for _, l := range listeners {
+		go func(l net.Listener) { errs <- public.Serve(l) }(l)
+	}
+	go func() { errs <- bridge.Serve(bridgeListener) }()
+	for _, addr := range bound {
+		log.Printf("CC Remote listening at http://%s", addr)
+	}
+	warnExposure(bound)
+	log.Printf("Claude config: %s", configDir)
 	select {
 	case <-ctx.Done():
 	case e := <-errs:
@@ -169,6 +363,7 @@ func run() error {
 			log.Printf("HTTP server: %v", e)
 		}
 	}
+	log.Printf("Shutting down")
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	appErr := app.Close(shutdown)

@@ -55,14 +55,9 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 	if configDir != "" {
 		args = append(args, "--claude-config-dir", configDir)
 	}
-	logFile, err := os.OpenFile(filepath.Join(dataDir, "host.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer logFile.Close()
+	// The host writes and rotates host.log itself; its stdio is discarded.
+	args = append(args, "--log-file", filepath.Join(dataDir, "host.log"))
 	cmd := exec.Command(exe, args...)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
 	detachHost(cmd)
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("start host: %w", err)
