@@ -24,10 +24,9 @@ access-token
 /.omx/
 *.log
 
-# Keep only the reviewed, current documentation screenshots
+# Ad-hoc preview captures; documentation screenshots live in docs/images/
 /docs/preview*
-!/docs/preview-sidebar-pc.jpg
-!/docs/preview-sidebar-mobile.jpg
+/.playwright-mcp/
 
 # Dependencies, generated frontend assets and caches
 node_modules/

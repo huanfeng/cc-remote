@@ -1,6 +1,6 @@
 # 发布、安装与更新
 
-本文说明如何发布 cc-remote 版本，以及在 Windows / Linux / macOS 上安装、更新和卸载。仓库是**私有**的，所有下载都需要 GitHub 凭据。
+本文说明如何发布 cc-remote 版本，以及在 Windows / Linux / macOS 上安装、更新和卸载。公开仓库可匿名下载；GitHub 凭据只在仓库私有或遇到 API 速率限制时需要。
 
 ## 发布新版本
 
@@ -36,48 +36,44 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 
 | 文件 | 内容 |
 | --- | --- |
-| `cc-remote_<版本>_windows_amd64.zip` / `_windows_arm64.zip` | `cc-remote.exe`、`README.md`（有 LICENSE 时一并附带） |
-| `cc-remote_<版本>_linux_{amd64,arm64}.tar.gz` | `cc-remote`（可执行）、`README.md` |
+| `cc-remote_<版本>_windows_amd64.zip` / `_windows_arm64.zip` | `cc-remote.exe`、`README.md`、`LICENSE` |
+| `cc-remote_<版本>_linux_{amd64,arm64}.tar.gz` | `cc-remote`（可执行）、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_darwin_{amd64,arm64}.tar.gz` | 同上 |
 | `checksums.txt` | 所有归档的 sha256（`sha256sum` 格式） |
-| `install.ps1` / `install.sh` | 安装脚本副本，方便私有仓库下载 |
+| `install.ps1` / `install.sh` | 安装脚本副本；`releases/latest/download/install.*` 即指向最新正式版中的这两个文件 |
 
 `<版本>` 不带 `v`，例如标签 `v0.2.0` 对应 `cc-remote_0.2.0_linux_amd64.tar.gz`，程序内的版本号（`main.version`）为 `0.2.0`。
 
-## 凭据（私有仓库）
+## 凭据
 
-安装脚本和 `cc-remote update` 按以下顺序取凭据：
+安装脚本和 `cc-remote update` 按以下顺序选择下载方式：
 
 1. **GitHub CLI**：已安装且 `gh auth login` 登录 → 用 `gh release view/download`。
 2. **令牌**：环境变量 `GITHUB_TOKEN` 或 `GH_TOKEN` → GitHub REST API（`/releases/latest`、`/releases/tags/<tag>`、`/releases/assets/<id>`）。
-3. 都没有 → 匿名尝试，失败时提示如何认证。
+3. 都没有 → 匿名访问 REST API（公开仓库的默认路径），失败时提示如何认证。
 
-推荐使用 **fine-grained personal access token**：Repository access 只选 `huanfeng/cc-remote`，Permissions → **Contents: Read-only**。classic token 需要 `repo` scope。
+仓库私有时（或 fork 到私有仓库并用 `CC_REMOTE_REPO` 指向它）需要凭据，推荐 **fine-grained personal access token**：Repository access 只选目标仓库，Permissions → **Contents: Read-only**。classic token 需要 `repo` scope。
 
 ## 一键安装 / 更新
 
-重复执行同一命令就是**更新**：脚本下载新版本、校验 sha256，然后运行新二进制的 `service install`，由它停止服务 → 复制到固定位置 → 重新启动；已有的 `--listen` 等配置不传参数时保留。
+重复执行同一命令就是**更新**：脚本下载新版本、校验 sha256，然后运行新二进制的 `service install`，由它停止服务 → 复制到固定位置 → 重新启动；已有的 `--listen` 等配置不传参数时保留。默认同时创建 `ccr` 别名。
 
 ### Windows（PowerShell 5.1 / 7）
 
-已登录 gh：
-
 ```powershell
-gh api repos/huanfeng/cc-remote/contents/scripts/install.ps1 -H "Accept: application/vnd.github.raw" | Out-String | Invoke-Expression
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 | iex
 ```
 
-需要参数时（`Invoke-Expression` 无法传参）：
+需要参数时（`iex` 无法传参，改用 scriptblock）：
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1))) -Listen lan:8787 -Version v0.2.0
+```
+
+私有仓库可改用已登录的 gh 获取脚本：
 
 ```powershell
 $s = gh api repos/huanfeng/cc-remote/contents/scripts/install.ps1 -H "Accept: application/vnd.github.raw" | Out-String
-& ([scriptblock]::Create($s)) -Listen lan:8787 -Version v0.2.0
-```
-
-只有令牌：
-
-```powershell
-$env:GITHUB_TOKEN = "<token>"
-$s = Invoke-RestMethod -UseBasicParsing -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github.raw" } https://api.github.com/repos/huanfeng/cc-remote/contents/scripts/install.ps1
 & ([scriptblock]::Create($s)) -Listen lan:8787
 ```
 
@@ -95,17 +91,17 @@ $s = Invoke-RestMethod -UseBasicParsing -Headers @{ Authorization = "Bearer $env
 
 ### Linux / macOS
 
-已登录 gh：
+```sh
+curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
+# 带参数
+curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh -s -- --listen lan:8787
+```
+
+私有仓库可改用 gh 或令牌获取脚本：
 
 ```sh
 gh api repos/huanfeng/cc-remote/contents/scripts/install.sh -H "Accept: application/vnd.github.raw" | sh
-# 带参数
-gh api repos/huanfeng/cc-remote/contents/scripts/install.sh -H "Accept: application/vnd.github.raw" | sh -s -- --listen lan:8787
-```
-
-只有令牌：
-
-```sh
+# 或
 export GITHUB_TOKEN=<token>
 curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
   https://api.github.com/repos/huanfeng/cc-remote/contents/scripts/install.sh | sh -s -- --listen lan:8787
@@ -149,7 +145,7 @@ cc-remote service uninstall
 cc-remote alias install      # 创建 ccr
 ```
 
-完整说明见 [README](../README.md) 中的后台服务章节和 `cc-remote service --help`。
+完整说明见 [configuration.md](configuration.md#后台服务) 和 `cc-remote service --help`。
 
 ## 卸载
 
@@ -163,7 +159,7 @@ cc-remote alias uninstall                    # 删除 ccr 并移除其 PATH 条�
 
 ## 故障排查
 
-- **`cannot access releases` / 404**：私有仓库未认证。运行 `gh auth status`；或检查令牌是否覆盖本仓库且有 Contents: Read。fine-grained token 若属于组织仓库，可能需要组织管理员批准。
+- **`cannot access releases` / 404**：仓库私有而未认证，或匿名访问触发了 API 速率限制。运行 `gh auth status`；或检查令牌是否覆盖本仓库且有 Contents: Read。fine-grained token 若属于组织仓库，可能需要组织管理员批准。
 - **`no release found`**：仓库还没有正式 Release，或只有 prerelease（需 `--version` 指定）。
 - **401/403**：令牌过期、权限不足，或触发了 API 速率限制。
 - **sha256 mismatch**：下载不完整或被篡改，脚本已中止且未改动现有安装，重试即可。

@@ -73,9 +73,9 @@ Windows 服务实测：计划任务无窗口运行、强杀后 5 秒内重启、
 
 数据目录迁移：旧版项目内 `./data` 的 SQLite、WAL 和访问令牌在宿主停止后复制到用户默认数据目录，验证原有会话完整保留；原目录保留不删。
 
-最新侧栏回归：独立 8792 测试宿主使用真实 HTTP/SQLite 生命周期与模拟 Runner，不调用模型或执行工具；验证 A 执行中、B 等待操作、B 完成、A 草稿保留，以及释放 A 缓存后任务继续。该测试宿主已停止，临时夹具保留在 `.test-data/sidebar-qa`。预览：[PC](preview-sidebar-pc.jpg)、[手机](preview-sidebar-mobile.jpg)。
+最新侧栏回归：独立 8792 测试宿主使用真实 HTTP/SQLite 生命周期与模拟 Runner，不调用模型或执行工具；验证 A 执行中、B 等待操作、B 完成、A 草稿保留，以及释放 A 缓存后任务继续。该测试宿主已停止，临时夹具保留在 `.test-data/sidebar-qa`。当时的预览截图已由当前界面截图取代：[桌面](images/desktop.png)、[手机](images/mobile.png)。
 
-真实测试记录见 [verification.md](verification.md)，使用方式和限制见 [README](../README.md)。后续执行者先检查这里未完成项，并更新验证结果，避免重做已经完成的功能。
+真实测试记录见 [verification.md](verification.md)，使用方式见 [usage.md](usage.md)，设计与限制见 [architecture.md](architecture.md)。后续执行者先检查这里未完成项，并更新验证结果，避免重做已经完成的功能。
 
 ## 后续候选事项（尚未承诺实现）
 
