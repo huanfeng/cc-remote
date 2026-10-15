@@ -11,8 +11,10 @@ import (
 	"runtime"
 	"strings"
 
+	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
 	"cc-remote/internal/hostlock"
+	"cc-remote/internal/prefs"
 	"cc-remote/internal/store"
 )
 
@@ -39,6 +41,16 @@ func Launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Like managed runs, a corrupt preferences file is reported and ignored.
+	p, _, err := prefs.Load(absData)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告：无法读取 CC Remote 默认设置，本次不应用：%v\n", err)
+		p = prefs.Preferences{}
+	}
+	if warning := inheritedDangerWarning(nativeArgs, p); warning != "" {
+		fmt.Fprintf(os.Stderr, "\n!!! %s\n\n", warning)
+	}
+	nativeArgs = applyPreferences(nativeArgs, p)
 	if err = ensureHost(absData, defaultHost(*host), *claudeBin, *configDir); err != nil {
 		return err
 	}
@@ -171,4 +183,41 @@ func prepareNativeArgs(args []string, resume string) ([]string, string, error) {
 		}
 	}
 	return result, id, nil
+}
+
+func hasFlag(args []string, names ...string) bool {
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		for _, n := range names {
+			if name == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var permissionFlags = []string{"--permission-mode", "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions"}
+
+// applyPreferences adds cc-remote defaults only for options the user did not pass.
+func applyPreferences(args []string, p prefs.Preferences) []string {
+	if hasFlag(args, permissionFlags...) {
+		p.PermissionMode = ""
+	}
+	if hasFlag(args, "--model") {
+		p.Model = ""
+	}
+	if hasFlag(args, "--effort") {
+		p.Effort = ""
+	}
+	return append(append([]string{}, args...), claude.LaunchFlags(p.PermissionMode, p.Model, p.Effort)...)
+}
+
+// inheritedDangerWarning explains, before launch, that a dangerous permission
+// mode comes from the web preferences rather than this command line.
+func inheritedDangerWarning(args []string, p prefs.Preferences) string {
+	if !prefs.Dangerous(p.PermissionMode) || hasFlag(args, permissionFlags...) {
+		return ""
+	}
+	return fmt.Sprintf("警告：CC Remote 默认权限模式为 %s（来自网页设置），本终端会话将跳过工具审批；传 --permission-mode default 可覆盖。", p.PermissionMode)
 }

@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+
+	"cc-remote/internal/prefs"
 )
 
 func TestNativeLaunchArguments(t *testing.T) {
@@ -50,5 +53,43 @@ func TestEnsureHostAuthenticatesMatchingDataDirectory(t *testing.T) {
 	}
 	if err := ensureHost(t.TempDir(), server.URL, "claude", ""); err == nil {
 		t.Fatal("accepted another data directory")
+	}
+}
+
+func TestApplyPreferencesRespectsNativeFlags(t *testing.T) {
+	p := prefs.Preferences{PermissionMode: "bypassPermissions", Model: "opus", Effort: "high"}
+	got := applyPreferences([]string{"--session-id", "x"}, p)
+	want := []string{"--session-id", "x", "--permission-mode", "bypassPermissions", "--model", "opus", "--effort", "high"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("injected %v", got)
+	}
+	for _, native := range [][]string{{"--permission-mode", "plan"}, {"--permission-mode=plan"}, {"--dangerously-skip-permissions"}, {"--allow-dangerously-skip-permissions"}} {
+		if got = applyPreferences(native, p); slices.Contains(got, "bypassPermissions") {
+			t.Fatalf("overrode native permission flag %v: %v", native, got)
+		}
+	}
+	got = applyPreferences([]string{"--model=sonnet", "--effort", "low"}, p)
+	if slices.Contains(got, "opus") || slices.Contains(got, "high") || !slices.Contains(got, "bypassPermissions") {
+		t.Fatalf("overrode native model/effort: %v", got)
+	}
+	if got = applyPreferences([]string{"a"}, prefs.Preferences{}); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("empty preferences injected %v", got)
+	}
+}
+
+func TestInheritedDangerWarning(t *testing.T) {
+	for _, mode := range []string{"bypassPermissions", "dontAsk", "auto"} {
+		w := inheritedDangerWarning([]string{"--session-id", "x"}, prefs.Preferences{PermissionMode: mode})
+		if !strings.Contains(w, mode) || !strings.Contains(w, "--permission-mode default") {
+			t.Fatalf("%s: %q", mode, w)
+		}
+	}
+	if w := inheritedDangerWarning(nil, prefs.Preferences{PermissionMode: "acceptEdits"}); w != "" {
+		t.Fatalf("safe mode warned %q", w)
+	}
+	for _, native := range [][]string{{"--permission-mode=default"}, {"--dangerously-skip-permissions"}} {
+		if w := inheritedDangerWarning(native, prefs.Preferences{PermissionMode: "bypassPermissions"}); w != "" {
+			t.Fatalf("explicit flag %v warned %q", native, w)
+		}
 	}
 }

@@ -22,6 +22,10 @@ type Session struct {
 	Resume          bool   `json:"-"`
 	Mode            string `json:"mode"`
 	Online          bool   `json:"online"`
+	// Per-session launch overrides; empty follows cc-remote preferences.
+	PermissionMode string `json:"permissionMode"`
+	Model          string `json:"model"`
+	Effort         string `json:"effort"`
 }
 
 type Event struct {
@@ -88,13 +92,15 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	var modeColumn int
-	if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name='mode'`).Scan(&modeColumn); err == nil && modeColumn == 0 {
-		_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'managed'`)
-	}
-	if err != nil {
-		db.Close()
-		return nil, err
+	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}} {
+		var n int
+		if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c.name).Scan(&n); err == nil && n == 0 {
+			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c.name + ` TEXT NOT NULL DEFAULT ` + c.def)
+		}
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS channel_transcript(session_id TEXT NOT NULL REFERENCES sessions(id),event_key TEXT NOT NULL,PRIMARY KEY(session_id,event_key))`); err != nil {
 		db.Close()
@@ -118,21 +124,23 @@ func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error
 	return x, err
 }
 
+const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort`
+
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort)
 	return x, err
 }
 
 func (s *Store) Get(id string) (Session, error) {
-	return scanSession(s.db.QueryRow(`SELECT * FROM sessions WHERE id=?`, id))
+	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE id=?`, id))
 }
 func (s *Store) FindClaude(id string) (Session, error) {
-	return scanSession(s.db.QueryRow(`SELECT * FROM sessions WHERE claude_id=?`, id))
+	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE claude_id=?`, id))
 }
 
 func (s *Store) List() ([]Session, error) {
-	r, err := s.db.Query(`SELECT * FROM sessions ORDER BY updated_at DESC`)
+	r, err := s.db.Query(`SELECT ` + sessionColumns + ` FROM sessions ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,9 +169,41 @@ func (s *Store) SetMode(id, mode string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET mode=?,updated_at=? WHERE id=?`, mode, now(), id)
 	return err
 }
+
+// SetOverrides stores per-session launch overrides used by the next managed turn.
+func (s *Store) SetOverrides(id, permissionMode, model, effort string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET permission_mode=?,model=?,effort=? WHERE id=?`, permissionMode, model, effort, id)
+	return err
+}
 func (s *Store) SetTitle(id, title string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET title=? WHERE id=?`, title, id)
 	return err
+}
+
+// Delete removes a session with its events, interactions and transcript keys in
+// one transaction. It returns sql.ErrNoRows when the session does not exist.
+func (s *Store) Delete(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"events", "interactions", "channel_transcript"} {
+		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE session_id=?`, id); err != nil {
+			return err
+		}
+	}
+	r, err := tx.Exec(`DELETE FROM sessions WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, err := r.RowsAffected(); err != nil || n == 0 {
+		if err == nil {
+			err = sql.ErrNoRows
+		}
+		return err
+	}
+	return tx.Commit()
 }
 
 // RecordTranscript keeps repeated heartbeat scans and reconnects idempotent.

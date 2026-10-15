@@ -31,6 +31,11 @@ type Config struct {
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL, TerminalCommand string
 	Assets                                                                                    fs.FS
 	Runner                                                                                    Runner
+	// Host metadata shared by status, preferences and service management.
+	DataDir, Listen, Version, LogFile string
+	StartedAt                         time.Time
+	// Shutdown asks the host process to exit gracefully; nil disables remote shutdown.
+	Shutdown func()
 }
 type execution struct {
 	cancel    context.CancelFunc
@@ -57,6 +62,11 @@ type Server struct {
 	closing         bool
 	channels        map[string]*channelConnection
 	channelRequests map[string]*channelApproval
+	modelCache      modelsCache
+	statusCache     statusCache
+	// configMu serializes writers of preferences.json, Claude settings.json and
+	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.
+	configMu sync.Mutex
 }
 
 func New(st *store.Store, cfg Config) *Server {
@@ -75,8 +85,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{id}/disconnect", s.channelDisconnect)
 	mux.HandleFunc("POST /api/channels/{id}/events", s.channelEvent)
 	mux.HandleFunc("GET /api/info", s.info)
+	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
+	mux.HandleFunc("POST /api/admin/shutdown", s.shutdown)
 	mux.HandleFunc("GET /api/claude/settings", s.settings)
 	mux.HandleFunc("PUT /api/claude/settings", s.settings)
+	mux.HandleFunc("GET /api/preferences", s.preferences)
+	mux.HandleFunc("PUT /api/preferences", s.preferences)
+	mux.HandleFunc("GET /api/models", s.models)
+	mux.HandleFunc("PATCH /api/sessions/{id}", s.patchSession)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("GET /api/sessions", s.list)
 	mux.HandleFunc("POST /api/sessions", s.create)
 	mux.HandleFunc("GET /api/sessions/{id}", s.get)
@@ -154,7 +172,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "channelExperimental": true})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "channelExperimental": true})
 }
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	x, e := s.store.List()
@@ -187,6 +205,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Title string `json:"title"`
 		Cwd   string `json:"cwd"`
+		overrideRequest
 	}
 	if !decode(w, r, &req) {
 		return
@@ -204,7 +223,16 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
+	var overrides store.Session
+	if e = req.apply(&overrides); e != nil {
+		fail(w, 400, e.Error())
+		return
+	}
 	x, e := s.store.Create(req.Title, cwd, store.ID(), false)
+	if e == nil {
+		e = s.store.SetOverrides(x.ID, overrides.PermissionMode, overrides.Model, overrides.Effort)
+		x.PermissionMode, x.Model, x.Effort = overrides.PermissionMode, overrides.Model, overrides.Effort
+	}
 	if e != nil {
 		fail(w, 500, "无法创建会话")
 		return
@@ -333,6 +361,8 @@ func (s *Server) execute(x store.Session, text string, run *execution) {
 	defer close(run.done)
 	defer run.cancel()
 	opts := claude.Options{Executable: s.cfg.ClaudeExecutable, HostExecutable: s.cfg.HostExecutable, SessionID: x.ClaudeSessionID, Cwd: x.Cwd, Message: text, Resume: x.Resume, BridgeURL: s.cfg.BridgeURL, BridgeToken: run.token, ConfigDir: s.cfg.ClaudeConfigDir}
+	p := s.effectivePreferences(x)
+	opts.PermissionMode, opts.Model, opts.Effort = p.PermissionMode, p.Model, p.Effort
 	err := s.cfg.Runner(run.ctx, opts, func(ev claude.Event) error {
 		if ev.Kind == "session" || ev.Kind == "result" {
 			if e := s.store.SetResume(x.ID); e != nil {
@@ -383,6 +413,88 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, map[string]string{"status": "stopping"})
+}
+
+const deleteStopTimeout = 15 * time.Second
+
+// deleteSession removes cc-remote's records of a session (events, interactions,
+// transcript keys, uploads). Claude's native JSONL history is never touched.
+// With ?stop=1 an active managed run is stopped first.
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.Lock()
+	x, err := s.store.Get(id)
+	if err != nil {
+		s.mu.Unlock()
+		fail(w, 404, "会话不存在")
+		return
+	}
+	s.decorateChannel(&x)
+	run := s.runs[id]
+	if x.Online {
+		s.mu.Unlock()
+		fail(w, 409, "共享终端在线，请先退出终端")
+		return
+	}
+	if run != nil {
+		if r.URL.Query().Get("stop") != "1" {
+			s.mu.Unlock()
+			fail(w, 409, "请先停止执行")
+			return
+		}
+		run.cancel()
+	}
+	s.mu.Unlock()
+	if run != nil {
+		timer := time.NewTimer(deleteStopTimeout)
+		defer timer.Stop()
+		select {
+		case <-run.done:
+		case <-timer.C:
+			fail(w, 504, "停止执行超时，请稍后重试")
+			return
+		case <-r.Context().Done():
+			return
+		}
+	}
+	s.mu.Lock()
+	x.Online = false
+	s.decorateChannel(&x)
+	if s.runs[id] != nil || x.Online {
+		s.mu.Unlock()
+		fail(w, 409, "会话已重新开始执行或终端已连接，请重试")
+		return
+	}
+	for rid, p := range s.requests {
+		if p.sessionID == id {
+			delete(s.requests, rid)
+		}
+	}
+	for rid, p := range s.channelRequests {
+		if p.connection.sessionID == id {
+			delete(s.channelRequests, rid)
+		}
+	}
+	for cid, c := range s.channels {
+		if c.sessionID == id {
+			delete(s.channels, cid)
+		}
+	}
+	err = s.store.Delete(id)
+	s.mu.Unlock()
+	if err != nil {
+		fail(w, 500, "无法删除会话")
+		return
+	}
+	if dir, e := s.sessionUploadDir(id); e == nil {
+		if e = os.RemoveAll(dir); e != nil {
+			log.Printf("delete uploads %s: %v", id, e)
+		}
+	}
+	s.statusCache.mu.Lock()
+	s.statusCache.at = time.Time{}
+	s.statusCache.mu.Unlock()
+	respond(w, 200, map[string]string{"status": "deleted"})
 }
 
 func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {

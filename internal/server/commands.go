@@ -4,6 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"cc-remote/internal/prefs"
+	"cc-remote/internal/store"
 )
 
 type webCommand struct {
@@ -25,10 +28,11 @@ func commandList(channel bool) []webCommand {
 	return []webCommand{
 		{"help", "显示网页支持的命令", false},
 		{"status", "查看当前会话状态", false},
-		{"model", "查看或修改新会话的默认模型，例如 /model sonnet", false},
-		{"effort", "查看或修改默认推理强度，例如 /effort high", false},
-		{"config", "打开 Claude 设置", false},
-		{"permissions", "打开默认权限设置", false},
+		{"model", "列出可用模型；/model opus 设置当前托管会话，/model --default opus 设置 CC Remote 默认；inherit 恢复默认", channel},
+		{"effort", "查看推理强度；/effort high 设置当前托管会话，/effort --default high 设置默认", channel},
+		{"permission-mode", "设置当前托管会话权限模式，例如 /permission-mode bypassPermissions；inherit 恢复默认", channel},
+		{"config", "打开设置面板", false},
+		{"permissions", "打开设置面板（权限模式等默认值）", false},
 		{"clear", "重置托管会话上下文，保留网页历史；共享会话需在终端执行", channel},
 		{"stop", "停止当前托管轮次；共享会话需在终端执行", channel},
 		{"compact", "压缩上下文，请在原生终端执行", true},
@@ -65,7 +69,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	switch name {
 	case "help":
 		result["commands"] = commandList(x.Mode == "channel")
-		result["message"] = "网页支持 /status、/model、/effort、/config、/permissions、/clear、/stop。其它 Claude 内置控制命令需在原生终端执行。"
+		result["message"] = "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear、/stop。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。其它 Claude 内置控制命令需在原生终端执行。"
 	case "status":
 		s.mu.Lock()
 		s.decorateChannel(&x)
@@ -74,46 +78,16 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		result["message"] = x.Title + " · " + x.Mode + " · " + x.Status
 	case "config", "permissions":
 		result["openSettings"] = true
-	case "model", "effort":
-		s.mu.Lock()
-		v, b, readErr := s.readSettings()
-		if readErr != nil {
-			s.mu.Unlock()
-			fail(w, 500, readErr.Error())
+	case "model", "effort", "permission-mode":
+		message, data, code := s.preferenceCommand(x, name, args)
+		if code != 200 {
+			fail(w, code, message)
 			return
 		}
-		prefs := s.settingsSnapshot(v, b)
-		if args != "" {
-			value := args
-			if value == "default" {
-				value = ""
-			}
-			if name == "model" {
-				prefs.Model = value
-			} else {
-				prefs.Effort = value
-			}
-			prefs, err = s.saveSettings(prefs)
+		for k, v := range data {
+			result[k] = v
 		}
-		s.mu.Unlock()
-		if err != nil {
-			code := 400
-			if errors.Is(err, errSettingsConflict) {
-				code = 409
-			}
-			fail(w, code, err.Error())
-			return
-		}
-		result["settings"] = prefs
-		if args == "" {
-			if name == "model" {
-				result["message"] = "默认模型：" + displayDefault(prefs.Model)
-			} else {
-				result["message"] = "默认推理强度：" + displayDefault(prefs.Effort)
-			}
-		} else {
-			result["message"] = "已保存 Claude 默认设置。托管会话下一轮读取；正在运行的共享终端需重启，或在终端用 /" + name + " 即时修改。项目及组织设置仍可能覆盖此默认值。"
-		}
+		result["message"] = message
 	case "stop":
 		if x.Mode == "channel" {
 			fail(w, 409, "共享终端请按 Esc 停止生成；Channels 没有停止控制接口")
@@ -172,4 +146,117 @@ func displayDefault(x string) string {
 		return "跟随 Claude 默认值"
 	}
 	return x
+}
+
+// preferenceCommand handles /model, /effort and /permission-mode.
+// Without --default they change the managed session override; with it, cc-remote preferences.
+func (s *Server) preferenceCommand(x store.Session, name, args string) (string, map[string]any, int) {
+	global := false
+	fields := strings.Fields(args)
+	kept := fields[:0]
+	for _, f := range fields {
+		if f == "--default" {
+			global = true
+		} else {
+			kept = append(kept, f)
+		}
+	}
+	value := strings.Join(kept, " ")
+	data := map[string]any{}
+	label := map[string]string{"model": "模型", "effort": "推理强度", "permission-mode": "权限模式"}[name]
+	if name == "permission-mode" && global {
+		data["openSettings"] = true
+		return "CC Remote 默认权限模式请在设置面板修改（需要确认危险模式）。", data, 200
+	}
+	// Model discovery reads files and may call the API, so it runs before taking s.mu.
+	var models *modelList
+	if value == "" && name == "model" {
+		list := s.modelList(x.Cwd, false)
+		models = &list
+	}
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	current, rev, err := prefs.Load(s.cfg.DataDir)
+	if err != nil {
+		return err.Error(), nil, 500
+	}
+	if value == "" {
+		effective := current.Over(sessionOverrides(x))
+		pick := func(p prefs.Preferences) string {
+			return map[string]string{"model": p.Model, "effort": p.Effort, "permission-mode": p.PermissionMode}[name]
+		}
+		lines := []string{"当前会话" + label + "：" + displayDefault(pick(effective)), "CC Remote 默认：" + displayDefault(pick(current))}
+		if x.Mode == "channel" {
+			lines = append(lines, "共享终端由终端进程持有，请在终端执行 /"+strings.TrimSuffix(name, "-mode")+" 切换。")
+		}
+		switch name {
+		case "model":
+			data["models"] = *models
+			ids := make([]string, 0, len(models.Models))
+			for _, m := range models.Models {
+				ids = append(ids, m.ID)
+			}
+			lines = append(lines, "可用模型："+strings.Join(ids, "、"), "/model inherit 恢复默认；default 是 Claude Code 的模型别名，会原样传给 --model")
+		case "effort":
+			lines = append(lines, "可选：low、medium、high、xhigh、max；/effort inherit 恢复默认")
+		default:
+			lines = append(lines, "可选：default、plan、acceptEdits、dontAsk、auto、bypassPermissions；inherit 恢复默认")
+		}
+		data["preferences"] = preferencesBody{Preferences: current, Revision: rev}
+		return strings.Join(lines, "\n"), data, 200
+	}
+	// inherit clears the override for every setting; "default" is a real value
+	// (a model alias, or the default permission mode) and is passed through.
+	if value == "inherit" || value == "跟随" {
+		value = ""
+	}
+	if global {
+		next := current
+		if name == "model" {
+			next.Model = value
+		} else {
+			next.Effort = value
+		}
+		saved, err := s.savePreferences(next, rev, true)
+		if err != nil {
+			code := 400
+			if errors.Is(err, prefs.ErrConflict) {
+				code = 409
+			}
+			return err.Error(), nil, code
+		}
+		data["preferences"] = saved
+		return "已保存 CC Remote 默认" + label + "：" + displayDefault(value) + "。托管会话下一轮生效；新启动的共享终端使用该默认值，不修改 Claude 配置。", data, 200
+	}
+	if x.Mode == "channel" {
+		return channelOverrideMessage, nil, 409
+	}
+	fresh, err := s.store.Get(x.ID)
+	if err != nil {
+		return "会话不存在", nil, 404
+	}
+	req := overrideRequest{ConfirmDangerous: true} // typing the mode explicitly is the confirmation
+	switch name {
+	case "model":
+		req.Model = &value
+	case "effort":
+		req.Effort = &value
+	default:
+		req.PermissionMode = &value
+	}
+	if err = req.apply(&fresh); err != nil {
+		return err.Error(), nil, 400
+	}
+	if err = s.store.SetOverrides(fresh.ID, fresh.PermissionMode, fresh.Model, fresh.Effort); err != nil {
+		return "无法保存会话设置", nil, 500
+	}
+	data["session"] = fresh
+	message := "当前会话" + label + "已设为：" + displayDefault(value) + "，下一轮生效。"
+	if value == "" {
+		message = "当前会话" + label + "已恢复为 CC Remote 默认（" + displayDefault(map[string]string{"model": current.Model, "effort": current.Effort, "permission-mode": current.PermissionMode}[name]) + "），下一轮生效。"
+	}
+	if name == "permission-mode" && prefs.Dangerous(value) {
+		message += " 注意：此模式会跳过或自动处理工具审批。"
+	}
+	return message, data, 200
 }

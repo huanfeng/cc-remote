@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -81,5 +82,76 @@ func TestApprovalExactlyOnce(t *testing.T) {
 	}
 	if err = s.Resolve(r.ID, "resolved"); err == nil {
 		t.Fatal("second resolution accepted")
+	}
+}
+
+func TestDeleteRemovesOnlyThatSession(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var ids []string
+	for _, title := range []string{"gone", "kept"} {
+		x, err := s.Create(title, t.TempDir(), ID(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, x.ID)
+		if _, err = s.Append(x.ID, "user", title, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.AddInteraction(Interaction{ID: ID(), SessionID: x.ID, Kind: "approval", ToolName: "Bash", Input: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.RecordTranscript(x.ID, "k:1", "assistant", "hi", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = s.Delete(ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Get(ids[0]); err != sql.ErrNoRows {
+		t.Fatalf("session survived: %v", err)
+	}
+	for table, want := range map[string]int{"events": 2, "interactions": 1, "channel_transcript": 1} {
+		var gone, kept int
+		_ = s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE session_id=?`, ids[0]).Scan(&gone)
+		_ = s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE session_id=?`, ids[1]).Scan(&kept)
+		if gone != 0 || kept != want {
+			t.Fatalf("%s: deleted session rows %d, other session rows %d", table, gone, kept)
+		}
+	}
+	if err = s.Delete(ids[0]); err != sql.ErrNoRows {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
+func TestMigratesOldSessionSchemaWithOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL UNIQUE,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0);
+INSERT INTO sessions VALUES('old','Old','/tmp','abcd1234-1234-1234-1234-123456789abc','idle','t','t',1);`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	x, err := s.Get("old")
+	if err != nil || x.Mode != "managed" || x.PermissionMode != "" || x.Model != "" || x.Effort != "" || !x.Resume {
+		t.Fatalf("migrated %+v %v", x, err)
+	}
+	if err = s.SetOverrides("old", "bypassPermissions", "opus", "high"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.List()
+	if err != nil || len(list) != 1 || list[0].PermissionMode != "bypassPermissions" || list[0].Model != "opus" || list[0].Effort != "high" {
+		t.Fatalf("overrides %+v %v", list, err)
 	}
 }

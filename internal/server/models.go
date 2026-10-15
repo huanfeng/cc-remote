@@ -1,0 +1,379 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"cc-remote/internal/claude"
+	"cc-remote/internal/jsonedit"
+	"cc-remote/internal/prefs"
+)
+
+type modelOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Source      string `json:"source"`
+	Description string `json:"description,omitempty"`
+}
+
+type modelList struct {
+	Models     []modelOption `json:"models"`
+	FetchedAt  string        `json:"fetchedAt"`
+	Restricted bool          `json:"restricted"`
+	Warnings   []string      `json:"warnings,omitempty"`
+}
+
+// modelsCache never holds mu while collecting; concurrent callers for the same
+// key wait for the one in-flight collection instead.
+type modelsCache struct {
+	mu       sync.Mutex
+	entries  map[string]cachedModels
+	inflight map[string]*modelsCall
+}
+
+type modelsCall struct {
+	done chan struct{}
+	list modelList
+}
+
+type cachedModels struct {
+	list modelList
+	at   time.Time
+}
+
+const modelsTTL = 10 * time.Minute
+
+// Aliases documented at https://code.claude.com/docs/en/model-config (checked against Claude Code 2.1.300).
+var modelAliases = []modelOption{
+	{"default", "default", "alias", "Claude Code 的 default 别名：按账户类型使用推荐模型"},
+	{"best", "best", "alias", "可用时使用 Fable，否则与 opus 相同"},
+	{"fable", "fable", "alias", "最难、最长的任务"},
+	{"opus", "opus", "alias", "最新 Opus，复杂推理"},
+	{"sonnet", "sonnet", "alias", "最新 Sonnet，日常编码"},
+	{"haiku", "haiku", "alias", "快速高效的简单任务"},
+	{"opus[1m]", "opus[1m]", "alias", "Opus 100 万 token 上下文"},
+	{"sonnet[1m]", "sonnet[1m]", "alias", "Sonnet 100 万 token 上下文"},
+	{"opusplan", "opusplan", "alias", "规划模式用 opus，执行时切换到 sonnet"},
+}
+
+var modelEnvKeys = []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}
+
+// managedSettingsPath is a variable so tests never read the machine's policy file.
+var managedSettingsPath = func() string {
+	switch runtime.GOOS {
+	case "windows":
+		return `C:\Program Files\ClaudeCode\managed-settings.json`
+	case "darwin":
+		return "/Library/Application Support/ClaudeCode/managed-settings.json"
+	}
+	return "/etc/claude-code/managed-settings.json"
+}
+
+type modelSettings struct {
+	Model           string                     `json:"model"`
+	AvailableModels *[]string                  `json:"availableModels"`
+	Env             map[string]json.RawMessage `json:"env"`
+}
+
+func readModelSettings(path string) (modelSettings, bool, error) {
+	var v modelSettings
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return v, false, nil
+	}
+	if err != nil {
+		return v, false, err
+	}
+	b = jsonedit.StripBOM(b)
+	if len(strings.TrimSpace(string(b))) == 0 {
+		return v, true, nil
+	}
+	if err = json.Unmarshal(b, &v); err != nil {
+		return v, false, fmt.Errorf("%s 不是有效 JSON", filepath.Base(path))
+	}
+	return v, true, nil
+}
+
+// envString reads one string value from a settings env block.
+func (m modelSettings) envString(key string) string {
+	var x string
+	_ = json.Unmarshal(m.Env[key], &x)
+	return x
+}
+
+func (s *Server) models(w http.ResponseWriter, r *http.Request) {
+	cwd := ""
+	if id := r.URL.Query().Get("sessionId"); id != "" {
+		x, err := s.store.Get(id)
+		if err != nil {
+			fail(w, 404, "会话不存在")
+			return
+		}
+		cwd = x.Cwd
+	}
+	respond(w, 200, s.modelList(cwd, r.URL.Query().Get("refresh") == "1"))
+}
+
+// modelList must not be called with s.mu held: collection reads files and may call the API.
+func (s *Server) modelList(cwd string, refresh bool) modelList {
+	c := &s.modelCache
+	c.mu.Lock()
+	if c.entries == nil {
+		c.entries, c.inflight = map[string]cachedModels{}, map[string]*modelsCall{}
+	}
+	if e, ok := c.entries[cwd]; ok && !refresh && time.Since(e.at) < modelsTTL {
+		c.mu.Unlock()
+		return e.list
+	}
+	if call, ok := c.inflight[cwd]; ok {
+		c.mu.Unlock()
+		<-call.done
+		return call.list
+	}
+	call := &modelsCall{done: make(chan struct{})}
+	c.inflight[cwd] = call
+	c.mu.Unlock()
+
+	list, cacheable := s.collectModels(cwd)
+	call.list = list
+	c.mu.Lock()
+	delete(c.inflight, cwd)
+	if cacheable {
+		c.entries[cwd] = cachedModels{list, time.Now()}
+	}
+	c.mu.Unlock()
+	close(call.done)
+	return list
+}
+
+// collectModels reports cacheable=false when the API request was cancelled, so
+// the next request tries again. Timeouts are cached to avoid repeated 5 s waits.
+func (s *Server) collectModels(cwd string) (modelList, bool) {
+	result := modelList{Models: []modelOption{}, FetchedAt: time.Now().UTC().Format(time.RFC3339)}
+	seen := map[string]bool{}
+	var allowed *[]string
+	add := func(id, source, description string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] || !prefs.ValidModel(id) {
+			return
+		}
+		if allowed != nil && !modelAllowed(id, *allowed) {
+			return
+		}
+		seen[id] = true
+		result.Models = append(result.Models, modelOption{ID: id, Label: id, Source: source, Description: description})
+	}
+
+	// Managed policy wins outright; otherwise user/project/local lists are combined.
+	managed, _, err := readModelSettings(managedSettingsPath())
+	if err != nil {
+		result.Warnings = append(result.Warnings, "无法读取组织托管设置："+err.Error())
+	}
+	paths := []string{filepath.Join(s.cfg.ClaudeConfigDir, "settings.json")}
+	if cwd != "" {
+		paths = append(paths, filepath.Join(cwd, ".claude", "settings.json"), filepath.Join(cwd, ".claude", "settings.local.json"))
+	}
+	var layers []modelSettings
+	var user modelSettings
+	for i, path := range paths {
+		v, ok, err := readModelSettings(path)
+		if err != nil {
+			result.Warnings = append(result.Warnings, err.Error())
+		}
+		if ok {
+			layers = append(layers, v)
+		}
+		if i == 0 {
+			user = v
+		}
+	}
+	if managed.AvailableModels != nil {
+		allowed = managed.AvailableModels
+	} else {
+		for _, l := range layers {
+			if l.AvailableModels != nil {
+				merged := []string{}
+				if allowed != nil {
+					merged = append(merged, *allowed...)
+				}
+				merged = append(merged, *l.AvailableModels...)
+				allowed = &merged
+			}
+		}
+	}
+	result.Restricted = allowed != nil
+
+	if allowed != nil {
+		// The Default option is always selectable; list entries are themselves choices.
+		seen["default"] = true
+		result.Models = append(result.Models, modelAliases[0])
+		for _, id := range *allowed {
+			description := "availableModels 允许"
+			for _, a := range modelAliases {
+				if a.ID == id {
+					description = a.Description
+				}
+			}
+			add(id, "settings", description)
+		}
+	} else {
+		for _, a := range modelAliases {
+			add(a.ID, a.Source, a.Description)
+		}
+	}
+	for _, l := range append([]modelSettings{managed}, layers...) {
+		add(l.Model, "settings", "settings.json 中的 model")
+		for _, key := range modelEnvKeys {
+			add(l.envString(key), "settings", "settings env "+key)
+		}
+	}
+	for _, key := range modelEnvKeys {
+		add(os.Getenv(key), "env", "环境变量 "+key)
+	}
+	for _, id := range claude.RecentModels(s.cfg.ClaudeConfigDir, 200) {
+		if len(result.Models) > 200 {
+			break
+		}
+		add(id, "recent", "本机原生会话最近使用")
+	}
+	api, attempted, err := fetchAPIModels(user)
+	cacheable := true
+	if err != nil {
+		result.Warnings = append(result.Warnings, "无法从 API 获取模型列表："+err.Error())
+		cacheable = !errors.Is(err, context.Canceled)
+	} else if attempted {
+		for _, m := range api {
+			add(m.ID, "api", m.Description)
+		}
+	}
+	return result, cacheable
+}
+
+// modelAllowed approximates Claude Code's availableModels matching: exact ID,
+// version prefix (claude-sonnet-4-5 allows claude-sonnet-4-5-20250929) or family alias.
+func modelAllowed(id string, list []string) bool {
+	if id == "default" {
+		return true
+	}
+	for _, e := range list {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if id == e || strings.HasPrefix(id, e+"-") || strings.HasPrefix(id, e+"[") {
+			return true
+		}
+		switch e {
+		case "opus", "sonnet", "haiku", "fable":
+			if strings.HasPrefix(id, "claude-"+e+"-") || strings.Contains(id, "-"+e+"-") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+const modelsAPITimeout = 5 * time.Second
+
+// modelsClient never follows redirects, so credentials are only sent to the configured host.
+var modelsClient = &http.Client{
+	Timeout:       modelsAPITimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// modelsBaseURL validates ANTHROPIC_BASE_URL: https, or plain http only to a loopback host.
+func modelsBaseURL(raw string) (string, error) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return "https://api.anthropic.com", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("ANTHROPIC_BASE_URL 无效")
+	}
+	switch u.Scheme {
+	case "https":
+		return raw, nil
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback()) {
+			return raw, nil
+		}
+		return "", errors.New("ANTHROPIC_BASE_URL 必须使用 https（本机地址除外），未发送凭据")
+	}
+	return "", errors.New("ANTHROPIC_BASE_URL 无效")
+}
+
+// apiCredentials takes the key and base URL from one layer only: the host process
+// environment, or else the user settings env block. A key from one source is never
+// sent to a base URL from another.
+func apiCredentials(user modelSettings) (apiKey, authToken, base string) {
+	apiKey, authToken = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")), strings.TrimSpace(os.Getenv("ANTHROPIC_AUTH_TOKEN"))
+	if apiKey != "" || authToken != "" {
+		return apiKey, authToken, os.Getenv("ANTHROPIC_BASE_URL")
+	}
+	return strings.TrimSpace(user.envString("ANTHROPIC_API_KEY")), strings.TrimSpace(user.envString("ANTHROPIC_AUTH_TOKEN")), user.envString("ANTHROPIC_BASE_URL")
+}
+
+// fetchAPIModels only runs when an API credential is configured; OAuth logins have none.
+// It uses its own timeout, independent of the browser request that triggered it,
+// because the result is cached and shared.
+func fetchAPIModels(user modelSettings) ([]modelOption, bool, error) {
+	apiKey, authToken, rawBase := apiCredentials(user)
+	if apiKey == "" && authToken == "" {
+		return nil, false, nil
+	}
+	base, err := modelsBaseURL(rawBase)
+	if err != nil {
+		return nil, true, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), modelsAPITimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/models?limit=1000", nil)
+	if err != nil {
+		return nil, true, errors.New("ANTHROPIC_BASE_URL 无效")
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
+	if apiKey != "" {
+		req.Header.Set("x-api-key", apiKey)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := modelsClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, true, fmt.Errorf("请求超时：%w", ctx.Err())
+		}
+		return nil, true, errors.New("请求失败")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, true, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&body); err != nil {
+		return nil, true, errors.New("响应不是有效 JSON")
+	}
+	out := make([]modelOption, 0, len(body.Data))
+	for _, m := range body.Data {
+		out = append(out, modelOption{ID: m.ID, Label: m.ID, Source: "api", Description: m.DisplayName})
+	}
+	return out, true, nil
+}

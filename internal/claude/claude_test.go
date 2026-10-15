@@ -285,3 +285,18 @@ func TestNativeHistory(t *testing.T) {
 		t.Fatal(list, err)
 	}
 }
+
+func TestCommandArgsPassLaunchPreferences(t *testing.T) {
+	o := Options{SessionID: testID}
+	joined := strings.Join(commandArgs(o, "s.json", "m.json"), " ")
+	if strings.Contains(joined, "--permission-mode") || strings.Contains(joined, "--model") || strings.Contains(joined, "--effort") {
+		t.Fatalf("empty preferences produced flags: %s", joined)
+	}
+	o.PermissionMode, o.Model, o.Effort = "bypassPermissions", "claude-opus-4-7", "xhigh"
+	joined = strings.Join(commandArgs(o, "s.json", "m.json"), " ")
+	for _, want := range []string{"--permission-mode bypassPermissions", "--model claude-opus-4-7", "--effort xhigh", "--permission-prompt-tool mcp__cc_remote__approval"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in %s", want, joined)
+		}
+	}
+}

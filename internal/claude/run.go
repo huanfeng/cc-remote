@@ -24,6 +24,8 @@ type Event struct {
 type Options struct {
 	Executable, SessionID, Cwd, Message, BridgeURL, BridgeToken, HostExecutable, ConfigDir string
 	Resume                                                                                 bool
+	// Empty values pass nothing, leaving Claude's own settings in charge.
+	PermissionMode, Model, Effort string
 }
 
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -35,7 +37,23 @@ func commandArgs(o Options, settings, mcp string) []string {
 	} else {
 		args = append(args, "--session-id", o.SessionID)
 	}
-	return append(args, "--settings", settings, "--mcp-config", mcp, "--permission-prompt-tool", "mcp__cc_remote__approval")
+	args = append(args, "--settings", settings, "--mcp-config", mcp, "--permission-prompt-tool", "mcp__cc_remote__approval")
+	return append(args, LaunchFlags(o.PermissionMode, o.Model, o.Effort)...)
+}
+
+// LaunchFlags converts cc-remote preferences into Claude CLI flags.
+func LaunchFlags(permissionMode, model, effort string) []string {
+	var args []string
+	if permissionMode != "" {
+		args = append(args, "--permission-mode", permissionMode)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
+	return args
 }
 
 // Run executes a single turn. Browser lifetime must not be used as ctx lifetime.
