@@ -13,6 +13,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Non-interactive corepack: download the pinned pnpm on first use.
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
 jobs:
   test:
     name: test (${{ matrix.os }})
@@ -29,15 +33,14 @@ jobs:
           go-version-file: go.mod # honors the toolchain directive
           check-latest: true
 
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: web/package.json # version from packageManager
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+
+      # pnpm version comes from packageManager in web/package.json; corepack ships
+      # with Node, so no third-party action is needed.
+      - name: Enable pnpm via corepack
+        run: corepack enable
 
       - name: Install web dependencies
         run: pnpm --dir web install --frozen-lockfile
@@ -79,15 +82,14 @@ jobs:
           go-version-file: go.mod # honors the toolchain directive
           check-latest: true
 
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: web/package.json
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+
+      # pnpm version comes from packageManager in web/package.json; corepack ships
+      # with Node, so no third-party action is needed.
+      - name: Enable pnpm via corepack
+        run: corepack enable
 
       - name: Build web
         run: |
