@@ -130,7 +130,60 @@ func installAlias(opts aliasOptions, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "Wrote %s\n", path)
 	}
+	if err = linkCommand(filepath.Dir(path), exe, opts.dryRun, out); err != nil {
+		return err
+	}
 	return ensureOnPath(filepath.Dir(path), opts.dryRun, out)
+}
+
+// commandLink is the "cc-remote" entry placed next to ccr on Unix. On Windows
+// the installed exe already lives in the PATH directory next to ccr.cmd.
+func commandLink(dir string) string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return filepath.Join(dir, "cc-remote")
+}
+
+// linkCommand points dir/cc-remote at exe so the CLI is on PATH like ccr.
+// It only replaces a symlink, never a regular file the user put there.
+func linkCommand(dir, exe string, dryRun bool, out io.Writer) error {
+	link := commandLink(dir)
+	if link == "" || samePath(link, exe) {
+		return nil
+	}
+	if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+		fmt.Fprintf(out, "warning: %s exists and is not a symlink; leaving it unchanged\n", link)
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintf(out, "[dry-run] symlink %s -> %s\n", link, exe)
+		return nil
+	}
+	_ = os.Remove(link)
+	if err := os.Symlink(exe, link); err != nil {
+		return fmt.Errorf("link %s: %w", link, err)
+	}
+	fmt.Fprintf(out, "Linked %s -> %s\n", link, exe)
+	return nil
+}
+
+// unlinkCommand removes dir/cc-remote only when it is a symlink.
+func unlinkCommand(dir string, dryRun bool, out io.Writer) {
+	link := commandLink(dir)
+	if link == "" {
+		return
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return
+	}
+	if dryRun {
+		fmt.Fprintf(out, "[dry-run] remove %s\n", link)
+		return
+	}
+	if err := os.Remove(link); err == nil {
+		fmt.Fprintf(out, "Removed %s\n", link)
+	}
 }
 
 func uninstallAlias(opts aliasOptions, out io.Writer) error {
@@ -145,6 +198,7 @@ func uninstallAlias(opts aliasOptions, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "Removed %s\n", path)
 	}
+	unlinkCommand(filepath.Dir(path), opts.dryRun, out)
 	return removeFromPath(filepath.Dir(path), opts.dryRun, out)
 }
 
@@ -160,6 +214,13 @@ func aliasStatus(opts aliasOptions, out io.Writer) error {
 		fmt.Fprintf(out, "ccr: %s\n%s", path, strings.TrimLeft(string(b), "\ufeff"))
 	}
 	dir := filepath.Dir(path)
+	if link := commandLink(dir); link != "" {
+		if target, err := os.Readlink(link); err == nil {
+			fmt.Fprintf(out, "cc-remote: %s -> %s\n", link, target)
+		} else {
+			fmt.Fprintf(out, "cc-remote: not linked (%s)\n", link)
+		}
+	}
 	fmt.Fprintf(out, "Directory on PATH (this shell): %s\n", yesNo(PathContains(os.Getenv("PATH"), dir, string(os.PathListSeparator))))
 	pathStatus(dir, out)
 	return nil

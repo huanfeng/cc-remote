@@ -126,12 +126,12 @@ cc-remote service config --env HTTPS_PROXY= # 删除
 `ccr` 是 `cc-remote -- claude` 的简写，不替换 `claude` 本身。安装脚本默认创建它，也可手动管理：
 
 ```sh
-cc-remote alias install      # Windows：在副本目录写 ccr.cmd 并加入用户 PATH；Linux/macOS：写 ~/.local/bin/ccr
+cc-remote alias install      # Windows：在副本目录写 ccr.cmd 并加入用户 PATH；Linux/macOS：写 ~/.local/bin/ccr，并链接 ~/.local/bin/cc-remote
 cc-remote alias status
 cc-remote alias uninstall
 ```
 
-别名指向已安装的服务副本，并带上服务的数据目录和地址；未安装服务时指向当前可执行文件并给出警告。Windows 修改用户 PATH 后需打开新终端，cmd 和 PowerShell 均可运行 `ccr`。Linux / macOS 若 `~/.local/bin` 不在 PATH 会提示添加。把可执行文件复制或链接为 `ccr` 效果相同。
+别名指向已安装的服务副本，并带上服务的数据目录和地址；未安装服务时指向当前可执行文件并给出警告。Windows 修改用户 PATH 后需打开新终端，cmd 和 PowerShell 均可运行 `ccr`。Linux / macOS 的程序本体在 `~/.local/share/cc-remote/bin`（macOS 为 `~/Library/Application Support/cc-remote/bin`），因此同时在 `~/.local/bin` 创建 `cc-remote` 符号链接，让 `cc-remote` 命令与 `ccr` 一样可直接使用；已有同名普通文件时不覆盖。若 `~/.local/bin` 不在 PATH 会提示添加。把可执行文件复制或链接为 `ccr` 效果相同。
 
 ## ccr 与共享终端参数
 
