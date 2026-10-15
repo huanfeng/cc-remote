@@ -11,6 +11,7 @@
 
 ## 本次迭代
 
+- [x] 空白页新建/连接按钮、连接说明复制按钮增加内边距及间距，手机纵向排列；复制支持普通 HTTP 降级、成功反馈及手动选择兜底。
 - [x] PC 与手机统一使用左侧会话列表（手机为抽屉菜单），取消顶部标签和重复的已打开列表。打开过的会话显示「已缓存」，切换保留消息、草稿、截图、滚动位置、工具展开和待提交回答。
 - [x] 侧栏显示执行中、等待操作、已完成、失败、共享终端在线/离线状态；执行中有动态圆点。后台缓存会话持续刷新，即使正在查看终端历史。
 - [x] 「×」释放指定会话的页面缓存，清除该会话未发送草稿；宿主任务继续运行，已发送历史不删除。
@@ -20,9 +21,34 @@
 - [x] 上传/粘贴 PNG、JPEG、GIF 截图、预览及消息回看；每张 10 MiB、2500 万像素，每条最多 8 张，Claude 通过原生 Read 读取。
 - [x] Claude 用户级模型、推理强度、权限默认设置；保存保留其它字段并检测版本冲突。
 - [x] 网页内置 `/help`、`/status`、`/model`、`/effort`、`/config`、`/permissions`；托管模式支持 `/clear`、`/stop`。
+- [x] 权限/模型/推理强度改为 CC Remote 自管：会话覆盖 → `preferences.json` 默认 → Claude 配置，以启动参数传入，支持 `bypassPermissions` 等全部模式（危险模式需确认）；共享终端启动器自动追加默认值。动态模型列表 `GET /api/models`（别名/配置/最近使用/API）与共用模型选择器；可选写入 `~/.claude/settings.json` 改为原位编辑、保留格式并备份。
 - [x] 发现用户/项目 `skills/*/SKILL.md` 和旧式 `commands/**/*.md`，支持静态 `$ARGUMENTS` 展开，原始指令保留在聊天记录。
 - [x] `cc-remote -- claude [原生参数]`：自动启动本机宿主，终端保留原生体验；旧 `terminal` 命令兼容。
 - [x] 用户数据目录：`--data-dir` 优先，其次 `CC_REMOTE_DATA_DIR`，默认 Windows `%APPDATA%\cc-remote`、Linux `${XDG_CONFIG_HOME:-~/.config}/cc-remote`。
+
+## 服务化迭代（2026-10-15）
+
+- [x] `cc-remote service install|config|start|stop|restart|status|logs|uninstall`：Windows 登录计划任务 + GUI 子系统监督进程（无窗口、Job Object、崩溃退避重启），Linux `systemd --user`，macOS LaunchAgent。重装/更新沿用原配置。
+- [x] 多地址监听：可重复 `--listen`、`lan:PORT`、`localhost:PORT`；始终保留回环地址；`all:`/`0.0.0.0` 需 `--allow-insecure-remote`；非回环地址启动告警。
+- [x] 服务环境变量：安装时自动捕获代理变量（`--env`/`--capture-env`），解决服务环境不加载 shell profile 导致的 `403 Request not allowed`。
+- [x] `ccr` 别名（`ccr.cmd` / `~/.local/bin/ccr`，加入用户 PATH）；继承网页危险权限模式时终端告警。
+- [x] `/api/status`、单会话统计、`/api/admin/shutdown`（仅本机）；网页「服务状态」面板（统计、14 天图表、日志尾部）。
+- [x] 日志文件 `--log-file`（10 MiB 轮转、崩溃输出），`cc-remote version`。
+- [x] 发布：`ci.yml`（测试、govulncheck）、`release.yml`（6 平台包、checksums、构建来源证明）、`scripts/install.{ps1,sh}` 私有仓库一键安装/更新、`cc-remote update`；工具链 go1.26.9。
+
+本机交付状态：服务已以计划任务「CC Remote」安装在 `127.0.0.1:8787`（版本 0.2.0-dev.2），程序位于 `%LOCALAPPDATA%\cc-remote\bin`。真实验证：无窗口、强杀后 5 秒重启、优雅停止、status 退出码 0/3、重装沿用配置、bypassPermissions 托管轮次零审批执行 Bash。
+注意：此前宿主由 Codex 桌面应用启动，其 `%APPDATA%` 写入被 MSIX 虚拟化到 `%LOCALAPPDATA%\Packages\OpenAI.Codex_*\LocalCache\Roaming\cc-remote`；数据已复制到真实 `%APPDATA%\cc-remote`，原目录保留。从 Codex 内运行 `ccr` 会读到虚拟化目录。
+未验证：GitHub Actions 实跑、真实 Release 下载安装、Linux/macOS 实机服务。
+
+### 界面调整（2026-10-15）
+
+- [x] 顶栏只放当前会话：标题、目录、模型 · 推理强度 · 权限模式只读标签（继承值「默认(…)」，危险模式着色）、状态、刷新、「会话设置」；移除常驻会话控制条。
+- [x] 会话设置对话框：模型/推理强度/权限模式（保存、取消、全部恢复默认，危险模式二次确认），会话 ID、Claude 会话 ID、目录、模式、创建时间与用量摘要；共享终端只读；危险区删除入口。
+- [x] 全局「默认设置」「服务状态」移到侧栏底部导航（手机抽屉同）。
+- [x] 删除会话：`DELETE /api/sessions/{id}[?stop=1]`，单事务删除 events/interactions/channel_transcript/会话行，清理内存待审批与共享连接状态、`uploads/<id>/`（`filepath.Rel` 校验不越界）、状态缓存；执行中 409（`stop=1` 先停止，最多等 15 秒）、在线共享终端 409；不动原生 JSONL。侧栏删除图标 + 自定义确认框。
+- [x] 任意文件附件：单个 ≤ 20 MiB、每条 ≤ 8 个，图片保留解码/像素校验，其它文件以清理后的原名保存并记录 MIME；下载走带令牌的 GET，非图片 `attachment` + nosniff，HTML/SVG 等以 octet-stream 返回；粘贴、拖放、文件卡片。
+- [x] 统一细滚动条（WebKit 样式 + Firefox `scrollbar-width`），对话框限高 `100dvh - 32px` 内部滚动且滚动条不压圆角。
+- [x] 桌面侧栏拖动调宽（200–480px、≤ 视口 40%、双击复位、键盘可调、本机记忆，折叠兼容）。
 
 ## 使用约定与边界
 
