@@ -98,15 +98,17 @@ cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
 | `/model [名称]` | 不带参数列出可用模型；带参数设置当前托管会话的模型。加 `--default` 改 CC Remote 默认，`inherit` 恢复默认 |
 | `/effort [级别]` | 同上，针对推理强度 |
 | `/permission-mode [模式]` | 同上，针对权限模式 |
-| `/clear` | （托管会话）开始新的 Claude 上下文，保留历史显示 |
+| `/clear`、`/new`、`/reset` | （托管会话）开始新的 Claude 上下文，保留历史显示 |
 | `/stop` | （托管会话）停止当前轮次 |
 | `/compact [保留重点]` | （托管会话）压缩上下文，对话中显示压缩前后的 token 数；共享会话请在终端执行 |
 
-`/resume`、`/mcp` 等其它原生控制命令需要在终端执行，网页会给出提示。
+### Claude Code 原生命令（托管会话）
 
-### 自定义命令与技能
+托管会话中，Claude Code 支持的其它命令都会原样交给 Claude 执行，包括内置命令（如 `/context`、`/usage`、`/init`、`/recap`）、插件命令和技能，hooks、frontmatter 等原生机制照常生效。输入 `/` 时的命令菜单就是 Claude 上一轮启动时报告的命令列表；Claude 不支持的命令会直接提示，不会消耗一轮对话。`/resume` 等只能在终端交互界面使用的命令不在列表中。
 
-自动发现项目级和用户级的 `skills/*/SKILL.md` 以及旧式 `commands/**/*.md`，支持静态 `$ARGUMENTS` 展开，原始指令保留在聊天记录中。动态 shell、位置参数，以及技能 frontmatter 中的 hooks、隔离上下文等原生执行选项暂不支持，网页会提示改在终端执行。
+### 共享会话
+
+共享会话中，Claude 运行在你的终端里，网页消息通过 Channels 送达，Claude Code 不会把它当作命令执行。因此原生命令（含 `/compact`、`/clear`）需要在终端输入。网页仍可使用 `/help`、`/status`、`/config` 等网页命令，自定义命令和技能会展开为提示词发送（只支持静态 `$ARGUMENTS`）。
 
 ## 附件
 

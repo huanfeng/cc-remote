@@ -1,8 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"sort"
 	"strings"
 
 	"cc-remote/internal/prefs"
@@ -34,11 +37,78 @@ func commandList(channel bool) []webCommand {
 		{"config", "打开设置面板", false},
 		{"permissions", "打开设置面板（权限模式等默认值）", false},
 		{"clear", "重置托管会话上下文，保留网页历史；共享会话需在终端执行", channel},
+		{"new", "同 /clear", channel},
+		{"reset", "同 /clear", channel},
 		{"stop", "停止当前托管轮次；共享会话需在终端执行", channel},
 		{"compact", "压缩上下文，可附加保留重点，例如 /compact 保留接口设计；共享会话需在终端执行", channel},
 		{"resume", "切换原生会话，请在终端执行或选择其它网页标签", true},
-		{"mcp", "管理原生 MCP 服务，请在终端执行", true},
 	}
+}
+
+// claudeCommands returns the slash commands Claude Code listed in its latest
+// init event for the session, else for any session (built-ins, plugins and
+// user skills are shared). known is false until Claude has run once.
+func (s *Server) claudeCommands(id string) (names []string, known bool) {
+	for _, sid := range []string{id, ""} {
+		raw, ok, err := s.store.LatestPayload(sid, "session", `"slash_commands"`)
+		if err != nil || !ok {
+			continue
+		}
+		var v struct {
+			SlashCommands []string `json:"slash_commands"`
+		}
+		if json.Unmarshal(raw, &v) == nil && v.SlashCommands != nil {
+			return v.SlashCommands, true
+		}
+	}
+	return nil, false
+}
+
+// nativeCommand reports whether /name is sent to Claude verbatim: in managed
+// sessions every command Claude reports (built-ins, plugins, skills) runs
+// natively in print mode. Before Claude has ever run nothing is known, so the
+// command is passed through and Claude answers it.
+func (s *Server) nativeCommand(x store.Session, name string) bool {
+	if x.Mode == "channel" || reservedCommand(name) || !skillName.MatchString(name) {
+		return false
+	}
+	names, known := s.claudeCommands(x.ID)
+	if !known || slices.Contains(names, name) {
+		return true
+	}
+	_, found := s.discoveredSkills(x.Cwd)[name] // project skills of this cwd
+	return found
+}
+
+// commandMenu lists the web commands plus, for managed sessions, Claude's own.
+func (s *Server) commandMenu(x store.Session) []webCommand {
+	menu := commandList(x.Mode == "channel")
+	names, known := s.claudeCommands(x.ID)
+	if x.Mode == "channel" || !known {
+		return append(menu, s.skillCommands(x.Cwd)...)
+	}
+	skills := s.discoveredSkills(x.Cwd)
+	seen := map[string]bool{}
+	var native []webCommand
+	add := func(name string) {
+		if seen[name] || reservedCommand(name) || !skillName.MatchString(name) {
+			return
+		}
+		seen[name] = true
+		description := "Claude Code 命令"
+		if f, ok := skills[name]; ok && f.description != "" {
+			description = f.description
+		}
+		native = append(native, webCommand{Name: name, Description: description})
+	}
+	for _, name := range names {
+		add(name)
+	}
+	for name := range skills {
+		add(name)
+	}
+	sort.Slice(native, func(i, j int) bool { return native[i].Name < native[j].Name })
+	return append(menu, native...)
 }
 
 func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +119,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		respond(w, 200, append(commandList(x.Mode == "channel"), s.skillCommands(x.Cwd)...))
+		respond(w, 200, s.commandMenu(x))
 		return
 	}
 	var req struct {
@@ -69,7 +139,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	switch name {
 	case "help":
 		result["commands"] = commandList(x.Mode == "channel")
-		result["message"] = "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear、/compact、/stop。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。其它 Claude 内置控制命令需在原生终端执行。"
+		result["message"] = "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear（/new、/reset）、/compact、/stop；托管会话中 Claude Code 报告的其它命令（如 /context、/usage、/init 及插件命令和技能）原样交给 Claude 执行。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。共享会话的原生命令需在终端执行。"
 	case "status":
 		s.mu.Lock()
 		s.decorateChannel(&x)
@@ -95,7 +165,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		s.stop(w, r)
 		return
-	case "clear":
+	case "clear", "new", "reset":
 		s.mu.Lock()
 		x, err = s.store.Get(id)
 		if err != nil {
@@ -105,7 +175,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		if x.Mode == "channel" {
 			s.mu.Unlock()
-			fail(w, 409, "请在原生终端执行 /clear；旧网页绑定将断开，再连接目标会话")
+			fail(w, 409, "请在原生终端执行 /"+name+"；旧网页绑定将断开，再连接目标会话")
 			return
 		}
 		if _, active := s.runs[id]; active {
@@ -130,10 +200,18 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(w, 200, map[string]any{"sendMessage": true})
 		return
-	case "resume", "mcp":
-		fail(w, 400, "此原生控制命令请在 Claude Code 终端执行")
+	case "resume":
+		fail(w, 400, "/resume 用于在终端切换会话；网页请从会话列表或「终端历史」切换")
 		return
 	default:
+		if x.Mode != "channel" {
+			if !s.nativeCommand(x, name) {
+				fail(w, 400, "Claude Code 没有报告 /"+name+" 命令，它可能只能在终端交互界面使用。输入 /help 查看网页命令。")
+				return
+			}
+			respond(w, 200, map[string]any{"sendMessage": true})
+			return
+		}
 		if _, found, skillErr := s.skillPrompt(x.Cwd, name, args); found {
 			if skillErr != nil {
 				fail(w, 400, skillErr.Error())
@@ -142,7 +220,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 			respond(w, 200, map[string]any{"sendMessage": true})
 			return
 		}
-		fail(w, 400, "此命令尚无网页控制接口，请在原生 Claude Code 终端执行。输入 /help 查看网页命令。")
+		fail(w, 409, "共享会话由终端进程持有，原生命令 /"+name+" 请在终端执行。输入 /help 查看网页命令。")
 		return
 	}
 	respond(w, 200, result)

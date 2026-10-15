@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -242,6 +243,26 @@ func (s *Store) Append(id, kind, text string, payload json.RawMessage) (Event, e
 	}
 	x.Seq, err = r.LastInsertId()
 	return x, err
+}
+
+// LatestPayload returns the payload of the newest event of kind whose payload
+// contains marker, in session id or, when id is empty, in any session.
+func (s *Store) LatestPayload(id, kind, marker string) (json.RawMessage, bool, error) {
+	q := `SELECT payload FROM events WHERE kind=? AND instr(payload,?)>0`
+	args := []any{kind, marker}
+	if id != "" {
+		q += ` AND session_id=?`
+		args = append(args, id)
+	}
+	var raw string
+	err := s.db.QueryRow(q+` ORDER BY seq DESC LIMIT 1`, args...).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return json.RawMessage(raw), true, nil
 }
 
 func (s *Store) Events(id string, after int64) ([]Event, error) {

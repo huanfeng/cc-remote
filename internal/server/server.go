@@ -342,19 +342,25 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	promptText := req.Text
-	if name, _, _ := strings.Cut(req.Text, " "); name == "/compact" {
-		// Passed to Claude verbatim; it compacts the resumed session in print mode.
+	name, args, _ := strings.Cut(strings.TrimPrefix(req.Text, "/"), " ")
+	native := strings.HasPrefix(req.Text, "/") && s.nativeCommand(x, name)
+	if strings.HasPrefix(req.Text, "/") && name == "compact" {
 		message, code := compactBlocked(x)
-		if code == 0 && len(req.AttachmentIDs) > 0 {
-			message, code = "/compact 不能附带附件", 400
-		}
 		if code != 0 {
 			s.mu.Unlock()
 			fail(w, code, message)
 			return
 		}
+		native = true
+	}
+	if native {
+		// Claude Code runs the command itself (print mode), so it is sent verbatim.
+		if len(req.AttachmentIDs) > 0 {
+			s.mu.Unlock()
+			fail(w, 400, "/"+name+" 命令不能附带附件")
+			return
+		}
 	} else if strings.HasPrefix(req.Text, "/") {
-		name, args, _ := strings.Cut(strings.TrimPrefix(req.Text, "/"), " ")
 		var found bool
 		promptText, found, e = s.skillPrompt(x.Cwd, name, strings.TrimSpace(args))
 		if e != nil || !found {

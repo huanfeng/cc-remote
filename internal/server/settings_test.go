@@ -10,7 +10,9 @@ import (
 	"testing"
 )
 
-func TestCustomCommandExpandsForClaudeAndKeepsOriginalTranscript(t *testing.T) {
+// Managed sessions hand custom commands to Claude verbatim so frontmatter,
+// hooks and plugin skills behave natively; the menu still lists them.
+func TestCustomCommandRunsNativelyAndKeepsOriginalTranscript(t *testing.T) {
 	runs := make(chan claude.Options, 1)
 	s, ts, st := setup(t, func(_ context.Context, o claude.Options, _ func(claude.Event) error) error { runs <- o; return nil })
 	dir := filepath.Join(s.cfg.ClaudeConfigDir, "commands")
@@ -35,8 +37,8 @@ func TestCustomCommandExpandsForClaudeAndKeepsOriginalTranscript(t *testing.T) {
 		t.Fatalf("send %d %s", code, b)
 	}
 	o := <-runs
-	if !strings.Contains(o.Message, "Review changes carefully") {
-		t.Fatalf("not expanded %s", o.Message)
+	if o.Message != "/review-test changes" {
+		t.Fatalf("not passed verbatim %s", o.Message)
 	}
 	events, err := st.Events(x.ID, 0)
 	if err != nil || len(events) == 0 || events[0].Text != "/review-test changes" {
@@ -103,9 +105,23 @@ func TestCommandClearChangesContextWithoutDeletingHistory(t *testing.T) {
 	if after.ClaudeSessionID == x.ClaudeSessionID || after.Resume || len(events) != 2 || events[0].Text != "keep this history" {
 		t.Fatalf("bad reset %+v %+v", after, events)
 	}
+	code, b = request(t, ts, "POST", path, map[string]string{"command": "/new"}, testToken)
+	if again, _ := st.Get(x.ID); code != 200 || again.ClaudeSessionID == after.ClaudeSessionID {
+		t.Fatalf("/new alias %d %s", code, b)
+	}
+	// Once Claude has reported its commands, only those are passed through.
+	_, _ = st.Append(x.ID, "session", "init", json.RawMessage(`{"type":"system","subtype":"init","slash_commands":["context","usage","clear","model"]}`))
 	code, _ = request(t, ts, "POST", path, map[string]string{"command": "/unknown"}, testToken)
 	if code != 400 {
 		t.Fatalf("unsupported command accepted %d", code)
+	}
+	code, b = request(t, ts, "POST", path, map[string]string{"command": "/context"}, testToken)
+	if code != 200 || !strings.Contains(string(b), `"sendMessage":true`) {
+		t.Fatalf("native /context %d %s", code, b)
+	}
+	code, b = request(t, ts, "GET", path, nil, testToken)
+	if code != 200 || !strings.Contains(string(b), `"name":"usage"`) || strings.Count(string(b), `"name":"model"`) != 1 {
+		t.Fatalf("menu %d %s", code, b)
 	}
 	_ = st.SetMode(x.ID, "channel")
 	code, _ = request(t, ts, "POST", path, map[string]string{"command": "/clear"}, testToken)

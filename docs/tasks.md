@@ -55,7 +55,7 @@ Windows 服务实测：计划任务无窗口运行、强杀后 5 秒内重启、
 
 - PC/手机切换会话不会丢界面缓存；刷新页面按 URL hash 回到原会话并恢复打开列表、草稿、附件和未提交回答（localStorage，7 天过期），滚动与展开状态按标签页恢复（sessionStorage）；释放缓存会清除该会话草稿，已发送消息保存在 SQLite。
 - 网页设置修改用户级 Claude 默认值；项目/组织设置可能覆盖。托管下一轮读取，已运行的共享 Claude 需重启或在终端用原生命令即时修改。
-- 托管会话的 `/compact` 以 `-p --resume` 原样交给 Claude（2.1.300 实测可用，输出 `compact_boundary`）；共享会话的 `/compact` 与 `/resume`、`/mcp` 等原生控制命令仍在终端执行。自定义技能只展开提示词，不执行 frontmatter 的 hooks、隔离上下文等原生机制；动态 shell 和位置参数明确提示使用终端。
+- 托管会话中 Claude init 事件 `slash_commands` 列出的命令（内置、插件、技能）以 `-p --resume` 原样交给 Claude（2.1.300 实测 `/compact`、`/context`、`/usage` 可用；`/clear` 在 `-p` 下会换会话 ID，故由 cc-remote 自己重置）。共享会话的原生命令仍在终端执行；共享会话的自定义技能只展开提示词，不执行 frontmatter 的 hooks、隔离上下文等原生机制；动态 shell 和位置参数明确提示使用终端。
 - 共享模式的停止生成暂留在终端；提问选项和计划确认依赖 `PermissionRequest` Hook 与原生对话框并行（2.1.300 实测），Hook 被禁用时回退为仅终端作答。Channels 是官方预览接口，不保证所有账户或组织允许。
 - 图片保存在宿主，取消附加不会删除已上传文件；尚未实现清理策略。
 - 同项目多会话会操作相同文件，尚无自动 worktree 隔离。
