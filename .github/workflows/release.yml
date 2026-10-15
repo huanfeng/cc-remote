@@ -1,0 +1,186 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v0.2.0 (the tag is created on the selected ref if missing)"
+        required: true
+        type: string
+      replace:
+        description: "Replace the assets of an existing release with this version (normally refused)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Manual releases only from a tag or main, never from a feature branch.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "$REF" in
+              refs/tags/*|refs/heads/main) ;;
+              *) echo "::error::workflow_dispatch must run on a tag or main (got $REF)"; exit 1 ;;
+            esac
+          fi
+          if [ "$EVENT" = "workflow_dispatch" ]; then raw="$INPUT_VERSION"; else raw="$REF_NAME"; fi
+          version="${raw#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$raw' is not a semantic version like v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+          case "$version" in *-*) pre=true ;; *) pre=false ;; esac
+          {
+            echo "tag=v$version"
+            echo "version=$version"
+            echo "prerelease=$pre"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version (prerelease=$pre)"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm --prefix web ci
+      - run: npm --prefix web run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: [meta, web]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # honors the toolchain directive
+          check-latest: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Build
+        run: |
+          bin=cc-remote
+          if [ "$GOOS" = windows ]; then bin=cc-remote.exe; fi
+          mkdir -p stage
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "stage/$bin" ./cmd/cc-remote
+      - name: Package
+        run: |
+          base="cc-remote_${VERSION}_${GOOS}_${GOARCH}"
+          cp README.md stage/
+          if [ -f LICENSE ]; then cp LICENSE stage/; fi
+          mkdir -p out
+          if [ "$GOOS" = windows ]; then
+            (cd stage && zip -9 -q "../out/${base}.zip" ./*)
+          else
+            chmod +x stage/cc-remote
+            tar -C stage -czf "out/${base}.tar.gz" .
+          fi
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # build provenance attestation
+      attestations: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+      REPLACE: ${{ github.event_name == 'workflow_dispatch' && inputs.replace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: out
+          merge-multiple: true
+      - name: Checksums and install scripts
+        run: |
+          cp scripts/install.ps1 scripts/install.sh out/
+          cd out
+          sha256sum cc-remote_* > checksums.txt
+          cat checksums.txt
+      # Optional supply-chain evidence (gh attestation verify). Private repos
+      # need a GitHub plan with artifact attestations, so this never fails
+      # the release.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        continue-on-error: true
+        with:
+          subject-path: |
+            out/cc-remote_*
+            out/checksums.txt
+      - name: Publish GitHub release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Published assets are what installers verify against; never
+            # overwrite them implicitly (e.g. a re-pushed tag).
+            if [ "$REPLACE" != "true" ]; then
+              echo "::error::Release $TAG already exists; bump the version, or run workflow_dispatch with replace=true to overwrite its assets"
+              exit 1
+            fi
+            echo "Release $TAG exists; replacing assets (replace=true)"
+            gh release upload "$TAG" out/* --clobber
+          else
+            flags="--generate-notes --title $TAG --target $GITHUB_SHA"
+            if [ "$PRERELEASE" = true ]; then flags="$flags --prerelease"; fi
+            # shellcheck disable=SC2086
+            gh release create "$TAG" $flags out/*
+          fi
