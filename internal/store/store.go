@@ -1,0 +1,265 @@
+package store
+
+import (
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+type Session struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Cwd             string `json:"cwd"`
+	ClaudeSessionID string `json:"claudeSessionId"`
+	Status          string `json:"status"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
+	Resume          bool   `json:"-"`
+	Mode            string `json:"mode"`
+	Online          bool   `json:"online"`
+}
+
+type Event struct {
+	Seq       int64           `json:"seq"`
+	SessionID string          `json:"sessionId"`
+	Kind      string          `json:"kind"`
+	Text      string          `json:"text"`
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt string          `json:"createdAt"`
+}
+
+type Interaction struct {
+	ID        string          `json:"id"`
+	SessionID string          `json:"sessionId"`
+	Kind      string          `json:"kind"`
+	ToolName  string          `json:"toolName"`
+	Input     json.RawMessage `json:"input"`
+	Status    string          `json:"status"`
+	CreatedAt string          `json:"createdAt"`
+}
+
+type Store struct{ db *sql.DB }
+
+// ResetContext retains events while starting a fresh managed Claude conversation.
+func (s *Store) ResetContext(id string) error {
+	r, err := s.db.Exec(`UPDATE sessions SET claude_id=?,resume=0,status='idle',updated_at=? WHERE id=? AND mode='managed'`, ID(), now(), id)
+	if err != nil {
+		return err
+	}
+	n, err := r.RowsAffected()
+	if err == nil && n != 1 {
+		return fmt.Errorf("managed session not found")
+	}
+	return err
+}
+
+func ID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	h := hex.EncodeToString(b[:])
+	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+}
+
+func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+func Open(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	s := &Store{db: db}
+	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL UNIQUE,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,text TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
+CREATE TABLE IF NOT EXISTS interactions(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,tool_name TEXT NOT NULL,input TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,status);`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	var modeColumn int
+	if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name='mode'`).Scan(&modeColumn); err == nil && modeColumn == 0 {
+		_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'managed'`)
+	}
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS channel_transcript(session_id TEXT NOT NULL REFERENCES sessions(id),event_key TEXT NOT NULL,PRIMARY KEY(session_id,event_key))`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Process-local execution cannot survive a host restart. Never replay it automatically.
+	_, err = db.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) SELECT id,'error','宿主已重启，上一轮执行中断。请检查工作区后再继续。','null',? FROM sessions WHERE status IN ('running','waiting'); UPDATE sessions SET status='interrupted' WHERE status IN ('running','waiting'); UPDATE interactions SET status='expired' WHERE status='pending';`, now())
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error) {
+	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: claudeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: "managed"}
+	x.UpdatedAt = x.CreatedAt
+	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume) VALUES(?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume)
+	return x, err
+}
+
+func scanSession(r interface{ Scan(...any) error }) (Session, error) {
+	var x Session
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode)
+	return x, err
+}
+
+func (s *Store) Get(id string) (Session, error) {
+	return scanSession(s.db.QueryRow(`SELECT * FROM sessions WHERE id=?`, id))
+}
+func (s *Store) FindClaude(id string) (Session, error) {
+	return scanSession(s.db.QueryRow(`SELECT * FROM sessions WHERE claude_id=?`, id))
+}
+
+func (s *Store) List() ([]Session, error) {
+	r, err := s.db.Query(`SELECT * FROM sessions ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	out := []Session{}
+	for r.Next() {
+		x, e := scanSession(r)
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, x)
+	}
+	return out, r.Err()
+}
+
+func (s *Store) SetStatus(id, status string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET status=?,updated_at=? WHERE id=?`, status, now(), id)
+	return err
+}
+func (s *Store) SetResume(id string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET resume=1 WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) SetMode(id, mode string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET mode=?,updated_at=? WHERE id=?`, mode, now(), id)
+	return err
+}
+func (s *Store) SetTitle(id, title string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET title=? WHERE id=?`, title, id)
+	return err
+}
+
+// RecordTranscript keeps repeated heartbeat scans and reconnects idempotent.
+func (s *Store) RecordTranscript(id, key, kind, text string, payload json.RawMessage) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	r, err := tx.Exec(`INSERT OR IGNORE INTO channel_transcript VALUES(?,?)`, id, key)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.RowsAffected()
+	if err != nil || n == 0 {
+		return false, err
+	}
+	if len(payload) == 0 {
+		payload = json.RawMessage(`null`)
+	}
+	_, err = tx.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) VALUES(?,?,?,?,?)`, id, kind, text, string(payload), now())
+	if err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+func (s *Store) Append(id, kind, text string, payload json.RawMessage) (Event, error) {
+	if len(payload) == 0 || !json.Valid(payload) {
+		payload = json.RawMessage(`null`)
+	}
+	x := Event{SessionID: id, Kind: kind, Text: text, Payload: payload, CreatedAt: now()}
+	r, err := s.db.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) VALUES(?,?,?,?,?)`, id, kind, text, string(payload), x.CreatedAt)
+	if err != nil {
+		return x, err
+	}
+	x.Seq, err = r.LastInsertId()
+	return x, err
+}
+
+func (s *Store) Events(id string, after int64) ([]Event, error) {
+	r, err := s.db.Query(`SELECT seq,session_id,kind,text,payload,created_at FROM events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 10000`, id, after)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	out := []Event{}
+	for r.Next() {
+		var x Event
+		var raw string
+		if err := r.Scan(&x.Seq, &x.SessionID, &x.Kind, &x.Text, &raw, &x.CreatedAt); err != nil {
+			return nil, err
+		}
+		x.Payload = json.RawMessage(raw)
+		out = append(out, x)
+	}
+	return out, r.Err()
+}
+
+func (s *Store) AddInteraction(x Interaction) error {
+	_, err := s.db.Exec(`INSERT INTO interactions VALUES(?,?,?,?,?,?,?)`, x.ID, x.SessionID, x.Kind, x.ToolName, string(x.Input), "pending", now())
+	return err
+}
+func (s *Store) Resolve(id, status string) error {
+	r, err := s.db.Exec(`UPDATE interactions SET status=? WHERE id=? AND status='pending'`, status, id)
+	if err != nil {
+		return err
+	}
+	n, _ := r.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("request already resolved")
+	}
+	return nil
+}
+func (s *Store) Pending(session string) ([]Interaction, error) {
+	q := `SELECT * FROM interactions WHERE status='pending'`
+	args := []any{}
+	if session != "" {
+		q += ` AND session_id=?`
+		args = append(args, session)
+	}
+	q += ` ORDER BY created_at`
+	r, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	out := []Interaction{}
+	for r.Next() {
+		var x Interaction
+		var raw string
+		if err := r.Scan(&x.ID, &x.SessionID, &x.Kind, &x.ToolName, &raw, &x.Status, &x.CreatedAt); err != nil {
+			return nil, err
+		}
+		x.Input = json.RawMessage(raw)
+		out = append(out, x)
+	}
+	return out, r.Err()
+}

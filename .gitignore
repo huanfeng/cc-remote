@@ -1,0 +1,57 @@
+# Host runtime data and private credentials
+/data/
+/uploads/
+access-token
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+.env
+.env.*
+!.env.example
+!.env.sample
+.claude/settings.local.json
+
+# Local verification data and agent runtime state
+/.test-data/
+/.omx/
+*.log
+
+# Keep only the reviewed, current documentation screenshots
+/docs/preview*
+!/docs/preview-sidebar-pc.jpg
+!/docs/preview-sidebar-mobile.jpg
+
+# Dependencies, generated frontend assets and caches
+node_modules/
+/web/dist/
+*.tsbuildinfo
+.vite/
+.cache/
+
+# Go binaries, test executables and coverage output
+/cc-remote
+*.exe
+*.test
+/bin/
+/coverage/
+/coverage.out
+/coverage.html
+/go.work
+/go.work.sum
+
+# Editor and operating system files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
