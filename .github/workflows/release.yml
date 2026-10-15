@@ -125,8 +125,7 @@ jobs:
       - name: Package
         run: |
           base="cc-remote_${VERSION}_${GOOS}_${GOARCH}"
-          cp README.md stage/
-          if [ -f LICENSE ]; then cp LICENSE stage/; fi
+          cp README.md README.en.md LICENSE stage/
           mkdir -p out
           if [ "$GOOS" = windows ]; then
             (cd stage && zip -9 -q "../out/${base}.zip" ./*)

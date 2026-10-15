@@ -8,7 +8,8 @@
   %LOCALAPPDATA%\cc-remote\bin and (re)starts the background service.
   Re-running the script updates an existing installation in place.
 
-  The repository is private, so downloads need credentials:
+  Public releases download anonymously. For a private fork (CC_REMOTE_REPO),
+  credentials are used when available:
     1. an authenticated GitHub CLI ("gh auth login"), or
     2. $env:GITHUB_TOKEN / $env:GH_TOKEN with "Contents: Read" on the repository.
 
@@ -69,7 +70,7 @@ param(
 
     $authHelp = @"
 cannot access releases of $Repo.
-The repository is private, so the installer needs credentials. Either:
+The repository may be private or the request was rate-limited. Either:
   1. install the GitHub CLI and run: gh auth login
   2. or set `$env:GITHUB_TOKEN to a fine-grained token with "Contents: Read" on $Repo
 "@

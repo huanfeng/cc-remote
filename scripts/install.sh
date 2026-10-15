@@ -5,7 +5,8 @@
 # binary's "service install" stops the service, copies itself to the stable
 # location and starts it again.
 #
-# The repository is private, so downloads need credentials:
+# Public releases download anonymously. For a private fork (CC_REMOTE_REPO),
+# credentials are used when available:
 #   1. an authenticated GitHub CLI ("gh auth login"), or
 #   2. GITHUB_TOKEN / GH_TOKEN with "Contents: Read" on the repository.
 #
@@ -103,7 +104,7 @@ fi
 auth_help() {
 	cat >&2 <<EOF
 error: cannot access releases of $REPO.
-The repository is private, so the installer needs credentials. Either:
+The repository may be private or the request was rate-limited. Either:
   1. install the GitHub CLI and run: gh auth login
   2. or export GITHUB_TOKEN=<fine-grained token with "Contents: Read" on $REPO>
 EOF
