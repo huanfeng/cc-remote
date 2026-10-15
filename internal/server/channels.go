@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -130,8 +132,18 @@ func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
 	if old := s.channels[req.ID]; old != nil && len(old.queue) > 0 {
 		_, _ = s.store.Append(x.ID, "error", "终端连接已重建，未确认送达的消息不会自动重发。请检查会话后重新发送。", nil)
 	}
-	s.expireChannel(s.channels[req.ID])
 	c := &channelConnection{sessionID: x.ID, key: store.ID() + store.ID(), seen: time.Now(), queue: []channelCommand{}}
+	if old := s.channels[req.ID]; old != nil {
+		// The bridge re-registers the same Claude session (e.g. after a missed
+		// heartbeat); a hook still long-polling keeps its question on the new
+		// connection. Questions whose hook is gone expire with the old one.
+		for _, p := range s.requests {
+			if p.connection == old && p.ctx.Err() == nil {
+				p.connection = c
+			}
+		}
+	}
+	s.expireChannel(s.channels[req.ID])
 	s.channels[req.ID] = c
 	_ = s.store.SetStatus(x.ID, "idle")
 	s.syncTranscript(c)
@@ -196,6 +208,275 @@ func (s *Server) expireChannel(c *channelConnection) {
 			delete(s.channelRequests, id)
 		}
 	}
+	for id, p := range s.requests {
+		if p.connection == c {
+			s.finishSharedLocked(id, p, "expired")
+		}
+	}
+}
+
+// sharedQuestionTimeout ends a waiting question before the hook gives up
+// (askTimeout, 29 min), so a long wait is recorded as expired, not as answered in
+// the terminal. A variable for tests.
+var sharedQuestionTimeout = 28 * time.Minute
+
+// channelInteraction is the long poll of a shared terminal's PermissionRequest
+// hook for AskUserQuestion / ExitPlanMode. The native dialog stays open while it
+// waits; the web answers through POST /api/requests/{id} like a managed question.
+// A canceled request means the hook gave up because the terminal answered.
+func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
+	if !s.channelLocal(w, r) {
+		return
+	}
+	var req struct {
+		Kind     string          `json:"kind"`
+		ToolName string          `json:"toolName"`
+		Input    json.RawMessage `json:"input"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	var object map[string]any
+	if !(req.Kind == "question" && req.ToolName == "AskUserQuestion") && !(req.Kind == "plan" && req.ToolName == "ExitPlanMode") || json.Unmarshal(req.Input, &object) != nil || object == nil {
+		fail(w, 400, "无效的交互请求")
+		return
+	}
+	claudeID := strings.ToLower(r.PathValue("id"))
+	// Parse the transcript before taking s.mu; applying it under the lock records
+	// earlier results first so they cannot expire this new question.
+	n, events, historyErr := claude.NativeHistory(s.cfg.ClaudeConfigDir, claudeID)
+	s.mu.Lock()
+	c := s.channels[claudeID]
+	if s.closing || !s.channelLive(c) {
+		s.mu.Unlock()
+		fail(w, 409, "终端桥接未连接")
+		return
+	}
+	if historyErr == nil {
+		s.applyTranscriptLocked(c, n, events)
+	}
+	x := store.Interaction{ID: store.ID(), SessionID: c.sessionID, Kind: req.Kind, ToolName: req.ToolName, Input: req.Input}
+	p := &pending{sessionID: c.sessionID, ctx: r.Context(), channel: make(chan answer, 1), connection: c, toolName: req.ToolName, input: req.Input}
+	if err := s.store.AddInteraction(x); err != nil {
+		s.mu.Unlock()
+		fail(w, 500, "无法保存交互请求")
+		return
+	}
+	s.requests[x.ID] = p
+	s.mu.Unlock()
+	timer := time.NewTimer(sharedQuestionTimeout)
+	defer timer.Stop()
+	var a answer
+	got := false
+	status := "terminal"
+	select {
+	case a = <-p.channel:
+		got = true
+	case <-r.Context().Done():
+	case <-timer.C:
+		status = "expired"
+	}
+	s.mu.Lock()
+	if _, open := s.requests[x.ID]; open {
+		s.finishSharedLocked(x.ID, p, status)
+		a = answer{Decision: "terminal"}
+	} else if !got {
+		// Already resolved (and its answer sent) while the timer or context fired.
+		select {
+		case a = <-p.channel:
+		default:
+			a = answer{Decision: "terminal"}
+		}
+	}
+	s.mu.Unlock()
+	web := a.Decision == "allow" || a.Decision == "deny"
+	// The tool result lands in the transcript right after the decision; show it soon.
+	// A web answer that arrived after the terminal had already answered was ignored
+	// by Claude: the result then disagrees with it and the outcome becomes terminal.
+	time.AfterFunc(1500*time.Millisecond, func() {
+		n, events, err := claude.NativeHistory(s.cfg.ClaudeConfigDir, claudeID)
+		if err != nil {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		conn := s.channels[claudeID]
+		if s.closing || !s.channelLive(conn) {
+			return
+		}
+		s.applyTranscriptLocked(conn, n, events)
+		if web && sharedAnswerOverridden(events, p, a) {
+			s.interactionEventLocked(x.ID, p, "terminal", answer{})
+		}
+	})
+	respond(w, 200, a)
+}
+
+// sharedAnswerOverridden reports whether the transcript result of the latest call
+// matching p contradicts the web answer a, i.e. the terminal answered first. An
+// unknown or missing result is not a contradiction.
+func sharedAnswerOverridden(events []claude.Event, p *pending, a answer) bool {
+	want := questionTexts(p.input)
+	useID := ""
+	var result *claude.Event
+	for i, ev := range events {
+		var b struct {
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
+			ToolUseID string          `json:"tool_use_id"`
+			Input     json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(ev.Payload, &b) != nil {
+			continue
+		}
+		if ev.Kind == "tool" && b.Name == p.toolName && (p.toolName != "AskUserQuestion" || slices.Equal(questionTexts(b.Input), want)) {
+			useID, result = b.ID, nil
+		} else if ev.Kind == "tool_result" && useID != "" && b.ToolUseID == useID && result == nil {
+			result = &events[i]
+		}
+	}
+	if result == nil {
+		return false
+	}
+	var b struct {
+		IsError bool            `json:"is_error"`
+		Content json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(result.Payload, &b)
+	if b.IsError != (a.Decision == "deny") {
+		return true
+	}
+	if p.toolName != "AskUserQuestion" || a.Decision != "allow" {
+		return false
+	}
+	got := parseAnswers(contentText(b.Content))
+	for q, ans := range a.Answers {
+		if v, ok := got[q]; ok && v != ans {
+			return true
+		}
+	}
+	return false
+}
+
+// contentText is the text of tool_result content: a string, or its text blocks.
+func contentText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(raw, &blocks)
+	parts := []string{}
+	for _, b := range blocks {
+		if b.Type == "text" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+var answerPair = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"="((?:[^"\\]|\\.)*)"`)
+var answerEscape = regexp.MustCompile(`\\(.)`)
+
+// parseAnswers reads `"question"="answer", ...` from an AskUserQuestion result.
+func parseAnswers(text string) map[string]string {
+	out := map[string]string{}
+	for _, m := range answerPair.FindAllStringSubmatch(text, -1) {
+		out[answerEscape.ReplaceAllString(m[1], "$1")] = answerEscape.ReplaceAllString(m[2], "$1")
+	}
+	return out
+}
+
+// finishSharedLocked withdraws a shared question without a web answer; the hook
+// then prints no decision and the native dialog (or its result) stands.
+func (s *Server) finishSharedLocked(id string, p *pending, status string) {
+	delete(s.requests, id)
+	if s.store.Resolve(id, status) == nil {
+		s.interactionEventLocked(id, p, status, answer{})
+	}
+	select {
+	case p.channel <- answer{Decision: "terminal"}:
+	default:
+	}
+}
+
+// interactionEventLocked records where a shared question ended (web, handoff,
+// terminal, expired) so the transcript card can say so. The web ignores this
+// event kind in the message list.
+func (s *Server) interactionEventLocked(id string, p *pending, outcome string, a answer) {
+	payload := map[string]any{"id": id, "toolName": p.toolName, "outcome": outcome, "decision": a.Decision}
+	if p.toolName == "AskUserQuestion" {
+		var input struct {
+			Questions json.RawMessage `json:"questions"`
+		}
+		_ = json.Unmarshal(p.input, &input)
+		payload["input"] = map[string]any{"questions": input.Questions}
+		if len(a.Answers) > 0 {
+			payload["answers"] = a.Answers
+		}
+	} else if a.Mode != "" {
+		payload["mode"] = a.Mode
+	}
+	raw, _ := json.Marshal(payload)
+	if _, err := s.store.Append(p.sessionID, "interaction", outcome, raw); err != nil {
+		log.Printf("interaction event: %v", err)
+	}
+}
+
+var planModes = map[string]bool{"default": true, "acceptEdits": true, "auto": true, "bypassPermissions": true}
+
+// checkSharedAnswer validates a web answer for a hook-held question.
+func checkSharedAnswer(p *pending, a *answer) string {
+	if len(a.Message) > 64<<10 {
+		return "反馈内容过长"
+	}
+	if a.Decision != "allow" {
+		a.Answers, a.Mode = nil, ""
+		return ""
+	}
+	if p.toolName == "ExitPlanMode" {
+		a.Answers, a.Message = nil, ""
+		if a.Mode == "" {
+			a.Mode = "default"
+		}
+		if !planModes[a.Mode] {
+			return "无效的权限模式"
+		}
+		return ""
+	}
+	a.Mode, a.Message = "", ""
+	// Only answers to this call's questions travel to the hook.
+	kept := map[string]string{}
+	for _, q := range questionTexts(p.input) {
+		v := a.Answers[q]
+		if strings.TrimSpace(v) == "" {
+			return "请回答全部问题"
+		}
+		if len(v) > 64<<10 {
+			return "回答内容过长"
+		}
+		kept[q] = v
+	}
+	a.Answers = kept
+	return ""
+}
+
+// questionTexts identifies an AskUserQuestion call by its question strings.
+func questionTexts(input json.RawMessage) []string {
+	var v struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+	}
+	_ = json.Unmarshal(input, &v)
+	out := make([]string, 0, len(v.Questions))
+	for _, q := range v.Questions {
+		out = append(out, q.Question)
+	}
+	return out
 }
 func (s *Server) channelCommands(w http.ResponseWriter, r *http.Request) {
 	if !s.channelLocal(w, r) {
@@ -338,20 +619,30 @@ func (s *Server) syncTranscript(c *channelConnection) {
 	if err != nil {
 		return
 	}
+	s.applyTranscriptLocked(c, n, events)
+}
+
+// applyTranscriptLocked records a parsed transcript. It may be parsed without
+// s.mu: a snapshot is a prefix of any later one and recording is idempotent, so
+// an older snapshot applied late adds nothing.
+func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSession, events []claude.Event) {
 	if n.Title != "Claude session" {
 		_ = s.store.SetTitle(c.sessionID, n.Title)
 	}
 	occurrences := map[string]int{}
 	toolNames := map[string]string{}
+	toolInputs := map[string]json.RawMessage{}
 	for _, ev := range events {
 		var tool struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			ToolUseID string `json:"tool_use_id"`
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
+			ToolUseID string          `json:"tool_use_id"`
+			Input     json.RawMessage `json:"input"`
 		}
 		_ = json.Unmarshal(ev.Payload, &tool)
 		if ev.Kind == "tool" {
 			toolNames[tool.ID] = tool.Name
+			toolInputs[tool.ID] = tool.Input
 		}
 		// Remote prompts have already been recorded by the message endpoint.
 		if ev.Kind == "user" && strings.HasPrefix(strings.TrimSpace(ev.Text), "<channel ") {
@@ -375,6 +666,12 @@ func (s *Server) syncTranscript(c *channelConnection) {
 				if matches == 1 && p.connection == c && toolNames[tool.ToolUseID] == p.toolName {
 					_ = s.store.Resolve(id, "expired")
 					delete(s.channelRequests, id)
+				}
+			}
+			// Backstop for a hook that missed the terminal answer: the question is over.
+			for id, p := range s.requests {
+				if p.connection == c && toolNames[tool.ToolUseID] == p.toolName && (p.toolName != "AskUserQuestion" || slices.Equal(questionTexts(toolInputs[tool.ToolUseID]), questionTexts(p.input))) {
+					s.finishSharedLocked(id, p, "terminal")
 				}
 			}
 		}

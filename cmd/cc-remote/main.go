@@ -121,6 +121,8 @@ func run() error {
 			return channel.Run()
 		case "channel-session-hook":
 			return channel.SessionHook()
+		case "channel-ask-hook":
+			return channel.AskHook()
 		}
 	}
 	return runHost(os.Args[1:])

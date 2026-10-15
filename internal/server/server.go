@@ -45,13 +45,21 @@ type execution struct {
 	done      chan struct{}
 }
 type answer struct {
+	// allow / deny; "terminal" (shared terminal only) hands the prompt back to the native dialog.
 	Decision string            `json:"decision"`
 	Answers  map[string]string `json:"answers,omitempty"`
+	// Shared terminal ExitPlanMode only: permission mode after approval, feedback on rejection.
+	Mode    string `json:"mode,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 type pending struct {
 	sessionID string
 	ctx       context.Context
 	channel   chan answer
+	// Set for a shared terminal question held by its PermissionRequest hook.
+	connection *channelConnection
+	toolName   string
+	input      json.RawMessage
 }
 type Server struct {
 	store           *store.Store
@@ -84,6 +92,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{id}/heartbeat", s.channelHeartbeat)
 	mux.HandleFunc("POST /api/channels/{id}/disconnect", s.channelDisconnect)
 	mux.HandleFunc("POST /api/channels/{id}/events", s.channelEvent)
+	mux.HandleFunc("POST /api/channels/{id}/interactions", s.channelInteraction)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
@@ -468,6 +477,13 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	for rid, p := range s.requests {
 		if p.sessionID == id {
 			delete(s.requests, rid)
+			if p.connection != nil {
+				// Release the waiting hook; the native dialog keeps the question.
+				select {
+				case p.channel <- answer{Decision: "terminal"}:
+				default:
+				}
+			}
 		}
 	}
 	for rid, p := range s.channelRequests {
@@ -602,7 +618,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &a) {
 		return
 	}
-	if a.Decision != "allow" && a.Decision != "deny" {
+	if a.Decision != "allow" && a.Decision != "deny" && a.Decision != "terminal" {
 		fail(w, 400, "无效的审批结果")
 		return
 	}
@@ -610,6 +626,10 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p, ok := s.channelRequests[id]; ok {
+		if a.Decision == "terminal" {
+			fail(w, 400, "无效的审批结果")
+			return
+		}
 		s.channelResolveLocked(w, id, p, a)
 		return
 	}
@@ -618,13 +638,33 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "请求已处理或已失效")
 		return
 	}
-	if err := s.store.Resolve(id, "resolved"); err != nil {
+	status := "resolved"
+	if p.connection != nil {
+		if msg := checkSharedAnswer(p, &a); msg != "" {
+			fail(w, 400, msg)
+			return
+		}
+		if a.Decision == "terminal" {
+			status = "terminal"
+		}
+	} else if a.Decision == "terminal" || a.Mode != "" || a.Message != "" {
+		fail(w, 400, "无效的审批结果")
+		return
+	}
+	if err := s.store.Resolve(id, status); err != nil {
 		fail(w, 409, err.Error())
 		return
 	}
 	delete(s.requests, id)
+	if p.connection != nil {
+		outcome := "web"
+		if status == "terminal" {
+			outcome = "handoff"
+		}
+		s.interactionEventLocked(id, p, outcome, a)
+	}
 	p.channel <- a
-	respond(w, 200, map[string]string{"status": "resolved"})
+	respond(w, 200, map[string]string{"status": status})
 }
 
 func (s *Server) nativeList(w http.ResponseWriter, r *http.Request) {
@@ -737,6 +777,12 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
+	// Waiting shared-terminal hooks hold long polls; release them so shutdown does not wait.
+	for id, p := range s.requests {
+		if p.connection != nil {
+			s.finishSharedLocked(id, p, "expired")
+		}
+	}
 	runs := []*execution{}
 	for _, r := range s.runs {
 		r.cancel()

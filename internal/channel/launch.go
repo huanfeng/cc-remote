@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
@@ -75,14 +76,23 @@ func Launch(args []string) error {
 	if err != nil {
 		return err
 	}
+	cleanStaleConfigs(absData, sessionID, 24*time.Hour)
 	configPath, err := writeConfig(absData, exe, defaultHost(*host), token, sessionID, cwd)
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(filepath.Dir(configPath))
+	// The hook reads its host and token from ask.json; CC_REMOTE_ASK_FILE is
+	// inherited by Claude's subprocesses, so the model's tools can read it, as they
+	// can the MCP config beside it. 0600 is not enforced on Windows.
+	bindingFile := filepath.Join(filepath.Dir(configPath), "session-changed")
+	askPath := filepath.Join(filepath.Dir(configPath), "ask.json")
+	ask, _ := json.Marshal(askConfig{Host: defaultHost(*host), Token: token, SessionID: sessionID, BindingFile: bindingFile})
+	if err = os.WriteFile(askPath, ask, 0600); err != nil {
+		return err
+	}
 	settingsPath := filepath.Join(filepath.Dir(configPath), "settings.json")
-	settings, _ := json.Marshal(map[string]any{"hooks": map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": exe, "args": []string{"channel-session-hook"}}}}}}})
-	if err = os.WriteFile(settingsPath, settings, 0600); err != nil {
+	if err = os.WriteFile(settingsPath, hookSettings(exe), 0600); err != nil {
 		return err
 	}
 	claudeArgs := append(nativeArgs, "--settings", settingsPath, "--mcp-config", configPath, "--dangerously-load-development-channels", "server:cc-remote")
@@ -90,7 +100,8 @@ func Launch(args []string) error {
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	cmd.Env = replaceEnv(cmd.Env, "CC_REMOTE_SESSION_ID", sessionID, runtime.GOOS == "windows")
-	cmd.Env = replaceEnv(cmd.Env, "CC_REMOTE_BINDING_FILE", filepath.Join(filepath.Dir(configPath), "session-changed"), runtime.GOOS == "windows")
+	cmd.Env = replaceEnv(cmd.Env, "CC_REMOTE_BINDING_FILE", bindingFile, runtime.GOOS == "windows")
+	cmd.Env = replaceEnv(cmd.Env, "CC_REMOTE_ASK_FILE", askPath, runtime.GOOS == "windows")
 	if strings.TrimSpace(*configDir) != "" {
 		cmd.Env = replaceEnv(cmd.Env, "CLAUDE_CONFIG_DIR", strings.TrimSpace(*configDir), runtime.GOOS == "windows")
 	}
@@ -98,6 +109,63 @@ func Launch(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// hookSettings is the --settings file of a shared terminal. SessionStart guards
+// the binding on /resume and /clear. The PermissionRequest hook runs alongside
+// the native AskUserQuestion / ExitPlanMode dialog so the web can answer too;
+// its timeout (seconds) covers a long wait for the user.
+func hookSettings(exe string) []byte {
+	command := func(arg string) map[string]any {
+		return map[string]any{"type": "command", "command": exe, "args": []string{arg}}
+	}
+	ask := command("channel-ask-hook")
+	ask["timeout"] = 1800
+	data, _ := json.Marshal(map[string]any{"hooks": map[string]any{
+		"SessionStart":      []any{map[string]any{"hooks": []any{command("channel-session-hook")}}},
+		"PermissionRequest": []any{map[string]any{"matcher": "AskUserQuestion|ExitPlanMode", "hooks": []any{ask}}},
+	}})
+	return data
+}
+
+// cleanStaleConfigs removes channel-config/session-* directories (with their
+// tokens) that a crashed launcher left behind. A directory is stale when it is
+// older than maxAge and no launcher holds its session lock. The caller already
+// holds the lock of session own, so that session's old directories are stale too.
+func cleanStaleConfigs(dataDir, own string, maxAge time.Duration) {
+	base := filepath.Join(dataDir, "channel-config")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "session-") {
+			continue
+		}
+		dir := filepath.Join(base, entry.Name())
+		info, err := entry.Info()
+		if err != nil || time.Since(info.ModTime()) < maxAge {
+			continue
+		}
+		files, _ := os.ReadDir(dir)
+		sessionID := ""
+		for _, f := range files {
+			if id := strings.TrimSuffix(f.Name(), ".json"); id != f.Name() && launchUUID.MatchString(id) {
+				sessionID = strings.ToLower(id)
+			}
+		}
+		release := func() {}
+		if sessionID != "" && sessionID != own {
+			lockDir := filepath.Join(dataDir, "channel-locks", sessionID)
+			if _, err := os.Stat(lockDir); err == nil {
+				if release, err = hostlock.Acquire(lockDir); err != nil {
+					continue // a running launcher still uses it
+				}
+			}
+		}
+		_ = os.RemoveAll(dir)
+		release()
+	}
 }
 
 func writeConfig(dataDir, hostExe, host, token, sessionID, cwd string) (string, error) {
