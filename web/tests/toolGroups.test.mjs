@@ -141,3 +141,20 @@ test('stabilize keeps unchanged calls and groups, replaces changed ones', () => 
   assert.equal(next[3], first[3], 'unchanged special card keeps its identity');
   assert.equal(stabilize(next, groupTranscript([...events, done], true))[2], next[2]);
 });
+
+test('compact_boundary renders a divider with trigger and token sizes', async () => {
+  const { compactSummary } = await import('../src/toolGroups.ts');
+  assert.equal(compactSummary({ compact_metadata: { trigger: 'manual', pre_tokens: 48026, post_tokens: 8969 } }), '上下文已压缩（手动） · 48.0k → 9.0k tokens');
+  assert.equal(compactSummary({ compact_metadata: { trigger: 'auto', pre_tokens: 900, post_tokens: 300 } }), '上下文已压缩（自动） · 900 → 300 tokens');
+  assert.equal(compactSummary(undefined), '上下文已压缩');
+});
+
+test('isCompacting follows the latest system status until the boundary arrives', async () => {
+  const { isCompacting } = await import('../src/toolGroups.ts');
+  const status = value => ({ seq: ++seq, kind: 'status', text: 'status', payload: { type: 'system', subtype: 'status', status: value }, createdAt: at(0) });
+  const hook = { seq: ++seq, kind: 'status', text: 'hook_started', payload: { type: 'system', subtype: 'hook_started' }, createdAt: at(0) };
+  assert.equal(isCompacting([msg('user'), status('compacting'), hook]), true);
+  assert.equal(isCompacting([msg('user'), status('compacting'), status(null)]), false);
+  assert.equal(isCompacting([status('compacting'), { seq: ++seq, kind: 'compact', createdAt: at(0) }]), false);
+  assert.equal(isCompacting([msg('user')]), false);
+});

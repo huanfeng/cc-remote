@@ -113,3 +113,37 @@ func TestCommandClearChangesContextWithoutDeletingHistory(t *testing.T) {
 		t.Fatalf("shared context reset %d", code)
 	}
 }
+
+// TestCompactRunsAsManagedTurn: /compact is passed to Claude verbatim on a
+// resumed managed session; fresh, busy-with-attachments and shared sessions are refused.
+func TestCompactRunsAsManagedTurn(t *testing.T) {
+	runs := make(chan claude.Options, 1)
+	_, ts, st := setup(t, func(_ context.Context, o claude.Options, _ func(claude.Event) error) error { runs <- o; return nil })
+	x := createSession(t, ts)
+	path := "/api/sessions/" + x.ID
+	if code, b := request(t, ts, "POST", path+"/commands", map[string]string{"command": "/compact"}, testToken); code != 400 || !strings.Contains(string(b), "没有可压缩") {
+		t.Fatalf("fresh session %d %s", code, b)
+	}
+	if code, _ := request(t, ts, "POST", path+"/messages", map[string]string{"text": "/compact"}, testToken); code != 400 {
+		t.Fatalf("fresh session message %d", code)
+	}
+	_ = st.SetResume(x.ID)
+	if code, b := request(t, ts, "POST", path+"/commands", map[string]string{"command": "/compact keep the API notes"}, testToken); code != 200 || !strings.Contains(string(b), `"sendMessage":true`) {
+		t.Fatalf("command %d %s", code, b)
+	}
+	if code, _ := request(t, ts, "POST", path+"/messages", map[string]any{"text": "/compact", "attachmentIds": []string{"a"}}, testToken); code != 400 {
+		t.Fatalf("attachments accepted: %d", code)
+	}
+	if code, b := request(t, ts, "POST", path+"/messages", map[string]string{"text": "/compact keep the API notes"}, testToken); code != 202 {
+		t.Fatalf("send %d %s", code, b)
+	}
+	if o := <-runs; o.Message != "/compact keep the API notes" || !o.Resume {
+		t.Fatalf("runner got %q resume=%v", o.Message, o.Resume)
+	}
+	y := createSession(t, ts)
+	_ = st.SetResume(y.ID)
+	_ = st.SetMode(y.ID, "channel")
+	if code, b := request(t, ts, "POST", "/api/sessions/"+y.ID+"/commands", map[string]string{"command": "/compact"}, testToken); code != 409 || !strings.Contains(string(b), "终端") {
+		t.Fatalf("channel %d %s", code, b)
+	}
+}

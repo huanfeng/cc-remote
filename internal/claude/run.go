@@ -267,8 +267,11 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 		return []Event{e}, true, nil
 	case "system":
 		kind := "status"
-		if v.Subtype == "init" {
+		switch v.Subtype {
+		case "init":
 			kind = "session"
+		case "compact_boundary": // /compact or auto-compaction; payload has compact_metadata
+			kind = "compact"
 		}
 		return []Event{{Kind: kind, Text: v.Subtype, Payload: payload}}, false, nil
 	case "error":

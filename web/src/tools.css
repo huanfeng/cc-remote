@@ -64,3 +64,6 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .question-plan:not(.full)::after{content:'';position:absolute;left:0;right:0;bottom:0;height:40px;background:linear-gradient(transparent,#f4f7eb)}
 .icon.active{color:#4e6243;background:#e4ebd8}
 @media(max-width:760px){.tool-group{margin:8px 0}.tool-group-summary{padding:8px 10px}.tool-current{padding-left:31px}.tool-detail{padding-left:8px}.tool-call-dir{display:none}.question-card{padding:12px}}
+.compact-divider{display:flex;align-items:center;gap:12px;margin:18px 0;font-size:11px;color:var(--muted)}
+.compact-divider::before,.compact-divider::after{content:'';flex:1;border-top:1px dashed #d3d9c8}
+.compact-divider span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80%}

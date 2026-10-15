@@ -342,7 +342,18 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	promptText := req.Text
-	if strings.HasPrefix(req.Text, "/") {
+	if name, _, _ := strings.Cut(req.Text, " "); name == "/compact" {
+		// Passed to Claude verbatim; it compacts the resumed session in print mode.
+		message, code := compactBlocked(x)
+		if code == 0 && len(req.AttachmentIDs) > 0 {
+			message, code = "/compact 不能附带附件", 400
+		}
+		if code != 0 {
+			s.mu.Unlock()
+			fail(w, code, message)
+			return
+		}
+	} else if strings.HasPrefix(req.Text, "/") {
 		name, args, _ := strings.Cut(strings.TrimPrefix(req.Text, "/"), " ")
 		var found bool
 		promptText, found, e = s.skillPrompt(x.Cwd, name, strings.TrimSpace(args))

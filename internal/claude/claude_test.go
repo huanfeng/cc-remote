@@ -147,6 +147,8 @@ func TestParseEvents(t *testing.T) {
 		{`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`, "tool_result", "ok", false},
 		{`{"type":"result","is_error":true,"errors":["auth failed"]}`, "error", "auth failed", true},
 		{`{"type":"result","is_error":false,"result":"done","permission_denials":[{"tool_name":"Bash"}]}`, "result", "done", true},
+		{`{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":48026,"post_tokens":8969}}`, "compact", "compact_boundary", false},
+		{`{"type":"system","subtype":"status","status":"compacting"}`, "status", "status", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.kind+tt.text, func(t *testing.T) {

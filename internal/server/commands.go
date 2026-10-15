@@ -35,7 +35,7 @@ func commandList(channel bool) []webCommand {
 		{"permissions", "打开设置面板（权限模式等默认值）", false},
 		{"clear", "重置托管会话上下文，保留网页历史；共享会话需在终端执行", channel},
 		{"stop", "停止当前托管轮次；共享会话需在终端执行", channel},
-		{"compact", "压缩上下文，请在原生终端执行", true},
+		{"compact", "压缩上下文，可附加保留重点，例如 /compact 保留接口设计；共享会话需在终端执行", channel},
 		{"resume", "切换原生会话，请在终端执行或选择其它网页标签", true},
 		{"mcp", "管理原生 MCP 服务，请在终端执行", true},
 	}
@@ -69,7 +69,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	switch name {
 	case "help":
 		result["commands"] = commandList(x.Mode == "channel")
-		result["message"] = "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear、/stop。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。其它 Claude 内置控制命令需在原生终端执行。"
+		result["message"] = "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear、/compact、/stop。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。其它 Claude 内置控制命令需在原生终端执行。"
 	case "status":
 		s.mu.Lock()
 		s.decorateChannel(&x)
@@ -123,7 +123,14 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result["message"] = "已重置上下文，网页历史已保留。"
-	case "compact", "resume", "mcp":
+	case "compact":
+		if message, code := compactBlocked(x); code != 0 {
+			fail(w, code, message)
+			return
+		}
+		respond(w, 200, map[string]any{"sendMessage": true})
+		return
+	case "resume", "mcp":
 		fail(w, 400, "此原生控制命令请在 Claude Code 终端执行")
 		return
 	default:
@@ -139,6 +146,19 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, result)
+}
+
+// compactBlocked explains why /compact cannot run as a managed turn, or returns
+// code 0. Claude Code accepts /compact in print mode on a resumed session; a
+// shared terminal owns its process, so the command has to be typed there.
+func compactBlocked(x store.Session) (string, int) {
+	if x.Mode == "channel" {
+		return "共享会话由终端进程持有，请在原生终端执行 /compact", 409
+	}
+	if !x.Resume {
+		return "会话还没有可压缩的上下文", 400
+	}
+	return "", 0
 }
 
 func displayDefault(x string) string {

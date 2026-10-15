@@ -116,6 +116,26 @@ export function argSummary(name: string, input: any): ArgSummary {
   return { text: '' };
 }
 
+const formatTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+/** Divider text for a compact_boundary event: "上下文已压缩（手动）· 48.0k → 9.0k tokens". */
+export function compactSummary(payload: any): string {
+  const meta = payload?.compact_metadata || {};
+  const trigger = meta.trigger === 'manual' ? '手动' : meta.trigger === 'auto' ? '自动' : '';
+  const sizes = Number.isFinite(meta.pre_tokens) && Number.isFinite(meta.post_tokens) ? ` · ${formatTokens(meta.pre_tokens)} → ${formatTokens(meta.post_tokens)} tokens` : '';
+  return `上下文已压缩${trigger ? `（${trigger}）` : ''}${sizes}`;
+}
+
+/** Whether Claude's latest system status says it is compacting (status events are not rendered). */
+export function isCompacting(events: TranscriptEvent[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.kind === 'compact' || event.kind === 'result' || event.kind === 'error') return false;
+    if (event.kind === 'status' && event.payload?.subtype === 'status') return event.payload.status === 'compacting';
+  }
+  return false;
+}
+
 export function formatDuration(ms: number): string {
   const s = Math.round(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60 ? ` ${s % 60}s` : ''}`;
