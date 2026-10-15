@@ -40,16 +40,20 @@ jobs:
       # pnpm version comes from packageManager in web/package.json; corepack ships
       # with Node, so no third-party action is needed.
       - name: Enable pnpm via corepack
+        working-directory: web
         run: corepack enable
 
       - name: Install web dependencies
-        run: pnpm --dir web install --frozen-lockfile
+        working-directory: web
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck web
-        run: pnpm --dir web run typecheck
+        working-directory: web
+        run: pnpm run typecheck
 
       - name: Build web (embedded into the Go binary)
-        run: pnpm --dir web run build
+        working-directory: web
+        run: pnpm run build
 
       - name: Web unit tests
         working-directory: web
@@ -89,12 +93,14 @@ jobs:
       # pnpm version comes from packageManager in web/package.json; corepack ships
       # with Node, so no third-party action is needed.
       - name: Enable pnpm via corepack
+        working-directory: web
         run: corepack enable
 
       - name: Build web
+        working-directory: web
         run: |
-          pnpm --dir web install --frozen-lockfile
-          pnpm --dir web run build
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: CGO_ENABLED=0 go build
         env:
