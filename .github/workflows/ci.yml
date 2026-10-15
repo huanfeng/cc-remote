@@ -29,20 +29,29 @@ jobs:
           go-version-file: go.mod # honors the toolchain directive
           check-latest: true
 
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json # version from packageManager
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Install web dependencies
-        run: npm --prefix web ci
+        run: pnpm --dir web install --frozen-lockfile
 
       - name: Typecheck web
-        run: npm --prefix web run typecheck
+        run: pnpm --dir web run typecheck
 
       - name: Build web (embedded into the Go binary)
-        run: npm --prefix web run build
+        run: pnpm --dir web run build
+
+      - name: Web unit tests
+        working-directory: web
+        shell: bash
+        run: node --test tests/*.test.mjs
 
       - name: go vet
         run: go vet ./...
@@ -70,16 +79,20 @@ jobs:
           go-version-file: go.mod # honors the toolchain directive
           check-latest: true
 
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Build web
         run: |
-          npm --prefix web ci
-          npm --prefix web run build
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web run build
 
       - name: CGO_ENABLED=0 go build
         env:

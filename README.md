@@ -50,7 +50,7 @@ cc-remote -- claude --resume <会话UUID>
 ## 环境要求
 
 - Go 1.26 或更新版本。
-- Node.js 22 / npm，用于构建前端；运行已构建宿主无需 Node。
+- Node.js 22 / pnpm（版本见 `web/package.json` 的 `packageManager`，可用 `corepack enable` 安装），用于构建前端；运行已构建宿主无需 Node。
 - Windows 或 Linux；安装近期版本的 Claude Code，并在宿主执行 `claude auth login`。
 - 本版使用当前 CLI 的 exec-form hooks 和 permission host。实际集成在 Claude Code 2.1.299 上验证；旧版本不保证兼容。
 
@@ -75,8 +75,8 @@ gh api repos/huanfeng/cc-remote/contents/scripts/install.sh -H "Accept: applicat
 在项目根目录执行：
 
 ```sh
-npm --prefix web ci
-npm --prefix web run build
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web run build
 go build -o cc-remote ./cmd/cc-remote
 ```
 
@@ -274,17 +274,17 @@ ccr --model sonnet           # 等同 cc-remote -- claude --model sonnet
 前端开发服务器将 `/api` 代理到 `127.0.0.1:8787`：
 
 ```sh
-npm --prefix web run dev
+pnpm --dir web run dev
 ```
 
-Web 资源在 Go 编译时嵌入；修改前端后先 `npm --prefix web run build`，再重新构建宿主。
+Web 资源在 Go 编译时嵌入；修改前端后先 `pnpm --dir web run build`，再重新构建宿主。
 
 ```sh
 go test ./...
 go test -race ./...
 go vet ./...
-npm --prefix web run typecheck
-npm --prefix web run build
+pnpm --dir web run typecheck
+pnpm --dir web run build
 ```
 
 自动测试使用假子进程，不消耗模型额度，覆盖事件解析、配置继承、权限桥接、会话并行/串行、取消、持久化、重启状态和数据目录独占。真实模型和浏览器验证记录见 [docs/verification.md](docs/verification.md)。

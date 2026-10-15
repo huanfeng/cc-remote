@@ -7,7 +7,7 @@
 - `go test ./...`：通过。
 - `go test -race ./...`：通过。
 - `go vet ./...`：通过。
-- `npm --prefix web run build`：TypeScript 检查和 Vite 生产构建通过。
+- `pnpm --dir web run build`：TypeScript 检查和 Vite 生产构建通过。
 - Linux amd64，CGO 关闭的宿主构建：通过（不是 Linux 实机执行验证）。
 
 覆盖内容：真实管道上的假子进程解析与取消、缺少终态结果的错误、配置目录和环境覆盖、Hook/MCP 交互、原生历史读取、令牌与跨站校验、同会话串行、多会话并行、取消隔离、审批只能处理一次、SQLite 落盘与重启恢复、宿主数据目录独占锁。

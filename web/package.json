@@ -1,1 +1,26 @@
-{"name":"cc-remote-web","private":true,"version":"0.1.0","type":"module","scripts":{"dev":"vite --host 0.0.0.0","build":"tsc -b && vite build","typecheck":"tsc -b"},"dependencies":{"react":"^19.0.0","react-dom":"^19.0.0","react-markdown":"^10.0.0","remark-breaks":"4.0.0","remark-gfm":"4.0.1"},"devDependencies":{"@types/react":"^19.0.0","@types/react-dom":"^19.0.0","@vitejs/plugin-react":"^4.3.4","typescript":"~5.7.2","vite":"^6.1.0"}}
+{
+  "name": "cc-remote-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.0.0",
+    "remark-breaks": "4.0.0",
+    "remark-gfm": "4.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.1.0"
+  },
+  "packageManager": "pnpm@11.22.0"
+}
