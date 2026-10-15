@@ -134,6 +134,10 @@ func makeTarGz(t *testing.T, path string, entries ...entry) {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for _, e := range entries {
+		if strings.HasSuffix(e.name, "/") {
+			tw.WriteHeader(&tar.Header{Name: e.name, Mode: 0o755, Typeflag: tar.TypeDir})
+			continue
+		}
 		tw.WriteHeader(&tar.Header{Name: e.name, Mode: 0o755, Size: int64(len(e.body)), Typeflag: tar.TypeReg})
 		io.WriteString(tw, e.body)
 	}
@@ -164,6 +168,27 @@ func TestExtractArchives(t *testing.T) {
 	}
 	if _, err := extractArchive(tgz, filepath.Join(dir, "tgz2"), "windows"); err == nil {
 		t.Fatal("expected missing cc-remote.exe error")
+	}
+}
+
+// TestExtractDotRootTarGz mirrors the release layout written by
+// "tar -C stage -czf x.tar.gz .": a "./" root entry followed by "./name" files.
+func TestExtractDotRootTarGz(t *testing.T) {
+	dir := t.TempDir()
+	tgz := filepath.Join(dir, "a.tar.gz")
+	makeTarGz(t, tgz, entry{"./", ""}, entry{"./LICENSE", "mit"}, entry{"./cc-remote", "UNIXBIN"})
+	bin, err := extractArchive(tgz, filepath.Join(dir, "out"), "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(bin); string(b) != "UNIXBIN" {
+		t.Fatalf("tar binary = %q", b)
+	}
+	// A regular file named "." must not be written over the destination.
+	bad := filepath.Join(dir, "bad.tar.gz")
+	makeTarGz(t, bad, entry{".", "x"})
+	if _, err := extractArchive(bad, filepath.Join(dir, "bad"), "linux"); err == nil {
+		t.Fatal("tar file entry \".\": expected error")
 	}
 }
 

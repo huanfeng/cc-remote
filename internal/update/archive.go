@@ -82,9 +82,13 @@ func verifyFile(path, want string) error {
 }
 
 // safeJoin resolves an archive entry name inside dir, rejecting absolute paths
-// and ".." components that would escape it.
+// and ".." components that would escape it. "./" (the root entry that
+// "tar -C stage -czf x.tar.gz ." writes first) resolves to dir itself.
 func safeJoin(dir, name string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(strings.ReplaceAll(name, `\`, "/")))
+	if clean == "." && name != "" && !strings.HasPrefix(name, "/") {
+		return dir, nil
+	}
 	if clean == "." || filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" ||
 		clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(name, "/") {
 		return "", fmt.Errorf("archive entry %q escapes the destination", name)
@@ -126,6 +130,9 @@ func extractZip(archive, dst string) error {
 		}
 		if !f.Mode().IsRegular() {
 			continue // skip symlinks and other special entries
+		}
+		if target == dst {
+			return fmt.Errorf("archive entry %q is not a file name", f.Name)
 		}
 		rc, err := f.Open()
 		if err != nil {
@@ -170,6 +177,9 @@ func extractTarGz(archive, dst string) error {
 				return err
 			}
 		case tar.TypeReg:
+			if target == dst {
+				return fmt.Errorf("archive entry %q is not a file name", hdr.Name)
+			}
 			if err := writeEntry(target, tr, 0o755); err != nil {
 				return err
 			}
