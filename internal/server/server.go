@@ -130,17 +130,40 @@ func (s *Server) Handler() http.Handler {
 				fail(w, 401, "访问凭证无效")
 				return
 			}
-			if origin := r.Header.Get("Origin"); origin != "" {
-				u, e := url.Parse(origin)
-				if e != nil || !strings.EqualFold(u.Host, r.Host) {
-					fail(w, 403, "不允许跨站访问")
-					return
-				}
+			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r) {
+				fail(w, 403, "不允许跨站访问")
+				return
 			}
 		}
 		mux.ServeHTTP(w, r)
 	})
 }
+
+// sameOrigin reports whether the browser Origin names this host. Behind a
+// reverse proxy that rewrites Host to the upstream address, the public host
+// arrives in X-Forwarded-Host instead. Trusting that header is safe here: a
+// cross-site page cannot set it (or the token's Authorization header) without
+// a CORS preflight, which the host never grants.
+func sameOrigin(origin string, r *http.Request) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	fwd, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Host"), ",")
+	fwd = strings.TrimSpace(fwd)
+	if fwd == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, fwd) {
+		return true
+	}
+	// Some proxies send the host without the default port of the scheme.
+	return u.Port() == "" && strings.EqualFold(u.Hostname(), strings.TrimSuffix(strings.TrimSuffix(fwd, ":443"), ":80"))
+}
+
 func equalToken(header, token string) bool {
 	return token != "" && subtle.ConstantTimeCompare([]byte(header), []byte("Bearer "+token)) == 1
 }

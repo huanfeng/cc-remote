@@ -21,6 +21,20 @@ CC Remote 让网页驱动本机的 Claude Code。任何持有访问令牌的人�
 - 绑定所有网卡（`all:PORT`、`0.0.0.0`、`::`）必须显式加 `--allow-insecure-remote`。
 - CC Remote 不做网络穿透，也不提供 TLS。远程访问的加密需要由你自己的 HTTPS 反向代理、隧道或私有网络（如 VPN / WireGuard 类组网）提供。
 
+## 反向代理
+
+API 会拒绝 `Origin` 与访问主机不一致的请求（提示「不允许跨站访问」）。代理需要把浏览器访问的主机名传给宿主：保留原始 `Host`，或通过 `X-Forwarded-Host` 传递（0.2.3 起支持）。Caddy、Traefik 默认就满足；nginx 默认会把 `Host` 改成上游地址，需要显式设置：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;                # 或 X-Forwarded-Host $host;
+    client_max_body_size 25m;                   # 附件上传上限为 20 MB
+}
+```
+
+经代理访问时，代理本身就是公网入口：请在代理层加一道认证（Basic Auth、SSO 等），不要只依赖访问令牌。
+
 ## 仅限本机的接口
 
 - `POST /api/admin/shutdown`（`service stop` 使用）必须来自回环地址、携带令牌，且不得带 `Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、`X-Real-IP` 等代理头，因此经本机反向代理转发的远程请求也会被拒绝。

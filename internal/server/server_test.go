@@ -118,6 +118,41 @@ func TestAuthenticationAndValidation(t *testing.T) {
 	}
 }
 
+// TestOriginBehindReverseProxy covers proxies that rewrite Host to the
+// upstream address and pass the public host in X-Forwarded-Host.
+func TestOriginBehindReverseProxy(t *testing.T) {
+	_, ts, _ := setup(t, nil)
+	cases := []struct {
+		origin, fwd string
+		want        int
+	}{
+		{"https://cc.example.com", "cc.example.com", 200},
+		{"https://cc.example.com", "cc.example.com:443", 200},
+		{"https://cc.example.com:8443", "cc.example.com:8443", 200},
+		{"https://cc.example.com", "cc.example.com, internal", 200},
+		{"https://evil.example", "cc.example.com", 403},
+		{"https://cc.example.com", "", 403},
+		{"https://cc.example.com:8443", "cc.example.com", 403},
+		{"null", "cc.example.com", 403},
+	}
+	for _, c := range cases {
+		req, _ := http.NewRequest("GET", ts.URL+"/api/sessions", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		req.Header.Set("Origin", c.origin)
+		if c.fwd != "" {
+			req.Header.Set("X-Forwarded-Host", c.fwd)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != c.want {
+			t.Errorf("Origin %q X-Forwarded-Host %q: status %d, want %d", c.origin, c.fwd, resp.StatusCode, c.want)
+		}
+	}
+}
+
 func TestConcurrentSessionsAndStop(t *testing.T) {
 	started := make(chan claude.Options, 3)
 	_, ts, st := setup(t, func(ctx context.Context, o claude.Options, emit func(claude.Event) error) error {
