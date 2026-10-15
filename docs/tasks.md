@@ -37,9 +37,9 @@
 - [x] 日志文件 `--log-file`（10 MiB 轮转、崩溃输出），`cc-remote version`。
 - [x] 发布：`ci.yml`（测试、govulncheck）、`release.yml`（6 平台包、checksums、构建来源证明）、`scripts/install.{ps1,sh}` 私有仓库一键安装/更新、`cc-remote update`；工具链 go1.26.9。
 
-本机交付状态：服务已以计划任务「CC Remote」安装在 `127.0.0.1:8787`（版本 0.2.0-dev.2），程序位于 `%LOCALAPPDATA%\cc-remote\bin`。真实验证：无窗口、强杀后 5 秒重启、优雅停止、status 退出码 0/3、重装沿用配置、bypassPermissions 托管轮次零审批执行 Bash。
-注意：此前宿主由 Codex 桌面应用启动，其 `%APPDATA%` 写入被 MSIX 虚拟化到 `%LOCALAPPDATA%\Packages\OpenAI.Codex_*\LocalCache\Roaming\cc-remote`；数据已复制到真实 `%APPDATA%\cc-remote`，原目录保留。从 Codex 内运行 `ccr` 会读到虚拟化目录。
-未验证：GitHub Actions 实跑、真实 Release 下载安装、Linux/macOS 实机服务。
+Windows 服务实测：计划任务无窗口运行、强杀后 5 秒内重启、优雅停止、`status` 退出码 0/3、重装沿用配置、bypassPermissions 托管轮次零审批执行 Bash。
+注意：从 MSIX 打包应用（如部分桌面 AI 客户端）的终端启动宿主时，`%APPDATA%` 写入会被虚拟化到 `%LOCALAPPDATA%\Packages\<应用>\LocalCache\Roaming`，与服务看到的真实 `%APPDATA%\cc-remote` 不是同一目录；迁移时需从虚拟化目录复制数据，并从普通终端运行 `ccr`。
+已在 GitHub Actions 实跑 CI 与 Release（预发布 `v0.2.0-rc.*`），并对真实 Release 验证安装脚本 dry-run、下载与 sha256 校验；未验证：实际安装/自更新替换、Linux/macOS 实机服务。
 
 ### 界面调整（2026-10-15）
 
@@ -71,7 +71,7 @@
 - [x] 最终移动端菜单、快捷键和刷新免登录浏览器回归；最新侧栏版本在 PC 和手机视口验证缓存标记、切换、执行/等待/完成状态，顶部标签已取消。
 - [x] 更新默认宿主可执行文件并重启，保留现有用户数据。
 
-当前交付：`http://127.0.0.1:8787/`，根目录 `cc-remote.exe` 为新版。原项目 `data` 的 SQLite、WAL 和访问令牌在宿主停止后复制至 `C:\Users\me\AppData\Roaming\cc-remote`，已验证两条原有会话完整保留；原目录未删除。当前运行的数据以用户目录为准，原项目 `data` 不再跟随更新。临时测试宿主 8791 已停止，测试数据保留在 `.test-data/v3-host`。
+数据目录迁移：旧版项目内 `./data` 的 SQLite、WAL 和访问令牌在宿主停止后复制到用户默认数据目录，验证原有会话完整保留；原目录保留不删。
 
 最新侧栏回归：独立 8792 测试宿主使用真实 HTTP/SQLite 生命周期与模拟 Runner，不调用模型或执行工具；验证 A 执行中、B 等待操作、B 完成、A 草稿保留，以及释放 A 缓存后任务继续。该测试宿主已停止，临时夹具保留在 `.test-data/sidebar-qa`。预览：[PC](preview-sidebar-pc.jpg)、[手机](preview-sidebar-mobile.jpg)。
 
