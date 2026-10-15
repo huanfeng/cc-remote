@@ -89,7 +89,8 @@ func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) err
 		if tag != "" {
 			return fmt.Errorf("release %s not found in %s", tag, u.repo)
 		}
-		return fmt.Errorf("no published release found in %s", u.repo)
+		// GitHub's "latest" release never includes prereleases.
+		return fmt.Errorf("no stable release found in %s (prereleases are skipped; pass --version <tag> to install one)", u.repo)
 	}
 	if err != nil {
 		return err

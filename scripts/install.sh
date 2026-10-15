@@ -31,6 +31,14 @@ LISTEN=""
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# GitHub's "latest" release never includes prereleases.
+missing_release() {
+	if [ -n "$VERSION" ]; then
+		printf 'no release %s found in %s' "$VERSION" "$REPO"
+	else
+		printf 'no stable release found in %s (prereleases are skipped; use --version <tag>)' "$REPO"
+	fi
+}
 
 usage() {
 	sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' || true
@@ -150,7 +158,7 @@ if [ "$METHOD" = gh ]; then
 		-q '.tagName, (.assets[] | .name)' 2>&1); then
 		case "$out" in
 			*"not found"*|*"Not Found"*)
-				die "no release ${VERSION:-(latest)} found in $REPO" ;;
+				die "$(missing_release)" ;;
 			*) die "gh release view failed: $out" ;;
 		esac
 	fi
@@ -162,7 +170,7 @@ else
 	case "$code" in
 		200) ;;
 		404) [ "$METHOD" = anonymous ] && auth_help
-		     die "no release ${VERSION:-(latest)} found in $REPO" ;;
+		     die "$(missing_release)" ;;
 		401|403) say "GitHub API returned $code; check the token's permissions." >&2; auth_help ;;
 		*) [ "$METHOD" = anonymous ] && auth_help
 		   die "GitHub API request failed (HTTP $code)" ;;

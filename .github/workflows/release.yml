@@ -65,10 +65,11 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false # pnpm is enabled via corepack afterwards
 
       # pnpm version comes from packageManager in web/package.json; corepack ships
       # with Node, so no third-party action is needed.
@@ -79,7 +80,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - working-directory: web
         run: pnpm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: web/dist
@@ -106,12 +107,12 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: "0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod # honors the toolchain directive
           check-latest: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
@@ -134,7 +135,7 @@ jobs:
             tar -C stage -czf "out/${base}.tar.gz" .
           fi
           ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
           path: out/*
@@ -155,8 +156,8 @@ jobs:
       PRERELEASE: ${{ needs.meta.outputs.prerelease }}
       REPLACE: ${{ github.event_name == 'workflow_dispatch' && inputs.replace }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
           path: out
@@ -167,12 +168,12 @@ jobs:
           cd out
           sha256sum cc-remote_* > checksums.txt
           cat checksums.txt
-      # Optional supply-chain evidence (gh attestation verify). Private repos
-      # need a GitHub plan with artifact attestations, so this never fails
-      # the release.
+      # Supply-chain evidence for `gh attestation verify`. GitHub does not
+      # offer attestations for user-owned private repositories, so the step
+      # only runs once the repository is public.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        continue-on-error: true
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             out/cc-remote_*

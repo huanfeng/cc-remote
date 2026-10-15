@@ -18,7 +18,7 @@ git push origin v0.2.0
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | push / PR 到 `main` | ubuntu + windows：`pnpm --dir web install --frozen-lockfile`、`typecheck`、构建前端、`go vet ./...`、`go test -race ./...`；另在 ubuntu 上 `CGO_ENABLED=0` 交叉编译 darwin/arm64；`govulncheck ./...` 发现可达漏洞（含标准库）即失败 |
-| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 构建一次前端 → 6 个平台 `CGO_ENABLED=0` 编译（`-trimpath -ldflags "-s -w -X main.version=<版本>"`）→ 打包 → `checksums.txt` → 构建来源证明（attestation）→ `gh release create --generate-notes` |
+| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 构建一次前端 → 6 个平台 `CGO_ENABLED=0` 编译（`-trimpath -ldflags "-s -w -X main.version=<版本>"`）→ 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
 
 Go 版本取自 `go.mod`：`go` 指令是最低语言版本，`toolchain` 指令固定实际编译用的补丁版本（含标准库安全修复）；`actions/setup-go` 使用 `go-version-file: go.mod` + `check-latest: true` 读取它。升级工具链时修改 `toolchain` 一行即可。
 
@@ -30,7 +30,7 @@ Release 工作流用 `actions/attest-build-provenance` 为归档和 `checksums.t
 gh attestation verify cc-remote_0.2.0_linux_amd64.tar.gz -R huanfeng/cc-remote
 ```
 
-私有仓库需要 GitHub 套餐支持 artifact attestations（目前为 Enterprise Cloud）；不支持时该步骤会失败但不影响发布（`continue-on-error`），此时只能依赖 `checksums.txt` 校验。
+GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测返回 "Feature not available for user-owned private repositories"），因此该步骤仅在仓库公开时运行；私有期间只能依赖 `checksums.txt` 校验。
 
 ### 发布附件
 

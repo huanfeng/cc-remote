@@ -123,8 +123,9 @@ The repository is private, so the installer needs credentials. Either:
         $r = Invoke-Native $gh.Source $argv
         if ($r.Code -ne 0) {
             if ($r.Out -match "not found") {
-                $what = $Version; if (-not $what) { $what = "(latest)" }
-                throw "no release $what found in $Repo"
+                # GitHub's "latest" release never includes prereleases.
+                if ($Version) { throw "no release $Version found in $Repo" }
+                throw "no stable release found in $Repo (prereleases are skipped; use -Version <tag>)"
             }
             throw "gh release view failed: $($r.Out)"
         }
@@ -141,8 +142,9 @@ The repository is private, so the installer needs credentials. Either:
             $code = Get-StatusCode $_
             if ($method -eq "anonymous") { throw $authHelp }
             if ($code -eq 404) {
-                $what = $Version; if (-not $what) { $what = "(latest)" }
-                throw "no release $what found in $Repo"
+                # GitHub's "latest" release never includes prereleases.
+                if ($Version) { throw "no release $Version found in $Repo" }
+                throw "no stable release found in $Repo (prereleases are skipped; use -Version <tag>)"
             }
             if ($code -eq 401 -or $code -eq 403) { throw "GitHub API returned $code; check the token's permissions.`n$authHelp" }
             throw
