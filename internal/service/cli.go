@@ -297,7 +297,9 @@ func installCmd(args []string, version string) error {
 		return err
 	}
 	printExposure(cfg, out)
-	if *withAlias {
+	// Reinstalls (and "cc-remote update") refresh an existing ccr alias too, so
+	// its target and the Unix cc-remote link follow the new installation.
+	if *withAlias || aliasInstalled() {
 		if err = installAlias(aliasOptions{dryRun: *dryRun}, out); err != nil {
 			return err
 		}

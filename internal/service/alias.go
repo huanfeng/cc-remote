@@ -106,6 +106,16 @@ func AliasScript(goos, exe string, flags []string) string {
 	return "#!/bin/sh\n# ccr: cc-remote shared Claude Code launcher\nexec " + strings.Join(parts, " ") + " -- claude \"$@\"\n"
 }
 
+// aliasInstalled reports whether the default ccr launcher exists.
+func aliasInstalled() bool {
+	path, err := aliasPath("")
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
 func installAlias(opts aliasOptions, out io.Writer) error {
 	exe, flags, err := aliasTarget(out)
 	if err != nil {
