@@ -25,7 +25,7 @@ func unitPath() string {
 
 func renderUnit(cfg *Config) string {
 	unit := SystemdUnit(cfg.Exe, HostArgs(*cfg, managerName), serviceEnvFor(serviceEnv(managerName), cfg.Env))
-	return strings.Replace(unit, "Type=simple\n", "Type=simple\nWorkingDirectory="+SystemdQuote(homeDir(cfg.DataDir), false)+"\n", 1)
+	return strings.Replace(unit, "Type=simple\n", "Type=simple\nWorkingDirectory="+SystemdPath(homeDir(cfg.DataDir))+"\n", 1)
 }
 
 func register(cfg *Config, dryRun bool, out io.Writer) error {

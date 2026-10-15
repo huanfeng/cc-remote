@@ -142,6 +142,14 @@ func SystemdQuote(s string, execLine bool) string {
 	return `"` + s + `"`
 }
 
+// SystemdPath renders a path setting such as WorkingDirectory=. Unlike
+// ExecStart= and Environment=, systemd takes these values literally: quotes
+// are not removed (a quoted path is "not absolute" and the unit is rejected),
+// so only the "%" specifier character is escaped.
+func SystemdPath(s string) string {
+	return strings.ReplaceAll(s, "%", "%%")
+}
+
 // SystemdUnit renders the user unit running exe with args.
 func SystemdUnit(exe string, args []string, env map[string]string) string {
 	words := []string{SystemdQuote(exe, true)}
