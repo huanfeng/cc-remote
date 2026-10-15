@@ -18,4 +18,95 @@
 .cache-marker{flex-shrink:0;padding:1px 5px;border:1px solid #d9e2cc;border-radius:4px;background:#eff4e7;color:#6d805e;font-size:9px;line-height:1.5}
 .release-cache{position:absolute;right:3px;top:5px;width:25px;height:28px;background:none;border-radius:5px;color:#7b8572;font-size:18px}.release-cache:hover{background:#e3e8da;color:#344730}
 .session-row .dot.running{background:#6d9353;box-shadow:0 0 0 3px #7f9c6220;animation:blink 1.6s infinite}.session-row .dot.waiting{background:#b58123;box-shadow:0 0 0 3px #ba933720}.session-state.running{color:#4d7637;font-weight:600}.session-state.waiting{color:#9a6d1c;font-weight:600}.session-state.failed,.session-state.error{color:#a45c4c}
-@media(max-width:760px){.release-cache{width:32px;height:34px;top:1px;right:0}.session-row.cached .session-item{padding-right:33px}}
+@media(max-width:760px){.release-cache{width:32px;height:34px;top:1px;right:0}.session-row.cached .session-item{padding-right:33px}}/* Welcome and terminal connection actions need room on desktop and mobile. */
+.welcome-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:12px}.welcome-actions>button{min-height:44px;padding:12px 20px;font-size:13px}
+textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:116px;max-height:260px;resize:vertical;padding:14px 16px;line-height:1.7}
+.share-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:14px 0 18px}.share-actions>.secondary{min-height:44px;padding:12px 20px;flex-shrink:0;font-size:13px}.copy-feedback{font-size:12px;line-height:1.7;color:#527347;overflow-wrap:anywhere}.copy-feedback.failed{color:#a05e4f}
+@media(max-width:760px){.welcome-actions{width:100%;max-width:320px;flex-direction:column}.welcome-actions>button{width:100%}textarea.terminal-command{font-size:16px}}
+/* Resizable desktop sidebar (width set by the drag handle). */
+@media(min-width:761px){.sidebar{width:var(--sidebar-width,248px)}}
+/* Thin themed scrollbars everywhere: standard properties plus WebKit fallbacks. */
+:root{--scroll-thumb:#cfd5c5;--scroll-thumb-hover:#a6b196;--modal-bg:#fcfbf6}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}.conversation:hover,.session-list:hover,.modal:hover,textarea:hover,pre:hover,.status-table-wrap:hover{scrollbar-color:var(--scroll-thumb-hover) transparent}}
+::-webkit-scrollbar-button{display:none;width:0;height:0}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border-radius:8px;border:2px solid transparent;background-clip:padding-box}::-webkit-scrollbar-thumb:hover{background-color:var(--scroll-thumb-hover)}
+/* Modals scroll inside their frame; the thick top/bottom border keeps the scrollbar clear of the rounded corners. */
+.modal-backdrop{padding:16px}
+.modal{max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;border-top:14px solid var(--modal-bg);border-bottom:14px solid var(--modal-bg)}
+.modal,.modal.status-panel{padding-top:12px;padding-bottom:12px}
+.dot.error{padding:0}
+/* Icon buttons: fixed squares with grid-centered SVG icons (text glyphs like × have font-dependent metrics). */
+.svg-icon{display:block;flex-shrink:0}
+.icon,.icon-button,.release-cache,.delete-session,.remove-image,.remove-file{display:inline-grid;place-items:center;padding:0;line-height:1}
+.icon{width:36px;height:36px;min-width:36px;flex-shrink:0;font-size:inherit}
+.icon.mobile{display:none}.icon.desktop{display:inline-grid}
+@media(max-width:760px){.icon.mobile{display:inline-grid}.icon.desktop{display:none}.topbar .icon{width:32px;min-width:32px;height:32px}}
+.icon-button{width:26px;height:26px;flex-shrink:0;background:transparent;color:inherit;border-radius:6px}.icon-button:hover{background:#2a3a2d14}
+.banner button.icon-button{font-size:inherit;align-self:flex-start}
+.image-lightbox>button.icon-button{width:44px;height:44px;color:#fff;border-radius:10px}.image-lightbox>button.icon-button:hover{background:#ffffff1f}
+.release-cache{top:6px;right:4px;width:24px;height:24px;font-size:inherit}
+.delete-session{right:4px;bottom:6px;width:24px;height:24px}
+@media(max-width:760px){.release-cache{width:32px;height:32px;top:2px;right:1px}.delete-session{width:32px;height:32px;bottom:2px;right:1px}}
+.attach-button{display:inline-flex;align-items:center;gap:4px}
+.welcome-actions>button{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+/* Sidebar header: brand, host version, Claude status and logout. */
+.sidebar{container:sidebar/inline-size}
+.brand{display:flex;align-items:center;gap:9px;padding:0 2px 10px;font-size:15px}
+.brand .brand-symbol{width:30px;height:30px;border-radius:9px;font-size:20px;flex-shrink:0}
+.brand-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.brand-name{display:flex;align-items:center;flex-wrap:wrap;gap:2px 6px;min-width:0;line-height:1.3}
+.brand-name>span:first-child{white-space:nowrap}
+.version-pill{font-size:9.5px;font-weight:500;letter-spacing:.2px;color:#5b6e4e;background:#e3e9d8;border:1px solid #d3dcc5;border-radius:20px;padding:0 6px;line-height:1.6;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.brand-status{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:400;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4}
+.brand-status .dot{flex-shrink:0}.brand-status>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.brand .brand-action{width:30px;height:30px;min-width:30px;color:var(--muted);align-self:center}.brand .brand-action:hover{color:#344730}
+.brand .mobile{margin-left:0}
+/* Compact action row, tabs and search so the session list keeps most of the height. */
+.sidebar-actions{display:flex;gap:6px;flex-shrink:0}
+.sidebar-actions .new-session{flex:1 1 0;min-width:0;height:34px;margin:0;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;white-space:nowrap;text-align:center}
+.sidebar-actions .new-session span{overflow:hidden;text-overflow:ellipsis}
+.sidebar-actions .primary-action{background:#293c2e;border-color:#293c2e;color:#fff}.sidebar-actions .primary-action:hover{background:#415441}
+@container sidebar (max-width:205px){.sidebar-actions .new-session:not(.primary-action){flex:0 0 34px;padding:0}.sidebar-actions .new-session:not(.primary-action) span{display:none}}
+.sidebar>.tabs{margin:6px 2px 6px;gap:18px}.tabs button{padding:6px 0}
+.sidebar .session-search{margin:0 0 4px;padding:6px 10px;border-radius:8px}
+.session-list-heading{padding:2px 9px 5px}
+/* Global entries share one row at the sidebar bottom. */
+.sidebar-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:8px 0 10px}
+.sidebar-nav button{justify-content:center;gap:6px;padding:0 6px;height:32px;border:1px solid var(--line);background:#f6f6f0;white-space:nowrap;min-width:0}
+.sidebar-nav button span{width:auto;text-align:left;color:inherit;font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.sidebar-nav .svg-icon{color:var(--muted)}
+@media(max-width:760px){.sidebar-nav{padding-bottom:max(10px,env(safe-area-inset-bottom))}}
+/* Custom Select: trigger styled like inputs; listbox is portaled to <body>. */
+.select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;margin-top:8px;min-height:44px;padding:8px 10px 8px 12px;background:#fff;border:1px solid #daddd2;border-radius:10px;color:inherit;text-align:left;font-size:14px;font-weight:400;transition:border-color .15s,box-shadow .15s}
+.select-trigger:hover:not(:disabled){border-color:#bfc8b2}
+.select-trigger[aria-expanded=true]{border-color:#87a568;box-shadow:0 0 0 3px #87a56826}
+.select-trigger>.svg-icon{color:var(--muted);transition:transform .15s}
+.select-trigger[aria-expanded=true]>.svg-icon{transform:rotate(180deg)}
+.select-value{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+.select-label,.select-placeholder{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.select-placeholder{color:var(--muted)}
+.select-tag{flex-shrink:0;font-size:10px;font-weight:500;line-height:1.5;padding:0 6px;border-radius:20px;border:1px solid #dce4d0;background:#edf1e4;color:#5b6e4e}
+.select-tag.warn{background:#fbf1dc;border-color:#ecd8a8;color:#7a5b16}.select-tag.danger{background:#fbe3df;border-color:#efb7ad;color:#a3321f}
+.popover-menu{background:#fcfbf6;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px #27372c26;padding:4px;overflow:auto;overscroll-behavior:contain}
+.select-menu{z-index:60;margin:0;list-style:none;width:max-content;box-sizing:border-box}
+.popover-option{display:flex;align-items:flex-start;gap:6px;width:100%;padding:7px 12px 7px 6px;border-radius:7px;cursor:pointer;color:inherit;background:transparent;text-align:left;font-size:13px;line-height:1.4}
+.popover-option.active{background:#e6eddc}
+.popover-option[aria-selected=true] .popover-label{font-weight:600;color:#273c2d}
+.popover-check{width:16px;height:18px;flex-shrink:0;display:grid;place-items:center;color:#4d7637}
+.popover-text{display:flex;flex-direction:column;gap:1px;min-width:0}
+.popover-label{display:flex;align-items:center;gap:6px;min-height:18px;overflow-wrap:anywhere}
+.popover-text small,.modal .popover-text small{display:block;font-size:11px;color:var(--muted);line-height:1.45}
+@media(pointer:coarse){.popover-option{padding-top:10px;padding-bottom:10px}}
+.composer-bottom .select-trigger.send-key{width:auto;max-width:170px;min-height:0;margin:0;padding:3px 6px 3px 8px;font-size:10.5px;border-radius:6px;background:#f5f6ef;border-color:#e3e6d9;color:#6d7866;gap:4px}
+.composer-bottom .select-trigger.send-key .svg-icon{width:12px;height:12px}
+/* Settings dialog: section list on the left (top tabs on phones). */
+.modal.settings-modal{width:660px}
+.settings-layout{display:grid;grid-template-columns:150px minmax(0,1fr);gap:20px;margin-top:14px}
+.settings-tabs{display:flex;flex-direction:column;gap:2px;border-right:1px solid var(--line);padding-right:10px;align-self:start}
+.settings-tabs button{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;background:none;color:#46553f;padding:8px 10px;border-radius:8px;font-size:13px}
+.settings-tabs button:hover{background:#eef0e6}
+.settings-tabs button[aria-selected=true]{background:#e6eddc;color:#273c2d;font-weight:600}
+.modal .settings-tabs small{font-size:10px;font-weight:400;line-height:1.4}
+.settings-panel{min-width:0}.settings-panel h3{font-size:14px;margin:2px 0 0}.settings-panel label{margin:16px 0}
+@media(max-width:640px){.settings-layout{grid-template-columns:minmax(0,1fr);gap:8px}.settings-tabs{flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:0 0 6px;overflow-x:auto}.settings-tabs button{flex:1}}
