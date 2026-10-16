@@ -73,3 +73,10 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .composer-expand{position:absolute;top:6px;right:8px;display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid #e3e6d9;border-radius:7px;background:#fffffff0;color:#6d7866;cursor:pointer}
 .composer-expand:hover{background:#f5f6ef;color:#3f4a37}
 .composer-input:has(.composer-expand) textarea{padding-right:40px}
+/* Chips are buttons: model and effort open the quick switch list. */
+.session-chips .chip{font-family:inherit;cursor:pointer}
+.quick-switch{position:fixed;z-index:50;min-width:230px;max-width:min(360px,calc(100vw - 16px));max-height:min(420px,60vh)}
+.quick-switch .popover-option:hover{background:#e6eddc}
+.quick-switch-head{display:flex;justify-content:space-between;align-items:center;padding:3px 4px 3px 10px;font-size:11px;color:var(--muted)}
+.slash-button{flex-shrink:0;width:28px;height:28px;padding:0;border-radius:7px;background:transparent;color:#52634c;font:600 15px/1 ui-monospace,Consolas,monospace;border:1px solid #e3e6d9}
+.slash-button:hover{background:#f0f3e8}

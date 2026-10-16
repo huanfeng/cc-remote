@@ -215,6 +215,36 @@ func (r *Runner) Shows(text string) bool {
 // Submit presses Enter.
 func (r *Runner) Submit() error { return r.write([]byte("\r")) }
 
+// ConfirmDialog waits up to wait for a dialog whose text contains title and
+// confirms it when its selected option starts with "Yes" (the user already
+// confirmed on the web), e.g. Claude Code's "Switch model?" after /model.
+func (r *Runner) ConfirmDialog(title string, wait time.Duration) bool {
+	for end := time.Now().Add(wait); time.Now().Before(end); time.Sleep(150 * time.Millisecond) {
+		r.mu.Lock()
+		lines := r.scr.lines()
+		r.mu.Unlock()
+		shown, selected := false, ""
+		for _, line := range lines {
+			if strings.Contains(line, title) {
+				shown = true
+			}
+			if i := strings.Index(line, "❯"); i >= 0 && shown {
+				selected = strings.TrimLeft(line[i+len("❯"):], " 0123456789.")
+			}
+		}
+		if shown && selected != "" {
+			if !strings.HasPrefix(selected, "Yes") {
+				return false
+			}
+			return r.write([]byte("\r")) == nil
+		}
+		if isClosed(r.done) {
+			return false
+		}
+	}
+	return false
+}
+
 // Activity is Claude Code's spinner line while it works, such as
 // "Composing… (8m 33s · ↓ 26.2k tokens)", or "".
 func (r *Runner) Activity() string {

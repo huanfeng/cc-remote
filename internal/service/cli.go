@@ -32,6 +32,10 @@ func (e ExitError) Error() string { return fmt.Sprintf("exit status %d", e.Code)
 // supervisor stops restarting after a few such exits.
 const ExitConflict = 75
 
+// ExitRestart is the host's exit code when it stops so that the service
+// manager starts it again, e.g. to run an update installed with --when-idle.
+const ExitRestart = 76
+
 type schedState struct {
 	Installed, Enabled bool
 	Detail             string
@@ -228,6 +232,7 @@ func installCmd(args []string, version string) error {
 	configDir := fs.String("claude-config-dir", "", "Claude config directory")
 	allowInsecure := fs.Bool("allow-insecure-remote", false, "allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)")
 	noStart := fs.Bool("no-start", false, "register without starting")
+	whenIdle := fs.Bool("when-idle", false, "replace the executable without stopping a running host; it restarts itself once no session is busy")
 	withAlias := fs.Bool("alias", false, "also install the ccr alias")
 	dryRun := fs.Bool("dry-run", false, "print what would be done without changing anything")
 	envF := addEnvFlags(fs, "capture HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY from the current environment (default when the installation has no environment configured yet)")
@@ -274,9 +279,15 @@ func installCmd(args []string, version string) error {
 	if err != nil {
 		return err
 	}
+	// --when-idle leaves a running service alone: the executable is swapped
+	// (a running one is moved aside) and the host restarts itself when idle.
+	hostURL, _ := findHost(cfg)
+	deferred := *whenIdle && existing != nil && hostURL != "" && !*dryRun
 	if *dryRun {
 		fmt.Fprintln(out, "[dry-run] no changes will be made")
 		fmt.Fprintf(out, "[dry-run] stop any host answering at %s\n", strings.Join(listen.ProbeURLs(cfg.Listen), ", "))
+	} else if deferred {
+		fmt.Fprintf(out, "Host running at %s; installing without stopping it (--when-idle)\n", hostURL)
 	} else if existing != nil || hostAnswering(cfg) {
 		if err = stop(cfg, out); err != nil {
 			return err
@@ -292,6 +303,27 @@ func installCmd(args []string, version string) error {
 			return err
 		}
 		fmt.Fprintf(out, "Wrote %s\n", filepath.Join(absData, configName))
+	}
+	if deferred {
+		// Re-registering could restart the service; its definition reads
+		// the settings from service.json, written above.
+		if *withAlias || aliasInstalled() {
+			if err = installAlias(aliasOptions{}, out); err != nil {
+				return err
+			}
+		}
+		busy, supported, err := requestRestart(hostURL, readToken(cfg.DataDir))
+		switch {
+		case err != nil:
+			return fmt.Errorf("new version installed, but asking the host to restart failed: %w (run: cc-remote service restart)", err)
+		case !supported:
+			fmt.Fprintln(out, "新版本已安装。运行中的宿主版本较旧，不能自动重启；空闲时运行 cc-remote service restart 生效。")
+		case len(busy) == 0:
+			fmt.Fprintln(out, "新版本已安装，没有忙碌的会话，宿主正在重启。")
+		default:
+			fmt.Fprintf(out, "新版本已安装。宿主会在这些会话空闲后自动重启：%s\n", strings.Join(busy, "、"))
+		}
+		return nil
 	}
 	if err = register(cfg, *dryRun, out); err != nil {
 		return err

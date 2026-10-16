@@ -219,6 +219,11 @@ func (s *Server) terminalWriter(ts *terminalSession) {
 				log.Printf("terminal %s: %v", ts.id, err)
 				continue
 			}
+			// The web asked before switching (the prompt cache no longer
+			// applies); Claude Code's own "Switch model?" would block the terminal.
+			if strings.HasPrefix(text, "/model ") {
+				ts.runner.ConfirmDialog("Switch model?", 3*time.Second)
+			}
 			if first && !strings.HasPrefix(text, "/") { // local commands run no UserPromptSubmit
 				s.confirmFirstPrompt(ts, text, before)
 			}

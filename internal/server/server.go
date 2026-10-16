@@ -39,6 +39,9 @@ type Config struct {
 	StartedAt                         time.Time
 	// Shutdown asks the host process to exit gracefully; nil disables remote shutdown.
 	Shutdown func()
+	// Restart asks the host process to exit so its service manager starts it
+	// again (an installed update takes effect); nil when not run as a service.
+	Restart func()
 }
 
 // execution is a busy period of a managed session (see runtime.go).
@@ -81,6 +84,7 @@ type Server struct {
 	idleTimeout     time.Duration // guarded by mu
 	requests        map[string]*pending
 	closing         bool
+	restartPending  bool // a restart waits for busy sessions (update installed)
 	channels        map[string]*channelConnection
 	channelRequests map[string]*channelApproval
 	modelCache      modelsCache
@@ -113,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
 	mux.HandleFunc("POST /api/admin/shutdown", s.shutdown)
+	mux.HandleFunc("POST /api/admin/restart", s.restart)
 	mux.HandleFunc("GET /api/claude/settings", s.settings)
 	mux.HandleFunc("PUT /api/claude/settings", s.settings)
 	mux.HandleFunc("GET /api/preferences", s.preferences)
@@ -228,7 +233,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart()})
 }
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	x, e := s.store.List()

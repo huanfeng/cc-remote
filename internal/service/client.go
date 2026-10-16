@@ -97,6 +97,37 @@ func gracefulShutdown(url, token string) error {
 	return nil
 }
 
+// requestRestart asks the running host to restart once no session is busy,
+// so it runs the newly installed binary. It reports the busy sessions, or
+// supported=false for a host too old to restart itself.
+func requestRestart(url, token string) (busy []string, supported bool, err error) {
+	req, err := http.NewRequest("POST", url+"/api/admin/restart", strings.NewReader(`{"when":"idle"}`))
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	client := *httpClient
+	client.Timeout = 5 * time.Second
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
+		return nil, false, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, true, fmt.Errorf("restart endpoint returned %s %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out struct {
+		Busy []string `json:"busy"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+	return out.Busy, true, nil
+}
+
 // fetchStatus reads /api/status, falling back to /api/info on older hosts.
 func fetchStatus(url, token string) (map[string]any, string, error) {
 	for _, path := range []string{"/api/status", "/api/info"} {

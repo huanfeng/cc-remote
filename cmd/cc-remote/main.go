@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -379,7 +380,14 @@ func runHost(argv []string) error {
 	attachCommand := prefix + quote(hostExe) + " attach --host " + quote(channelURL) + " --data-dir " + quote(absData)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop})
+	// Under a service manager the host can restart itself: it exits with
+	// ExitRestart and the manager starts it again (with an updated binary).
+	var restartRequested atomic.Bool
+	var restart func()
+	if *opts.serviceManager != "" {
+		restart = func() { restartRequested.Store(true); stop() }
+	}
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
 	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errs := make(chan error, len(listeners)+1)
@@ -405,6 +413,10 @@ func runHost(argv []string) error {
 	appErr := app.Close(shutdown)
 	publicErr := public.Shutdown(shutdown)
 	bridgeErr := bridge.Shutdown(shutdown)
+	if restartRequested.Load() {
+		log.Printf("Exiting for a restart by the service manager")
+		return service.ExitError{Code: service.ExitRestart}
+	}
 	if appErr != nil {
 		return appErr
 	}

@@ -23,6 +23,7 @@ const checksumsName = "checksums.txt"
 
 type updater struct {
 	repo, current string
+	whenIdle      bool // service install --when-idle
 	goos, goarch  string
 	src           source
 	out           io.Writer
@@ -40,11 +41,12 @@ func Run(current string, args []string) error {
 	check := fs.Bool("check", false, "only report whether a newer release exists")
 	version := fs.String("version", "", "install this release tag instead of the latest (e.g. v0.2.0)")
 	yes := fs.Bool("yes", false, "install even when not newer (dev builds, reinstall, downgrade)")
+	whenIdle := fs.Bool("when-idle", false, "install without stopping the running service; it restarts itself once no session is busy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes]")
+		return fmt.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes] [--when-idle]")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -62,7 +64,7 @@ func Run(current string, args []string) error {
 		repo = DefaultRepo
 	}
 	u := &updater{
-		repo: repo, current: current,
+		repo: repo, current: current, whenIdle: *whenIdle,
 		goos: runtime.GOOS, goarch: runtime.GOARCH,
 		src: pickSource(repo), out: os.Stdout,
 		exePath: exe, installedPath: installed,
@@ -197,7 +199,11 @@ func (u *updater) serviceInstalled() bool {
 func (u *updater) apply(bin, tag string) error {
 	if u.serviceInstalled() {
 		fmt.Fprintf(u.out, "service installation found at %s; running \"service install\" from %s\n", u.installedPath, tag)
-		if err := u.runCmd(bin, "service", "install"); err != nil {
+		args := []string{"service", "install"}
+		if u.whenIdle {
+			args = append(args, "--when-idle")
+		}
+		if err := u.runCmd(bin, args...); err != nil {
 			return fmt.Errorf("service install with the new binary failed: %w", err)
 		}
 		fmt.Fprintf(u.out, "updated to %s\n", tag)

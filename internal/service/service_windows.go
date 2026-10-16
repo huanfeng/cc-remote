@@ -326,6 +326,12 @@ func Supervise(args []string) error {
 			backoff = 5 * time.Second
 		}
 		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == ExitRestart {
+			logLine(logPath, "host restarting (e.g. to run an installed update)")
+			backoff, conflicts = 5*time.Second, 0
+			time.Sleep(time.Second)
+			continue
+		}
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == ExitConflict {
 			conflicts++
 			if conflicts >= maxConflictRetries {

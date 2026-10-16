@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -315,17 +314,8 @@ var proxyHeaders = []string{"Forwarded", "X-Real-Ip", "Via"}
 // shutdown is loopback-only in addition to bearer authentication, so a leaked
 // token used remotely cannot stop the host.
 func (s *Server) shutdown(w http.ResponseWriter, r *http.Request) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	ip := net.ParseIP(host)
-	if err != nil || ip == nil || !ip.IsLoopback() {
-		fail(w, 403, "仅允许本机关闭宿主")
+	if !localAdmin(w, r, "关闭宿主") {
 		return
-	}
-	for name := range r.Header {
-		if slices.Contains(proxyHeaders, name) || strings.HasPrefix(name, "X-Forwarded-") {
-			fail(w, 403, "仅允许本机直接关闭宿主，不接受经反向代理转发的请求")
-			return
-		}
 	}
 	if s.cfg.Shutdown == nil {
 		fail(w, 501, "当前宿主未启用远程关闭")

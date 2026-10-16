@@ -24,29 +24,32 @@ function useEscape(close: () => void) {
   }, []);
 }
 
-/** Read-only effective settings in the top bar: override, or 默认(<inherited>). */
-export function SessionChips({ session, defaults, open }: { session: SessionInfo; defaults?: Defaults; open: () => void }) {
+/** Effective settings in the top bar: override, or 默认(<inherited>). The model
+ * and effort chips open a list to switch at once (quick); the others open the settings. */
+export function SessionChips({ session, defaults, open, quick }: { session: SessionInfo; defaults?: Defaults; open: () => void; quick?: (kind: 'model' | 'effort', anchor: DOMRect) => void }) {
   if (session.mode === 'channel') return <button type="button" className="session-chips" title="会话设置" onClick={open}><span className="chip inherited">设置由终端持有</span></button>;
-  const chip = (label: string, value: string | undefined, inherited: string | undefined, tone = '') => {
+  const button = (className: string, title: string, text: string, kind?: 'model' | 'effort') => <button type="button" className={className} title={kind && quick ? `${title}（点击切换）` : title} aria-haspopup={kind && quick ? 'listbox' : undefined}
+    onClick={event => { if (kind && quick) quick(kind, event.currentTarget.getBoundingClientRect()); else open(); }}>{text}</button>;
+  const chip = (label: string, value: string | undefined, inherited: string | undefined, tone = '', kind?: 'model' | 'effort') => {
     const shown = value || `默认(${inherited || 'Claude 配置'})`;
-    return <span className={`chip${value ? '' : ' inherited'}${tone}`} title={`${label}：${shown}`}>{shown}</span>;
+    return button(`chip${value ? '' : ' inherited'}${tone}`, `${label}：${shown}`, shown, kind);
   };
   const live = session.mode === 'terminal' ? session.live : undefined;
   if (live?.model) {
     const effort = live.effort || session.effort || defaults?.effort;
     const pct = Math.round(live.contextPercent);
-    return <button type="button" className="session-chips" title="会话设置" aria-label="打开会话设置" onClick={open}>
-      <span className="chip" title={`模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`}>{live.model}</span>
-      {effort && <span className="chip" title={`推理强度：${effort}`}>{effort}</span>}
-      {live.contextSize > 0 && <span className={`chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`} title={`上下文：${live.contextTokens.toLocaleString()} / ${live.contextSize.toLocaleString()} tokens`}>上下文 {pct}% · {compact(live.contextTokens)}/{compact(live.contextSize)}</span>}
-      {live.durationMs > 0 && <span className="chip inherited" title="会话时长">{duration(live.durationMs / 1000)}</span>}
-      {live.costUSD > 0 && <span className="chip inherited" title="本次运行的费用（按 API 价格估算）">${live.costUSD.toFixed(2)}</span>}
-    </button>;
+    return <div className="session-chips">
+      {button('chip', `模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`, live.model, 'model')}
+      {effort && button('chip', `推理强度：${effort}`, effort, 'effort')}
+      {live.contextSize > 0 && button(`chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`, `上下文：${live.contextTokens.toLocaleString()} / ${live.contextSize.toLocaleString()} tokens`, `上下文 ${pct}% · ${compact(live.contextTokens)}/${compact(live.contextSize)}`)}
+      {live.durationMs > 0 && button('chip inherited', '会话时长', duration(live.durationMs / 1000))}
+      {live.costUSD > 0 && button('chip inherited', '本次运行的费用（按 API 价格估算）', `$${live.costUSD.toFixed(2)}`)}
+    </div>;
   }
   const perm = session.permissionMode || defaults?.permissionMode || '';
-  return <button type="button" className="session-chips" title="会话设置（模型 · 推理强度 · 权限模式）" aria-label="打开会话设置" onClick={open}>
-    {chip('模型', session.model, defaults?.model)}{chip('推理强度', session.effort, defaults?.effort)}{chip('权限模式', session.permissionMode, defaults?.permissionMode, permTone(perm))}
-  </button>;
+  return <div className="session-chips">
+    {chip('模型', session.model, defaults?.model, '', 'model')}{chip('推理强度', session.effort, defaults?.effort, '', 'effort')}{chip('权限模式', session.permissionMode, defaults?.permissionMode, permTone(perm))}
+  </div>;
 }
 
 export function SessionSettings<T extends SessionInfo>({ api, session, defaults, close, onUpdated, onDelete }: { api: Api; session: T; defaults?: Defaults; close: () => void; onUpdated: (session: T) => void; onDelete: () => void }) {
