@@ -106,3 +106,9 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .task-progress{color:#8a7130!important}
 @media(max-width:760px){.agent-meta{display:none}.agent-body{padding:4px 10px 10px}.agent-transcript{padding-left:8px}}
 .agent-icon.is-completed{color:#5f7d4c}.agent-icon.is-failed,.agent-icon.is-interrupted,.agent-icon.is-killed,.agent-icon.is-stopped{color:#a05e4f}
+.mode-choice{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 4px}
+.mode-choice button{text-align:left;background:#f6f7f0;border:1px solid #e1e5d8;border-radius:10px;padding:10px 12px;color:inherit;display:flex;flex-direction:column;gap:4px}
+.mode-choice button.active{border-color:#87a568;background:#eaf1df}
+.mode-choice strong{font-size:13px;font-weight:500}
+.mode-choice small{font-size:11px;line-height:1.5}
+@media(max-width:760px){.mode-choice{grid-template-columns:1fr}}

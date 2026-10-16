@@ -28,6 +28,7 @@ import (
 	"cc-remote/internal/server"
 	"cc-remote/internal/service"
 	"cc-remote/internal/store"
+	"cc-remote/internal/terminal"
 	"cc-remote/internal/update"
 	webui "cc-remote/web"
 )
@@ -46,6 +47,7 @@ commands:
   service    install/config/uninstall/start/stop/restart/status/logs the background service
   alias      install/uninstall/status the ccr launcher
   terminal   start a shared terminal session (legacy form of "--")
+  attach     connect this terminal to a terminal session the host holds (--new starts one here)
   update     update cc-remote to the latest release
   version    print version information
   help       show this help
@@ -97,6 +99,8 @@ func run() error {
 			return update.Run(version, os.Args[2:])
 		case "terminal":
 			return channel.Launch(os.Args[2:])
+		case "attach":
+			return terminal.Attach(os.Args[2:], config.DefaultDataDir())
 		}
 	}
 	for i, arg := range os.Args[1:] {
@@ -123,6 +127,8 @@ func run() error {
 			return channel.SessionHook()
 		case "channel-ask-hook":
 			return channel.AskHook()
+		case "terminal-hook":
+			return terminal.RunHook()
 		}
 	}
 	return runHost(os.Args[1:])
@@ -343,9 +349,10 @@ func runHost(argv []string) error {
 		quote = func(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
 	}
 	terminalCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData) + " --claude-config-dir " + quote(configDir) + " -- " + quote(claudeBin)
+	attachCommand := prefix + quote(hostExe) + " attach --host " + quote(channelURL) + " --data-dir " + quote(absData)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop})
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop})
 	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errs := make(chan error, len(listeners)+1)

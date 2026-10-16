@@ -32,6 +32,9 @@ type channelConnection struct {
 	seen           time.Time
 	next           int64
 	queue          []channelCommand
+	// keyPrefix scopes transcript keys; a terminal session uses its Claude
+	// session ID, so /clear's new transcript is not mistaken for the old one.
+	keyPrefix string
 }
 type channelApproval struct {
 	connection *channelConnection
@@ -49,6 +52,10 @@ func (s *Server) channelLive(c *channelConnection) bool {
 func (s *Server) decorateChannel(x *store.Session) {
 	if rt := s.procs[x.ID]; rt != nil && len(rt.sent) > 0 {
 		x.Queued = rt.queuedMessages()
+	}
+	if x.Mode == "terminal" {
+		s.decorateTerminalLocked(x)
+		return
 	}
 	if x.Mode != "channel" {
 		return
@@ -661,7 +668,7 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		hash := sha256.Sum256(append([]byte(ev.Kind+"\x00"+ev.Text+"\x00"), ev.Payload...))
 		key := hex.EncodeToString(hash[:])
 		occurrences[key]++
-		key = fmt.Sprintf("%s:%d", key, occurrences[key])
+		key = fmt.Sprintf("%s%s:%d", c.keyPrefix, key, occurrences[key])
 		added, e := s.store.RecordTranscript(c.sessionID, key, ev.Kind, ev.Text, ev.Payload)
 		// A completed tool result after a prompt means the terminal has progressed.
 		// Claude remains the authority on whether a relayed verdict is still valid.

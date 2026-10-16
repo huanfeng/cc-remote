@@ -35,8 +35,10 @@
 
 ## 阶段 4：与终端交接
 
-- 「在终端继续」：结束常驻进程并给出 `claude --resume <id>`，网页端加锁防止双写；「接回网页」恢复托管。
+- 已由终端会话取代（见 [design/terminal-sessions.md](design/terminal-sessions.md)）：宿主持有交互式 Claude Code，网页和 `cc-remote attach` 同时接入，切换不中断任务。
+- 终端会话阶段 1–2 已完成：伪终端运行器、hook 驱动的状态、网页消息与提问、`cc-remote attach`。
+- 后续：网页内终端（xterm）、工具审批经 hook 送到网页、宿主升级前提示忙碌会话、共享会话逐步下线。
 
 ## 暂不做
 
-- 共享模式的伪终端中转（ConPTY / pty）。网页消息经 Channels 送达，Claude Code 不会当作命令执行；若以后需要，只评估「终端空闲时插入 `/compact`、`/clear`」的最小范围。
+- 共享模式的伪终端中转：终端会话已经用伪终端实现，共享模式保持 Channels 方案，不再另做。

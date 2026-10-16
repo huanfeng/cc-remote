@@ -28,6 +28,7 @@ type Runner func(context.Context, claude.Options, func(claude.Event) error) erro
 type Config struct {
 	UploadDir                                                                                 string
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL, TerminalCommand string
+	AttachCommand                                                                             string // cc-remote attach with this host's flags; the web appends a session
 	Assets                                                                                    fs.FS
 	// Runner runs one turn per message instead of a long-lived process (tests).
 	Runner Runner
@@ -72,6 +73,7 @@ type Server struct {
 	mu              sync.Mutex
 	runs            map[string]*execution
 	procs           map[string]*sessionRuntime
+	terminals       map[string]*terminalSession // running terminal sessions by session ID
 	startProcess    ProcessStarter
 	stopReaper      chan struct{}
 	closers         sync.WaitGroup // detached processes being closed
@@ -93,7 +95,7 @@ func New(st *store.Store, cfg Config) *Server {
 	if start == nil {
 		start = defaultProcessStarter(cfg)
 	}
-	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, startProcess: start, stopReaper: make(chan struct{}), idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}, channelRequests: map[string]*channelApproval{}}
+	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}, channelRequests: map[string]*channelApproval{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
 	return s
 }
@@ -124,6 +126,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.events)
 	mux.HandleFunc("GET /api/sessions/{id}/events/{seq}", s.eventAt)
 	mux.HandleFunc("GET /api/sessions/{id}/tasks", s.tasks)
+	mux.HandleFunc("POST /api/terminals/{id}/hook", s.terminalHook)
+	mux.HandleFunc("GET /api/terminals/{id}/stream", s.terminalStream)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
@@ -223,7 +227,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "channelExperimental": true})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true})
 }
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	x, e := s.store.List()
@@ -256,6 +260,10 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Title string `json:"title"`
 		Cwd   string `json:"cwd"`
+		// Mode "terminal" runs an interactive Claude Code the host holds; the
+		// request must confirm trusting the directory (Claude asks on first use).
+		Mode        string `json:"mode"`
+		TrustFolder bool   `json:"trustFolder"`
 		overrideRequest
 	}
 	if !decode(w, r, &req) {
@@ -279,10 +287,22 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
+	if req.Mode != "" && req.Mode != "managed" && req.Mode != "terminal" {
+		fail(w, 400, "无效的会话类型")
+		return
+	}
+	if req.Mode == "terminal" && !req.TrustFolder {
+		fail(w, 400, "终端会话需要确认信任此目录")
+		return
+	}
 	x, e := s.store.Create(req.Title, cwd, store.ID(), false)
 	if e == nil {
 		e = s.store.SetOverrides(x.ID, overrides.PermissionMode, overrides.Model, overrides.Effort)
 		x.PermissionMode, x.Model, x.Effort = overrides.PermissionMode, overrides.Model, overrides.Effort
+	}
+	if e == nil && req.Mode == "terminal" {
+		e = s.store.SetMode(x.ID, "terminal")
+		x.Mode = "terminal"
 	}
 	if e != nil {
 		fail(w, 500, "无法创建会话")
@@ -390,6 +410,23 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "会话不存在")
 		return
 	}
+	if x.Mode == "terminal" {
+		// Claude Code's own terminal runs every command and skill itself.
+		if strings.HasPrefix(req.Text, "/") && len(req.AttachmentIDs) > 0 {
+			s.mu.Unlock()
+			fail(w, 400, "命令不能附带附件")
+			return
+		}
+		prompt, payload, e := s.messageAttachments(x.ID, req.Text, req.AttachmentIDs)
+		if e != nil {
+			s.mu.Unlock()
+			fail(w, 400, e.Error())
+			return
+		}
+		s.terminalMessageLocked(w, x, prompt, store.QueuedMessage{Text: req.Text, Payload: payload})
+		s.mu.Unlock()
+		return
+	}
 	promptText := req.Text
 	name, args, _ := strings.Cut(strings.TrimPrefix(req.Text, "/"), " ")
 	native := strings.HasPrefix(req.Text, "/") && s.nativeCommand(x, name)
@@ -458,6 +495,11 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
+	if s.terminals[r.PathValue("id")] != nil {
+		s.terminalStopLocked(w, r.PathValue("id"))
+		s.mu.Unlock()
+		return
+	}
 	run, ok := s.runs[r.PathValue("id")]
 	if ok {
 		run.interrupt()
@@ -486,6 +528,15 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.decorateChannel(&x)
 	run := s.runs[id]
+	if ts := s.terminals[id]; ts != nil {
+		// Deleting ends the terminal session's Claude Code (its history stays).
+		delete(s.terminals, id)
+		if s.channels[ts.claudeID] == ts.conn {
+			delete(s.channels, ts.claudeID)
+		}
+		s.closeTerminalAsync(ts)
+		x.Online = false
+	}
 	if x.Online {
 		s.mu.Unlock()
 		fail(w, 409, "共享终端在线，请先退出终端")
@@ -849,6 +900,10 @@ func (s *Server) Close(ctx context.Context) error {
 	if !s.reaperStopped {
 		s.reaperStopped = true
 		close(s.stopReaper)
+	}
+	// Terminal sessions end with the host; they resume (--resume) on next use.
+	for _, ts := range s.terminals {
+		s.closeTerminalAsync(ts)
 	}
 	s.mu.Unlock()
 	if err := s.closeProcesses(ctx); err != nil {

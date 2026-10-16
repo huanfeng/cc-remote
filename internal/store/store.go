@@ -178,6 +178,12 @@ func (s *Store) SetResume(id string) error {
 	return err
 }
 
+// SetClaudeID follows a session to a new Claude session (/clear, /resume).
+func (s *Store) SetClaudeID(id, claudeID string) error {
+	_, err := s.db.Exec(`UPDATE sessions SET claude_id=?,updated_at=? WHERE id=?`, claudeID, now(), id)
+	return err
+}
+
 func (s *Store) SetMode(id, mode string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET mode=?,updated_at=? WHERE id=?`, mode, now(), id)
 	return err

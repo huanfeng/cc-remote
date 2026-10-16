@@ -118,7 +118,7 @@ export function StatusPanel({ api, close, select }: { api: Api; close: () => voi
           <thead><tr>{header('title', '标题')}{header('mode', '模式')}{header('status', '状态')}{header('turns', '轮次')}{header('tokens', 'Tokens')}{header('costUSD', '费用')}{header('durationMs', '耗时')}{header('lastActivityAt', '最后活动')}</tr></thead>
           <tbody>{rows.length === 0 ? <tr><td colSpan={8} className="muted">暂无会话</td></tr> : rows.map(x => <tr key={x.id} tabIndex={0} title={x.cwd} onClick={() => select(x.id)} onKeyDown={event => { if (event.key === 'Enter') select(x.id); }}>
             <td data-label="标题"><strong>{x.title || '未命名会话'}</strong></td>
-            <td data-label="模式">{x.mode === 'channel' ? '共享' : '托管'}</td>
+            <td data-label="模式">{x.mode === 'channel' ? '共享' : x.mode === 'terminal' ? '终端' : '托管'}</td>
             <td data-label="状态"><span className={`dot ${x.status}`} />{statusText[x.status] || x.status}</td>
             <td data-label="轮次">{x.turns}</td>
             <td data-label="Tokens">{x.costKnown ? number(tokens(x)) : '—'}</td>

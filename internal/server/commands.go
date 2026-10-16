@@ -80,8 +80,27 @@ func (s *Server) nativeCommand(x store.Session, name string) bool {
 	return found
 }
 
+// terminalCommands are offered in a terminal session's menu; Claude Code's
+// terminal runs any other command typed too.
+var terminalCommands = []webCommand{
+	{"help", "显示网页支持的命令", false},
+	{"status", "查看当前会话状态", false},
+	{"stop", "停止当前轮次（Esc）；再按一次相当于 Ctrl+C", false},
+	{"compact", "压缩上下文，可附加保留重点", false},
+	{"clear", "开始新的上下文（网页保留之前的记录）", false},
+	{"model", "切换模型，例如 /model opus", false},
+	{"effort", "设置推理强度，例如 /effort high", false},
+	{"context", "查看上下文用量", false},
+	{"usage", "查看用量", false},
+	{"agents", "管理子 agent", false},
+	{"config", "打开设置面板", false},
+}
+
 // commandMenu lists the web commands plus, for managed sessions, Claude's own.
 func (s *Server) commandMenu(x store.Session) []webCommand {
+	if x.Mode == "terminal" {
+		return append(append([]webCommand{}, terminalCommands...), s.skillCommands(x.Cwd)...)
+	}
 	menu := commandList(x.Mode == "channel")
 	names, known := s.claudeCommands(x.ID)
 	if x.Mode == "channel" || !known {
@@ -135,10 +154,28 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "命令过长")
 		return
 	}
+	if x.Mode == "terminal" {
+		switch name {
+		case "stop":
+			s.mu.Lock()
+			s.terminalStopLocked(w, x.ID)
+			s.mu.Unlock()
+			return
+		case "help", "status", "config", "permissions":
+		default:
+			respond(w, 200, map[string]any{"sendMessage": true}) // typed into Claude Code's terminal
+			return
+		}
+	}
 	result := map[string]any{}
 	switch name {
 	case "help":
 		result["commands"] = commandList(x.Mode == "channel")
+		if x.Mode == "terminal" {
+			result["commands"] = terminalCommands
+			result["message"] = "终端会话里，除 /help、/status、/config、/stop 外，所有命令都原样输入 Claude Code 的终端执行（包括插件命令和技能）。"
+			break
+		}
 		result["message"] = "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear（/new、/reset）、/compact、/stop；托管会话中 Claude Code 报告的其它命令（如 /context、/usage、/init 及插件命令和技能）原样交给 Claude 执行。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。共享会话的原生命令需在终端执行。"
 	case "status":
 		s.mu.Lock()
