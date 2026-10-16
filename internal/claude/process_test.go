@@ -177,3 +177,26 @@ func TestProcessArgsUseStreamInput(t *testing.T) {
 		}
 	}
 }
+
+// A task ends on its notification or on an update to a final status.
+func TestProcessTracksTaskEnds(t *testing.T) {
+	p := &Process{tasks: map[string]bool{}}
+	meta := func(line string) streamMeta {
+		var m streamMeta
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	p.trackTasks(meta(`{"type":"system","subtype":"task_started","task_id":"a"}`))
+	p.trackTasks(meta(`{"type":"system","subtype":"task_started","task_id":"b"}`))
+	p.trackTasks(meta(`{"type":"system","subtype":"task_updated","task_id":"a","patch":{"status":"running"}}`))
+	if !p.HasTask("a") || p.BackgroundTasks() != 2 {
+		t.Fatal("running update ended a task")
+	}
+	p.trackTasks(meta(`{"type":"system","subtype":"task_updated","task_id":"a","patch":{"status":"killed"}}`))
+	p.trackTasks(meta(`{"type":"system","subtype":"task_notification","task_id":"b","status":"completed"}`))
+	if p.HasTask("a") || p.HasTask("b") || p.BackgroundTasks() != 0 {
+		t.Fatal("ended tasks still tracked")
+	}
+}

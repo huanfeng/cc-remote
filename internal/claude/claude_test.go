@@ -140,6 +140,37 @@ func TestCommandAndConfig(t *testing.T) {
 	}
 }
 
+// Subagent output carries the Agent call it belongs to, in Parent and in the
+// payload; its partial text never mixes into the main reply's stream.
+func TestParseSubagentEvents(t *testing.T) {
+	events, _, err := parseEvent([]byte(`{"type":"assistant","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"text","text":"looking"},{"type":"tool_use","id":"t1","name":"Glob","input":{}}]}}`))
+	if err != nil || len(events) != 2 {
+		t.Fatal(events, err)
+	}
+	for _, e := range events {
+		var p struct {
+			Parent string `json:"parent_tool_use_id"`
+			ID     string `json:"id"`
+		}
+		if e.Parent != "toolu_A" || json.Unmarshal(e.Payload, &p) != nil || p.Parent != "toolu_A" {
+			t.Fatalf("%s: parent %q payload %s", e.Kind, e.Parent, e.Payload)
+		}
+		if e.Kind == "tool" && p.ID != "t1" {
+			t.Fatalf("tool payload lost its fields: %s", e.Payload)
+		}
+	}
+	events, _, _ = parseEvent([]byte(`{"type":"user","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`))
+	if len(events) != 1 || events[0].Parent != "toolu_A" {
+		t.Fatal(events)
+	}
+	if events, _, _ = parseEvent([]byte(`{"type":"stream_event","parent_tool_use_id":"toolu_A","event":{"delta":{"type":"text_delta","text":"x"}}}`)); len(events) != 0 {
+		t.Fatal("subagent delta streamed into the main reply")
+	}
+	if events, _, _ = parseEvent([]byte(`{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"main"}]}}`)); len(events) != 1 || events[0].Parent != "" || len(events[0].Payload) != 0 {
+		t.Fatal("main message marked as subagent", events)
+	}
+}
+
 func TestParseEvents(t *testing.T) {
 	tests := []struct {
 		line, kind, text string

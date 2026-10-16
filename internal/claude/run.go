@@ -3,6 +3,7 @@ package claude
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,9 @@ type Event struct {
 	Kind    string          `json:"kind"`
 	Text    string          `json:"text,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Parent is the Agent tool call whose subagent produced this event; the
+	// payload carries it too (parent_tool_use_id) for the web to nest it.
+	Parent string `json:"-"`
 }
 
 type Options struct {
@@ -222,6 +226,7 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 				Text string `json:"text"`
 			} `json:"delta"`
 		} `json:"event"`
+		Parent  string            `json:"parent_tool_use_id"`
 		IsError bool              `json:"is_error"`
 		Result  string            `json:"result"`
 		Errors  []string          `json:"errors"`
@@ -233,11 +238,11 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 	payload := json.RawMessage(append([]byte(nil), line...))
 	switch v.Type {
 	case "stream_event":
-		if v.Event.Delta.Type == "text_delta" {
+		if v.Event.Delta.Type == "text_delta" && v.Parent == "" { // the main reply only
 			return []Event{{Kind: "assistant_delta", Text: v.Event.Delta.Text, Payload: payload}}, false, nil
 		}
 	case "assistant":
-		return contentEvents(v.Message.Content, "assistant"), false, nil
+		return withParent(contentEvents(v.Message.Content, "assistant"), v.Parent), false, nil
 	case "user":
 		events := contentEvents(v.Message.Content, "user")
 		filtered := events[:0]
@@ -246,7 +251,7 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 				filtered = append(filtered, e)
 			}
 		}
-		return filtered, false, nil
+		return withParent(filtered, v.Parent), false, nil
 	case "result":
 		e := Event{Kind: "result", Text: v.Result, Payload: payload}
 		if v.IsError {
@@ -278,6 +283,29 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 		return []Event{{Kind: "error", Text: string(line), Payload: payload}}, false, errors.New("Claude Code emitted an error")
 	}
 	return nil, false, nil
+}
+
+// withParent marks the events of a subagent with the Agent call that runs it.
+func withParent(events []Event, parent string) []Event {
+	if parent == "" {
+		return events
+	}
+	field, _ := json.Marshal(parent)
+	for i := range events {
+		events[i].Parent = parent
+		raw := bytes.TrimSpace(events[i].Payload)
+		if len(raw) < 2 || raw[0] != '{' {
+			events[i].Payload = json.RawMessage(`{"parent_tool_use_id":` + string(field) + `}`)
+			continue
+		}
+		rest := bytes.TrimSpace(raw[1:])
+		sep := ","
+		if len(rest) > 0 && rest[0] == '}' {
+			sep = ""
+		}
+		events[i].Payload = json.RawMessage(`{"parent_tool_use_id":` + string(field) + sep + string(rest))
+	}
+	return events
 }
 
 func contentEvents(raw json.RawMessage, role string) []Event {

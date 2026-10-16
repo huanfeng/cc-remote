@@ -111,6 +111,7 @@ func (p *runnerProcess) Interrupt() error {
 }
 
 func (p *runnerProcess) BackgroundTasks() int  { return 0 }
+func (p *runnerProcess) HasTask(string) bool   { return false }
 func (p *runnerProcess) Done() <-chan struct{} { return p.done }
 
 func (p *runnerProcess) Close() {

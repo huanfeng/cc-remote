@@ -28,6 +28,7 @@ type claudeProcess interface {
 	Send(text string) error
 	Interrupt() error
 	BackgroundTasks() int
+	HasTask(id string) bool
 	Close()
 	Done() <-chan struct{}
 }
@@ -141,7 +142,9 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 }
 
 func (s *Server) processEvent(rt *sessionRuntime, e claude.Event) error {
-	if e.Kind != "session" && e.Kind != "status" && e.Kind != "result" {
+	// A subagent's output belongs to its Agent call, not to a turn: a
+	// background agent keeps working after the turn that started it ended.
+	if e.Parent == "" && e.Kind != "session" && e.Kind != "status" && e.Kind != "result" {
 		s.mu.Lock()
 		s.turnOutputLocked(rt)
 		s.mu.Unlock()

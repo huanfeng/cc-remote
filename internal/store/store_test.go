@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -153,5 +154,37 @@ INSERT INTO sessions VALUES('old','Old','/tmp','abcd1234-1234-1234-1234-12345678
 	list, err := s.List()
 	if err != nil || len(list) != 1 || list[0].PermissionMode != "bypassPermissions" || list[0].Model != "opus" || list[0].Effort != "high" {
 		t.Fatalf("overrides %+v %v", list, err)
+	}
+}
+
+// Task events come from the partial index, not a scan of the session's events.
+func TestTaskEventsUsePartialIndex(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	x, _ := s.Create("Session", t.TempDir(), ID(), false)
+	_, _ = s.Append(x.ID, "status", "task_started", json.RawMessage(`{"task_id":"a"}`))
+	_, _ = s.Append(x.ID, "status", "requesting", json.RawMessage(`{}`))
+	_, _ = s.Append(x.ID, "assistant", "task_ looks alike", nil)
+	events, err := s.TaskEvents(x.ID)
+	if err != nil || len(events) != 1 || events[0].Text != "task_started" {
+		t.Fatal(events, err)
+	}
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT seq,session_id,kind,text,payload,created_at FROM events WHERE session_id=? AND kind='status' AND text LIKE 'task_%' ORDER BY seq`, x.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	plan := ""
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		_ = rows.Scan(&id, &parent, &unused, &detail)
+		plan += detail + "; "
+	}
+	if !strings.Contains(plan, "events_tasks") {
+		t.Fatalf("plan does not use the partial index: %s", plan)
 	}
 }

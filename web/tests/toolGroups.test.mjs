@@ -30,7 +30,7 @@ test('results pair with their tool_use by id, even interleaved for parallel call
 });
 
 test('block-array results are reduced to text and orphan results still show up', () => {
-  const [group] = groupTranscript([use('a', 'Agent', { description: 'review' }), res('a', [{ type: 'text', text: 'launched' }]), res('zz', 'lost')]);
+  const [group] = groupTranscript([use('a', 'Read', { file_path: 'x' }), res('a', [{ type: 'text', text: 'launched' }]), res('zz', 'lost')]);
   assert.equal(group.calls[0].resultText, 'launched');
   assert.equal(group.calls[1].name, '工具结果');
   assert.equal(group.calls[1].resultText, 'lost');
@@ -170,4 +170,57 @@ test('calls list the seqs of events the host truncated, and change when they loa
   assert.notEqual(next[0], group, 'loading the full events must re-render the group');
   const [orphan] = groupTranscript([{ ...result, payload: { tool_use_id: 'zz', content: 'cut…' } }]);
   assert.deepEqual(orphan.calls[0].truncated, [2]);
+});
+
+const child = (event, parent) => ({ ...event, payload: { ...(event.payload || {}), parent_tool_use_id: parent } });
+
+test('subagent events nest under their Agent call card, outside the main tool groups', () => {
+  const events = [use('ag', 'Agent', { description: 'Count files', subagent_type: 'general-purpose', prompt: 'count' }), child(msg('assistant', 'looking'), 'ag'), child(use('g1', 'Glob', { pattern: '*' }), 'ag'), child(res('g1', 'a.txt'), 'ag'), res('ag', [{ type: 'text', text: '2' }]), msg('assistant', 'done')];
+  const items = groupTranscript(events, false);
+  assert.deepEqual(items.map(item => item.type), ['agent', 'event']);
+  const [agent] = items;
+  assert.equal(agent.call.status, 'ok');
+  assert.equal(agent.call.resultText, '2');
+  assert.deepEqual(agent.items.map(item => item.type === 'tools' ? `tools:${item.calls[0].name}:${item.calls[0].status}` : item.event.text), ['looking', 'tools:Glob:ok']);
+});
+
+test('an agent call is running until its result, or while its background task runs', () => {
+  const pending = groupTranscript([use('a1', 'Agent', { description: 'x' }), child(use('r1', 'Read', {}), 'a1')], true);
+  assert.equal(pending[0].call.status, 'running');
+  assert.equal(pending[0].items[0].calls[0].status, 'running', 'its unfinished calls run too');
+  const launched = [use('b1', 'Agent', { description: 'bg', run_in_background: true }), res('b1', 'launched'), child(use('r2', 'Read', {}), 'b1')];
+  assert.equal(groupTranscript(launched, false, id => id === 'b1')[0].items[0].calls[0].status, 'running');
+  assert.equal(groupTranscript(launched, false, () => false)[0].items[0].calls[0].status, 'missing');
+});
+
+test('stabilize keeps an unchanged agent card and replaces it when its subagent moves on', () => {
+  const base = [use('s1', 'Agent', { description: 'x' }), child(use('t1', 'Bash', { command: 'ls' }), 's1')];
+  const first = groupTranscript(base, true);
+  assert.equal(stabilize(first, groupTranscript(structuredClone(base), true))[0], first[0]);
+  const next = stabilize(first, groupTranscript([...base, child(res('t1', 'ok'), 's1')], true));
+  assert.notEqual(next[0], first[0]);
+  assert.equal(next[0].items[0].calls[0].status, 'ok');
+});
+
+test('a subagent whose Agent call is on an older page still shows, as a placeholder card', () => {
+  const items = groupTranscript([msg('user', 'go'), child(use('k1', 'Read', {}), 'older'), child(res('k1', 'ok'), 'older')], true, id => id === 'older');
+  const agent = items.find(item => item.type === 'agent');
+  assert.ok(agent, 'placeholder card');
+  assert.equal(agent.call.id, 'older');
+  assert.ok(agent.key < 0, 'its key stays apart from the first child event');
+  assert.equal(agent.call.status, 'running');
+  assert.equal(agent.items[0].calls[0].status, 'ok');
+});
+
+test('only agent calls after the last message run in a live session', () => {
+  const items = groupTranscript([use('old', 'Agent', { description: 'lost' }), msg('assistant', 'later'), use('new', 'Agent', { description: 'now' })], true);
+  const agents = items.filter(item => item.type === 'agent');
+  assert.deepEqual(agents.map(item => item.call.status), ['missing', 'running']);
+});
+
+test('an agent whose id shows up in its own events nests once instead of looping', () => {
+  const items = groupTranscript([use('loop', 'Agent', { description: 'x' }), child(use('loop', 'Agent', { description: 'again' }), 'loop')], false);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].items.length, 1);
+  assert.equal(items[0].items[0].items.length, 0);
 });

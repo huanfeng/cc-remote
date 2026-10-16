@@ -63,7 +63,7 @@ function CallArg({ call }: { call: ToolCall }) {
 }
 
 function ToolCallRow({ call, open, onToggle, onLoadFull }: { call: ToolCall; open: boolean; onToggle: (open: boolean) => void; onLoadFull?: LoadFull }) {
-  return <li className={`tool-call is-${call.status}${open ? ' open' : ''}`}>
+  return <li className={`tool-call is-${call.status}${open ? ' open' : ''}`} data-call={call.id || undefined}>
     <button type="button" className="tool-call-line" aria-expanded={open} onClick={() => onToggle(!open)}>
       <span className="tool-call-icon">{toolIcon(call.name)}</span>
       <span className="tool-call-name">{call.name}</span>

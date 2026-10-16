@@ -8,10 +8,11 @@ import { DeleteSessionDialog, SessionChips, SessionSettings, type Defaults } fro
 import { SidebarResizer, useSidebarWidth } from './SidebarResizer';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions } from './ModelPicker';
 import { Select } from './Select';
-import { CloseIcon, CollapseAllIcon, ExpandAllIcon, GearIcon, LogoutIcon, MenuIcon, PlusIcon, RefreshIcon, StatusIcon, TerminalIcon, TrashIcon } from './icons';
+import { AgentIcon, CloseIcon, CollapseAllIcon, ExpandAllIcon, GearIcon, LogoutIcon, MenuIcon, PlusIcon, RefreshIcon, StatusIcon, TerminalIcon, TrashIcon } from './icons';
 import { ToolGroup } from './ToolGroup';
+import { AgentCard, TaskPanel, type NestedProps, type TaskInfo } from './AgentCard';
 import { QuestionCard, type QuestionDraft } from './QuestionCard';
-import { compactSummary, groupTranscript, isCompacting, linkOutcomes, linkRequests, requestCall, requestSettled, stabilize, type ToolCall, type TranscriptItem } from './toolGroups';
+import { compactSummary, groupTranscript, isCompacting, parentOf, linkOutcomes, linkRequests, requestCall, requestSettled, stabilize, type ToolCall, type TranscriptItem } from './toolGroups';
 import { MAX_UI_CHARS, UI_KEY, UI_PREFIX, VIEW_KEY, deserialize, draftEmpty, emptyUI, forget, formatHash, mergeUI, parseHash, parseKey, parseViews, serialize, serializeViews, type Route, type SessionDraft, type UIState, type ViewState } from './persist';
 
 type Session = { id: string; title: string; cwd: string; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[] };
@@ -66,6 +67,8 @@ function messages(events: Event[]) {
   const items: Event[] = [];
   let stream: Event | undefined;
   for (const event of events) {
+    // A subagent's messages nest under its Agent call and never touch the main reply's stream.
+    if (parentOf(event)) { if (['assistant', 'tool', 'tool_result'].includes(event.kind)) items.push(event); continue; }
     if (event.kind === 'assistant_delta') {
       if (!stream) { stream = { ...event, kind: 'assistant', text: '' }; items.push(stream); }
       stream.text = (stream.text || '') + (event.text || '');
@@ -120,6 +123,7 @@ export default function App() {
   const [copying, setCopying] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
   const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
   const [deleting, setDeleting] = useState<Session>();
   const [defaults, setDefaults] = useState<Defaults>();
@@ -444,7 +448,22 @@ export default function App() {
   const live = !native && (current?.mode === 'channel' ? !!current.online : running);
   // Unchanged calls and groups keep their objects so memoized cards skip re-rendering.
   const transcriptCache = useRef<TranscriptItem[]>([]);
-  const transcript = useMemo(() => (transcriptCache.current = stabilize(transcriptCache.current, groupTranscript(messages(events), live))), [events, live]);
+  // Subagents and background tasks of the open managed session, folded by the host from
+  // Claude's task events. Fetched on opening, when a new task event arrives in the transcript
+  // poll, and when the session's status changes (a process that exits ends its tasks).
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const taskSignal = useMemo(() => { for (let i = events.length - 1; i >= 0; i--) if (events[i].kind === 'status' && events[i].text?.startsWith('task_')) return events[i].seq; return 0; }, [events]);
+  const sessionStatus = session?.status;
+  useEffect(() => { setTasks([]); }, [selected, native]);
+  useEffect(() => {
+    if (!selected || native || !connected) return;
+    let active = true;
+    api<TaskInfo[]>(`/api/sessions/${encodeURIComponent(selected)}/tasks`).then(data => { if (active) setTasks(data); }).catch(() => {});
+    return () => { active = false; };
+  }, [selected, native, connected, api, taskSignal, sessionStatus]);
+  const taskByCall = useMemo(() => new Map(tasks.filter(task => task.toolUseId).map(task => [task.toolUseId!, task])), [tasks]);
+  const runningTasks = tasks.filter(task => task.status === 'running').length;
+  const transcript = useMemo(() => (transcriptCache.current = stabilize(transcriptCache.current, groupTranscript(messages(events), live, id => taskByCall.get(id)?.status === 'running'))), [events, live, taskByCall]);
   // Question and plan cards parse the whole result; load truncated ones as they appear.
   useEffect(() => { for (const item of transcript) if (item.type === 'special' && item.call.truncated) loadFull(item.call); }, [transcript, loadFull]);
   // Shared terminals: AskUserQuestion / ExitPlanMode are answerable here and in the terminal; first answer wins.
@@ -460,6 +479,22 @@ export default function App() {
   }
   const toggleGroup = useCallback((key: number, open: boolean) => updateTab(activeKey, tab => ({ ...tab, expandedGroups: { ...tab.expandedGroups, [key]: open } })), [activeKey, updateTab]);
   const toggleCall = useCallback((seq: number, open: boolean) => updateTab(activeKey, tab => tab.expandedTools.includes(seq) === open ? tab : ({ ...tab, expandedTools: open ? [...tab.expandedTools, seq] : tab.expandedTools.filter(item => item !== seq) })), [activeKey, updateTab]);
+  const nested: NestedProps = useMemo(() => ({ openGroups: activeTab?.expandedGroups || {}, toolsExpanded, onToggleGroup: toggleGroup, openCalls: activeTab?.expandedTools || NO_CALLS, onToggleCall: toggleCall, onLoadFull: loadFull, tasks: taskByCall }), [activeTab?.expandedGroups, activeTab?.expandedTools, toolsExpanded, toggleGroup, toggleCall, loadFull, taskByCall]);
+  // Jump from the task panel to the call that started a task (an agent's card, or a command
+  // inside one): open the cards and groups around it and scroll there.
+  function locateTask(task: TaskInfo) {
+    const id = task.toolUseId || '';
+    const groups: number[] = []; let call: number | undefined;
+    const find = (items: TranscriptItem[]): boolean => items.some(item => {
+      if (item.type === 'agent') { if (item.call.id === id) { groups.push(item.key); return true; } if (find(item.items)) { groups.push(item.key); return true; } return false; }
+      if (item.type === 'tools') { const hit = item.calls.find(entry => entry.id === id); if (hit) { groups.push(item.key); call = hit.seq; return true; } }
+      return false;
+    });
+    setTasksOpen(false);
+    if (!id || !find(transcript)) { setRouteNotice(hasOlder ? '这个任务在更早的消息里，向上滚动加载后再试' : '没有找到这个任务的调用记录'); return; }
+    updateTab(activeKey, tab => ({ ...tab, expandedGroups: { ...tab.expandedGroups, ...Object.fromEntries(groups.map(key => [key, true])) }, expandedTools: call === undefined || tab.expandedTools.includes(call) ? tab.expandedTools : [...tab.expandedTools, call] }));
+    window.setTimeout(() => document.querySelector(`[data-agent="${CSS.escape(id)}"],[data-call="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
+  }
   function questionHint(call: ToolCall): string | undefined {
     if (call.status === 'missing') return '未记录回答';
     if (native) return '未记录回答';
@@ -577,17 +612,18 @@ export default function App() {
       <nav className="sidebar-nav" aria-label="全局"><button title="设置" onClick={() => { setSettingsOpen(true); setDrawer(false); }}><GearIcon size={15} /><span>设置</span></button><button title="服务状态" onClick={() => { setStatusOpen(true); setDrawer(false); }}><StatusIcon size={15} /><span>服务状态</span></button></nav>
     </aside>
     {!sidebarCollapsed && <SidebarResizer width={sidebar.width} max={sidebar.max} onChange={sidebar.set} />}
-    <main className="workspace"><header className="topbar"><button className="desktop icon" aria-label={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'} title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'} onClick={() => setSidebarCollapsed(old => { localStorage.setItem('cc-sidebar-collapsed', String(!old)); return !old; })}><MenuIcon size={18} /></button><button className="mobile icon" aria-label="打开会话列表" onClick={() => setDrawer(true)}><MenuIcon size={18} /></button><div className="header-title"><h1>{current?.title || '工作空间'}</h1><div className="header-sub">{current && !native && <SessionChips session={current} defaults={defaults} open={() => setSessionSettingsOpen(true)} />}<p title={current?.cwd || info?.cwd}>{current?.cwd || info?.cwd}</p></div></div><span className="badge">{native ? '只读历史' : sessionLabel(current)}</span>{selected && <button className={`icon${toolsExpanded ? ' active' : ''}`} title={toolsExpanded ? '折叠全部工具调用' : '展开全部工具调用'} aria-label={toolsExpanded ? '折叠全部工具调用' : '展开全部工具调用'} aria-pressed={toolsExpanded} onClick={toggleAllTools}>{toolsExpanded ? <CollapseAllIcon size={17} /> : <ExpandAllIcon size={17} />}</button>}<button className="icon" title="刷新会话" aria-label="刷新会话" onClick={() => action(list)}><RefreshIcon size={17} /></button>{current && !native && <button className="icon" title="会话设置" aria-label="会话设置" onClick={() => setSessionSettingsOpen(true)}><GearIcon size={17} /></button>}</header>
+    <main className="workspace"><header className="topbar"><button className="desktop icon" aria-label={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'} title={sidebarCollapsed ? '展开会话列表' : '折叠会话列表'} onClick={() => setSidebarCollapsed(old => { localStorage.setItem('cc-sidebar-collapsed', String(!old)); return !old; })}><MenuIcon size={18} /></button><button className="mobile icon" aria-label="打开会话列表" onClick={() => setDrawer(true)}><MenuIcon size={18} /></button><div className="header-title"><h1>{current?.title || '工作空间'}</h1><div className="header-sub">{current && !native && <SessionChips session={current} defaults={defaults} open={() => setSessionSettingsOpen(true)} />}<p title={current?.cwd || info?.cwd}>{current?.cwd || info?.cwd}</p></div></div><span className="badge">{native ? '只读历史' : sessionLabel(current)}</span>{selected && <button className={`icon${toolsExpanded ? ' active' : ''}`} title={toolsExpanded ? '折叠全部工具调用' : '展开全部工具调用'} aria-label={toolsExpanded ? '折叠全部工具调用' : '展开全部工具调用'} aria-pressed={toolsExpanded} onClick={toggleAllTools}>{toolsExpanded ? <CollapseAllIcon size={17} /> : <ExpandAllIcon size={17} />}</button>}{tasks.length > 0 && <button className={`icon task-button${runningTasks ? ' active' : ''}`} title={runningTasks ? `${runningTasks} 个任务运行中` : '子 agent 与后台任务'} aria-label="子 agent 与后台任务" onClick={() => setTasksOpen(true)}><AgentIcon size={17} />{runningTasks > 0 && <span className="task-count">{runningTasks}</span>}</button>}<button className="icon" title="刷新会话" aria-label="刷新会话" onClick={() => action(list)}><RefreshIcon size={17} /></button>{current && !native && <button className="icon" title="会话设置" aria-label="会话设置" onClick={() => setSessionSettingsOpen(true)}><GearIcon size={17} /></button>}</header>
       {plainHttp && <div className="plain-http-banner banner" role="status">当前通过明文 HTTP 访问（{location.host}），访问令牌和会话内容会在网络中明文传输。建议改用 HTTPS 反向代理或 VPN。<button className="icon-button" onClick={dismissPlainHttp} aria-label="关闭明文访问提示"><CloseIcon size={14} /></button></div>}
       {error && <div className="error banner" role="alert">{error}<button className="icon-button" onClick={() => setError('')} aria-label="关闭错误"><CloseIcon size={14} /></button></div>}
       {routeNotice && <div className="command-notice" role="status"><span>{routeNotice}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setRouteNotice('')}><CloseIcon size={14} /></button></div>}
-      {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label="关闭命令结果" onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} close={() => setSettingsOpen(false)} />}{statusOpen && <StatusPanel api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{sessionSettingsOpen && current && !native && <SessionSettings api={api} session={current} defaults={defaults} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>把工作带到身边。</h2><p>选择一个会话，或在项目目录中开始新的任务。<br/>会话持续在宿主运行，关闭页面也可以稍后回来。</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />新建会话</button><button className="secondary" onClick={() => setSharing(true)}><TerminalIcon size={15} />连接原生终端</button></div>{!info?.claudeAvailable && <p className="error">请先在宿主安装 Claude Code 并完成登录。</p>}</div> : <>
+      {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label="关闭命令结果" onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} close={() => setSettingsOpen(false)} />}{tasksOpen && <TaskPanel tasks={tasks} close={() => setTasksOpen(false)} locate={locateTask} />}{statusOpen && <StatusPanel api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{sessionSettingsOpen && current && !native && <SessionSettings api={api} session={current} defaults={defaults} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>把工作带到身边。</h2><p>选择一个会话，或在项目目录中开始新的任务。<br/>会话持续在宿主运行，关闭页面也可以稍后回来。</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />新建会话</button><button className="secondary" onClick={() => setSharing(true)}><TerminalIcon size={15} />连接原生终端</button></div>{!info?.claudeAvailable && <p className="error">请先在宿主安装 Claude Code 并完成登录。</p>}</div> : <>
         <div className="conversation" ref={scroll} onScroll={() => { const element = scroll.current; if (element && !loading) { nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120; updateTab(activeKey, tab => ({ ...tab, scrollTop: element.scrollTop, nearBottom: nearBottom.current })); } }}>
           {loading && <div className="muted loading">正在加载会话…</div>}
           {!loading && activeTab?.hasOlder && <div ref={olderMarker} className="older-marker">{activeTab.loadingOlder ? '正在加载更早的消息…' : <button type="button" onClick={() => void loadOlder()}>加载更早的消息</button>}</div>}
           {!loading && events.length === 0 && <div className="conversation-empty"><h2>准备开始</h2><p>描述你的任务，Claude 会在这个项目目录中工作。</p></div>}
           {/* One child list: a shared card keyed by its request id moves between the transcript and the pending list without remounting. */}
           {[...transcript.map(item => {
+            if (item.type === 'agent') return <AgentCard key={item.key} call={item.call} items={item.items} nested={nested} />;
             if (item.type === 'tools') return <ToolGroup key={item.key} groupKey={item.key} calls={item.calls} open={activeTab?.expandedGroups[item.key] ?? toolsExpanded} onToggle={toggleGroup} openCalls={activeTab?.expandedTools || NO_CALLS} onToggleCall={toggleCall} onLoadFull={loadFull} />;
             if (item.type === 'special') {
               const request = linked.get(item.call.seq);
@@ -602,7 +638,8 @@ export default function App() {
           // A request whose call already shows a terminal result is about to be withdrawn; don't show it twice.
           ...(native ? [] : requests.filter(request => !linkedIds.has(request.id) && !(shared && requestSettled(request, transcript))).map(request => shared && (request.kind === 'question' || request.kind === 'plan') ? sharedCard(undefined, request) : <RequestCard key={request.id} request={request} busy={busy} answers={activeTab?.answers[request.id] || {}} setAnswers={update => updateTab(activeKey, tab => ({ ...tab, answers: { ...tab.answers, [request.id]: update(tab.answers[request.id] || {}) } }))} onAnswer={(decision, answers) => action(async () => { await api(`/api/requests/${request.id}`, { method: 'POST', body: JSON.stringify({ decision, answers }) }); updateTab(activeKey, tab => ({ ...tab, requests: tab.requests.filter(item => item.id !== request.id) })); })} />))]}
           {!native && current?.queued?.map((item, index) => <article className="message user queued" key={`queued-${index}`}><div className="message-label">你 · 等待处理</div><Markdown text={item.text} />{item.payload?.attachments?.length > 0 && <AttachmentList items={item.payload.attachments} token={token} />}</article>)}
-          {running && !requests.length && <div className="working"><span className="pulse" />{isCompacting(events) ? '正在压缩上下文…' : 'Claude 正在工作…'}</div>}<div ref={bottom} />
+          {running && !requests.length && <div className="working"><span className="pulse" />{isCompacting(events) ? '正在压缩上下文…' : 'Claude 正在工作…'}</div>}
+          {!running && runningTasks > 0 && <button type="button" className="working working-tasks" onClick={() => setTasksOpen(true)}><span className="pulse" />{runningTasks} 个后台任务运行中 · 查看</button>}<div ref={bottom} />
         </div>
         {native ? <div className="native-footer"><p>沿用原会话标题和上下文。通过连接命令恢复后，终端与网页可交替使用。</p><button className="primary" onClick={() => setSharing(true)}>连接此终端会话 ↔</button><button className="secondary" onClick={() => setImporting(true)}>导入为托管会话</button></div> : <form className={`composer${dragging ? ' dragging' : ''}`} onSubmit={send} onDragOver={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); setDragging(false); void addFiles(Array.from(event.dataTransfer.files)); }}>{dragging && <div className="drop-hint" aria-hidden="true">松开以添加附件（单个 ≤ 20 MiB，每条最多 8 个）</div>}{draft.startsWith('/') && !draft.includes(' ') && <div className="command-menu" role="listbox" aria-label="命令建议">{commands.filter(command => command.name.startsWith(draft.slice(1))).map(command => <button type="button" key={command.name} onClick={() => setDraft(`/${command.name} `)}><strong>/{command.name}</strong><small>{command.description}{command.terminalOnly ? ' · 终端操作' : ''}</small></button>)}</div>}{attachments.length > 0 && <AttachmentList items={attachments} token={token} remove={id => updateTab(activeKey, tab => ({ ...tab, attachments: tab.attachments.filter(item => item.id !== id) }))} />}<textarea aria-label="发送给 Claude 的消息" placeholder={current?.mode === 'channel' && !current.online ? '终端离线，请先在宿主重新启动连接命令' : running ? '可以继续输入，消息会排在当前任务之后' : '描述任务，或继续提问…'} value={draft} onChange={event => setDraft(event.target.value)} onPaste={event => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files); } }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => { if (event.key !== 'Enter' || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return; const modifier = event.ctrlKey || event.metaKey; if (!event.shiftKey && !event.altKey && (sendKey === 'enter' ? !modifier : modifier)) { event.preventDefault(); void send(event); } }} /><div className="composer-bottom"><AttachButton disabled={uploading || busy} upload={files => void addFiles(files)} /><span><Select className="send-key" label="发送快捷键" title="Shift + Enter 始终换行；中文输入法选词时不会发送" value={sendKey} options={SEND_KEYS} onChange={value => { setSendKey(value); localStorage.setItem('cc-send-key', value); }} /></span><div className="composer-actions">{running && <button type="button" className="stop" disabled={busy} title="停止当前轮次；排队的消息会继续执行" onClick={() => action(async () => { await api(`/api/sessions/${selected}/stop`, { method: 'POST' }); await list(); })}>■ 停止</button>}{(!running || draft.trim() || attachments.length > 0) && <button className="primary" disabled={busy || uploading || (!draft.trim() && !attachments.length) || (!draft.startsWith('/') && (!info?.claudeAvailable || (current?.mode === 'channel' && !current.online)))}>{uploading ? '上传中…' : running && !draft.startsWith('/') ? '排队 ↑' : '发送 ↑'}</button>}</div></div></form>}
       </>}

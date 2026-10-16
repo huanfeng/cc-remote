@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,6 +59,7 @@ type fakeProc struct {
 	hooks  claude.ProcessHooks
 	mu     sync.Mutex
 	sent   []string
+	tasks  map[string]bool // tasks this process tracks as running
 	closed bool
 	done   chan struct{}
 }
@@ -68,8 +70,13 @@ func (p *fakeProc) Send(text string) error {
 	p.sent = append(p.sent, text)
 	return nil
 }
-func (p *fakeProc) Interrupt() error      { return nil } // ignores it, like a stuck turn
-func (p *fakeProc) BackgroundTasks() int  { return 0 }
+func (p *fakeProc) Interrupt() error     { return nil } // ignores it, like a stuck turn
+func (p *fakeProc) BackgroundTasks() int { return 0 }
+func (p *fakeProc) HasTask(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.tasks[id]
+}
 func (p *fakeProc) Done() <-chan struct{} { return p.done }
 func (p *fakeProc) Close() {
 	p.mu.Lock()
@@ -250,4 +257,51 @@ func TestBridgeRequestWhileIdle(t *testing.T) {
 		t.Fatalf("bridge answered %d", code)
 	}
 	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
+}
+
+// A background agent's output after its turn ended belongs to the Agent call:
+// it is recorded but does not make the session busy again.
+func TestSubagentOutputDoesNotStartATurn(t *testing.T) {
+	_, ts, st, procs := withFakeProc(t)
+	x := createSession(t, ts)
+	request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "start agent"}, testToken)
+	p := <-procs
+	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	p.replay("start agent")
+	p.result(nil)
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
+	if err := p.hooks.Event(claude.Event{Kind: "tool", Payload: []byte(`{"parent_tool_use_id":"toolu_A","id":"t1","name":"Glob"}`), Parent: "toolu_A"}); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := st.Events(x.ID, 0)
+	if last := events[len(events)-1]; last.Kind != "tool" {
+		t.Fatalf("subagent event not recorded: %+v", last)
+	}
+	if y, _ := st.Get(x.ID); y.Status != "completed" {
+		t.Fatalf("subagent output made the session %s", y.Status)
+	}
+}
+
+// A running task counts as running only while the session's current process
+// tracks it; one left by an earlier process reports as interrupted.
+func TestTasksRunOnlyInTheirProcess(t *testing.T) {
+	_, ts, st, procs := withFakeProc(t)
+	x := createSession(t, ts)
+	request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "go"}, testToken)
+	p := <-procs
+	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	for _, id := range []string{"old", "live"} {
+		_, _ = st.Append(x.ID, "status", "task_started", []byte(`{"type":"system","subtype":"task_started","task_id":"`+id+`","description":"`+id+`"}`))
+	}
+	p.mu.Lock()
+	p.tasks = map[string]bool{"live": true}
+	p.mu.Unlock()
+	code, b := request(t, ts, "GET", "/api/sessions/"+x.ID+"/tasks", nil, testToken)
+	var tasks []taskInfo
+	if code != 200 || json.Unmarshal(b, &tasks) != nil || len(tasks) != 2 {
+		t.Fatalf("%d %s", code, b)
+	}
+	if tasks[0].Status != "interrupted" || tasks[1].Status != "running" {
+		t.Fatalf("old %s, live %s", tasks[0].Status, tasks[1].Status)
+	}
 }

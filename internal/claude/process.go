@@ -129,7 +129,10 @@ type streamMeta struct {
 	IsReplay bool            `json:"isReplay"`
 	Origin   json.RawMessage `json:"origin"`
 	TaskID   string          `json:"task_id"`
-	Message  struct {
+	Patch    struct {
+		Status string `json:"status"`
+	} `json:"patch"`
+	Message struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -178,6 +181,8 @@ func (p *Process) trackTasks(meta streamMeta) {
 		p.tasks[meta.TaskID] = true
 	case meta.Subtype == "task_notification":
 		delete(p.tasks, meta.TaskID)
+	case meta.Subtype == "task_updated" && meta.Patch.Status != "" && meta.Patch.Status != "running" && meta.Patch.Status != "pending":
+		delete(p.tasks, meta.TaskID) // ended (completed, failed, killed) even if no notification follows
 	}
 }
 
@@ -212,6 +217,13 @@ func (p *Process) BackgroundTasks() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.tasks)
+}
+
+// HasTask reports whether this process started task id and it has not ended.
+func (p *Process) HasTask(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.tasks[id]
 }
 
 // Done is closed after the process exited.

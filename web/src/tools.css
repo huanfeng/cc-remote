@@ -74,3 +74,35 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .older-marker button:hover{background:#eef1e6}
 .list-more{width:100%;background:transparent;color:#5d7350;font-size:12px;padding:10px;border-radius:8px;margin-bottom:8px}
 .list-more:hover{background:#e6e8dc}
+.agent-card{margin:10px 0;border:1px solid #dfe4d4;border-radius:11px;background:#f8f9f3;overflow:hidden}
+.agent-card.is-running{border-color:#d9cfa6}
+.agent-summary{width:100%;display:flex;align-items:center;gap:9px;padding:10px 12px;background:transparent;color:inherit;text-align:left;font-size:12px}
+.agent-summary:hover{background:#f0f2e8}
+.agent-icon{display:inline-flex;color:#6f8460;flex-shrink:0}
+.agent-title{flex:1;min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden}
+.agent-title strong{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-type{font-size:10px;color:#6b7766;background:#eceee4;border-radius:5px;padding:2px 6px;white-space:nowrap}
+.agent-meta{font-size:10px;color:var(--muted);white-space:nowrap}
+.agent-status.is-completed{color:#5f7d4c;background:#e8f0dd}
+.agent-status.is-running{color:#8a7130;background:#f6efd8}
+.agent-status.is-failed,.agent-status.is-interrupted,.agent-status.is-killed,.agent-status.is-stopped{color:#a05e4f;background:#f9ece6}
+.agent-card.open .tool-group-chevron{transform:rotate(180deg)}
+.agent-body{padding:4px 14px 12px;border-top:1px solid #e6e9dd}
+.agent-transcript{border-left:2px solid #dfe5d2;padding-left:12px;margin:10px 0}
+.agent-message{font-size:13px;line-height:1.7;margin:8px 0;color:#3a453b}
+.agent-result{font-size:13px;line-height:1.75;background:#fff;border:1px solid #e6e9dd;border-radius:9px;padding:10px 12px}
+.task-button{position:relative}
+.task-button.active{color:#8a7130}
+.task-count{position:absolute;top:4px;right:3px;min-width:15px;height:15px;border-radius:8px;background:#b09242;color:#fff;font-size:9px;line-height:15px;text-align:center;padding:0 3px}
+.working-tasks{background:transparent;border:0;padding:0;cursor:pointer;color:var(--muted)}
+.working-tasks:hover{color:#5d7350}
+.task-panel{width:520px}
+.task-list{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.task-row{width:100%;text-align:left;background:#f6f7f0;border:1px solid #e3e6da;border-radius:10px;padding:10px 12px;color:inherit;display:flex;flex-direction:column;gap:4px}
+.task-row:hover:not(:disabled){background:#eef1e6}
+.task-row-head{display:flex;align-items:center;gap:8px;font-size:13px}
+.task-row-head strong{flex:1;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-row small{font-size:11px;padding-left:22px}
+.task-progress{color:#8a7130!important}
+@media(max-width:760px){.agent-meta{display:none}.agent-body{padding:4px 10px 10px}.agent-transcript{padding-left:8px}}
+.agent-icon.is-completed{color:#5f7d4c}.agent-icon.is-failed,.agent-icon.is-interrupted,.agent-icon.is-killed,.agent-icon.is-stopped{color:#a05e4f}

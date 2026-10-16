@@ -98,6 +98,7 @@ func Open(path string) (*Store, error) {
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL UNIQUE,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,text TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
+CREATE INDEX IF NOT EXISTS events_tasks ON events(session_id,seq) WHERE kind='status' AND text LIKE 'task_%';
 CREATE TABLE IF NOT EXISTS interactions(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,tool_name TEXT NOT NULL,input TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,status);`)
 	if err != nil {
@@ -274,6 +275,16 @@ func (s *Store) LatestPayload(id, kind, marker string) (json.RawMessage, bool, e
 		return nil, false, err
 	}
 	return json.RawMessage(raw), true, nil
+}
+
+// TaskEvents returns a session's task_* system events (subtype in text),
+// oldest first. The condition matches the events_tasks partial index.
+func (s *Store) TaskEvents(id string) ([]Event, error) {
+	r, err := s.db.Query(`SELECT seq,session_id,kind,text,payload,created_at FROM events WHERE session_id=? AND kind='status' AND text LIKE 'task_%' ORDER BY seq`, id)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(r)
 }
 
 func (s *Store) Events(id string, after int64) ([]Event, error) {

@@ -9,12 +9,24 @@ export type ToolCall = { seq: number; id: string; name: string; input: any; resu
 export type TranscriptItem =
   | { type: 'event'; key: number; event: TranscriptEvent }
   | { type: 'tools'; key: number; calls: ToolCall[] }
-  | { type: 'special'; key: number; call: ToolCall };
+  | { type: 'special'; key: number; call: ToolCall }
+  | { type: 'agent'; key: number; call: ToolCall; items: TranscriptItem[] };
 
 /** Tools that ask the user something; they render as their own card instead of a group row. */
 export const SPECIAL_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
+/** Tools that run a subagent; they render as a card holding the subagent's own transcript. */
+export const AGENT_TOOLS = new Set(['Agent', 'Task']);
+
 const isToolKind = (kind: string) => kind === 'tool' || kind === 'tool_result';
+/** The Agent call a subagent's event belongs to (managed sessions mark them). */
+export const parentOf = (event: TranscriptEvent): string => typeof event.payload?.parent_tool_use_id === 'string' ? event.payload.parent_tool_use_id : '';
+
+/**
+ * Agent tool calls still running: the call has no result yet, or (a background agent,
+ * whose result only says it launched) its task is running.
+ */
+export type AgentState = (id: string) => boolean;
 
 /** Text of a tool_result: string content as is, block arrays reduced to their text parts. */
 export function resultText(event: TranscriptEvent): string {
@@ -29,7 +41,28 @@ export function resultText(event: TranscriptEvent): string {
  * `live` means the session can still produce results: calls without a result in the
  * final group are then running; elsewhere they are reported as missing.
  */
-export function groupTranscript(events: TranscriptEvent[], live = false): TranscriptItem[] {
+export function groupTranscript(all: TranscriptEvent[], live = false, agentRunning?: AgentState): TranscriptItem[] {
+  // Subagent events nest under their Agent call; the rest is the main transcript. A subagent
+  // whose call is on an older page (not loaded) gets a placeholder call where its events start,
+  // so its work stays visible; the seq is negated to keep it apart from the event's own key.
+  const children = new Map<string, TranscriptEvent[]>();
+  const events: TranscriptEvent[] = [];
+  const called = new Set<string>();
+  for (const event of all) {
+    if (event.kind === 'tool' && event.payload?.id) called.add(event.payload.id);
+    const parent = parentOf(event);
+    if (!parent) { events.push(event); continue; }
+    if (!called.has(parent)) {
+      called.add(parent);
+      events.push({ seq: -event.seq, kind: 'tool', createdAt: event.createdAt, payload: { id: parent, name: 'Agent', input: {}, placeholder: true } });
+    }
+    const list = children.get(parent);
+    if (list) list.push(event); else children.set(parent, [event]);
+  }
+  return shapeTranscript(events, live, children, agentRunning);
+}
+
+function shapeTranscript(events: TranscriptEvent[], live: boolean, children: Map<string, TranscriptEvent[]>, agentRunning?: AgentState): TranscriptItem[] {
   const results = new Map<string, TranscriptEvent>();
   const uses = new Set<string>();
   for (const event of events) {
@@ -38,7 +71,10 @@ export function groupTranscript(events: TranscriptEvent[], live = false): Transc
   }
   const items: TranscriptItem[] = [];
   let group: { type: 'tools'; key: number; calls: ToolCall[] } | undefined;
-  for (const event of events) {
+  // Calls after the last message are the ones a live session may still be running.
+  let tail = -1;
+  events.forEach((event, index) => { if (!isToolKind(event.kind)) tail = index; });
+  for (const [index, event] of events.entries()) {
     if (!isToolKind(event.kind)) { group = undefined; items.push({ type: 'event', key: event.seq, event }); continue; }
     let call: ToolCall;
     if (event.kind === 'tool') {
@@ -56,11 +92,21 @@ export function groupTranscript(events: TranscriptEvent[], live = false): Transc
       if (event.truncated) call.truncated = [event.seq];
     }
     if (SPECIAL_TOOLS.has(call.name)) { group = undefined; items.push({ type: 'special', key: call.seq, call }); continue; }
+    if (AGENT_TOOLS.has(call.name) && event.kind === 'tool') {
+      group = undefined;
+      const known = agentRunning?.(call.id);
+      const running = known || (call.status === 'missing' && live && index > tail);
+      if (call.status === 'missing' && running) call.status = 'running';
+      const inner = children.get(call.id) || [];
+      children.delete(call.id); // each subagent nests once, even with malformed ids
+      items.push({ type: 'agent', key: call.seq, call, items: shapeTranscript(inner, running, children, agentRunning) });
+      continue;
+    }
     if (!group) { group = { type: 'tools', key: call.seq, calls: [] }; items.push(group); }
     group.calls.push(call);
   }
   const last = items.at(-1);
-  if (live && last && last.type !== 'event') {
+  if (live && last && (last.type === 'tools' || last.type === 'special')) {
     const calls = last.type === 'tools' ? last.calls : [last.call];
     for (const call of calls) if (call.status === 'missing') call.status = 'running';
   }
@@ -165,12 +211,18 @@ export function stabilize(prev: TranscriptItem[], next: TranscriptItem[]): Trans
   const calls = new Map<number, ToolCall>();
   const groups = new Map<number, TranscriptItem>();
   for (const item of prev) {
+    if (item.type === 'agent') { groups.set(item.key, item); calls.set(item.call.seq, item.call); }
     if (item.type === 'tools') { groups.set(item.key, item); for (const call of item.calls) calls.set(call.seq, call); }
     else if (item.type === 'special') { groups.set(item.key, item); calls.set(item.call.seq, item.call); }
   }
   const reuse = (call: ToolCall) => { const old = calls.get(call.seq); return old && sameCallObject(old, call) ? old : call; };
   return next.map(item => {
     const old = groups.get(item.key);
+    if (item.type === 'agent') {
+      const call = reuse(item.call);
+      const inner = stabilize(old?.type === 'agent' ? old.items : [], item.items);
+      return old?.type === 'agent' && old.call === call && old.items.length === inner.length && old.items.every((entry, index) => entry === inner[index]) ? old : { ...item, call, items: inner };
+    }
     if (item.type === 'special') {
       const call = reuse(item.call);
       return old?.type === 'special' && old.call === call ? old : { ...item, call };

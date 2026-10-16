@@ -123,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}", s.get)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.events)
 	mux.HandleFunc("GET /api/sessions/{id}/events/{seq}", s.eventAt)
+	mux.HandleFunc("GET /api/sessions/{id}/tasks", s.tasks)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
