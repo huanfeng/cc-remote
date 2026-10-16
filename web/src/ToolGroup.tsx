@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { AgentIcon, CheckIcon, ChevronDownIcon, CloseIcon, FileIcon, GlobeIcon, ListIcon, SearchIcon, TerminalIcon, WrenchIcon } from './icons';
 import { argSummary, formatDuration, groupStats, summaryLabel, type CallStatus, type ToolCall } from './toolGroups';
 import './tools.css';
@@ -41,9 +41,15 @@ function inputText(input: any): string {
   return JSON.stringify(input, null, 2);
 }
 
-function ToolDetail({ call }: { call: ToolCall }) {
+type LoadFull = (call: ToolCall) => void;
+
+/** Listings carry long tool text cut short; an opened call fetches its events whole. */
+function ToolDetail({ call, onLoadFull }: { call: ToolCall; onLoadFull?: LoadFull }) {
   const input = inputText(call.input);
+  const cut = String(call.truncated || '');
+  useEffect(() => { if (cut) onLoadFull?.(call); }, [cut]);
   return <div className="tool-detail">
+    {cut && <p className="tool-detail-note">内容较长，正在加载完整内容… <button type="button" className="tool-more" onClick={() => onLoadFull?.(call)}>重试</button></p>}
     {input && <><div className="tool-detail-label">输入</div><LongPre text={input} /></>}
     <div className="tool-detail-label">{call.status === 'error' ? '结果（失败）' : '结果'}</div>
     {call.status === 'running' ? <p className="tool-detail-note">执行中…</p> : call.status === 'missing' ? <p className="tool-detail-note">未记录结果</p> : <LongPre text={call.resultText || '（无输出）'} className={call.status === 'error' ? 'is-error' : ''} />}
@@ -56,7 +62,7 @@ function CallArg({ call }: { call: ToolCall }) {
   return <span className="tool-call-arg" title={arg.title || arg.text}>{arg.dir !== undefined ? <><strong>{arg.text}</strong>{arg.dir && <span className="tool-call-dir">{arg.dir}</span>}</> : arg.text}</span>;
 }
 
-function ToolCallRow({ call, open, onToggle }: { call: ToolCall; open: boolean; onToggle: (open: boolean) => void }) {
+function ToolCallRow({ call, open, onToggle, onLoadFull }: { call: ToolCall; open: boolean; onToggle: (open: boolean) => void; onLoadFull?: LoadFull }) {
   return <li className={`tool-call is-${call.status}${open ? ' open' : ''}`}>
     <button type="button" className="tool-call-line" aria-expanded={open} onClick={() => onToggle(!open)}>
       <span className="tool-call-icon">{toolIcon(call.name)}</span>
@@ -65,12 +71,12 @@ function ToolCallRow({ call, open, onToggle }: { call: ToolCall; open: boolean; 
       {call.durationMs !== undefined && <span className="tool-call-time">{formatDuration(call.durationMs)}</span>}
       <StatusMark status={call.status} />
     </button>
-    {open && <ToolDetail call={call} />}
+    {open && <ToolDetail call={call} onLoadFull={onLoadFull} />}
   </li>;
 }
 
 /** One summary row for a run of tool calls; the call list only mounts while expanded. */
-function ToolGroupView({ groupKey, calls, open, onToggle, openCalls, onToggleCall }: { groupKey: number; calls: ToolCall[]; open: boolean; onToggle: (key: number, open: boolean) => void; openCalls: number[]; onToggleCall: (seq: number, open: boolean) => void }) {
+function ToolGroupView({ groupKey, calls, open, onToggle, openCalls, onToggleCall, onLoadFull }: { groupKey: number; calls: ToolCall[]; open: boolean; onToggle: (key: number, open: boolean) => void; openCalls: number[]; onToggleCall: (seq: number, open: boolean) => void; onLoadFull?: LoadFull }) {
   const stats = groupStats(calls);
   const label = summaryLabel(calls);
   return <section className={`tool-group${open ? ' open' : ''}${stats.running ? ' running' : ''}`}>
@@ -82,7 +88,7 @@ function ToolGroupView({ groupKey, calls, open, onToggle, openCalls, onToggleCal
       <span className="tool-group-chevron"><ChevronDownIcon size={14} /></span>
     </button>
     {!open && stats.current && <div className="tool-current">正在执行：<strong>{stats.current.name}</strong> <span>{argSummary(stats.current.name, stats.current.input).text}</span></div>}
-    {open && <ul className="tool-calls">{calls.map(call => <ToolCallRow key={call.seq} call={call} open={openCalls.includes(call.seq)} onToggle={value => onToggleCall(call.seq, value)} />)}</ul>}
+    {open && <ul className="tool-calls">{calls.map(call => <ToolCallRow key={call.seq} call={call} open={openCalls.includes(call.seq)} onToggle={value => onToggleCall(call.seq, value)} onLoadFull={onLoadFull} />)}</ul>}
   </section>;
 }
 

@@ -2,9 +2,10 @@
 // groups and lifts question-like tools (AskUserQuestion, ExitPlanMode) out so
 // they are never buried. No React here so node tests can import it directly.
 
-export type TranscriptEvent = { seq: number; kind: string; text?: string; payload?: any; createdAt: string };
+export type TranscriptEvent = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 export type CallStatus = 'ok' | 'error' | 'running' | 'missing';
-export type ToolCall = { seq: number; id: string; name: string; input: any; result?: TranscriptEvent; resultText: string; status: CallStatus; durationMs?: number };
+/** `truncated` lists the seqs of this call's events whose long text the host cut in the listing. */
+export type ToolCall = { seq: number; id: string; name: string; input: any; result?: TranscriptEvent; resultText: string; status: CallStatus; durationMs?: number; truncated?: number[] };
 export type TranscriptItem =
   | { type: 'event'; key: number; event: TranscriptEvent }
   | { type: 'tools'; key: number; calls: ToolCall[] }
@@ -46,10 +47,13 @@ export function groupTranscript(events: TranscriptEvent[], live = false): Transc
       call = { seq: event.seq, id, name: event.payload?.name || event.payload?.toolName || '工具', input: event.payload?.input ?? {}, result, resultText: result ? resultText(result) : '', status: result ? (result.payload?.is_error ? 'error' : 'ok') : 'missing' };
       const ms = result ? Date.parse(result.createdAt) - Date.parse(event.createdAt) : NaN;
       if (ms >= 1000) call.durationMs = ms;
+      const cut = [event, result].flatMap(item => item?.truncated ? [item.seq] : []);
+      if (cut.length) call.truncated = cut;
     } else {
       const id = event.payload?.tool_use_id || '';
       if (id && uses.has(id)) continue; // shown with its tool_use
       call = { seq: event.seq, id, name: '工具结果', input: undefined, result: event, resultText: resultText(event), status: event.payload?.is_error ? 'error' : 'ok' };
+      if (event.truncated) call.truncated = [event.seq];
     }
     if (SPECIAL_TOOLS.has(call.name)) { group = undefined; items.push({ type: 'special', key: call.seq, call }); continue; }
     if (!group) { group = { type: 'tools', key: call.seq, calls: [] }; items.push(group); }
@@ -150,12 +154,12 @@ export function parseAnswers(text: string): Record<string, string> {
 
 export type PendingRequest = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
 
-const sameCallObject = (a: ToolCall, b: ToolCall) => a.seq === b.seq && a.id === b.id && a.name === b.name && a.status === b.status && a.resultText === b.resultText && a.durationMs === b.durationMs && a.result?.seq === b.result?.seq;
+const sameCallObject = (a: ToolCall, b: ToolCall) => a.seq === b.seq && a.id === b.id && a.name === b.name && a.status === b.status && a.resultText === b.resultText && a.durationMs === b.durationMs && a.result?.seq === b.result?.seq && String(a.truncated) === String(b.truncated);
 
 /**
  * Reuses the objects of `prev` where nothing changed, so memoized cards and groups
- * skip re-rendering when new events arrive. Events of one seq never change, so a
- * call is identified by its seq plus the fields its result can change.
+ * skip re-rendering when new events arrive. A call is identified by its seq plus
+ * the fields its result can change; loading truncated events whole clears `truncated`.
  */
 export function stabilize(prev: TranscriptItem[], next: TranscriptItem[]): TranscriptItem[] {
   const calls = new Map<number, ToolCall>();

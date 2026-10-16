@@ -69,3 +69,8 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .compact-divider span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80%}
 .message.user.queued{opacity:.6;border-style:dashed}
 .composer-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;margin-left:auto}
+.older-marker{text-align:center;font-size:12px;color:var(--muted);margin:0 0 18px}
+.older-marker button{background:transparent;color:#5d7350;font-size:12px;padding:6px 12px;border-radius:8px}
+.older-marker button:hover{background:#eef1e6}
+.list-more{width:100%;background:transparent;color:#5d7350;font-size:12px;padding:10px;border-radius:8px;margin-bottom:8px}
+.list-more:hover{background:#e6e8dc}

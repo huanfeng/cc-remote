@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -45,6 +46,7 @@ type Event struct {
 	Text      string          `json:"text"`
 	Payload   json.RawMessage `json:"payload"`
 	CreatedAt string          `json:"createdAt"`
+	Truncated bool            `json:"truncated,omitempty"` // long tool text was cut for a listing
 }
 
 type Interaction struct {
@@ -279,6 +281,74 @@ func (s *Store) Events(id string, after int64) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
+	return scanEvents(r)
+}
+
+// EventsPage returns about limit of the newest events before seq `before`
+// (0: the latest), and whether older ones exist. Within `reach` events further
+// back the page starts at a user message, or else at the nearest event that is
+// not a tool result, so a tool call and its result stay on one page.
+func (s *Store) EventsPage(id string, before int64, limit, reach int) ([]Event, bool, error) {
+	if before <= 0 {
+		before = math.MaxInt64
+	}
+	nth := func(offset int) (int64, error) {
+		var seq int64
+		err := s.db.QueryRow(`SELECT seq FROM events WHERE session_id=? AND seq<? ORDER BY seq DESC LIMIT 1 OFFSET ?`, id, before, offset).Scan(&seq)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return seq, err
+	}
+	start, err := nth(limit - 1)
+	if err != nil {
+		return nil, false, err
+	}
+	if start > 0 {
+		floor, err := nth(limit - 1 + reach)
+		if err != nil {
+			return nil, false, err
+		}
+		var user, call sql.NullInt64
+		if err := s.db.QueryRow(`SELECT MAX(CASE WHEN kind='user' THEN seq END), MAX(CASE WHEN kind<>'tool_result' THEN seq END) FROM events WHERE session_id=? AND seq<=? AND seq>=?`, id, start, floor).Scan(&user, &call); err != nil {
+			return nil, false, err
+		}
+		if user.Valid {
+			start = user.Int64
+		} else if call.Valid {
+			start = call.Int64
+		}
+	}
+	r, err := s.db.Query(`SELECT seq,session_id,kind,text,payload,created_at FROM events WHERE session_id=? AND seq>=? AND seq<? ORDER BY seq`, id, start, before)
+	if err != nil {
+		return nil, false, err
+	}
+	out, err := scanEvents(r)
+	if err != nil || start == 0 {
+		return out, false, err
+	}
+	var older bool
+	err = s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM events WHERE session_id=? AND seq<?)`, id, start).Scan(&older)
+	return out, older, err
+}
+
+// Event returns one event of a session.
+func (s *Store) Event(id string, seq int64) (Event, error) {
+	r, err := s.db.Query(`SELECT seq,session_id,kind,text,payload,created_at FROM events WHERE session_id=? AND seq=?`, id, seq)
+	if err != nil {
+		return Event{}, err
+	}
+	out, err := scanEvents(r)
+	if err != nil {
+		return Event{}, err
+	}
+	if len(out) == 0 {
+		return Event{}, sql.ErrNoRows
+	}
+	return out[0], nil
+}
+
+func scanEvents(r *sql.Rows) ([]Event, error) {
 	defer r.Close()
 	out := []Event{}
 	for r.Next() {

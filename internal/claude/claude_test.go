@@ -291,6 +291,57 @@ func TestNativeHistory(t *testing.T) {
 	}
 }
 
+// History is parsed incrementally: a partial last line waits, appended lines
+// are added, and a rewritten (shorter) transcript is parsed again.
+func TestNativeHistoryIncremental(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "projects", "-tmp-inc")
+	if err := os.MkdirAll(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(project, testID+".jsonl")
+	first := `{"type":"user","cwd":"/tmp/inc","message":{"content":"one"}}` + "\n"
+	partial := `{"type":"assistant","message":{"content":[{"type":"text","text":"tw`
+	write := func(content string, mod time.Time) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chtimes(path, mod, mod)
+	}
+	texts := func() string {
+		t.Helper()
+		_, events, err := NativeHistory(dir, testID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range events {
+			out = append(out, e.Text)
+		}
+		return strings.Join(out, ",")
+	}
+	base := time.Now().Add(-time.Hour)
+	write(first+partial, base)
+	if got := texts(); got != "one" {
+		t.Fatalf("partial line: %q", got)
+	}
+	write(first+partial+`o"}]}}`+"\n"+`{"type":"custom-title","customTitle":"Inc"}`+"\n", base.Add(time.Second))
+	if got := texts(); got != "one,two" {
+		t.Fatalf("appended: %q", got)
+	}
+	if list, _ := ListNative(dir); len(list) != 1 || list[0].Title != "Inc" {
+		t.Fatalf("list %+v", list)
+	}
+	write(`{"type":"user","message":{"content":"fresh"}}`+"\n", base.Add(2*time.Second))
+	if got := texts(); got != "fresh" {
+		t.Fatalf("rewritten: %q", got)
+	}
+	if list, _ := ListNative(dir); len(list) != 1 || list[0].Title != "fresh" {
+		t.Fatalf("list after rewrite %+v", list)
+	}
+}
+
 func TestCommandArgsPassLaunchPreferences(t *testing.T) {
 	o := Options{SessionID: testID}
 	joined := strings.Join(commandArgs(o, "s.json", "m.json"), " ")

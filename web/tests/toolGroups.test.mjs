@@ -158,3 +158,16 @@ test('isCompacting follows the latest system status until the boundary arrives',
   assert.equal(isCompacting([status('compacting'), { seq: ++seq, kind: 'compact', createdAt: at(0) }]), false);
   assert.equal(isCompacting([msg('user')]), false);
 });
+
+test('calls list the seqs of events the host truncated, and change when they load whole', () => {
+  const tool = { seq: 1, kind: 'tool', createdAt: 't', truncated: true, payload: { id: 'a', name: 'Write', input: { file_path: 'x', content: 'short…' } } };
+  const result = { seq: 2, kind: 'tool_result', createdAt: 't', truncated: true, payload: { tool_use_id: 'a', content: 'cut…' } };
+  const [group] = groupTranscript([tool, result]);
+  assert.deepEqual(group.calls[0].truncated, [1, 2]);
+  const whole = groupTranscript([{ ...tool, truncated: false, payload: { ...tool.payload, input: { file_path: 'x', content: 'full' } } }, { ...result, truncated: false, payload: { tool_use_id: 'a', content: 'full' } }]);
+  assert.equal(whole[0].calls[0].truncated, undefined);
+  const next = stabilize([group], whole);
+  assert.notEqual(next[0], group, 'loading the full events must re-render the group');
+  const [orphan] = groupTranscript([{ ...result, payload: { tool_use_id: 'zz', content: 'cut…' } }]);
+  assert.deepEqual(orphan.calls[0].truncated, [2]);
+});

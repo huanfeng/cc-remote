@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions", s.create)
 	mux.HandleFunc("GET /api/sessions/{id}", s.get)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.events)
+	mux.HandleFunc("GET /api/sessions/{id}/events/{seq}", s.eventAt)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
@@ -133,8 +133,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/requests/{id}", s.resolve)
 	mux.HandleFunc("GET /api/native/sessions", s.nativeList)
 	mux.HandleFunc("GET /api/native/sessions/{id}", s.nativeGet)
+	mux.HandleFunc("GET /api/native/sessions/{id}/events", s.nativeEventsList)
+	mux.HandleFunc("GET /api/native/sessions/{id}/events/{seq}", s.nativeEventAt)
 	mux.HandleFunc("POST /api/native/sessions/{id}/import", s.nativeImport)
 	mux.HandleFunc("/", s.static)
+	served := condensed(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -150,7 +153,7 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 		}
-		mux.ServeHTTP(w, r)
+		served.ServeHTTP(w, r)
 	})
 }
 
@@ -292,15 +295,31 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "会话不存在")
 		return
 	}
-	events, e := s.store.Events(x.ID, 0)
+	q := r.URL.Query()
+	tail := q.Get("tail")
+	limit, ok := pageLimit(tail)
+	if !ok {
+		fail(w, 400, "无效的分页参数")
+		return
+	}
+	var events []store.Event
+	older := false
+	if tail != "" {
+		events, older, e = s.store.EventsPage(x.ID, 0, limit, pageReach)
+	} else {
+		events, e = s.store.Events(x.ID, 0)
+	}
 	if e != nil {
 		fail(w, 500, "无法读取消息")
 		return
 	}
+	if q.Get("compact") == "1" {
+		events = trimEvents(events)
+	}
 	s.mu.Lock()
 	s.decorateChannel(&x)
 	s.mu.Unlock()
-	respond(w, 200, map[string]any{"session": x, "events": events})
+	respond(w, 200, map[string]any{"session": x, "events": events, "hasMore": older})
 }
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -308,19 +327,38 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "会话不存在")
 		return
 	}
-	after := int64(0)
-	if raw := r.URL.Query().Get("after"); raw != "" {
-		n, e := strconv.ParseInt(raw, 10, 64)
-		if e != nil || n < 0 {
-			fail(w, 400, "无效的事件游标")
+	q := r.URL.Query()
+	compact := q.Get("compact") == "1"
+	if raw := q.Get("before"); raw != "" {
+		before, ok := cursor(raw)
+		limit, okLimit := pageLimit(q.Get("limit"))
+		if !ok || !okLimit {
+			fail(w, 400, "无效的分页参数")
 			return
 		}
-		after = n
+		page, older, e := s.store.EventsPage(id, before, limit, pageReach)
+		if e != nil {
+			fail(w, 500, "无法读取消息")
+			return
+		}
+		if compact {
+			page = trimEvents(page)
+		}
+		respond(w, 200, map[string]any{"events": page, "hasMore": older})
+		return
+	}
+	after, ok := cursor(q.Get("after"))
+	if !ok {
+		fail(w, 400, "无效的事件游标")
+		return
 	}
 	x, e := s.store.Events(id, after)
 	if e != nil {
 		fail(w, 500, "无法读取消息")
 		return
+	}
+	if compact {
+		x = trimEvents(x)
 	}
 	respond(w, 200, x)
 }
@@ -695,15 +733,21 @@ func (s *Server) nativeGet(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "无法读取原生会话："+e.Error())
 		return
 	}
-	out := []store.Event{}
-	for i, v := range ev {
-		raw := v.Payload
-		if len(raw) == 0 {
-			raw = json.RawMessage(`null`)
+	q := r.URL.Query()
+	out := nativeEvents(x, ev)
+	older := false
+	if tail := q.Get("tail"); tail != "" {
+		limit, ok := pageLimit(tail)
+		if !ok {
+			fail(w, 400, "无效的分页参数")
+			return
 		}
-		out = append(out, store.Event{Seq: int64(i + 1), SessionID: x.ID, Kind: v.Kind, Text: v.Text, Payload: raw, CreatedAt: x.UpdatedAt})
+		out, older = pageSlice(out, 0, limit, pageReach)
 	}
-	respond(w, 200, map[string]any{"session": x, "events": out})
+	if q.Get("compact") == "1" {
+		out = trimEvents(out)
+	}
+	respond(w, 200, map[string]any{"session": x, "events": out, "hasMore": older})
 }
 func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 	var req struct {

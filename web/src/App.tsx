@@ -15,18 +15,19 @@ import { compactSummary, groupTranscript, isCompacting, linkOutcomes, linkReques
 import { MAX_UI_CHARS, UI_KEY, UI_PREFIX, VIEW_KEY, deserialize, draftEmpty, emptyUI, forget, formatHash, mergeUI, parseHash, parseKey, parseViews, serialize, serializeViews, type Route, type SessionDraft, type UIState, type ViewState } from './persist';
 
 type Session = { id: string; title: string; cwd: string; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[] };
-type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string };
+type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 type Request = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
 type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; terminalCommand?: string; channelExperimental?: boolean };
-type ConversationTab = { key: string; id: string; native: boolean; session?: Session; events: Event[]; requests: Request[]; draft: string; attachments: Attachment[]; notice?: string; scrollTop: number; nearBottom: boolean; loaded: boolean; expandedTools: number[]; expandedGroups: Record<number, boolean>; answers: Record<string, Record<string, string>>; questionDrafts: Record<string, QuestionDraft> };
+type ConversationTab = { key: string; id: string; native: boolean; session?: Session; events: Event[]; requests: Request[]; draft: string; attachments: Attachment[]; notice?: string; scrollTop: number; nearBottom: boolean; loaded: boolean; hasOlder: boolean; loadingOlder: boolean; expandedTools: number[]; expandedGroups: Record<number, boolean>; answers: Record<string, Record<string, string>>; questionDrafts: Record<string, QuestionDraft> };
 type Command = { name: string; description: string; terminalOnly?: boolean };
 const SEND_KEYS = [{ value: 'ctrl-enter', label: 'Ctrl / ⌘ + Enter', description: 'Enter 换行，组合键发送' }, { value: 'enter', label: 'Enter 发送', description: 'Shift + Enter 换行' }];
+const transcriptPath = (tab: { id: string; native: boolean }) => `/api/${tab.native ? 'native/sessions' : 'sessions'}/${encodeURIComponent(tab.id)}`;
 const tabKey = (id: string, native: boolean) => `${native ? 'native' : 'session'}:${id}`;
 const statusLabel = (status?: string) => ({ running: '执行中', waiting: '等待回答', idle: '就绪', completed: '已完成', interrupted: '已停止', failed: '执行失败', stopped: '已停止', offline: '离线', error: '执行失败' }[status || ''] || status || '历史');
 const sessionLabel = (session?: Session) => session?.mode === 'channel' && !session.online ? '终端离线' : ['running', 'waiting'].includes(session?.status || '') ? statusLabel(session?.status) : session?.mode === 'channel' ? '终端在线' : statusLabel(session?.status || 'idle');
 
 function blankTab(key: string, id: string, native: boolean, session?: Session, saved?: SessionDraft, view?: ViewState): ConversationTab {
-  return { key, id, native, session, events: [], requests: [], draft: saved?.draft || '', attachments: saved?.attachments || [], scrollTop: view?.scrollTop || 0, nearBottom: view?.nearBottom ?? true, loaded: false, expandedTools: view?.expandedTools || [], expandedGroups: view?.expandedGroups || {}, answers: saved?.answers || {}, questionDrafts: saved?.questionDrafts || {} };
+  return { key, id, native, session, events: [], requests: [], draft: saved?.draft || '', attachments: saved?.attachments || [], scrollTop: view?.scrollTop || 0, nearBottom: view?.nearBottom ?? true, loaded: false, hasOlder: false, loadingOlder: false, expandedTools: view?.expandedTools || [], expandedGroups: view?.expandedGroups || {}, answers: saved?.answers || {}, questionDrafts: saved?.questionDrafts || {} };
 }
 const pickDraft = (tab: Pick<ConversationTab, 'draft' | 'attachments' | 'questionDrafts' | 'answers'>) => ({ draft: tab.draft, attachments: tab.attachments, questionDrafts: tab.questionDrafts, answers: tab.answers });
 const cleanURL = () => location.pathname + location.search;
@@ -35,6 +36,14 @@ function loadUI(): UIState { try { return deserialize(localStorage.getItem(UI_KE
 function saveUI(state: UIState) { for (const max of [MAX_UI_CHARS, MAX_UI_CHARS / 8]) { try { localStorage.setItem(UI_KEY, serialize(state, Date.now(), max)); return; } catch {} } }
 function loadViews(): Record<string, ViewState> { try { return parseViews(sessionStorage.getItem(VIEW_KEY)); } catch { return {}; } }
 function saveViews(text: string) { try { sessionStorage.setItem(VIEW_KEY, text); } catch {} }
+// Transcripts load from the end, PAGE events at a time; older pages load on scroll-up.
+const PAGE = 200;
+// Session lists render LIST_RENDER rows at a time and keep the newest LIST_CACHE in storage,
+// so the list shows at once after a reload and refreshes in the background.
+const LIST_RENDER = 200, LIST_CACHE = 300;
+const listKey = (native: boolean) => `${UI_PREFIX}-list-${native ? 'native' : 'session'}`;
+function loadList(native: boolean): Session[] { try { const items = JSON.parse(localStorage.getItem(listKey(native)) || '[]'); return Array.isArray(items) ? items : []; } catch { return []; } }
+function saveList(native: boolean, items: Session[]) { try { localStorage.setItem(listKey(native), JSON.stringify(items.slice(0, LIST_CACHE))); } catch {} }
 function clearUI() { for (const name of ['localStorage', 'sessionStorage'] as const) { try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith(UI_PREFIX)) storage.removeItem(key); } catch {} } }
 
 const NO_CALLS: number[] = [];
@@ -132,16 +141,30 @@ export default function App() {
   const scroll = useRef<HTMLDivElement>(null);
   const selectedRef = useRef(activeKey);
   selectedRef.current = activeKey;
+  // Polls revalidate with the last ETag: an unchanged reply (304) returns the earlier object,
+  // so nothing re-renders and nothing is transferred. Cursor queries change every time; skip them.
+  const etags = useRef(new Map<string, { tag: string; data: unknown }>());
   const api = useCallback(async <T,>(path: string, options?: RequestInit): Promise<T> => {
-    const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...options?.headers }, cache: 'no-store' });
+    const cacheable = (options?.method || 'GET').toUpperCase() === 'GET' && !/[?&](after|before)=/.test(path);
+    const cached = cacheable ? etags.current.get(path) : undefined;
+    const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(cached ? { 'If-None-Match': cached.tag } : {}), ...options?.headers }, cache: 'no-store' });
+    if (response.status === 304 && cached) return cached.data as T;
     if (!response.ok) {
       let message = `请求失败 (${response.status})`;
       try { const body = await response.json(); message = body.error || body.message || message; } catch {}
-      if (response.status === 401) { setConnected(false); localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); }
-      throw new Error(message);
+      if (response.status === 401) { setConnected(false); localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); for (const view of [false, true]) try { localStorage.removeItem(listKey(view)); } catch {} }
+      throw Object.assign(new Error(message), { status: response.status });
     }
-    return response.status === 204 ? undefined as T : response.json();
+    if (response.status === 204) return undefined as T;
+    const data = await response.json();
+    const tag = response.headers.get('ETag');
+    if (cacheable && tag) {
+      etags.current.delete(path); etags.current.set(path, { tag, data });
+      if (etags.current.size > 64) etags.current.delete(etags.current.keys().next().value!);
+    }
+    return data;
   }, [token]);
+  useEffect(() => { etags.current.clear(); }, [token]);
   const list = useCallback(async () => {
     const result = await api<Session[]>(native ? '/api/native/sessions' : '/api/sessions');
     if (listView.current === native) setSessions(result);
@@ -157,6 +180,7 @@ export default function App() {
     if (!connected) return;
     let active = true;
     let refreshing = false;
+    setSessions(loadList(native));
     const refresh = async () => {
       if (document.hidden || refreshing) return;
       refreshing = true;
@@ -168,12 +192,14 @@ export default function App() {
         if (result.status === 'rejected') { setError((result.reason as Error).message); continue; }
         const { view, data } = result.value;
         if (view === native) setSessions(data);
+        if (savedLists.current[String(view)] !== data) { savedLists.current[String(view)] = data; saveList(view, data); }
         setTabs(old => old.map(tab => tab.native === view ? { ...tab, session: data.find(item => item.id === tab.id) || tab.session } : tab));
       }
     };
     refresh(); const timer = window.setInterval(refresh, 3000);
     return () => { active = false; clearInterval(timer); };
   }, [connected, api, native]);
+  const savedLists = useRef<Record<string, Session[]>>({});
   const openKeys = tabs.map(tab => tab.key).join('|');
   useEffect(() => {
     if (!connected || !openKeys) return;
@@ -185,19 +211,26 @@ export default function App() {
       try {
         let nextSession: Session | undefined;
         let nextEvents: Event[] | undefined;
-        if (!snapshot.loaded || snapshot.native) {
-          const data = await api<{ session: Session; events: Event[] }>(`/api/${snapshot.native ? 'native/sessions' : 'sessions'}/${encodeURIComponent(snapshot.id)}`);
+        let hasOlder: boolean | undefined;
+        const base = transcriptPath(snapshot);
+        if (!snapshot.loaded) {
+          const data = await api<{ session: Session; events: Event[]; hasMore?: boolean }>(`${base}?tail=${PAGE}&compact=1`);
           nextSession = data.session;
           nextEvents = data.events;
+          hasOlder = !!data.hasMore;
         } else {
-          nextEvents = await api<Event[]>(`/api/sessions/${encodeURIComponent(snapshot.id)}/events?after=${snapshot.events.at(-1)?.seq || 0}`);
+          nextEvents = await api<Event[]>(`${base}/events?after=${snapshot.events.at(-1)?.seq || 0}&compact=1`);
         }
         const pending = snapshot.native ? [] : await api<Request[]>(`/api/requests?sessionId=${encodeURIComponent(snapshot.id)}`);
         if (!active) return;
-        updateTab(snapshot.key, tab => ({ ...tab, session: nextSession || tab.session, loaded: true,
-          events: !snapshot.loaded || snapshot.native ? nextEvents! : nextEvents!.length ? [...tab.events, ...nextEvents!.filter(event => event.seq > (tab.events.at(-1)?.seq || 0))] : tab.events,
+        updateTab(snapshot.key, tab => ({ ...tab, session: nextSession || tab.session, loaded: true, hasOlder: hasOlder ?? tab.hasOlder,
+          events: !snapshot.loaded ? nextEvents! : nextEvents!.length ? [...tab.events, ...nextEvents!.filter(event => event.seq > (tab.events.at(-1)?.seq || 0))] : tab.events,
           requests: pending.filter(request => request.status === 'pending') }));
-      } catch (err) { if (active && selectedRef.current === snapshot.key) setError((err as Error).message); }
+      } catch (err) {
+        // 409: a native transcript was rewritten and renumbered; load it again from the end.
+        if (active && (err as { status?: number }).status === 409) updateTab(snapshot.key, tab => ({ ...tab, loaded: false, events: [], hasOlder: false }));
+        else if (active && selectedRef.current === snapshot.key) setError((err as Error).message);
+      }
       finally { inFlight.delete(snapshot.key); }
     };
     const refresh = () => { if (!document.hidden) for (const tab of tabsRef.current) void refreshTab(tab); };
@@ -332,10 +365,70 @@ export default function App() {
     nearBottom.current = activeTab.nearBottom;
     element.scrollTop = activeTab.nearBottom ? element.scrollHeight : activeTab.scrollTop;
   }, [activeKey, loading]);
+  // Older pages: a marker above the transcript loads the previous page when it nears the
+  // viewport; the reading position is kept by shifting scrollTop by the added height.
+  const olderMarker = useRef<HTMLDivElement>(null);
+  const olderInFlight = useRef(new Set<string>());
+  const prepended = useRef<{ key: string; height: number; top: number } | undefined>(undefined);
+  const loadOlder = useCallback(async () => {
+    const key = selectedRef.current;
+    const tab = tabsRef.current.find(item => item.key === key);
+    if (!tab || !tab.loaded || !tab.hasOlder || !tab.events.length || olderInFlight.current.has(key)) return;
+    olderInFlight.current.add(key);
+    updateTab(key, old => ({ ...old, loadingOlder: true }));
+    const before = tab.events[0].seq;
+    try {
+      const data = await api<{ events: Event[]; hasMore: boolean }>(`${transcriptPath(tab)}/events?before=${before}&limit=${PAGE}&compact=1`);
+      const element = scroll.current;
+      // The tab may have been closed and reopened (reloaded) meanwhile: a page that no longer joins its start is dropped.
+      if (tabsRef.current.find(item => item.key === key)?.events[0]?.seq !== before) return;
+      if (element && selectedRef.current === key) prepended.current = { key, height: element.scrollHeight, top: element.scrollTop };
+      updateTab(key, old => old.events[0]?.seq !== before ? { ...old, loadingOlder: false } : { ...old, loadingOlder: false, hasOlder: data.hasMore, events: [...data.events, ...old.events] });
+    } catch (err) {
+      updateTab(key, old => ({ ...old, loadingOlder: false }));
+      if (selectedRef.current === key) setError((err as Error).message);
+    } finally { olderInFlight.current.delete(key); }
+  }, [api, updateTab]);
+  useLayoutEffect(() => {
+    const anchor = prepended.current; const element = scroll.current;
+    if (!anchor || !element || anchor.key !== activeKey) return;
+    prepended.current = undefined;
+    const behavior = element.style.scrollBehavior;
+    element.style.scrollBehavior = 'auto'; // smooth scrolling would animate the jump
+    element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
+    element.style.scrollBehavior = behavior;
+  }, [events]);
+  const hasOlder = !!activeTab?.hasOlder;
+  const firstSeq = events[0]?.seq;
+  useEffect(() => {
+    const root = scroll.current; const target = olderMarker.current;
+    if (!root || !target || !hasOlder || loading) return;
+    // Recreated per page: a new observer reports at once, so a marker still in view loads the next page.
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void loadOlder(); }, { root, rootMargin: '800px 0px 0px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [activeKey, hasOlder, loading, firstSeq, loadOlder]);
+  // Opened tool calls whose text the listing cut fetch their events whole.
+  const fullInFlight = useRef(new Set<string>());
+  const loadFull = useCallback((call: ToolCall) => {
+    const key = activeKey; const tab = tabsRef.current.find(item => item.key === key);
+    if (!tab) return;
+    for (const seq of call.truncated || []) {
+      const id = `${key}#${seq}`;
+      if (fullInFlight.current.has(id)) continue;
+      fullInFlight.current.add(id);
+      api<Event>(`${transcriptPath(tab)}/events/${seq}`)
+        .then(full => updateTab(key, old => ({ ...old, events: old.events.map(event => event.seq === full.seq ? full : event) })))
+        .catch(err => { if (selectedRef.current === key) setError((err as Error).message); })
+        .finally(() => fullInFlight.current.delete(id));
+    }
+  }, [activeKey, api, updateTab]);
   useEffect(() => {
     if (nearBottom.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [events, requests]);
   const current = sessions.find(item => item.id === selected) || session;
+  const [listLimit, setListLimit] = useState(LIST_RENDER);
+  useEffect(() => { setListLimit(LIST_RENDER); }, [search, native]);
   const filteredSessions = sessions.filter(item => `${item.title} ${item.cwd}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   const cachedCount = tabs.filter(tab => tab.native === native).length;
   const hostVersion = !info?.version || info.version === 'dev' ? 'dev' : /^\d/.test(info.version) ? `v${info.version}` : info.version;
@@ -352,6 +445,8 @@ export default function App() {
   // Unchanged calls and groups keep their objects so memoized cards skip re-rendering.
   const transcriptCache = useRef<TranscriptItem[]>([]);
   const transcript = useMemo(() => (transcriptCache.current = stabilize(transcriptCache.current, groupTranscript(messages(events), live))), [events, live]);
+  // Question and plan cards parse the whole result; load truncated ones as they appear.
+  useEffect(() => { for (const item of transcript) if (item.type === 'special' && item.call.truncated) loadFull(item.call); }, [transcript, loadFull]);
   // Shared terminals: AskUserQuestion / ExitPlanMode are answerable here and in the terminal; first answer wins.
   const shared = !native && current?.mode === 'channel';
   const outcomes = useMemo(() => shared ? linkOutcomes(transcript, events) : new Map<number, string>(), [shared, transcript, events]);
@@ -439,7 +534,7 @@ export default function App() {
     if (!native && selected === item.id) setSelected('');
     setDeleting(undefined); setSessionSettingsOpen(false);
   }
-  function switchTab(value: boolean) { setNative(value); setSelected(''); setSessions([]); setSearch(''); }
+  function switchTab(value: boolean) { setNative(value); setSelected(''); setSessions(loadList(value)); setSearch(''); }
   async function send(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim(); const isCommand = text.startsWith('/');
@@ -467,7 +562,7 @@ export default function App() {
       <div className="tabs"><button className={!native ? 'active' : ''} onClick={() => switchTab(false)}>会话</button><button className={native ? 'active' : ''} onClick={() => switchTab(true)}>终端历史</button></div>
       <input className="session-search" aria-label="搜索会话" placeholder="搜索名称或项目目录" value={search} onChange={event => setSearch(event.target.value)} />
       <div className="session-list-heading"><span>{native ? '终端历史' : '全部会话'}</span><span title="缓存在当前页面内，切换保留草稿和阅读位置">已缓存 {cachedCount}</span></div>
-      <div className="session-list">{filteredSessions.length === 0 ? <p className="muted empty-list">{search.trim() ? '没有匹配的会话' : native ? '暂无可读取的终端历史' : '开始你的第一个会话'}</p> : filteredSessions.map(item => {
+      <div className="session-list">{filteredSessions.length === 0 ? <p className="muted empty-list">{search.trim() ? '没有匹配的会话' : native ? '暂无可读取的终端历史' : '开始你的第一个会话'}</p> : filteredSessions.slice(0, listLimit).map(item => {
         const state = sidebarState(item);
         return <div key={item.id} className={`session-row ${selected === item.id ? 'selected' : ''} ${state.cached ? 'cached' : ''}`}>
           <button className="session-item" aria-current={selected === item.id ? 'page' : undefined} onClick={() => choose(item.id)}>
@@ -478,7 +573,7 @@ export default function App() {
           {state.cached && <button className="release-cache" title="释放此会话的页面缓存，未发送草稿将清除，宿主任务继续运行" aria-label={`释放 ${item.title || '会话'} 的缓存`} onClick={() => closeTab(state.cached!.key)}><CloseIcon size={13} /></button>}
           {!native && <button className="delete-session" title="删除此会话的 CC Remote 记录" aria-label={`删除 ${item.title || '会话'}`} onClick={() => { setDeleting(item); setDrawer(false); }}><TrashIcon size={13} /></button>}
         </div>;
-      })}</div>
+      })}{filteredSessions.length > listLimit && <button type="button" className="list-more" onClick={() => setListLimit(n => n + LIST_RENDER)}>显示更多（还有 {filteredSessions.length - listLimit} 个）</button>}</div>
       <nav className="sidebar-nav" aria-label="全局"><button title="设置" onClick={() => { setSettingsOpen(true); setDrawer(false); }}><GearIcon size={15} /><span>设置</span></button><button title="服务状态" onClick={() => { setStatusOpen(true); setDrawer(false); }}><StatusIcon size={15} /><span>服务状态</span></button></nav>
     </aside>
     {!sidebarCollapsed && <SidebarResizer width={sidebar.width} max={sidebar.max} onChange={sidebar.set} />}
@@ -489,10 +584,11 @@ export default function App() {
       {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label="关闭命令结果" onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} close={() => setSettingsOpen(false)} />}{statusOpen && <StatusPanel api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{sessionSettingsOpen && current && !native && <SessionSettings api={api} session={current} defaults={defaults} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>把工作带到身边。</h2><p>选择一个会话，或在项目目录中开始新的任务。<br/>会话持续在宿主运行，关闭页面也可以稍后回来。</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />新建会话</button><button className="secondary" onClick={() => setSharing(true)}><TerminalIcon size={15} />连接原生终端</button></div>{!info?.claudeAvailable && <p className="error">请先在宿主安装 Claude Code 并完成登录。</p>}</div> : <>
         <div className="conversation" ref={scroll} onScroll={() => { const element = scroll.current; if (element && !loading) { nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120; updateTab(activeKey, tab => ({ ...tab, scrollTop: element.scrollTop, nearBottom: nearBottom.current })); } }}>
           {loading && <div className="muted loading">正在加载会话…</div>}
+          {!loading && activeTab?.hasOlder && <div ref={olderMarker} className="older-marker">{activeTab.loadingOlder ? '正在加载更早的消息…' : <button type="button" onClick={() => void loadOlder()}>加载更早的消息</button>}</div>}
           {!loading && events.length === 0 && <div className="conversation-empty"><h2>准备开始</h2><p>描述你的任务，Claude 会在这个项目目录中工作。</p></div>}
           {/* One child list: a shared card keyed by its request id moves between the transcript and the pending list without remounting. */}
           {[...transcript.map(item => {
-            if (item.type === 'tools') return <ToolGroup key={item.key} groupKey={item.key} calls={item.calls} open={activeTab?.expandedGroups[item.key] ?? toolsExpanded} onToggle={toggleGroup} openCalls={activeTab?.expandedTools || NO_CALLS} onToggleCall={toggleCall} />;
+            if (item.type === 'tools') return <ToolGroup key={item.key} groupKey={item.key} calls={item.calls} open={activeTab?.expandedGroups[item.key] ?? toolsExpanded} onToggle={toggleGroup} openCalls={activeTab?.expandedTools || NO_CALLS} onToggleCall={toggleCall} onLoadFull={loadFull} />;
             if (item.type === 'special') {
               const request = linked.get(item.call.seq);
               if (request) return sharedCard(item.call, request);
