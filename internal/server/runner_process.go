@@ -56,6 +56,9 @@ func (p *runnerProcess) loop() {
 		o := p.opts
 		p.mu.Unlock()
 		o.Message = text
+		if p.hooks.Replay != nil {
+			p.hooks.Replay(text)
+		}
 		err := p.run(ctx, o, func(e claude.Event) error {
 			if e.Kind == "session" || e.Kind == "result" {
 				p.mu.Lock()
@@ -78,8 +81,8 @@ func (p *runnerProcess) loop() {
 		if closed {
 			return // the turn was cut short by Close; Exit settles it
 		}
-		if p.hooks.TurnDone != nil {
-			p.hooks.TurnDone(err)
+		if p.hooks.Result != nil {
+			p.hooks.Result(err, false)
 		}
 	}
 }

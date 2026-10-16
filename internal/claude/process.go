@@ -20,34 +20,34 @@ import (
 type ProcessHooks struct {
 	// Event receives every parsed event; an error stops the process.
 	Event func(Event) error
-	// TurnDone reports that the turn of one Send finished (nil on success).
-	TurnDone func(error)
-	// SelfTurn reports turns Claude starts on its own, e.g. to report a
-	// finished background agent: true when one starts, false when it ends.
-	SelfTurn func(bool)
-	// Exit reports that the process ended; turns still pending will not finish.
+	// Replay receives the user message a turn starts with, as Claude echoes it
+	// (--replay-user-messages). Messages that queued up while a turn ran are
+	// merged into one turn and echoed together, joined by newlines. Slash
+	// commands are echoed after their output.
+	Replay func(content string)
+	// Result reports the end of a turn: err is nil on success, origin is set
+	// for turns Claude started itself (e.g. reporting a background agent).
+	Result func(err error, origin bool)
+	// Exit reports that the process ended.
 	Exit func(error)
 }
 
 // Process is a Claude Code session kept running between turns
 // ("claude -p --input-format stream-json"). Messages written while a turn runs
-// are queued by Claude, which merges consecutive queued messages into one
-// turn; callers wanting one result per message send the next after TurnDone.
+// queue inside Claude and start the next turn; Claude merges them.
 type Process struct {
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	writeMu sync.Mutex
 	done    chan struct{}
 
-	mu      sync.Mutex
-	pending int  // Sends without their result yet
-	self    bool // a turn Claude started on its own is running
-	tasks   map[string]bool
-	closed  bool
+	mu     sync.Mutex
+	tasks  map[string]bool
+	closed bool
 }
 
 func processArgs(o Options, settings, mcp string) []string {
-	return append(commandArgs(o, settings, mcp), "--input-format", "stream-json")
+	return append(commandArgs(o, settings, mcp), "--input-format", "stream-json", "--replay-user-messages")
 }
 
 // StartProcess launches Claude for o.SessionID; o.Message is ignored.
@@ -129,6 +129,9 @@ type streamMeta struct {
 	IsReplay bool            `json:"isReplay"`
 	Origin   json.RawMessage `json:"origin"`
 	TaskID   string          `json:"task_id"`
+	Message  struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"message"`
 }
 
 func (p *Process) read(stdout io.Reader, hooks ProcessHooks) error {
@@ -141,7 +144,14 @@ func (p *Process) read(stdout io.Reader, hooks ProcessHooks) error {
 			continue // stray non-JSON output does not end a long-lived session
 		}
 		events, terminal, turnErr := parseEvent(line)
-		p.track(meta, terminal, hooks)
+		p.trackTasks(meta)
+		if meta.Type == "user" && meta.IsReplay {
+			var content string
+			if json.Unmarshal(meta.Message.Content, &content) == nil && hooks.Replay != nil {
+				hooks.Replay(content)
+			}
+			continue // already shown as the user's message
+		}
 		for _, e := range events {
 			if hooks.Event != nil {
 				if err := hooks.Event(e); err != nil {
@@ -149,51 +159,25 @@ func (p *Process) read(stdout io.Reader, hooks ProcessHooks) error {
 				}
 			}
 		}
-		if terminal {
-			p.finish(meta, turnErr, hooks)
+		if terminal && hooks.Result != nil {
+			hooks.Result(turnErr, len(meta.Origin) > 0 && string(meta.Origin) != "null")
 		}
 	}
 	return scanner.Err()
 }
 
-// track updates background tasks and detects turns Claude starts by itself:
-// conversation output while none of our messages is pending.
-func (p *Process) track(meta streamMeta, terminal bool, hooks ProcessHooks) {
+// trackTasks follows background tasks (agents running after their turn).
+func (p *Process) trackTasks(meta streamMeta) {
+	if meta.Type != "system" {
+		return
+	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	switch {
-	case meta.Type == "system" && meta.Subtype == "task_started" && meta.TaskID != "":
+	case meta.Subtype == "task_started" && meta.TaskID != "":
 		p.tasks[meta.TaskID] = true
-	case meta.Type == "system" && meta.Subtype == "task_notification":
+	case meta.Subtype == "task_notification":
 		delete(p.tasks, meta.TaskID)
-	}
-	start := !terminal && !p.self && p.pending == 0 && (meta.Type == "assistant" || meta.Type == "stream_event" || (meta.Type == "user" && !meta.IsReplay))
-	if start {
-		p.self = true
-	}
-	p.mu.Unlock()
-	if start && hooks.SelfTurn != nil {
-		hooks.SelfTurn(true)
-	}
-}
-
-// finish attributes a result: one with an origin (or arriving while none of
-// our messages is pending) ends a self-started turn, any other ends a Send.
-func (p *Process) finish(meta streamMeta, turnErr error, hooks ProcessHooks) {
-	p.mu.Lock()
-	own := p.pending > 0 && len(meta.Origin) == 0
-	ended := false
-	if own {
-		p.pending--
-	} else if p.self {
-		p.self = false
-		ended = true
-	}
-	p.mu.Unlock()
-	if own && hooks.TurnDone != nil {
-		hooks.TurnDone(turnErr)
-	}
-	if ended && hooks.SelfTurn != nil {
-		hooks.SelfTurn(false)
 	}
 }
 
@@ -213,18 +197,9 @@ func (p *Process) write(v any) error {
 	return err
 }
 
-// Send queues one user message; its TurnDone follows its result.
+// Send writes one user message; Claude runs it now or queues it.
 func (p *Process) Send(text string) error {
-	p.mu.Lock()
-	p.pending++
-	p.mu.Unlock()
-	err := p.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": text}})
-	if err != nil {
-		p.mu.Lock()
-		p.pending--
-		p.mu.Unlock()
-	}
-	return err
+	return p.write(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": text}})
 }
 
 // Interrupt stops the running turn; the process and its context stay.

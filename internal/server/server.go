@@ -399,7 +399,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
-	if rt := s.procs[id]; rt != nil && len(rt.queue) >= maxQueuedMessages {
+	if rt := s.procs[id]; rt != nil && len(rt.sent) >= maxQueuedMessages {
 		s.mu.Unlock()
 		fail(w, 429, "排队的消息过多，请等待当前轮次完成")
 		return

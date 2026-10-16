@@ -63,11 +63,16 @@ func streamChild() {
 	os.Exit(0)
 }
 
+type turnResult struct {
+	err    error
+	origin bool
+}
+
 type processLog struct {
-	events chan Event
-	turns  chan error
-	self   chan bool
-	exit   chan error
+	events  chan Event
+	replays chan string
+	results chan turnResult
+	exit    chan error
 }
 
 func startTestProcess(t *testing.T) (*Process, processLog) {
@@ -77,12 +82,12 @@ func startTestProcess(t *testing.T) (*Process, processLog) {
 		t.Fatal(err)
 	}
 	t.Setenv("CC_REMOTE_TEST_CHILD", "stream")
-	l := processLog{make(chan Event, 64), make(chan error, 8), make(chan bool, 8), make(chan error, 1)}
+	l := processLog{make(chan Event, 64), make(chan string, 8), make(chan turnResult, 8), make(chan error, 1)}
 	p, err := StartProcess(Options{Executable: exe, HostExecutable: exe, SessionID: testID, Cwd: t.TempDir(), BridgeURL: "http://127.0.0.1:1/api/bridge/request", BridgeToken: "secret"}, ProcessHooks{
-		Event:    func(e Event) error { l.events <- e; return nil },
-		TurnDone: func(err error) { l.turns <- err },
-		SelfTurn: func(b bool) { l.self <- b },
-		Exit:     func(err error) { l.exit <- err },
+		Event:  func(e Event) error { l.events <- e; return nil },
+		Replay: func(c string) { l.replays <- c },
+		Result: func(err error, origin bool) { l.results <- turnResult{err, origin} },
+		Exit:   func(err error) { l.exit <- err },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,13 +107,16 @@ func wait[T any](t *testing.T, c chan T, what string) T {
 	return zero
 }
 
-func TestProcessTurnsInterruptAndSelfTurns(t *testing.T) {
+func TestProcessReplaysResultsAndInterrupt(t *testing.T) {
 	p, l := startTestProcess(t)
 	if err := p.Send("hello"); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, l.turns, "first turn"); err != nil {
-		t.Fatalf("first turn: %v", err)
+	if got := wait(t, l.replays, "replay"); got != "hello" {
+		t.Fatalf("replay %q", got)
+	}
+	if r := wait(t, l.results, "first result"); r.err != nil || r.origin {
+		t.Fatalf("first result %+v", r)
 	}
 	found := false
 	for len(l.events) > 0 {
@@ -119,29 +127,26 @@ func TestProcessTurnsInterruptAndSelfTurns(t *testing.T) {
 	if !found {
 		t.Fatal("assistant event missing")
 	}
-	// Two messages at once are answered in order, one TurnDone each.
-	_ = p.Send("one")
 	_ = p.Send("fail")
-	if err := wait(t, l.turns, "queued 1"); err != nil {
-		t.Fatalf("queued 1: %v", err)
-	}
-	if err := wait(t, l.turns, "queued 2"); err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("failed turn: %v", err)
+	wait(t, l.replays, "fail replay")
+	if r := wait(t, l.results, "failed result"); r.err == nil || !strings.Contains(r.err.Error(), "boom") {
+		t.Fatalf("failed turn: %+v", r)
 	}
 	_ = p.Send("hang")
-	time.Sleep(100 * time.Millisecond)
+	wait(t, l.replays, "hang replay")
 	if err := p.Interrupt(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, l.turns, "interrupted turn"); err == nil {
+	if r := wait(t, l.results, "interrupted result"); r.err == nil {
 		t.Fatal("interrupted turn reported success")
 	}
 	_ = p.Send("bg")
-	if err := wait(t, l.turns, "bg turn"); err != nil {
-		t.Fatalf("bg turn: %v", err)
+	wait(t, l.replays, "bg replay")
+	if r := wait(t, l.results, "bg result"); r.origin {
+		t.Fatal("our turn reported an origin")
 	}
-	if !wait(t, l.self, "self turn start") || wait(t, l.self, "self turn end") {
-		t.Fatal("self turn not reported as start then end")
+	if r := wait(t, l.results, "self-started result"); !r.origin {
+		t.Fatal("self-started turn without origin")
 	}
 	if n := p.BackgroundTasks(); n != 0 {
 		t.Fatalf("background tasks %d", n)
@@ -160,11 +165,6 @@ func TestProcessCrashReportsExit(t *testing.T) {
 	_ = p.Send("crash")
 	if err := wait(t, l.exit, "exit"); err == nil {
 		t.Fatal("crash not reported")
-	}
-	select {
-	case err := <-l.turns:
-		t.Fatalf("crashed turn reported done: %v", err)
-	default:
 	}
 	<-p.Done()
 }

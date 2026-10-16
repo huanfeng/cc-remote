@@ -47,7 +47,7 @@ func (s *Server) channelLive(c *channelConnection) bool {
 	return c != nil && time.Since(c.seen) < channelTTL
 }
 func (s *Server) decorateChannel(x *store.Session) {
-	if rt := s.procs[x.ID]; rt != nil && len(rt.queue) > 0 {
+	if rt := s.procs[x.ID]; rt != nil && len(rt.sent) > 0 {
 		x.Queued = rt.queuedMessages()
 	}
 	if x.Mode != "channel" {

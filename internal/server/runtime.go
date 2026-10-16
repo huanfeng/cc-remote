@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"cc-remote/internal/claude"
@@ -13,13 +14,14 @@ import (
 
 // Managed sessions keep one Claude process running between turns.
 //
-// cc-remote queues web messages itself and writes the next one only after the
-// previous turn's result: Claude merges messages that queue up on its stdin
-// into one turn (one result for several messages), which would make results
-// impossible to attribute. A session is busy (s.runs holds an execution,
-// status "running") while a message is queued or in flight, while Claude runs
-// a turn it started itself (e.g. to report a finished background agent), or
-// while an approval request is open; the execution ends when all are over.
+// Web messages are written to Claude as they arrive (one writer per session
+// keeps several clients in order); Claude queues those sent during a turn and
+// merges them into its next turn. Each turn starts by echoing the messages it
+// handles, so a message is "waiting" until its echo and is recorded in the
+// history then. A session is busy (s.runs holds an execution, status
+// "running") while Claude is in a turn (ours, or one it started itself, e.g.
+// to report a finished background agent), while sent messages wait for their
+// echo, or while an approval request is open.
 
 // claudeProcess is the part of claude.Process the server uses.
 type claudeProcess interface {
@@ -62,10 +64,12 @@ type sessionRuntime struct {
 	proc  claudeProcess // nil while starting; set before ready is closed
 	ready chan struct{}
 
-	queue     []outgoing
-	inflight  bool // a message was written and its result is outstanding
-	self      bool // Claude runs a turn it started itself
-	approvals int  // open bridge requests
+	sent      []outgoing // accepted, not yet echoed by Claude (oldest first)
+	unwritten int        // trailing entries of sent the writer has not written
+	writing   bool       // the writer goroutine runs
+	turn      bool       // Claude is in a turn
+	early     *outgoing  // recorded on a turn's first output, before its echo (slash commands)
+	approvals int        // open bridge requests
 
 	run     *execution
 	release context.CancelFunc // cancels run.ctx without ending the process
@@ -107,10 +111,10 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	opts.BridgeToken = rt.token
 	s.procs[x.ID] = rt
 	hooks := claude.ProcessHooks{
-		Event:    func(e claude.Event) error { return s.processEvent(rt, e) },
-		TurnDone: func(err error) { s.turnDone(rt, err) },
-		SelfTurn: func(active bool) { s.selfTurn(rt, active) },
-		Exit:     func(err error) { s.processExit(rt, err) },
+		Event:  func(e claude.Event) error { return s.processEvent(rt, e) },
+		Replay: func(content string) { s.replay(rt, content) },
+		Result: func(err error, _ bool) { s.result(rt, err) },
+		Exit:   func(err error) { s.processExit(rt, err) },
 	}
 	// Starting can take seconds (Windows, antivirus); it runs outside s.mu and
 	// messages queue meanwhile.
@@ -126,7 +130,7 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 		}
 		detached := rt.stopping
 		if !detached {
-			s.dispatchLocked(rt)
+			s.writeLocked(rt)
 		}
 		s.mu.Unlock()
 		if detached {
@@ -137,6 +141,11 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 }
 
 func (s *Server) processEvent(rt *sessionRuntime, e claude.Event) error {
+	if e.Kind != "session" && e.Kind != "status" && e.Kind != "result" {
+		s.mu.Lock()
+		s.turnOutputLocked(rt)
+		s.mu.Unlock()
+	}
 	if e.Kind == "session" || e.Kind == "result" {
 		if err := s.store.SetResume(rt.id); err != nil {
 			return err
@@ -146,49 +155,137 @@ func (s *Server) processEvent(rt *sessionRuntime, e claude.Event) error {
 	return err
 }
 
-// queuedMessages lists messages not yet written to Claude, for the web.
+// turnOutputLocked notes output: without a turn it starts one, either for our
+// oldest written message (a slash command, echoed only after its output; it
+// is recorded now so the history keeps the order) or one Claude started.
+func (s *Server) turnOutputLocked(rt *sessionRuntime) {
+	if rt.turn {
+		return
+	}
+	rt.turn = true
+	if written := len(rt.sent) - rt.unwritten; written > 0 {
+		m := rt.sent[0]
+		rt.sent = rt.sent[1:]
+		rt.early = &m
+		s.recordLocked(rt, m)
+		return
+	}
+	if !rt.stopping {
+		s.busyLocked(rt)
+	}
+}
+
+func (s *Server) recordLocked(rt *sessionRuntime, m outgoing) {
+	if _, e := s.store.Append(rt.id, "user", m.Text, m.Payload); e != nil {
+		log.Printf("save message: %v", e)
+	}
+}
+
+// queuedMessages lists messages Claude has not started yet, for the web.
 func (rt *sessionRuntime) queuedMessages() []store.QueuedMessage {
-	out := make([]store.QueuedMessage, len(rt.queue))
-	for i, m := range rt.queue {
+	out := make([]store.QueuedMessage, len(rt.sent))
+	for i, m := range rt.sent {
 		out[i] = m.QueuedMessage
 	}
 	return out
 }
 
-// enqueueLocked adds a web message; it reports whether it waits behind other work.
+// enqueueLocked accepts a web message; it reports whether it waits behind other work.
 func (s *Server) enqueueLocked(rt *sessionRuntime, m outgoing) bool {
-	waiting := rt.inflight || rt.self || len(rt.queue) > 0 || rt.proc == nil
-	rt.queue = append(rt.queue, m)
+	waiting := rt.turn || len(rt.sent) > 0 || rt.proc == nil
+	rt.sent = append(rt.sent, m)
+	rt.unwritten++
 	s.busyLocked(rt)
-	s.dispatchLocked(rt)
+	s.writeLocked(rt)
 	return waiting
 }
 
-// dispatchLocked writes the next queued message once Claude is free. The
-// message enters the history now, before any of its output.
-func (s *Server) dispatchLocked(rt *sessionRuntime) {
-	if rt.proc == nil || rt.stopping || rt.inflight || rt.self || len(rt.queue) == 0 {
+// writeLocked starts the session's writer, which writes accepted messages in
+// order outside s.mu (the pipe can block while Claude's output waits for the
+// reader). One writer per session serializes messages from several clients.
+func (s *Server) writeLocked(rt *sessionRuntime) {
+	if rt.writing || rt.proc == nil || rt.stopping || rt.unwritten == 0 {
 		return
 	}
-	m := rt.queue[0]
-	rt.queue = rt.queue[1:]
-	rt.inflight = true
-	if _, e := s.store.Append(rt.id, "user", m.Text, m.Payload); e != nil {
-		log.Printf("save message: %v", e)
-	}
+	rt.writing = true
 	proc := rt.proc
-	go func() { // outside s.mu: the pipe can block while Claude's output waits for the reader
-		if err := proc.Send(m.prompt); err != nil {
+	go func() {
+		for {
 			s.mu.Lock()
-			defer s.mu.Unlock()
-			if rt.inflight && !rt.stopping {
-				rt.inflight = false
-				s.recordOutcomeLocked(rt, err)
-				s.dispatchLocked(rt)
-				s.settleLocked(rt)
+			if rt.unwritten == 0 || rt.stopping {
+				rt.writing = false
+				s.mu.Unlock()
+				return
+			}
+			m := rt.sent[len(rt.sent)-rt.unwritten]
+			rt.unwritten--
+			s.mu.Unlock()
+			if err := proc.Send(m.prompt); err != nil {
+				log.Printf("send to Claude (%s): %v", rt.id, err) // the process is gone; Exit settles
+				s.mu.Lock()
+				rt.writing = false
+				s.mu.Unlock()
+				return
 			}
 		}
 	}()
+}
+
+// replay records the messages a turn starts with. Claude echoes messages that
+// queued up during a turn merged, joined by newlines.
+func (s *Server) replay(rt *sessionRuntime, content string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt.turn = true
+	if early := rt.early; early != nil {
+		rt.early = nil
+		if strings.TrimSpace(content) == strings.TrimSpace(early.prompt) {
+			return // already recorded on the turn's first output
+		}
+	}
+	written := rt.sent[:len(rt.sent)-rt.unwritten]
+	n := replayCount(written, content)
+	for _, m := range written[:n] {
+		s.recordLocked(rt, m)
+	}
+	rt.sent = rt.sent[n:]
+}
+
+// replayCount says how many of the oldest written messages an echo covers.
+func replayCount(written []outgoing, content string) int {
+	joined := ""
+	for i, m := range written {
+		if i == 0 {
+			joined = m.prompt
+		} else {
+			joined += "\n" + m.prompt
+		}
+		if joined == content {
+			return i + 1
+		}
+	}
+	// Not an exact join: take the leading messages found in it, in order.
+	n, at := 0, 0
+	for _, m := range written {
+		p := strings.TrimSpace(m.prompt)
+		i := strings.Index(content[at:], p)
+		if i < 0 {
+			break
+		}
+		n, at = n+1, at+i+len(p)
+	}
+	if n == 0 && len(written) > 0 {
+		n = 1
+	}
+	return n
+}
+
+func (s *Server) result(rt *sessionRuntime, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rt.turn, rt.early = false, nil
+	s.recordOutcomeLocked(rt, err)
+	s.settleLocked(rt)
 }
 
 // busyLocked starts an execution for the session if none is running.
@@ -212,7 +309,7 @@ func (s *Server) busyLocked(rt *sessionRuntime) {
 
 // settleLocked ends the execution once nothing is left to do.
 func (s *Server) settleLocked(rt *sessionRuntime) {
-	if rt.run == nil || rt.inflight || rt.self || rt.approvals > 0 || (len(rt.queue) > 0 && !rt.stopping) {
+	if rt.run == nil || rt.turn || rt.approvals > 0 || (len(rt.sent) > 0 && !rt.stopping) {
 		return
 	}
 	status := rt.outcome
@@ -258,26 +355,6 @@ func (s *Server) recordOutcomeLocked(rt *sessionRuntime, err error) {
 	}
 }
 
-func (s *Server) turnDone(rt *sessionRuntime, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rt.inflight = false
-	s.recordOutcomeLocked(rt, err)
-	s.dispatchLocked(rt)
-	s.settleLocked(rt)
-}
-
-func (s *Server) selfTurn(rt *sessionRuntime, active bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rt.self = active
-	if active && !rt.stopping {
-		s.busyLocked(rt)
-	}
-	s.dispatchLocked(rt)
-	s.settleLocked(rt)
-}
-
 func (s *Server) processExit(rt *sessionRuntime, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -290,8 +367,8 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 	if err == nil && !rt.stopping {
 		err = errors.New("Claude Code exited")
 	}
-	unsent := rt.queue
-	rt.queue = nil
+	unsent := rt.sent
+	rt.sent, rt.unwritten = nil, 0
 	s.recordOutcomeLocked(rt, err)
 	if rt.stopping {
 		rt.outcome = "interrupted"
@@ -306,7 +383,7 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 			log.Printf("save execution error: %v", e)
 		}
 	}
-	rt.inflight, rt.self, rt.approvals, rt.stopping = false, false, 0, true
+	rt.turn, rt.early, rt.approvals, rt.stopping = false, nil, 0, true
 	s.settleLocked(rt)
 }
 
@@ -315,8 +392,8 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 // call anyway. A second stop, or a turn still running after interruptGrace,
 // ends the process.
 func (s *Server) interruptLocked(rt *sessionRuntime) {
-	if !rt.inflight && !rt.self {
-		return // nothing runs; queued messages wait for a starting process
+	if !rt.turn && len(rt.sent) == 0 {
+		return // nothing runs
 	}
 	if rt.interrupting {
 		go s.terminate(rt)

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,23 +55,17 @@ func TestIdleProcessIsReaped(t *testing.T) {
 
 // fakeProc is a scripted Claude process: the test ends turns with finish.
 type fakeProc struct {
-	hooks    claude.ProcessHooks
-	mu       sync.Mutex
-	sent     []string
-	inflight int
-	maxIn    int
-	closed   bool
-	done     chan struct{}
+	hooks  claude.ProcessHooks
+	mu     sync.Mutex
+	sent   []string
+	closed bool
+	done   chan struct{}
 }
 
 func (p *fakeProc) Send(text string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sent = append(p.sent, text)
-	p.inflight++
-	if p.inflight > p.maxIn {
-		p.maxIn = p.inflight
-	}
 	return nil
 }
 func (p *fakeProc) Interrupt() error      { return nil } // ignores it, like a stuck turn
@@ -89,12 +82,12 @@ func (p *fakeProc) Close() {
 	close(p.done)
 	p.hooks.Exit(nil)
 }
-func (p *fakeProc) finish(err error) {
-	p.mu.Lock()
-	p.inflight--
-	p.mu.Unlock()
-	p.hooks.TurnDone(err)
-}
+
+// replay, output and result play Claude's side of a turn.
+func (p *fakeProc) replay(content string) { p.hooks.Replay(content) }
+func (p *fakeProc) result(err error)      { p.hooks.Result(err, false) }
+func (p *fakeProc) output(kind string)    { _ = p.hooks.Event(claude.Event{Kind: kind, Text: kind}) }
+
 func (p *fakeProc) sentCopy() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -113,9 +106,21 @@ func withFakeProc(t *testing.T) (*Server, *httptest.Server, *store.Store, chan *
 	return s, ts, st, procs
 }
 
-// Messages are written one at a time, in the order they were accepted, and
-// enter the history when written (Claude would merge queued stdin messages).
-func TestQueuedMessagesAreSentOneAtATimeInOrder(t *testing.T) {
+func userTexts(st *store.Store, id string) []string {
+	events, _ := st.Events(id, 0)
+	var users []string
+	for _, e := range events {
+		if e.Kind == "user" {
+			users = append(users, e.Text)
+		}
+	}
+	return users
+}
+
+// Messages go straight to Claude, which queues and merges them; each enters
+// the history when Claude echoes it, and the session stays busy until no sent
+// message is left unechoed.
+func TestMessagesUseClaudeQueue(t *testing.T) {
 	_, ts, st, procs := withFakeProc(t)
 	x := createSession(t, ts)
 	for _, text := range []string{"one", "two", "three"} {
@@ -124,33 +129,65 @@ func TestQueuedMessagesAreSentOneAtATimeInOrder(t *testing.T) {
 		}
 	}
 	p := <-procs
-	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	await(t, func() bool { return strings.Join(p.sentCopy(), ",") == "one,two,three" })
+	p.replay("one")
+	p.output("assistant")
 	code, b := request(t, ts, "GET", "/api/sessions", nil, testToken)
 	if code != 200 || !strings.Contains(string(b), `"queued":[{"text":"two"},{"text":"three"}]`) {
 		t.Fatalf("queued listing %d %s", code, b)
 	}
-	p.finish(nil)
-	await(t, func() bool { return len(p.sentCopy()) == 2 })
-	p.finish(errors.New("boom"))
-	await(t, func() bool { return len(p.sentCopy()) == 3 })
+	p.result(nil)
 	if y, _ := st.Get(x.ID); y.Status != "running" {
-		t.Fatalf("status with a message in flight: %s", y.Status)
+		t.Fatalf("status with unechoed messages: %s", y.Status)
 	}
-	p.finish(nil)
+	p.replay("two\nthree") // Claude merged the queued messages
+	p.output("assistant")
+	p.result(nil)
 	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
-	if got := p.sentCopy(); strings.Join(got, ",") != "one,two,three" || p.maxIn != 1 {
-		t.Fatalf("sent %v, max in flight %d", got, p.maxIn)
+	if got := strings.Join(userTexts(st, x.ID), ","); got != "one,two,three" {
+		t.Fatalf("history %s", got)
 	}
+}
+
+// A slash command is echoed after its output; it is recorded before it.
+func TestSlashCommandRecordedBeforeItsOutput(t *testing.T) {
+	_, ts, st, procs := withFakeProc(t)
+	x := createSession(t, ts)
+	_ = st.SetResume(x.ID)
+	request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "/compact"}, testToken)
+	p := <-procs
+	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	p.output("compact")
+	p.replay("/compact")
+	p.result(nil)
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
 	events, _ := st.Events(x.ID, 0)
-	var users []string
+	var kinds []string
 	for _, e := range events {
-		if e.Kind == "user" {
-			users = append(users, e.Text)
+		if e.Kind == "user" || e.Kind == "compact" {
+			kinds = append(kinds, e.Kind)
 		}
 	}
-	if strings.Join(users, ",") != "one,two,three" {
-		t.Fatalf("history %v", users)
+	if strings.Join(kinds, ",") != "user,compact" {
+		t.Fatalf("order %v", kinds)
 	}
+}
+
+// Output without a message of ours is a turn Claude started; it keeps the
+// session busy until its result.
+func TestSelfStartedTurnKeepsSessionBusy(t *testing.T) {
+	_, ts, st, procs := withFakeProc(t)
+	x := createSession(t, ts)
+	request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "start"}, testToken)
+	p := <-procs
+	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	p.replay("start")
+	p.result(nil)
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
+	p.output("assistant")
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "running" })
+	p.result(nil)
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
 }
 
 // A second stop ends a turn that ignores the interrupt; the next message
@@ -161,6 +198,7 @@ func TestSecondStopEndsTheProcess(t *testing.T) {
 	request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "hang"}, testToken)
 	p := <-procs
 	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	p.replay("hang")
 	for i := 0; i < 2; i++ {
 		if code, _ := request(t, ts, "POST", "/api/sessions/"+x.ID+"/stop", nil, testToken); code != 200 {
 			t.Fatalf("stop %d: %d", i, code)
@@ -184,7 +222,8 @@ func TestBridgeRequestWhileIdle(t *testing.T) {
 	request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "start agent"}, testToken)
 	p := <-procs
 	await(t, func() bool { return len(p.sentCopy()) == 1 })
-	p.finish(nil)
+	p.replay("start agent")
+	p.result(nil)
 	await(t, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
 	s.mu.Lock()
 	token := s.procs[x.ID].token
