@@ -317,6 +317,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, x)
 }
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
+	s.markViewed(r, r.PathValue("id"))
 	x, e := s.store.Get(r.PathValue("id"))
 	if e != nil {
 		fail(w, 404, "会话不存在")
@@ -350,6 +351,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	s.markViewed(r, id)
 	if _, e := s.store.Get(id); e != nil {
 		fail(w, 404, "会话不存在")
 		return

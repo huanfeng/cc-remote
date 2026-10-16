@@ -245,6 +245,30 @@ func (r *Runner) ConfirmDialog(title string, wait time.Duration) bool {
 	return false
 }
 
+// Focus tells Claude Code whether someone is looking at it, as a terminal
+// does with focus reports (when the TUI turned them on): Claude Code writes a
+// recap of what happened when its user comes back after being away.
+func (r *Runner) Focus(in bool) {
+	r.mu.Lock()
+	on := r.modes.decset[1004]
+	r.mu.Unlock()
+	if !on {
+		return
+	}
+	if in {
+		_ = r.write([]byte("\x1b[I"))
+	} else {
+		_ = r.write([]byte("\x1b[O"))
+	}
+}
+
+// Suggestion is the next prompt Claude Code suggests in its input box, or "".
+func (r *Runner) Suggestion() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.scr.suggestion()
+}
+
 // Activity is Claude Code's spinner line while it works, such as
 // "Composing… (8m 33s · ↓ 26.2k tokens)", or "".
 func (r *Runner) Activity() string {

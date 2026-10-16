@@ -14,13 +14,21 @@ import (
 // these programs use and ignores colors and modes.
 type screen struct {
 	cols, rows  int
-	cells       [][]rune // 0 marks the right half of a wide character
+	cells       [][]cell
 	x, y        int
+	dim         bool // SGR 2 (faint) is on
 	pendingWrap bool
 	state       int
 	seq         []byte // CSI parameters, or a partial UTF-8 character
 	savedX      int
 	savedY      int
+}
+
+// cell is one character cell; r is 0 for the right half of a wide character.
+// dim marks faint text, such as Claude Code's suggested next prompt.
+type cell struct {
+	r   rune
+	dim bool
 }
 
 const (
@@ -39,7 +47,7 @@ func newScreen(cols, rows int) *screen {
 }
 
 func (s *screen) resize(cols, rows int) {
-	cells := make([][]rune, rows)
+	cells := make([][]cell, rows)
 	for y := range cells {
 		cells[y] = blankLine(cols)
 		if y < len(s.cells) {
@@ -51,10 +59,10 @@ func (s *screen) resize(cols, rows int) {
 	s.pendingWrap = false
 }
 
-func blankLine(cols int) []rune {
-	line := make([]rune, cols)
+func blankLine(cols int) []cell {
+	line := make([]cell, cols)
 	for i := range line {
-		line[i] = ' '
+		line[i] = cell{r: ' '}
 	}
 	return line
 }
@@ -166,9 +174,9 @@ func (s *screen) print(r rune) {
 		s.x = 0
 		s.lineFeed()
 	}
-	s.cells[s.y][s.x] = r
+	s.cells[s.y][s.x] = cell{r, s.dim}
 	if w == 2 && s.x+1 < s.cols {
-		s.cells[s.y][s.x+1] = 0
+		s.cells[s.y][s.x+1] = cell{0, s.dim}
 	}
 	s.x += w
 	if s.x >= s.cols {
@@ -212,7 +220,7 @@ func (s *screen) erase(x0, y0, x1, y1 int) {
 			to = x1
 		}
 		for x := max(from, 0); x < min(to, s.cols); x++ {
-			s.cells[y][x] = ' '
+			s.cells[y][x] = cell{r: ' '}
 		}
 	}
 }
@@ -231,6 +239,10 @@ func (s *screen) csi(final byte) {
 			return params[i]
 		}
 		return def
+	}
+	if final == 'm' {
+		s.sgr(params)
+		return
 	}
 	s.pendingWrap = false
 	switch final {
@@ -296,18 +308,37 @@ func (s *screen) csi(final byte) {
 		if final == '@' {
 			copy(line[n:], line[:len(line)-n])
 			for i := 0; i < n; i++ {
-				line[i] = ' '
+				line[i] = cell{r: ' '}
 			}
 		} else {
 			copy(line, line[n:])
 			for i := len(line) - n; i < len(line); i++ {
-				line[i] = ' '
+				line[i] = cell{r: ' '}
 			}
 		}
 	case 's':
 		s.savedX, s.savedY = s.x, s.y
 	case 'u':
 		s.x, s.y = s.savedX, s.savedY
+	}
+}
+
+func (s *screen) sgr(params []int) {
+	for i := 0; i < len(params); i++ {
+		switch p := params[i]; p {
+		case 0:
+			s.dim = false
+		case 2:
+			s.dim = true
+		case 22:
+			s.dim = false
+		case 38, 48, 58: // 5;n or 2;r;g;b
+			if i+1 < len(params) && params[i+1] == 5 {
+				i += 2
+			} else if i+1 < len(params) && params[i+1] == 2 {
+				i += 4
+			}
+		}
 	}
 }
 
@@ -318,9 +349,9 @@ func (s *screen) lines() []string {
 	out := make([]string, s.rows)
 	for y, row := range s.cells {
 		var b strings.Builder
-		for _, r := range row {
-			if r != 0 {
-				b.WriteRune(r)
+		for _, c := range row {
+			if c.r != 0 {
+				b.WriteRune(c.r)
 			}
 		}
 		out[y] = strings.TrimRight(b.String(), " ")
@@ -343,6 +374,37 @@ func runeWidth(r rune) int {
 		return 2
 	}
 	return 1
+}
+
+// suggestion is the faint text after the prompt in Claude Code's input box,
+// the next prompt it suggests, or "" when the box has typed text or nothing.
+func (s *screen) suggestion() string {
+	for y := s.rows - 1; y >= 0; y-- {
+		row := s.cells[y]
+		x := 0
+		for x < len(row) && row[x].r == ' ' {
+			x++
+		}
+		if x >= len(row) || row[x].r != '❯' {
+			continue
+		}
+		var b strings.Builder
+		for _, c := range row[x+1:] {
+			if c.r == 0 {
+				continue
+			}
+			if !c.dim && c.r != ' ' && c.r != '\u00a0' {
+				return "" // typed text, a dialog option or a past prompt
+			}
+			b.WriteRune(c.r)
+		}
+		text := strings.TrimSpace(strings.ReplaceAll(b.String(), "\u00a0", " "))
+		if strings.HasPrefix(text, "Try \"") { // the empty box's placeholder
+			return ""
+		}
+		return text
+	}
+	return ""
 }
 
 // activityLine matches Claude Code's spinner line while it works, such as

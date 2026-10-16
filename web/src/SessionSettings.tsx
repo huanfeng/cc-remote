@@ -6,7 +6,7 @@ import { duration, money, number, tokens, type Stats } from './StatusPanel';
 
 export type SessionInfo = { id: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
 // What Claude Code reports to a terminal session's status line.
-export type LiveStatus = { model?: string; modelId?: string; effort?: string; costUSD: number; durationMs: number; contextTokens: number; contextSize: number; contextPercent: number; activity?: string };
+export type LiveStatus = { model?: string; modelId?: string; effort?: string; costUSD: number; durationMs: number; contextTokens: number; contextSize: number; contextPercent: number; activity?: string; suggestion?: string };
 const compact = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 
 export type Defaults = { permissionMode: string; model: string; effort: string };

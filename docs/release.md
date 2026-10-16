@@ -128,9 +128,12 @@ cc-remote update --check          # 只查看是否有新版本
 cc-remote update                  # 有新版本时安装
 cc-remote update --version v0.2.0 # 安装指定版本
 cc-remote update --yes            # dev 构建、重装同版本或降级时需要
+cc-remote update --when-idle      # 不停服务：先替换程序，等所有会话空闲后宿主自动重启
 ```
 
 流程同安装脚本：取凭据 → 下载与当前平台匹配的归档和 `checksums.txt` → 校验 sha256 → 解压。若已安装服务（存在固定位置的二进制），执行新二进制的 `service install` 完成停服务/替换/启动——不带 `--data-dir`，因此沿用安装目录中 `service.json` 副本记录的数据目录和设置；否则直接替换当前可执行文件（Windows 先把运行中的 exe 改名为 `.old`；旧 `.old` 仍被占用时改名为 `.old-<时间戳>`，下次运行 `update` 时清理所有 `.old*`）。
+
+`--when-idle`（同样适用于 `service install --when-idle`）不停止正在运行的服务：只替换程序（运行中的 exe 先改名），然后请求宿主在没有会话执行中、等待回答或运行后台任务时自动重启。宿主以退出码 76 退出，由服务管理器（Windows 计划任务的 supervisor、systemd、launchd）重新启动并运行新版本。运行中的宿主版本较旧、不支持自动重启时，会提示空闲时手动运行 `cc-remote service restart`。
 
 查询与下载有超时：连接、TLS 握手和等待响应头各 30 秒，整个查询+下载最长 10 分钟。匿名访问时，若仓库本身可读而指定标签不存在，报告 `release vX.Y.Z not found`；只有仓库不可访问（私有且未认证）时才显示认证帮助。
 

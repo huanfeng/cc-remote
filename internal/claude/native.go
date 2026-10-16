@@ -365,14 +365,31 @@ func (e *historyEntry) refresh(path, id string) error {
 func transcriptEvents(line []byte, session *NativeSession) []Event {
 	inspectLine(line, session)
 	var v struct {
-		Type        string `json:"type"`
-		IsMeta      bool   `json:"isMeta"`
-		IsSidechain bool   `json:"isSidechain"`
+		Type        string          `json:"type"`
+		Subtype     string          `json:"subtype"`
+		Content     json.RawMessage `json:"content"`
+		IsMeta      bool            `json:"isMeta"`
+		IsSidechain bool            `json:"isSidechain"`
 		Message     struct {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
-	if json.Unmarshal(line, &v) != nil || v.IsMeta || v.IsSidechain || (v.Type != "user" && v.Type != "assistant") {
+	if json.Unmarshal(line, &v) != nil || v.IsMeta || v.IsSidechain {
+		return nil
+	}
+	// Claude Code's recap of the session, written while its user was away.
+	if v.Type == "system" && v.Subtype == "away_summary" {
+		var text string
+		if json.Unmarshal(v.Content, &text) != nil {
+			return nil
+		}
+		text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), "(disable recaps in /config)"))
+		if text == "" {
+			return nil
+		}
+		return []Event{{Kind: "recap", Text: text}}
+	}
+	if v.Type != "user" && v.Type != "assistant" {
 		return nil
 	}
 	var out []Event

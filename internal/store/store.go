@@ -46,6 +46,7 @@ type LiveStatus struct {
 	ContextSize    int     `json:"contextSize"`
 	ContextPercent float64 `json:"contextPercent"`
 	Activity       string  `json:"activity,omitempty"`
+	Suggestion     string  `json:"suggestion,omitempty"` // Claude Code's suggested next prompt
 }
 
 // QueuedMessage is a sent message Claude has not started yet; it becomes a

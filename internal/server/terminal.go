@@ -49,6 +49,8 @@ type terminalSession struct {
 	wake         chan struct{} // a hook asks for a transcript sync now
 	cwd          string
 	live         *store.LiveStatus // from the status line
+	viewedAt     time.Time         // the web last showed this session (polling with viewing=1)
+	away         bool              // Claude Code was told nobody looks (focus out)
 }
 
 type terminalQueued struct {
@@ -307,9 +309,42 @@ func (s *Server) terminalLoop(ts *terminalSession) {
 			s.terminalExited(ts)
 			return
 		case <-tick.C:
+			s.updateFocus(ts)
 		case <-ts.wake:
 		}
 		s.syncTerminal(ts)
+	}
+}
+
+// webViewWindow is how long after the web's last poll a session counts as viewed.
+const webViewWindow = 20 * time.Second
+
+// updateFocus reports focus to Claude Code: in while a terminal front end is
+// attached or the web shows the session, out when nobody does.
+func (s *Server) updateFocus(ts *terminalSession) {
+	s.mu.Lock()
+	watched := ts.runner.Attached() > 0 || time.Since(ts.viewedAt) < webViewWindow
+	change := watched == ts.away
+	ts.away = !watched
+	s.mu.Unlock()
+	if change {
+		ts.runner.Focus(watched)
+	}
+}
+
+// markViewed records that the web shows a session (its active tab polls with viewing=1).
+func (s *Server) markViewed(r *http.Request, id string) {
+	if r.URL.Query().Get("viewing") != "1" {
+		return
+	}
+	s.mu.Lock()
+	ts := s.terminals[id]
+	if ts != nil {
+		ts.viewedAt = time.Now()
+	}
+	s.mu.Unlock()
+	if ts != nil {
+		s.updateFocus(ts)
 	}
 }
 
@@ -727,8 +762,10 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 	}
 	if x.Status == "running" {
 		live.Activity = ts.runner.Activity()
+	} else if len(ts.queued) == 0 {
+		live.Suggestion = ts.runner.Suggestion()
 	}
-	if ts.live != nil || live.Activity != "" {
+	if ts.live != nil || live.Activity != "" || live.Suggestion != "" {
 		x.Live = &live
 	}
 	if len(ts.queued) > 0 {
