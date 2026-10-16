@@ -72,3 +72,9 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 	}
 	return fmt.Errorf("host did not become ready at %s; see %s", host, filepath.Join(dataDir, "host.log"))
 }
+
+// EnsureHost makes sure a host for dataDir answers at host, starting one in
+// the background when none runs (as ccr does for shared sessions).
+func EnsureHost(dataDir, host string) error {
+	return ensureHost(dataDir, defaultHost(host), "claude", "")
+}

@@ -6,7 +6,7 @@
 
 | | 共享终端会话 | 托管会话 |
 | --- | --- | --- |
-| 启动方式 | 在项目目录运行 `ccr`（或 `cc-remote -- claude`） | 网页「新建」 |
+| 启动方式 | 在项目目录运行 `ccr --shared`（或 `cc-remote -- claude`） | 网页「新建」 |
 | 进程 | 一个长期运行的原生交互式 Claude Code | 每轮一个 `claude -p` 子进程，用 `--resume` 恢复上下文 |
 | 终端 | 保留原生终端界面，终端和网页都能发消息 | 无终端，全部在网页操作 |
 | 停止生成 | 只能在终端 | 网页「停止」 |
@@ -16,7 +16,7 @@
 ### 共享终端会话
 
 1. 确保宿主在运行（安装了服务即自动运行；未运行时 `ccr` 会自动在后台启动一个本机宿主）。
-2. 在项目目录执行 `ccr`。它启动原生 Claude Code，并为该进程加载 CC Remote 的 Channels 桥接组件。
+2. 在项目目录执行 `ccr --shared`（或 `cc-remote -- claude`）。它启动原生 Claude Code，并为该进程加载 CC Remote 的 Channels 桥接组件。不带 `--shared` 的 `ccr` 使用终端会话，见下文。
 3. 首次运行时，在终端确认加载开发 Channel 和项目信任。该参数只允许加载指定的开发 Channel，不会跳过工具权限。
 4. 会话自动出现在网页「会话」列表中，显示在线/离线状态，沿用原会话标题。终端和网页都可以发消息，两端共用同一个进程和上下文；网页退出不会停止终端。
 5. 工具审批、AskUserQuestion 提问和计划确认可以在终端或网页回答，先到达的有效结果生效，另一端自动撤下。网页卡片上的「交给终端」会撤回网页提问，只在终端作答。
@@ -24,9 +24,9 @@
 常用形式：
 
 ```sh
-ccr                                   # 新会话
-ccr --model sonnet                    # 参数原样传给 claude
-ccr --resume <Claude 会话 UUID>       # 继续已有会话，标题自动读取
+ccr --shared                          # 新会话
+ccr --shared --model sonnet           # 参数原样传给 claude
+ccr --shared --resume <Claude 会话 UUID>   # 继续已有会话，标题自动读取
 cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
 ```
 
@@ -57,11 +57,15 @@ cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
 3. 点击会话标题栏的终端图标，复制接入命令，在宿主上运行即可在本地终端中操作同一个 Claude Code：
 
    ```sh
-   cc-remote attach --host http://127.0.0.1:8787 <会话 ID 前缀或标题>
-   cc-remote attach --new --title 修复登录    # 在当前目录新建终端会话并接入
+   ccr                       # 接入当前目录的终端会话，没有就新建（宿主未运行时自动在后台启动）
+   ccr ls                    # 最近的终端会话（按活动时间，最多 20 个），选择编号接入，0 为新建
+   ccr <会话 ID 前缀或标题>
+   ccr --new --title 修复登录 --model sonnet
+   cc-remote attach --host http://127.0.0.1:8787 <会话>   # 缩写 cc-remote a
    ```
 
-   按 `Ctrl+]` 断开，Claude Code 继续运行。多个前端可以同时接入，终端尺寸以最近一次调整的前端为准。
+   按 `Ctrl+]` 断开，Claude Code 继续运行。多个前端可以同时接入，终端尺寸以最近一次调整的前端为准。Windows 的 ConPTY 只发送变化的字符，终端偶尔会留下没刷新的字符：每轮回复结束时会自动整屏重画，也可以按 `Ctrl+L`。
+6. 网页标题栏显示 Claude Code 状态栏数据：模型、推理强度、上下文用量、时长和费用；Claude 工作时显示和终端相同的状态行（如 `Composing… (8m 33s · ↓ 26.2k tokens)`）。终端里的状态栏仍是你自己配置的那个。
 4. 进程默认一直保留。宿主重启或 Claude Code 退出后，下次发消息或接入时会用 `--resume` 恢复上下文，提示缓存仍然有效。还没发过消息的会话会以全新会话启动。
 5. 在终端里执行 `/clear` 或 `/resume` 时，网页会跟随新的 Claude 会话 ID。如果切换到的 Claude 会话已被另一个网页会话占用，网页不会跟随。
 

@@ -41,13 +41,15 @@ const usage = `CC Remote: remote web UI for Claude Code.
 usage:
   cc-remote [host flags]                  run the host (web UI and API)
   cc-remote [--data-dir D] -- claude ...  start native Claude Code shared with the web UI
-  ccr [claude args]                       same as "cc-remote -- claude [claude args]"
+  ccr [--new] [ls | session]              attach to this directory's terminal session (or start one)
+  ccr --shared [claude args]              same as "cc-remote -- claude [claude args]"
 
 commands:
   service    install/config/uninstall/start/stop/restart/status/logs the background service
   alias      install/uninstall/status the ccr launcher
   terminal   start a shared terminal session (legacy form of "--")
-  attach     connect this terminal to a terminal session the host holds (--new starts one here)
+  attach, a  connect this terminal to a terminal session the host holds (--new starts one here)
+  ccr        the ccr launcher: see "ccr --help"
   update     update cc-remote to the latest release
   version    print version information
   help       show this help
@@ -71,6 +73,27 @@ func main() {
 	}
 }
 
+// runCCR is ccr: a terminal session for this directory, or with --shared
+// the shared session it started before terminal sessions existed.
+func runCCR(args []string) error {
+	return terminal.CCR(args, config.DefaultDataDir(), channel.EnsureHost, func(args []string) error {
+		// Leading cc-remote flags (from the alias) stay before "--"; the rest goes to claude.
+		var lead []string
+		for len(args) > 0 {
+			name, _, inline := strings.Cut(args[0], "=")
+			if name != "--host" && name != "-host" && name != "--data-dir" && name != "-data-dir" {
+				break
+			}
+			if inline || len(args) < 2 {
+				lead, args = append(lead, args[0]), args[1:]
+			} else {
+				lead, args = append(lead, args[0], args[1]), args[2:]
+			}
+		}
+		return channel.Launch(append(append(lead, "--claude", "claude", "--"), args...))
+	})
+}
+
 // isCCR reports whether the executable was invoked under the ccr alias name.
 func isCCR(argv0 string) bool {
 	base := filepath.Base(strings.ReplaceAll(argv0, `\`, "/"))
@@ -79,7 +102,7 @@ func isCCR(argv0 string) bool {
 
 func run() error {
 	if isCCR(os.Args[0]) {
-		return channel.Launch(append([]string{"--claude", "claude", "--"}, os.Args[1:]...))
+		return runCCR(os.Args[1:])
 	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -99,8 +122,10 @@ func run() error {
 			return update.Run(version, os.Args[2:])
 		case "terminal":
 			return channel.Launch(os.Args[2:])
-		case "attach":
+		case "attach", "a":
 			return terminal.Attach(os.Args[2:], config.DefaultDataDir())
+		case "ccr":
+			return runCCR(os.Args[2:])
 		}
 	}
 	for i, arg := range os.Args[1:] {

@@ -65,8 +65,8 @@ func aliasPath(dir string) (string, error) {
 	return filepath.Join(dir, name), nil
 }
 
-// aliasTarget returns the executable and the cc-remote flags placed before
-// "--": the installed service copy with its data dir and host when present.
+// aliasTarget returns the executable and the cc-remote flags ccr passes:
+// the installed service copy with its data dir and host when present.
 func aliasTarget(out io.Writer) (string, []string, error) {
 	cfg, _ := LoadConfig("")
 	if cfg != nil && cfg.Exe != "" {
@@ -93,17 +93,17 @@ func aliasTarget(out io.Writer) (string, []string, error) {
 // AliasScript renders the ccr launcher for goos.
 func AliasScript(goos, exe string, flags []string) string {
 	if goos == "windows" {
-		parts := []string{WindowsCmdQuote(exe)}
+		parts := []string{WindowsCmdQuote(exe), "ccr"}
 		for _, f := range flags {
 			parts = append(parts, WindowsCmdQuote(f))
 		}
-		return "@echo off\r\n" + strings.Join(parts, " ") + " -- claude %*\r\n"
+		return "@echo off\r\n" + strings.Join(parts, " ") + " %*\r\n"
 	}
-	parts := []string{ShellQuote(exe)}
+	parts := []string{ShellQuote(exe), "ccr"}
 	for _, f := range flags {
 		parts = append(parts, ShellQuote(f))
 	}
-	return "#!/bin/sh\n# ccr: cc-remote shared Claude Code launcher\nexec " + strings.Join(parts, " ") + " -- claude \"$@\"\n"
+	return "#!/bin/sh\n# ccr: cc-remote terminal session launcher\nexec " + strings.Join(parts, " ") + " \"$@\"\n"
 }
 
 // aliasInstalled reports whether the default ccr launcher exists.

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,8 @@ type remoteSession struct {
 	Mode   string `json:"mode"`
 	Status string `json:"status"`
 	Online bool   `json:"online"`
+	// UpdatedAt is the last activity (RFC 3339).
+	UpdatedAt string `json:"updatedAt"`
 }
 
 // Attach is `cc-remote attach`: it connects this terminal to a terminal
@@ -50,19 +54,13 @@ func Attach(args []string, defaultDataDir string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	token := strings.TrimSpace(os.Getenv("CC_REMOTE_TOKEN"))
-	if token == "" {
-		b, err := os.ReadFile(filepath.Join(*dataDir, "access-token"))
-		if err != nil {
-			return fmt.Errorf("读取访问令牌失败（%v）；用 --data-dir 指定宿主的数据目录", err)
-		}
-		token = strings.TrimSpace(string(b))
+	api, err := newClient(*host, *dataDir)
+	if err != nil {
+		return err
 	}
-	api := &client{host: strings.TrimRight(*host, "/"), token: token}
 	var target remoteSession
-	var err error
 	if *create {
-		target, err = api.create(*title)
+		target, err = api.create(*title, nil)
 	} else {
 		target, err = api.pick(strings.Join(fs.Args(), " "))
 	}
@@ -70,6 +68,127 @@ func Attach(args []string, defaultDataDir string) error {
 		return err
 	}
 	return api.attach(target)
+}
+
+// CCR is `ccr`: it attaches to this directory's terminal session, creating one
+// when there is none. ensureHost starts a background host when none runs;
+// `ccr --shared ...` runs shared (the former ccr).
+func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error, shared func(args []string) error) error {
+	for i, a := range args {
+		if a == "--shared" {
+			return shared(append(append([]string{}, args[:i]...), args[i+1:]...))
+		}
+	}
+	fs := flag.NewFlagSet("ccr", flag.ContinueOnError)
+	host := fs.String("host", "http://127.0.0.1:8787", "cc-remote host URL")
+	dataDir := fs.String("data-dir", defaultDataDir, "cc-remote data directory")
+	create := fs.Bool("new", false, "start a new terminal session in this directory")
+	title := fs.String("title", "", "title of a new session (default: directory name)")
+	model := fs.String("model", "", "model of a new session")
+	effort := fs.String("effort", "", "reasoning effort of a new session")
+	mode := fs.String("permission-mode", "", "permission mode of a new session")
+	fs.Usage = func() {
+		out := fs.Output()
+		fmt.Fprintln(out, "usage: ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]")
+		fmt.Fprintln(out, "       ccr ls                            (recent terminal sessions in every directory; pick one to attach)")
+		fmt.Fprintln(out, "       ccr --shared [claude arguments]   (shared session: Claude Code runs in this terminal)")
+		fmt.Fprintln(out, "\nccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return fmt.Errorf("%w（其它 Claude Code 参数请用 ccr --shared …）", err)
+	}
+	if err := ensureHost(*dataDir, *host); err != nil {
+		return err
+	}
+	api, err := newClient(*host, *dataDir)
+	if err != nil {
+		return err
+	}
+	options := map[string]any{"model": *model, "effort": *effort, "permissionMode": *mode}
+	var target remoteSession
+	switch {
+	case *create:
+		target, err = api.create(*title, options)
+	case fs.NArg() == 1 && (fs.Arg(0) == "ls" || fs.Arg(0) == "list"):
+		target, err = api.recent(*title, options)
+	case fs.NArg() > 0:
+		target, err = api.pick(strings.Join(fs.Args(), " "))
+	default:
+		target, err = api.here(*title, options)
+	}
+	if err != nil {
+		return err
+	}
+	return api.attach(target)
+}
+
+func newClient(host, dataDir string) (*client, error) {
+	token := strings.TrimSpace(os.Getenv("CC_REMOTE_TOKEN"))
+	if token == "" {
+		b, err := os.ReadFile(filepath.Join(dataDir, "access-token"))
+		if err != nil {
+			return nil, fmt.Errorf("读取访问令牌失败（%v）；用 --data-dir 指定宿主的数据目录", err)
+		}
+		token = strings.TrimSpace(string(b))
+	}
+	return &client{host: strings.TrimRight(host, "/"), token: token}, nil
+}
+
+// here returns this directory's terminal session: the only one, a choice
+// among several, or a new one.
+func (c *client) here(title string, options map[string]any) (remoteSession, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return remoteSession{}, err
+	}
+	all, err := c.terminals()
+	if err != nil {
+		return remoteSession{}, err
+	}
+	var list []remoteSession
+	for _, x := range all {
+		if samePath(x.Cwd, cwd) {
+			list = append(list, x)
+		}
+	}
+	switch len(list) {
+	case 0:
+		fmt.Println("这个目录还没有终端会话，正在新建…")
+		return c.create(title, options)
+	case 1:
+		return list[0], nil
+	}
+	fmt.Println("这个目录有多个终端会话：")
+	return choose(list, true, func() (remoteSession, error) { return c.create(title, options) })
+}
+
+// recentLimit is how many sessions the pickers list.
+const recentLimit = 20
+
+// recent lists the most recently active terminal sessions to pick from.
+func (c *client) recent(title string, options map[string]any) (remoteSession, error) {
+	list, err := c.terminals()
+	if err != nil {
+		return remoteSession{}, err
+	}
+	if len(list) == 0 {
+		fmt.Println("还没有终端会话，正在当前目录新建…")
+		return c.create(title, options)
+	}
+	fmt.Println("最近的终端会话：")
+	return choose(list, true, func() (remoteSession, error) { return c.create(title, options) })
+}
+
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 type client struct{ host, token string }
@@ -109,7 +228,7 @@ func (c *client) do(method, path string, body any, out any) error {
 	return nil
 }
 
-func (c *client) create(title string) (remoteSession, error) {
+func (c *client) create(title string, options map[string]any) (remoteSession, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return remoteSession{}, err
@@ -117,22 +236,89 @@ func (c *client) create(title string) (remoteSession, error) {
 	if title == "" {
 		title = filepath.Base(cwd)
 	}
+	// Running attach --new (or ccr) in a directory is the user's decision to trust it.
+	body := map[string]any{"title": title, "cwd": cwd, "mode": "terminal", "trustFolder": true}
+	for k, v := range options {
+		if v != "" {
+			body[k] = v
+		}
+	}
 	var x remoteSession
-	// Running attach --new in a directory is the user's decision to trust it.
-	err = c.do("POST", "/api/sessions", map[string]any{"title": title, "cwd": cwd, "mode": "terminal", "trustFolder": true}, &x)
+	err = c.do("POST", "/api/sessions", body, &x)
 	return x, err
 }
 
-func (c *client) pick(query string) (remoteSession, error) {
+func (c *client) terminals() ([]remoteSession, error) {
 	var all []remoteSession
 	if err := c.do("GET", "/api/sessions", nil, &all); err != nil {
-		return remoteSession{}, err
+		return nil, err
 	}
 	var list []remoteSession
 	for _, x := range all {
 		if x.Mode == "terminal" {
 			list = append(list, x)
 		}
+	}
+	sort.SliceStable(list, func(i, j int) bool { return list[i].UpdatedAt > list[j].UpdatedAt }) // most recent first
+	return list, nil
+}
+
+// ago is a short "how long ago" for an RFC 3339 time.
+func ago(at string) string {
+	t, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return ""
+	}
+	switch d := time.Since(t); {
+	case d < time.Minute:
+		return "刚刚"
+	case d < time.Hour:
+		return fmt.Sprintf("%d 分钟前", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d 小时前", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d 天前", int(d.Hours()/24))
+	}
+}
+
+func statusText(status string) string {
+	if t, ok := map[string]string{"running": "执行中", "waiting": "等待回答", "idle": "就绪", "completed": "已完成", "interrupted": "已停止", "failed": "失败"}[status]; ok {
+		return t
+	}
+	return status
+}
+
+// choose asks for one of list by number; with create, 0 starts a new session.
+func choose(list []remoteSession, allowNew bool, create func() (remoteSession, error)) (remoteSession, error) {
+	if len(list) > recentLimit {
+		list = list[:recentLimit]
+	}
+	for i, x := range list {
+		state := "未运行"
+		if x.Online {
+			state = statusText(x.Status)
+		}
+		fmt.Printf("%2d. %s  [%s · %s]  %s  (%s)\n", i+1, x.Title, state, ago(x.UpdatedAt), x.Cwd, x.ID[:8])
+	}
+	if allowNew {
+		fmt.Println(" 0. 新建终端会话")
+	}
+	fmt.Print("选择会话编号：")
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err == nil && n == 0 && allowNew {
+		return create()
+	}
+	if err != nil || n < 1 || n > len(list) {
+		return remoteSession{}, errors.New("无效的选择")
+	}
+	return list[n-1], nil
+}
+
+func (c *client) pick(query string) (remoteSession, error) {
+	list, err := c.terminals()
+	if err != nil {
+		return remoteSession{}, err
 	}
 	if query != "" {
 		var matched []remoteSession
@@ -151,20 +337,7 @@ func (c *client) pick(query string) (remoteSession, error) {
 	case len(list) == 1:
 		return list[0], nil
 	}
-	for i, x := range list {
-		state := "未运行"
-		if x.Online {
-			state = x.Status
-		}
-		fmt.Printf("%2d. %s  [%s]  %s  (%s)\n", i+1, x.Title, state, x.Cwd, x.ID[:8])
-	}
-	fmt.Print("选择会话编号：")
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	n, err := strconv.Atoi(strings.TrimSpace(line))
-	if err != nil || n < 1 || n > len(list) {
-		return remoteSession{}, errors.New("无效的选择")
-	}
-	return list[n-1], nil
+	return choose(list, false, nil)
 }
 
 func (c *client) attach(x remoteSession) error {
@@ -204,7 +377,7 @@ func (c *client) attach(x remoteSession) error {
 		os.Stdout.WriteString(resetModes)
 		_ = term.Restore(in, old)
 		if detached {
-			fmt.Printf("\r\n已断开。会话仍在宿主上运行，用 cc-remote attach %s 重新接入。\r\n", x.ID[:8])
+			fmt.Printf("\r\n已断开。会话仍在宿主上运行，在该目录运行 ccr，或 ccr %s 重新接入。\r\n", x.ID[:8])
 		}
 	}()
 	os.Stdout.WriteString("\x1b[2J\x1b[H")

@@ -18,7 +18,7 @@ CC Remote 是一个运行在你电脑上的小型宿主程序（单个可执行�
 
 ## 功能特性
 
-- **终端与网页共享会话**：在项目里运行 `ccr` 启动原生 Claude Code，网页即可向同一个进程发消息、看回复，离开电脑也能接着聊。
+- **终端与网页接力**：在项目里运行 `ccr`，宿主持有一个交互式 Claude Code，本地终端接入使用；按 `Ctrl+]` 离开后它继续运行，网页和手机可以接着发消息，再运行 `ccr` 就接回来。子 agent 等长任务不会因为切换而中断。
 - **网页托管会话**：直接在网页新建会话、指定项目目录，多个会话并行执行，关掉浏览器任务也不会停。
 - **审批、提问、计划都能在网页回答**：工具权限审批、AskUserQuestion 选项、计划确认以卡片呈现；共享会话中网页和终端谁先答谁生效。
 - **按会话设置模型与权限模式**：支持全部权限模式（含 `bypassPermissions`，需二次确认）和推理强度，不改动你的 `~/.claude/settings.json`。
@@ -83,13 +83,22 @@ cd your-project
 ccr
 ```
 
-原生 Claude Code 照常在终端打开，同时会话出现在网页列表中。首次运行需在终端确认加载开发 Channel。（安装后若找不到 `ccr`，请新开一个终端。）
+终端里打开的是原生 Claude Code 界面，同时会话出现在网页列表中。按 `Ctrl+]` 断开，Claude Code 继续在宿主上运行。（安装后若找不到 `ccr`，请新开一个终端。）
 
 ## 使用
 
-### 共享终端（ccr）
+### 终端会话（ccr）
 
-`ccr` 等同于 `cc-remote -- claude`，参数原样传给 Claude Code，例如 `ccr --model sonnet`、`ccr --resume <会话UUID>`。终端和网页使用同一个进程和上下文，网页退出不影响终端。停止生成、`/compact` 等原生命令仍在终端操作。
+```sh
+ccr                      # 接入当前目录的终端会话，没有就新建
+ccr ls                   # 列出最近的终端会话，选择一个接入
+ccr <ID前缀或标题>        # 接入指定会话
+ccr --new --model sonnet # 在当前目录新建（可选 --title、--effort、--permission-mode）
+```
+
+终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。`cc-remote attach`（缩写 `cc-remote a`）是同样的功能，需要指定 `--host` 时使用。
+
+旧的共享会话（Claude Code 运行在当前终端里，网页经 Channels 接入）改为 `ccr --shared [claude 参数]`，例如 `ccr --shared --resume <会话UUID>`。
 
 ### 托管会话
 
