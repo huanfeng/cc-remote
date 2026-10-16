@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/events/{seq}", s.eventAt)
 	mux.HandleFunc("GET /api/sessions/{id}/tasks", s.tasks)
 	mux.HandleFunc("POST /api/terminals/{id}/hook", s.terminalHook)
+	mux.HandleFunc("POST /api/terminals/{id}/status", s.terminalStatus)
 	mux.HandleFunc("GET /api/terminals/{id}/stream", s.terminalStream)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)

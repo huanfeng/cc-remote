@@ -260,6 +260,9 @@ func (c *client) attach(x remoteSession) error {
 				keys <- err
 				return
 			}
+			if HasRedraw(chunk) { // Ctrl+L: repaint every cell, clearing leftovers
+				_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"redraw"}`))
+			}
 		}
 	}()
 	screen := make(chan error, 1)

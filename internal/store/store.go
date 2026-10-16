@@ -30,6 +30,22 @@ type Session struct {
 	Effort         string `json:"effort"`
 	// Queued holds web messages waiting for Claude (filled in by the server).
 	Queued []QueuedMessage `json:"queued,omitempty"`
+	// Live is a terminal session's status line data (filled in by the server).
+	Live *LiveStatus `json:"live,omitempty"`
+}
+
+// LiveStatus is what Claude Code reports to its status line, and the spinner
+// line while it works.
+type LiveStatus struct {
+	Model          string  `json:"model,omitempty"`
+	ModelID        string  `json:"modelId,omitempty"`
+	Effort         string  `json:"effort,omitempty"`
+	CostUSD        float64 `json:"costUSD"`
+	DurationMS     int64   `json:"durationMs"`
+	ContextTokens  int     `json:"contextTokens"`
+	ContextSize    int     `json:"contextSize"`
+	ContextPercent float64 `json:"contextPercent"`
+	Activity       string  `json:"activity,omitempty"`
 }
 
 // QueuedMessage is a sent message Claude has not started yet; it becomes a

@@ -129,6 +129,8 @@ func run() error {
 			return channel.AskHook()
 		case "terminal-hook":
 			return terminal.RunHook()
+		case "terminal-status":
+			return terminal.RunStatus()
 		}
 	}
 	return runHost(os.Args[1:])

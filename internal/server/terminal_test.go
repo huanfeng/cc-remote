@@ -385,3 +385,32 @@ func TestTerminalResendsLostFirstMessage(t *testing.T) {
 		return strings.Join(eventTexts(st, x.ID), "|") == "user:are you there|assistant:echo: are you there"
 	})
 }
+
+// The status line reports to the host and keeps running the user's own one;
+// the session shows the reported model, context and cost.
+func TestTerminalStatusLine(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	_ = os.MkdirAll(s.cfg.ClaudeConfigDir, 0o700)
+	_ = os.WriteFile(filepath.Join(s.cfg.ClaudeConfigDir, "settings.json"), []byte(`{"statusLine":{"type":"command","command":"my-hud --x","padding":1}}`), 0o600)
+	x := createTerminal(t, base)
+	s.mu.Lock()
+	y, _ := s.store.Get(x.ID)
+	ts, err := s.terminalLocked(y)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, _ := os.ReadFile(filepath.Join(ts.dir, "settings.json"))
+	hook, _ := os.ReadFile(filepath.Join(ts.dir, "terminal.json"))
+	if !strings.Contains(string(settings), `terminal-status`) || !strings.Contains(string(settings), `"padding":1`) || !strings.Contains(string(hook), `"statusCommand":"my-hud --x"`) {
+		t.Fatalf("status line config: %s / %s", settings, hook)
+	}
+	status := `{"model":{"id":"claude-opus-5-5","display_name":"Opus 5.5"},"cost":{"total_cost_usd":1.5,"total_duration_ms":90000},"context_window":{"context_window_size":200000,"used_percentage":34,"current_usage":{"input_tokens":10,"cache_creation_input_tokens":2000,"cache_read_input_tokens":66000}}}`
+	if code, b := call(t, base, "POST", "/api/terminals/"+x.ID+"/status", json.RawMessage(status)); code != 200 {
+		t.Fatalf("status: %d %s", code, b)
+	}
+	_, b := call(t, base, "GET", "/api/sessions/"+x.ID, nil)
+	if !strings.Contains(string(b), `"model":"Opus 5.5"`) || !strings.Contains(string(b), `"contextTokens":68010`) || !strings.Contains(string(b), `"contextPercent":34`) {
+		t.Fatalf("live status not shown: %s", b)
+	}
+}

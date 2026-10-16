@@ -61,6 +61,7 @@ type Runner struct {
 	pasteMu sync.Mutex // one web message at a time
 	ready   chan struct{}
 	modes   *modeTracker
+	scr     *screen // screen text, for the activity line
 }
 
 // Sub is a front end's view of the output.
@@ -133,7 +134,7 @@ func Start(o Options) (*Runner, error) {
 		p.Close()
 		return nil, err
 	}
-	r := &Runner{pty: p, cmd: c, done: make(chan struct{}), subs: map[*Sub]bool{}, cols: o.Cols, rows: o.Rows, trust: o.TrustFolder, lastOut: time.Now(), ready: make(chan struct{}), awaitStart: o.AwaitStart, launched: time.Now(), modes: newModeTracker()}
+	r := &Runner{pty: p, cmd: c, done: make(chan struct{}), subs: map[*Sub]bool{}, cols: o.Cols, rows: o.Rows, trust: o.TrustFolder, lastOut: time.Now(), ready: make(chan struct{}), awaitStart: o.AwaitStart, launched: time.Now(), modes: newModeTracker(), scr: newScreen(o.Cols, o.Rows)}
 	go r.read()
 	go r.watchReady()
 	go func() {
@@ -214,6 +215,14 @@ func (r *Runner) Shows(text string) bool {
 // Submit presses Enter.
 func (r *Runner) Submit() error { return r.write([]byte("\r")) }
 
+// Activity is Claude Code's spinner line while it works, such as
+// "Composing… (8m 33s · ↓ 26.2k tokens)", or "".
+func (r *Runner) Activity() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.scr.activity()
+}
+
 func (r *Runner) read() {
 	buf := make([]byte, 32*1024)
 	for {
@@ -224,6 +233,7 @@ func (r *Runner) read() {
 			r.lastOut = time.Now()
 			r.outSeen = true
 			r.modes.observe(chunk)
+			r.scr.write(chunk)
 			r.recent = append(r.recent, ansi.ReplaceAll(chunk, nil)...)
 			if len(r.recent) > recentBytes {
 				r.recent = append([]byte(nil), r.recent[len(r.recent)-recentBytes:]...)
@@ -353,6 +363,9 @@ func (r *Runner) Resize(cols, rows int) error {
 	r.mu.Lock()
 	same := cols == r.cols && rows == r.rows
 	r.cols, r.rows = cols, rows
+	if !same {
+		r.scr.resize(cols, rows)
+	}
 	r.mu.Unlock()
 	if same {
 		return nil

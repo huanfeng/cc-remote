@@ -86,6 +86,13 @@ func (m *modeTracker) replay() []byte {
 // protocol, and modifyOtherKeys.
 var detachSeq = regexp.MustCompile(`\x1d|\x1b\[[0-9]+;[0-9]+;29;1;[0-9]+;[0-9]+_|\x1b\[93;5(?::[0-9]+)?u|\x1b\[27;5;93~`)
 
+// redrawSeq matches Ctrl+L in the same encodings.
+var redrawSeq = regexp.MustCompile(`\x0c|\x1b\[[0-9]+;[0-9]+;12;1;[0-9]+;[0-9]+_|\x1b\[108;5(?::[0-9]+)?u|\x1b\[27;5;108~`)
+
+// HasRedraw reports whether keyboard input contains Ctrl+L, which also makes
+// the host repaint the whole screen.
+func HasRedraw(b []byte) bool { return redrawSeq.Match(b) }
+
 // DetachIndex returns where Ctrl+] starts in keyboard input, or -1.
 func DetachIndex(b []byte) int {
 	loc := detachSeq.FindIndex(b)

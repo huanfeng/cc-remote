@@ -47,6 +47,8 @@ type terminalSession struct {
 	prompts      int           // UserPromptSubmit hooks seen
 	confirmed    bool          // a web message was seen submitted since Claude Code started
 	wake         chan struct{} // a hook asks for a transcript sync now
+	cwd          string
+	live         *store.LiveStatus // from the status line
 }
 
 type terminalQueued struct {
@@ -59,6 +61,8 @@ type terminalConfig struct {
 	Host    string `json:"host"`
 	Token   string `json:"token"`
 	Session string `json:"session"`
+	// StatusCommand is the user's own status line, run by terminal-status.
+	StatusCommand string `json:"statusCommand,omitempty"`
 }
 
 func (s *Server) hookHost() string {
@@ -89,7 +93,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, send: make(chan string, maxQueuedMessages+1), wake: make(chan struct{}, 1)}
+	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, cwd: x.Cwd, send: make(chan string, maxQueuedMessages+1), wake: make(chan struct{}, 1)}
 	if err := s.writeTerminalConfig(ts); err != nil {
 		return nil, err
 	}
@@ -143,7 +147,7 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 	ask := command("channel-ask-hook")
 	ask["timeout"] = 1800
 	state := []any{map[string]any{"hooks": []any{command("terminal-hook")}}}
-	settings, _ := json.Marshal(map[string]any{"hooks": map[string]any{
+	config := map[string]any{"hooks": map[string]any{
 		"PermissionRequest": []any{map[string]any{"matcher": "AskUserQuestion|ExitPlanMode", "hooks": []any{ask}}},
 		"SessionStart":      state,
 		"UserPromptSubmit":  state,
@@ -151,13 +155,49 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 		"Notification":      state,
 		"SubagentStop":      state,
 		"PostToolUse":       state,
-	}})
+	}}
+	// The status line reports model, context and cost to the host, then shows
+	// the user's own status line unchanged.
+	own := userStatusLine(s.cfg.ClaudeConfigDir, ts.cwd)
+	status := map[string]any{"type": "command", "command": `"` + filepath.ToSlash(s.cfg.HostExecutable) + `" terminal-status`}
+	if p, ok := own["padding"]; ok {
+		status["padding"] = p
+	}
+	config["statusLine"] = status
+	settings, _ := json.Marshal(config)
 	host := s.hookHost()
 	askFile, _ := json.Marshal(map[string]string{"host": host, "token": s.cfg.Token, "sessionId": ts.claudeID, "bindingFile": ""})
-	termFile, _ := json.Marshal(terminalConfig{Host: host, Token: s.cfg.Token, Session: ts.id})
+	ownCommand, _ := own["command"].(string)
+	termFile, _ := json.Marshal(terminalConfig{Host: host, Token: s.cfg.Token, Session: ts.id, StatusCommand: ownCommand})
 	for name, data := range map[string][]byte{"settings.json": settings, "ask.json": askFile, "terminal.json": termFile} {
 		if err := os.WriteFile(filepath.Join(ts.dir, name), data, 0o600); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// userStatusLine is the status line Claude Code would use without
+// cc-remote's settings: the project's local, then project, then user setting.
+func userStatusLine(configDir, cwd string) map[string]any {
+	if configDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			configDir = filepath.Join(home, ".claude")
+		}
+	}
+	for _, path := range []string{filepath.Join(cwd, ".claude", "settings.local.json"), filepath.Join(cwd, ".claude", "settings.json"), filepath.Join(configDir, "settings.json")} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var settings struct {
+			StatusLine map[string]any `json:"statusLine"`
+		}
+		if json.Unmarshal(raw, &settings) == nil && settings.StatusLine != nil {
+			if settings.StatusLine["type"] == "command" {
+				return settings.StatusLine
+			}
+			return nil
 		}
 	}
 	return nil
@@ -494,6 +534,12 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.SetStatus(id, "running")
 		}
 	case "Stop":
+		if ts.runner.Attached() > 0 {
+			go func() { // clears what a terminal drew differently from ConPTY
+				time.Sleep(500 * time.Millisecond)
+				ts.runner.Redraw()
+			}()
+		}
 		_ = s.store.SetStatus(id, "completed")
 	case "Notification":
 		if req.Type == "permission_prompt" || strings.Contains(strings.ToLower(req.Message), "permission") {
@@ -519,6 +565,59 @@ func (s *Server) rebindFreeLocked(id, next string, ts *terminalSession) bool {
 		return false
 	}
 	return true
+}
+
+// terminalStatus receives Claude Code's status line data from
+// `cc-remote terminal-status`.
+func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.channelLocal(w, r) {
+		return
+	}
+	var in struct {
+		Model struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"model"`
+		Cost struct {
+			TotalCostUSD    float64 `json:"total_cost_usd"`
+			TotalDurationMS int64   `json:"total_duration_ms"`
+		} `json:"cost"`
+		Context struct {
+			Size           int     `json:"context_window_size"`
+			UsedPercentage float64 `json:"used_percentage"`
+			Current        struct {
+				Input         int `json:"input_tokens"`
+				CacheCreation int `json:"cache_creation_input_tokens"`
+				CacheRead     int `json:"cache_read_input_tokens"`
+			} `json:"current_usage"`
+		} `json:"context_window"`
+		Effort any `json:"effort"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		fail(w, 400, "无效的状态内容")
+		return
+	}
+	effort, _ := in.Effort.(string)
+	if m, ok := in.Effort.(map[string]any); ok {
+		effort, _ = m["level"].(string)
+	}
+	live := &store.LiveStatus{
+		Model:          in.Model.DisplayName,
+		ModelID:        in.Model.ID,
+		Effort:         effort,
+		CostUSD:        in.Cost.TotalCostUSD,
+		DurationMS:     in.Cost.TotalDurationMS,
+		ContextTokens:  in.Context.Current.Input + in.Context.Current.CacheCreation + in.Context.Current.CacheRead,
+		ContextSize:    in.Context.Size,
+		ContextPercent: in.Context.UsedPercentage,
+	}
+	s.mu.Lock()
+	if ts := s.terminals[r.PathValue("id")]; ts != nil {
+		ts.live = live
+	}
+	s.mu.Unlock()
+	respond(w, 200, map[string]string{"status": "ok"})
 }
 
 // terminalStream connects a terminal front end: binary frames carry keystrokes
@@ -560,6 +659,13 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 			var m struct {
 				Type       string `json:"type"`
 				Cols, Rows int
+			}
+			if json.Unmarshal(data, &m) == nil && m.Type == "redraw" {
+				go func() {
+					time.Sleep(150 * time.Millisecond) // after Claude Code handled the key
+					ts.runner.Redraw()
+				}()
+				continue
 			}
 			if json.Unmarshal(data, &m) == nil && m.Type == "resize" {
 				_ = ts.runner.Resize(m.Cols, m.Rows)
@@ -609,6 +715,16 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 	x.Online = ts != nil
 	if ts == nil {
 		return
+	}
+	live := store.LiveStatus{}
+	if ts.live != nil {
+		live = *ts.live
+	}
+	if x.Status == "running" {
+		live.Activity = ts.runner.Activity()
+	}
+	if ts.live != nil || live.Activity != "" {
+		x.Live = &live
 	}
 	if len(ts.queued) > 0 {
 		x.Queued = make([]store.QueuedMessage, len(ts.queued))

@@ -4,7 +4,11 @@ import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptio
 import { Select } from './Select';
 import { duration, money, number, tokens, type Stats } from './StatusPanel';
 
-export type SessionInfo = { id: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; permissionMode?: string; model?: string; effort?: string };
+export type SessionInfo = { id: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
+// What Claude Code reports to a terminal session's status line.
+export type LiveStatus = { model?: string; modelId?: string; effort?: string; costUSD: number; durationMs: number; contextTokens: number; contextSize: number; contextPercent: number; activity?: string };
+const compact = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+
 export type Defaults = { permissionMode: string; model: string; effort: string };
 
 const CHANNEL_NOTE = '共享终端：模型、推理强度与权限模式由运行中的终端进程持有，网页无法切换。请在终端执行 /model、/effort，或按 Shift+Tab 切换权限模式。';
@@ -27,6 +31,18 @@ export function SessionChips({ session, defaults, open }: { session: SessionInfo
     const shown = value || `默认(${inherited || 'Claude 配置'})`;
     return <span className={`chip${value ? '' : ' inherited'}${tone}`} title={`${label}：${shown}`}>{shown}</span>;
   };
+  const live = session.mode === 'terminal' ? session.live : undefined;
+  if (live?.model) {
+    const effort = live.effort || session.effort || defaults?.effort;
+    const pct = Math.round(live.contextPercent);
+    return <button type="button" className="session-chips" title="会话设置" aria-label="打开会话设置" onClick={open}>
+      <span className="chip" title={`模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`}>{live.model}</span>
+      {effort && <span className="chip" title={`推理强度：${effort}`}>{effort}</span>}
+      {live.contextSize > 0 && <span className={`chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`} title={`上下文：${live.contextTokens.toLocaleString()} / ${live.contextSize.toLocaleString()} tokens`}>上下文 {pct}% · {compact(live.contextTokens)}/{compact(live.contextSize)}</span>}
+      {live.durationMs > 0 && <span className="chip inherited" title="会话时长">{duration(live.durationMs / 1000)}</span>}
+      {live.costUSD > 0 && <span className="chip inherited" title="本次运行的费用（按 API 价格估算）">${live.costUSD.toFixed(2)}</span>}
+    </button>;
+  }
   const perm = session.permissionMode || defaults?.permissionMode || '';
   return <button type="button" className="session-chips" title="会话设置（模型 · 推理强度 · 权限模式）" aria-label="打开会话设置" onClick={open}>
     {chip('模型', session.model, defaults?.model)}{chip('推理强度', session.effort, defaults?.effort)}{chip('权限模式', session.permissionMode, defaults?.permissionMode, permTone(perm))}
