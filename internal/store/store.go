@@ -27,6 +27,15 @@ type Session struct {
 	PermissionMode string `json:"permissionMode"`
 	Model          string `json:"model"`
 	Effort         string `json:"effort"`
+	// Queued holds web messages waiting for Claude (filled in by the server).
+	Queued []QueuedMessage `json:"queued,omitempty"`
+}
+
+// QueuedMessage is a sent message Claude has not started yet; it becomes a
+// "user" event with the same text and payload when its turn starts.
+type QueuedMessage struct {
+	Text    string          `json:"text"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 type Event struct {

@@ -30,15 +30,21 @@ type Config struct {
 	UploadDir                                                                                 string
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL, TerminalCommand string
 	Assets                                                                                    fs.FS
-	Runner                                                                                    Runner
+	// Runner runs one turn per message instead of a long-lived process (tests).
+	Runner Runner
+	// StartProcess launches the long-lived Claude process of a managed session.
+	StartProcess ProcessStarter
 	// Host metadata shared by status, preferences and service management.
 	DataDir, Listen, Version, LogFile string
 	StartedAt                         time.Time
 	// Shutdown asks the host process to exit gracefully; nil disables remote shutdown.
 	Shutdown func()
 }
+
+// execution is a busy period of a managed session (see runtime.go).
 type execution struct {
-	cancel    context.CancelFunc
+	cancel    context.CancelFunc // ends the session's Claude process
+	interrupt func()             // stops the running turn, keeping the process; call with s.mu held
 	ctx       context.Context
 	sessionID string
 	token     string
@@ -66,6 +72,12 @@ type Server struct {
 	cfg             Config
 	mu              sync.Mutex
 	runs            map[string]*execution
+	procs           map[string]*sessionRuntime
+	startProcess    ProcessStarter
+	stopReaper      chan struct{}
+	closers         sync.WaitGroup // detached processes being closed
+	reaperStopped   bool
+	idleTimeout     time.Duration // guarded by mu
 	requests        map[string]*pending
 	closing         bool
 	channels        map[string]*channelConnection
@@ -78,10 +90,13 @@ type Server struct {
 }
 
 func New(st *store.Store, cfg Config) *Server {
-	if cfg.Runner == nil {
-		cfg.Runner = claude.Run
+	start := cfg.StartProcess
+	if start == nil {
+		start = defaultProcessStarter(cfg)
 	}
-	return &Server{store: st, cfg: cfg, runs: map[string]*execution{}, requests: map[string]*pending{}, channels: map[string]*channelConnection{}, channelRequests: map[string]*channelApproval{}}
+	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, startProcess: start, stopReaper: make(chan struct{}), idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}, channelRequests: map[string]*channelApproval{}}
+	go s.reapIdle(s.stopReaper, time.Minute)
+	return s
 }
 
 func (s *Server) Handler() http.Handler {
@@ -330,11 +345,6 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "宿主正在关闭")
 		return
 	}
-	if _, ok := s.runs[id]; ok {
-		s.mu.Unlock()
-		fail(w, 409, "此会话仍在运行，请等待或停止当前轮次")
-		return
-	}
 	x, e := s.store.Get(id)
 	if e != nil {
 		s.mu.Unlock()
@@ -389,72 +399,29 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	run := &execution{cancel: cancel, ctx: ctx, sessionID: id, token: store.ID() + store.ID(), done: make(chan struct{})}
-	if _, e = s.store.Append(id, "user", req.Text, payload); e == nil {
-		e = s.store.SetStatus(id, "running")
-	}
-	if e != nil {
-		cancel()
+	if rt := s.procs[id]; rt != nil && len(rt.queue) >= maxQueuedMessages {
 		s.mu.Unlock()
-		fail(w, 500, "无法保存消息")
+		fail(w, 429, "排队的消息过多，请等待当前轮次完成")
 		return
 	}
-	s.runs[id] = run
+	if len(payload) == 0 {
+		payload = nil
+	}
+	rt := s.runtimeLocked(x)
+	queued := s.enqueueLocked(rt, outgoing{QueuedMessage: store.QueuedMessage{Text: req.Text, Payload: payload}, prompt: prompt})
 	s.mu.Unlock()
-	go s.execute(x, prompt, run)
-	respond(w, 202, map[string]string{"status": "running"})
-}
-
-func (s *Server) execute(x store.Session, text string, run *execution) {
-	defer close(run.done)
-	defer run.cancel()
-	opts := claude.Options{Executable: s.cfg.ClaudeExecutable, HostExecutable: s.cfg.HostExecutable, SessionID: x.ClaudeSessionID, Cwd: x.Cwd, Message: text, Resume: x.Resume, BridgeURL: s.cfg.BridgeURL, BridgeToken: run.token, ConfigDir: s.cfg.ClaudeConfigDir}
-	p := s.effectivePreferences(x)
-	opts.PermissionMode, opts.Model, opts.Effort = p.PermissionMode, p.Model, p.Effort
-	err := s.cfg.Runner(run.ctx, opts, func(ev claude.Event) error {
-		if ev.Kind == "session" || ev.Kind == "result" {
-			if e := s.store.SetResume(x.ID); e != nil {
-				return e
-			}
-		}
-		_, e := s.store.Append(x.ID, ev.Kind, ev.Text, ev.Payload)
-		return e
-	})
-	status := "completed"
-	if err != nil {
-		status = "failed"
-		if run.ctx.Err() != nil {
-			status = "interrupted"
-		}
-		if _, e := s.store.Append(x.ID, "error", err.Error(), nil); e != nil {
-			log.Printf("save execution error: %v", e)
-		}
+	status := "running"
+	if queued {
+		status = "queued"
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, p := range s.requests {
-		if p.sessionID == x.ID {
-			if e := s.store.Resolve(id, "expired"); e != nil {
-				log.Printf("expire: %v", e)
-			}
-			delete(s.requests, id)
-		}
-	}
-	if e := s.store.SetStatus(x.ID, status); e != nil {
-		log.Printf("save status: %v", e)
-	}
-	if _, e := s.store.Append(x.ID, "status", status, nil); e != nil {
-		log.Printf("save status event: %v", e)
-	}
-	delete(s.runs, x.ID)
+	respond(w, 202, map[string]string{"status": status})
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	run, ok := s.runs[r.PathValue("id")]
 	if ok {
-		run.cancel()
+		run.interrupt()
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -542,6 +509,10 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "无法删除会话")
 		return
 	}
+	s.mu.Lock()
+	rt := s.detachLocked(id) // an idle Claude process may still hold the session
+	s.mu.Unlock()
+	closeRuntime(rt)
 	if dir, e := s.sessionUploadDir(id); e == nil {
 		if e = os.RemoveAll(dir); e != nil {
 			log.Printf("delete uploads %s: %v", id, e)
@@ -560,18 +531,21 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	rt := s.bridgeRuntimeLocked(r.Header.Get("Authorization"))
 	var run *execution
-	for _, x := range s.runs {
-		if equalToken(r.Header.Get("Authorization"), x.token) {
-			run = x
-			break
-		}
+	if rt != nil {
+		run = rt.run
 	}
 	s.mu.Unlock()
 	if run == nil {
 		fail(w, 401, "执行凭证无效或已失效")
 		return
 	}
+	defer func() {
+		s.mu.Lock()
+		s.bridgeDoneLocked(rt)
+		s.mu.Unlock()
+	}()
 	var req struct {
 		Kind     string          `json:"kind"`
 		ToolName string          `json:"toolName"`
@@ -825,10 +799,16 @@ func (s *Server) Close(ctx context.Context) error {
 	}
 	runs := []*execution{}
 	for _, r := range s.runs {
-		r.cancel()
 		runs = append(runs, r)
 	}
+	if !s.reaperStopped {
+		s.reaperStopped = true
+		close(s.stopReaper)
+	}
 	s.mu.Unlock()
+	if err := s.closeProcesses(ctx); err != nil {
+		return err
+	}
 	for _, r := range runs {
 		select {
 		case <-r.done:

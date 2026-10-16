@@ -24,6 +24,9 @@ func TestMain(m *testing.M) {
 			time.Sleep(time.Minute)
 			os.Exit(0)
 		}
+		if mode == "stream" {
+			streamChild()
+		}
 		if mode == "no-result" {
 			fmt.Println(`{"type":"system","subtype":"init"}`)
 			os.Exit(0)

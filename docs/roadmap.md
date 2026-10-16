@@ -8,12 +8,12 @@
 - 子 agent 内部的消息带 `parent_tool_use_id`（指向发起它的 Agent 工具调用）；另有 `task_started`、`task_progress`（描述、`last_tool_name`）、`task_updated`、`task_notification`（完成状态）、`background_tasks_changed` 系统事件。
 - `-p` 模式的 init 事件 `slash_commands` 列出可执行命令（已用于命令透传）；`/clear` 在 `-p` 下会换会话 ID（`conversation_reset`）。
 
-## 阶段 1：常驻进程运行时
+## 阶段 1：常驻进程运行时（已完成）
 
 - 每个活跃托管会话一个常驻 Claude 进程，空闲超时退出，下次用 `--resume` 拉起；进程意外退出时自动恢复。
 - 停止改为 `interrupt` 控制请求，不再结束进程。
-- 模型、权限模式运行中切换即时生效（`set_model`、`set_permission_mode`，后者待验证）。
-- 运行中发送的消息排队，界面显示排队状态（排队语义待验证）。
+- 模型、推理强度、权限模式变化后，空闲时下一条消息重启进程生效（`set_model`、`set_permission_mode` 实测可用，留作运行中即时切换的后续优化）。
+- 运行中发送的消息由 cc-remote 排队、逐条发送（Claude 会合并 stdin 上排队的多条消息），界面显示等待状态。
 - 审批、提问、计划确认等现有桥接保持不变。
 
 ## 阶段 2：子 agent 与后台任务

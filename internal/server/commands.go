@@ -192,6 +192,10 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "无法重置上下文")
 			return
 		}
+		s.mu.Lock()
+		rt := s.detachLocked(id) // the idle process belongs to the previous context
+		s.mu.Unlock()
+		closeRuntime(rt)
 		result["message"] = "已重置上下文，网页历史已保留。"
 	case "compact":
 		if message, code := compactBlocked(x); code != 0 {

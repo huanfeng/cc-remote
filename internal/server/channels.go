@@ -47,6 +47,9 @@ func (s *Server) channelLive(c *channelConnection) bool {
 	return c != nil && time.Since(c.seen) < channelTTL
 }
 func (s *Server) decorateChannel(x *store.Session) {
+	if rt := s.procs[x.ID]; rt != nil && len(rt.queue) > 0 {
+		x.Queued = rt.queuedMessages()
+	}
 	if x.Mode != "channel" {
 		return
 	}
@@ -106,6 +109,13 @@ func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
 	if err == nil && s.runs[x.ID] != nil {
 		fail(w, 409, "此会话仍由宿主执行，请先停止托管轮次")
 		return
+	}
+	if err == nil {
+		if rt := s.procs[x.ID]; rt != nil && rt.proc != nil && rt.proc.BackgroundTasks() > 0 {
+			fail(w, 409, "此会话的托管进程仍有后台任务在运行，请等待完成后再连接终端")
+			return
+		}
+		s.closeAsync(s.detachLocked(x.ID)) // the terminal takes over the conversation
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		title := strings.TrimSpace(req.Title)

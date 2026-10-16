@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,11 +180,26 @@ func TestConcurrentSessionsAndStop(t *testing.T) {
 			t.Fatal("runner not started")
 		}
 	}
-	if code, _ := request(t, ts, "POST", "/api/sessions/"+a.ID+"/messages", map[string]string{"text": "again"}, testToken); code != 409 {
-		t.Fatal("concurrent send to same session accepted")
+	// A message sent while a turn runs is queued and runs next.
+	if code, body := request(t, ts, "POST", "/api/sessions/"+a.ID+"/messages", map[string]string{"text": "again"}, testToken); code != 202 || !strings.Contains(string(body), "queued") {
+		t.Fatalf("queued send %d %s", code, body)
 	}
 	if code, _ := request(t, ts, "POST", "/api/sessions/"+a.ID+"/stop", nil, testToken); code != 200 {
 		t.Fatal("stop failed")
+	}
+	select {
+	case o := <-started:
+		if o.Message != "again" || !o.Resume {
+			t.Fatalf("queued turn %q resume=%v", o.Message, o.Resume)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("queued message not run after stop")
+	}
+	if x, _ := st.Get(a.ID); x.Status != "running" {
+		t.Fatalf("status while queued turn runs: %s", x.Status)
+	}
+	if code, _ := request(t, ts, "POST", "/api/sessions/"+a.ID+"/stop", nil, testToken); code != 200 {
+		t.Fatal("second stop failed")
 	}
 	await(t, func() bool { x, _ := st.Get(a.ID); return x.Status == "interrupted" })
 	x, _ := st.Get(b.ID)

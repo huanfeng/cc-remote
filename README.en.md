@@ -95,7 +95,7 @@ Claude Code opens in the terminal as usual, and the session appears in the web U
 
 ### Managed sessions
 
-Click "新建" (New) in the web UI and enter a name and an existing project directory on the host. Each turn runs Claude Code on the host; you can stop it at any time and the next turn resumes the context. "终端历史" (Terminal history) lists existing Claude Code sessions on the machine and can import them as managed sessions.
+Click "新建" (New) in the web UI and enter a name and an existing project directory on the host. Claude Code keeps running on the host: you can queue more messages while it works, stop the current turn at any time, and an idle session is released and resumed automatically. "终端历史" (Terminal history) lists existing Claude Code sessions on the machine and can import them as managed sessions.
 
 More — web commands (`/model`, `/effort`, `/status` …), attachments, settings dialogs, refresh recovery — in [docs/usage.md](docs/usage.md) (Chinese).
 
