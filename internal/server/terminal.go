@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
@@ -40,8 +41,9 @@ type terminalSession struct {
 	conn         *channelConnection
 	dir          string // per-session config (hook settings, ask.json)
 	send         chan string
-	queued       []terminalQueued // web messages not yet in the transcript
-	scan         int              // transcript user messages already matched
+	withdraw     chan chan []string // the writer takes the queued messages back (see withdrawQueued)
+	queued       []terminalQueued   // web messages not yet in the transcript
+	scan         int                // transcript user messages already matched
 	lastStop     time.Time
 	closing      bool
 	prompts      int           // UserPromptSubmit hooks seen
@@ -95,7 +97,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, cwd: x.Cwd, send: make(chan string, maxQueuedMessages+1), wake: make(chan struct{}, 1)}
+	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, cwd: x.Cwd, send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
 	if err := s.writeTerminalConfig(ts); err != nil {
 		return nil, err
 	}
@@ -230,10 +232,82 @@ func (s *Server) terminalWriter(ts *terminalSession) {
 			if first && !strings.HasPrefix(text, "/") { // local commands run no UserPromptSubmit
 				s.confirmFirstPrompt(ts, text, before)
 			}
+		case reply := <-ts.withdraw:
+			reply <- s.withdrawQueued(ts)
 		case <-ts.runner.Done():
 			return
 		}
 	}
+}
+
+// withdrawQueued takes the web's queued messages back for editing, as pressing
+// Up does in the terminal: messages not typed yet leave the send queue, and
+// Claude Code's own queue moves into its input box (Up) and is cleared
+// (Ctrl+U per line). The running turn goes on. Run by the writer, so no
+// message is being typed meanwhile.
+func (s *Server) withdrawQueued(ts *terminalSession) []string {
+	var commands []string
+	for drained := false; !drained; {
+		select {
+		case text := <-ts.send:
+			if strings.HasPrefix(text, "/") {
+				commands = append(commands, text)
+			}
+		default:
+			drained = true
+		}
+	}
+	s.mu.Lock()
+	var texts []string
+	lines := 0
+	for _, q := range ts.queued {
+		texts = append(texts, q.text)
+		lines += strings.Count(q.text, "\n") + 1
+	}
+	ts.queued = nil
+	s.mu.Unlock()
+	if lines > 0 {
+		// Clear a draft first: Up puts the queue in front of it. Ctrl+U deletes a
+		// line (an empty input ignores it); Up with nothing queued recalls the
+		// previous prompt, which the clearing removes again.
+		clear := bytes.Repeat([]byte{0x15}, 2*lines+4)
+		_ = ts.runner.Keys(clear[:4])
+		_ = ts.runner.Keys([]byte("\x1b[A"))
+		time.Sleep(300 * time.Millisecond)
+		_ = ts.runner.Keys(clear)
+	}
+	return append(texts, commands...)
+}
+
+// terminalWithdrawLocked is POST /api/sessions/{id}/queue/withdraw for a
+// terminal session; it unlocks s.mu while the writer works.
+func (s *Server) terminalWithdrawLocked(w http.ResponseWriter, r *http.Request, ts *terminalSession) {
+	l := s.lang(r)
+	if x, err := s.store.Get(ts.id); err == nil && x.Status == "waiting" {
+		s.mu.Unlock()
+		fail(w, 409, l.T("Answer the open dialog first", "请先处理当前的确认对话框"))
+		return
+	}
+	for _, p := range s.requests {
+		if p.connection == ts.conn {
+			s.mu.Unlock()
+			fail(w, 409, l.T("Answer the open question first", "请先回答当前的提问"))
+			return
+		}
+	}
+	s.mu.Unlock()
+	reply := make(chan []string, 1)
+	select {
+	case ts.withdraw <- reply:
+	case <-ts.runner.Done():
+		fail(w, 409, l.T("Claude Code is not running", "Claude Code 没有运行"))
+		return
+	case <-time.After(10 * time.Second):
+		fail(w, 409, l.T("A message is still being typed; try again", "仍有消息正在输入，请稍后再试"))
+		return
+	}
+	texts := <-reply
+	respond(w, 200, map[string]string{"text": strings.Join(texts, "\n\n")})
 }
 
 // awaitNoDialog waits while Claude Code shows a permission or question
@@ -556,6 +630,10 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 				delete(s.channels, ts.claudeID)
 			}
 			ts.claudeID, ts.scan = next, -1
+			// /clear leaves no mark in either transcript: show where the context restarted.
+			if req.Source == "clear" {
+				_, _ = s.store.Append(id, "compact", "", json.RawMessage(`{"clear":true}`))
+			}
 			ts.conn.keyPrefix = next + ":"
 			s.channels[next] = ts.conn
 			if err := s.store.SetClaudeID(id, next); err != nil {
@@ -567,6 +645,12 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		}
 	case "UserPromptSubmit":
 		ts.prompts++
+		// While Claude works, the hook runs as a message joins Claude Code's own
+		// queue: it is still queued (and can be withdrawn) until the transcript
+		// shows it taken in (syncTerminal).
+		if x, err := s.store.Get(id); err == nil && (x.Status == "running" || x.Status == "waiting") {
+			break
+		}
 		ts.popQueuedLocked(req.Prompt)
 		_ = s.store.SetStatus(id, "running")
 	case "PostToolUse":

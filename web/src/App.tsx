@@ -21,7 +21,7 @@ import { applyIdentity, initialIdentity, onIdentity } from './hostIdentity';
 import { TopbarMenu, type TopbarAction } from './TopbarMenu';
 import { matchProjects, projectKey, recentProjects, type RecentProject } from './recentProjects';
 
-type Session = { id: string; title: string; cwd: string; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus };
+type Session = { id: string; title: string; cwd: string; truncated?: boolean; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus };
 type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 type Request = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
 type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; attachCommand?: string; channelExperimental?: boolean; language?: string; name?: string; color?: string };
@@ -85,6 +85,9 @@ function messages(events: Event[]) {
       if (stream) { stream.text = event.text; stream = undefined; }
       else items.push(event);
     } else {
+      // A background task's notification is a user turn Claude Code adds, not something typed
+      // (the host filters it now; terminal sessions may have recorded it before).
+      if (event.kind === 'user' && event.text?.trimStart().startsWith('<task-notification>')) continue;
       if (['user', 'tool', 'tool_result', 'error', 'compact', 'recap'].includes(event.kind)) items.push(event);
       if (['user', 'result', 'error', 'compact', 'recap'].includes(event.kind)) stream = undefined;
     }
@@ -584,6 +587,15 @@ export default function App() {
     });
     return () => { active = false; };
   }, [create, api, info?.cwd]);
+  // Queued messages of a terminal session come back into the message box for editing.
+  function withdrawQueued() {
+    void action(async () => {
+      const data = await api<{ text: string }>(`/api/sessions/${selected}/queue/withdraw`, { method: 'POST' });
+      if (data.text) setDraft([data.text, draft].filter(part => part.trim()).join('\n\n'));
+      await list();
+      (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus();
+    });
+  }
   function stopTurn() { void action(async () => { await api(`/api/sessions/${selected}/stop`, { method: 'POST' }); await list(); }); }
   // Esc stops the running turn, as in the terminal (in a terminal session a second Esc
   // soon after acts as Ctrl+C). Dialogs, menus, an input method and the command list
@@ -728,6 +740,7 @@ export default function App() {
       {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label={t('Dismiss command result', '关闭命令结果')} onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} close={() => setSettingsOpen(false)} />}{tasksOpen && <TaskPanel tasks={tasks} close={() => setTasksOpen(false)} locate={locateTask} />}{statusOpen && <StatusPanel api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{quick && current && !native && <QuickSwitch api={api} sessionId={current.id} target={quick} current={quick.kind === 'model' ? (current.mode === 'terminal' ? current.live?.modelId || current.model || '' : current.model || '') : (current.mode === 'terminal' ? current.live?.effort || current.effort || '' : current.effort || '')} inherit={current.mode === 'terminal' ? undefined : quick.kind === 'model' ? defaults?.model || '' : defaults?.effort || ''} close={() => setQuick(null)} pick={value => void quickPick(quick.kind, value)} />}{sessionSettingsOpen && current && !native && <SessionSettings api={api} session={current} defaults={defaults} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>{t('Take your work with you.', '把工作带到身边。')}</h2><p>{t('Pick a session, or start a new task in a project directory.', '选择一个会话，或在项目目录中开始新的任务。')}<br/>{t('Sessions keep running on the host; close the page and come back later.', '会话持续在宿主运行，关闭页面也可以稍后回来。')}</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />{t('New session', '新建会话')}</button></div>{!info?.claudeAvailable && <p className="error">{t('Install Claude Code on the host and sign in first.', '请先在宿主安装 Claude Code 并完成登录。')}</p>}</div> : <>
         <div className="conversation" ref={scroll} onScroll={() => { const element = scroll.current; if (element && !loading) { nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120; updateTab(activeKey, tab => ({ ...tab, scrollTop: element.scrollTop, nearBottom: nearBottom.current })); } }}>
           {loading && <div className="muted loading">{t('Loading session…', '正在加载会话…')}</div>}
+          {!loading && !activeTab?.hasOlder && activeTab?.session?.truncated && <div className="older-marker muted">{t('This transcript is over 64 MiB; only its most recent part is shown.', '这个会话的记录超过 64 MiB，只显示最近的部分。')}</div>}
           {!loading && activeTab?.hasOlder && <div ref={olderMarker} className="older-marker">{activeTab.loadingOlder ? t('Loading earlier messages…', '正在加载更早的消息…') : <button type="button" onClick={() => void loadOlder()}>{t('Load earlier messages', '加载更早的消息')}</button>}</div>}
           {!loading && events.length === 0 && <div className="conversation-empty"><h2>{t('Ready to start', '准备开始')}</h2><p>{t('Describe your task; Claude works in this project directory.', '描述你的任务，Claude 会在这个项目目录中工作。')}</p></div>}
           {/* One child list: a shared card keyed by its request id moves between the transcript and the pending list without remounting. */}
@@ -748,6 +761,7 @@ export default function App() {
           // A request whose call already shows a terminal result is about to be withdrawn; don't show it twice.
           ...(native ? [] : requests.filter(request => !linkedIds.has(request.id) && !(shared && requestSettled(request, transcript))).map(request => shared && (request.kind === 'question' || request.kind === 'plan') ? sharedCard(undefined, request) : <RequestCard key={request.id} request={request} busy={busy} answers={activeTab?.answers[request.id] || {}} setAnswers={update => updateTab(activeKey, tab => ({ ...tab, answers: { ...tab.answers, [request.id]: update(tab.answers[request.id] || {}) } }))} onAnswer={(decision, answers) => action(async () => { await api(`/api/requests/${request.id}`, { method: 'POST', body: JSON.stringify({ decision, answers }) }); updateTab(activeKey, tab => ({ ...tab, requests: tab.requests.filter(item => item.id !== request.id) })); })} />))]}
           {!native && current?.queued?.map((item, index) => <article className="message user queued" key={`queued-${index}`}><div className="message-label">{t('YOU · queued', '你 · 等待处理')}</div><Markdown text={item.text} />{item.payload?.attachments?.length > 0 && <AttachmentList items={item.payload.attachments} token={token} />}</article>)}
+          {!native && current?.mode === 'terminal' && (current.queued?.length || 0) > 0 && <div className="queued-actions"><button type="button" className="secondary" disabled={busy} onClick={withdrawQueued}>{t('Withdraw to edit', '撤回编辑')}</button><small>{t('Takes the queued messages back into the message box, like pressing Up in the terminal; the current turn keeps running.', '把排队消息取回输入框修改，和终端里按 ↑ 一样；当前任务不受影响。')}</small></div>}
           {running && !requests.length && <div className="working"><span className="pulse" />{isCompacting(events) ? t('Compacting context…', '正在压缩上下文…') : current?.live?.activity || t('Claude is working…', 'Claude 正在工作…')}</div>}
           {!running && runningTasks > 0 && <button type="button" className="working working-tasks" onClick={() => setTasksOpen(true)}><span className="pulse" />{t(`${runningTasks} background tasks running · View`, `${runningTasks} 个后台任务运行中 · 查看`)}</button>}<div ref={bottom} />
         </div>

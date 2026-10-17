@@ -171,6 +171,7 @@ const formatTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : St
 
 /** Divider text for a compact_boundary event: "Context compacted (manual) · 48.0k → 9.0k tokens". */
 export function compactSummary(payload: any): string {
+  if (payload?.clear) return t('Context cleared (/clear); the messages above are kept for reference', '上下文已清除（/clear），以上消息仅供查看');
   const meta = payload?.compact_metadata || {};
   const trigger = meta.trigger === 'manual' ? t('manual', '手动') : meta.trigger === 'auto' ? t('auto', '自动') : '';
   const sizes = Number.isFinite(meta.pre_tokens) && Number.isFinite(meta.post_tokens) ? ` · ${formatTokens(meta.pre_tokens)} → ${formatTokens(meta.post_tokens)} tokens` : '';

@@ -227,7 +227,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		err = s.store.ResetContext(id)
 		if err == nil {
-			_, err = s.store.Append(id, "assistant", l.T("Started a new Claude context; the earlier web messages are kept for reference.", "已开始新的 Claude 上下文；之前的网页消息仍保留供查看。"), nil)
+			_, err = s.store.Append(id, "compact", "", json.RawMessage(`{"clear":true}`))
 		}
 		s.mu.Unlock()
 		if err != nil {

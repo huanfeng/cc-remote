@@ -119,3 +119,7 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .recent-projects button:hover{background:#eef2e6}.recent-projects button.active{border-color:#87a568;background:#eaf1df}
 .recent-projects strong{font-size:12px;font-weight:500;flex-shrink:0}
 .recent-projects small{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;line-height:1.5!important}
+/* Terminal session: withdraw the queued messages back into the message box. */
+.queued-actions{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin:-14px 0 22px;flex-wrap:wrap}
+.queued-actions button{font-size:12px;padding:7px 14px}
+.queued-actions small{font-size:10px;color:var(--muted);flex:1 1 220px;text-align:right}

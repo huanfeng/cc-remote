@@ -148,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
+	mux.HandleFunc("POST /api/sessions/{id}/queue/withdraw", s.withdrawQueue)
 	mux.HandleFunc("GET /api/requests", s.pending)
 	mux.HandleFunc("POST /api/requests/{id}", s.resolve)
 	mux.HandleFunc("GET /api/native/sessions", s.nativeList)
@@ -668,6 +669,18 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, map[string]string{"status": "stopping"})
+}
+
+// withdrawQueue takes a terminal session's queued web messages back for editing.
+func (s *Server) withdrawQueue(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	ts := s.terminals[r.PathValue("id")]
+	if ts == nil {
+		s.mu.Unlock()
+		fail(w, 409, s.lang(r).T("Only a running terminal session has queued messages to withdraw", "只有运行中的终端会话可以撤回排队消息"))
+		return
+	}
+	s.terminalWithdrawLocked(w, r, ts) // unlocks s.mu
 }
 
 const deleteStopTimeout = 15 * time.Second
