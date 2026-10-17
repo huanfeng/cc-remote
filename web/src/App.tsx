@@ -19,7 +19,7 @@ import { MAX_UI_CHARS, UI_KEY, UI_PREFIX, VIEW_KEY, deserialize, draftEmpty, emp
 import { lang, t } from './i18n';
 import { applyIdentity, initialIdentity, onIdentity } from './hostIdentity';
 
-type Session = { id: string; title: string; cwd: string; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus };
+type Session = { id: string; title: string; cwd: string; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus };
 type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 type Request = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
 type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; attachCommand?: string; channelExperimental?: boolean; language?: string; name?: string; color?: string };
@@ -56,7 +56,7 @@ function clearUI() { for (const name of ['localStorage', 'sessionStorage'] as co
 
 const NO_CALLS: number[] = [];
 const NO_DRAFT: QuestionDraft = {};
-type SharedQuestionProps = { request: Request; call?: ToolCall; busy: boolean; draft?: QuestionDraft; onAnswer: (request: Request, body: object) => void; onDraft: (id: string, update: (old: QuestionDraft) => QuestionDraft) => void };
+type SharedQuestionProps = { request: Request; call?: ToolCall; busy: boolean; sessionMode?: string; draft?: QuestionDraft; onAnswer: (request: Request, body: object) => void; onDraft: (id: string, update: (old: QuestionDraft) => QuestionDraft) => void };
 
 /**
  * Interactive card for a shared-terminal question; "Answer in terminal" leaves it to the native dialog.
@@ -64,11 +64,11 @@ type SharedQuestionProps = { request: Request; call?: ToolCall; busy: boolean; d
  * the pending list, or switching sessions, keeps it. A request's content never changes, and
  * polling recreates its object, so it is compared by id.
  */
-const SharedQuestion = memo(function SharedQuestion({ request, call, busy, draft, onAnswer, onDraft }: SharedQuestionProps) {
+const SharedQuestion = memo(function SharedQuestion({ request, call, busy, sessionMode, draft, onAnswer, onDraft }: SharedQuestionProps) {
   const shown = useMemo(() => call ? (request.kind === 'plan' ? { ...call, input: request.input } : call) : requestCall(request), [call, request.id]);
   const setDraft = useCallback((update: (old: QuestionDraft) => QuestionDraft) => onDraft(request.id, update), [onDraft, request.id]);
-  return <QuestionCard call={shown} waitingHint={t('Waiting for an answer (on the web or in the terminal)', '等待回答（网页或终端均可）')} busy={busy} draft={draft || NO_DRAFT} setDraft={setDraft} onAnswer={answers => onAnswer(request, { decision: 'allow', answers })} onDecide={decision => onAnswer(request, decision)} onHandoff={() => onAnswer(request, { decision: 'terminal' })} />;
-}, (a, b) => a.request.id === b.request.id && a.call === b.call && a.busy === b.busy && a.draft === b.draft && a.onAnswer === b.onAnswer && a.onDraft === b.onDraft);
+  return <QuestionCard call={shown} waitingHint={t('Waiting for an answer (on the web or in the terminal)', '等待回答（网页或终端均可）')} busy={busy} sessionMode={sessionMode} draft={draft || NO_DRAFT} setDraft={setDraft} onAnswer={answers => onAnswer(request, { decision: 'allow', answers })} onDecide={decision => onAnswer(request, decision)} onHandoff={() => onAnswer(request, { decision: 'terminal' })} />;
+}, (a, b) => a.request.id === b.request.id && a.call === b.call && a.busy === b.busy && a.sessionMode === b.sessionMode && a.draft === b.draft && a.onAnswer === b.onAnswer && a.onDraft === b.onDraft);
 
 function messages(events: Event[]) {
   const items: Event[] = [];
@@ -140,6 +140,8 @@ export default function App() {
   const [quick, setQuick] = useState<QuickTarget | null>(null);
   const [deleting, setDeleting] = useState<Session>();
   const [defaults, setDefaults] = useState<Defaults>();
+  // defaultMode of Claude's own settings.json, the last fallback of a session's permission mode.
+  const [claudeMode, setClaudeMode] = useState('');
   const [dragging, setDragging] = useState(false);
   const sidebar = useSidebarWidth();
   // The bearer token travels in clear text when this page is served over plain http from another machine.
@@ -539,6 +541,7 @@ export default function App() {
     api<Defaults>('/api/preferences').then(data => { if (active) setDefaults(data); }).catch(() => {});
     return () => { active = false; };
   }, [connected, settingsOpen, sessionSettingsOpen, api]);
+  useEffect(() => { if (connected) api<{ permissionMode?: string }>('/api/claude/settings').then(data => setClaudeMode(data.permissionMode || '')).catch(() => {}); }, [connected, settingsOpen, api]);
   useEffect(() => { setSessionSettingsOpen(false); }, [activeKey]);
   async function addFiles(files: File[]) {
     if (!files.length || !selected || native || uploading) return;
@@ -560,7 +563,9 @@ export default function App() {
       .finally(() => setBusy(false));
   }, [activeKey, api, updateTab]);
   const updateQuestionDraft = useCallback((id: string, update: (old: QuestionDraft) => QuestionDraft) => updateTab(activeKey, tab => ({ ...tab, questionDrafts: { ...tab.questionDrafts, [id]: update(tab.questionDrafts[id] || {}) } })), [activeKey, updateTab]);
-  const sharedCard = (call: ToolCall | undefined, request: Request) => <SharedQuestion key={request.id} request={request} call={call} busy={busy} draft={activeTab?.questionDrafts[request.id]} onAnswer={answerRequest} onDraft={updateQuestionDraft} />;
+  // The session's permission mode: its launch options and override, then the CC Remote and Claude defaults.
+  const sessionMode = current?.claudeArgs?.includes('--dangerously-skip-permissions') ? 'bypassPermissions' : current?.permissionMode || defaults?.permissionMode || claudeMode;
+  const sharedCard = (call: ToolCall | undefined, request: Request) => <SharedQuestion key={request.id} request={request} call={call} busy={busy} sessionMode={sessionMode} draft={activeTab?.questionDrafts[request.id]} onAnswer={answerRequest} onDraft={updateQuestionDraft} />;
   const linkedIds = new Set([...linked.values()].map(request => request.id));
   function choose(id: string, nativeSession = native, item?: Session) {
     const key = tabKey(id, nativeSession);

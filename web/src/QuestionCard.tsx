@@ -23,6 +23,8 @@ type Props = {
   /** Where a recorded answer was given, when known. */
   answeredBy?: 'terminal' | 'web';
   busy?: boolean;
+  /** ExitPlanMode: the session's own permission mode, preselected (and offered when it is bypassPermissions) so approving a plan does not lower it. */
+  sessionMode?: string;
   /** Draft input held by the caller; without it the card keeps its own. */
   draft?: QuestionDraft;
   setDraft?: DraftUpdate;
@@ -50,10 +52,15 @@ function HandoffButton({ onHandoff, busy }: { onHandoff?: () => void; busy?: boo
   return onHandoff ? <button type="button" className="secondary" disabled={busy} title={t('Withdraw the question from the web and answer it only in the native terminal', '撤回网页上的提问，只在原生终端作答')} onClick={onHandoff}>{t('Answer in terminal', '交给终端')}</button> : null;
 }
 
-function PlanCard({ call, waitingHint, onDecide, onHandoff, answeredBy, busy, draft: held, setDraft: setHeld }: Props) {
+// Offered only when the session bypasses permissions: approving a plan keeps it that way.
+const BYPASS_MODE = { value: 'bypassPermissions', label: t('Approve and keep bypassing permissions', '批准并继续跳过权限确认'), description: t('The mode this session uses: nothing needs confirmation', '本会话使用的模式：无需任何确认') };
+
+function PlanCard({ call, waitingHint, onDecide, onHandoff, answeredBy, busy, sessionMode, draft: held, setDraft: setHeld }: Props) {
   const [full, setFull] = useState(false);
   const [draft, setDraft] = useDraft(held, setHeld);
-  const mode = draft.mode || 'acceptEdits', feedback = draft.feedback || '';
+  const modes = sessionMode === 'bypassPermissions' ? [BYPASS_MODE, ...PLAN_MODES] : PLAN_MODES;
+  // Approving keeps the session's own mode when the dialog offers it, as the terminal does.
+  const mode = draft.mode || (modes.some(option => option.value === sessionMode) ? sessionMode! : 'acceptEdits'), feedback = draft.feedback || '';
   const setMode = (value: string) => setDraft(old => ({ ...old, mode: value }));
   const setFeedback = (value: string) => setDraft(old => ({ ...old, feedback: value }));
   const plan = typeof call.input?.plan === 'string' ? call.input.plan : '';
@@ -65,7 +72,7 @@ function PlanCard({ call, waitingHint, onDecide, onHandoff, answeredBy, busy, dr
     {plan.split('\n').length > 16 && <button type="button" className="tool-more" onClick={() => setFull(!full)}>{full ? t('Show less', '收起') : t('Show the whole plan', '显示全部计划')}</button>}
     {call.status === 'error' && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
     {interactive && <>
-      <ul className="question-options plan-modes" aria-label={t('Permission mode after approval', '批准后的权限模式')}>{PLAN_MODES.map(option => {
+      <ul className="question-options plan-modes" aria-label={t('Permission mode after approval', '批准后的权限模式')}>{modes.map(option => {
         const selected = mode === option.value;
         return <li key={option.value} className={selected ? 'selected' : ''}><button type="button" disabled={busy} aria-pressed={selected} onClick={() => setMode(option.value)}><span className="question-check">{selected && <CheckIcon size={12} />}</span><span><strong>{option.label}</strong><small>{option.description}</small></span></button></li>;
       })}</ul>
