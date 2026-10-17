@@ -112,3 +112,10 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .mode-choice strong{font-size:13px;font-weight:500}
 .mode-choice small{font-size:11px;line-height:1.5}
 @media(max-width:760px){.mode-choice{grid-template-columns:1fr}}
+/* New session: recent project directories under the path field. */
+.recent-projects{display:flex;flex-direction:column;gap:4px;margin:-12px 0 10px;max-height:220px;overflow:auto;overscroll-behavior:contain}
+.recent-projects .eyebrow{margin:2px 2px 2px}
+.recent-projects button{display:flex;align-items:baseline;gap:10px;text-align:left;background:#f6f7f0;border:1px solid #e1e5d8;border-radius:8px;padding:7px 10px;color:inherit;min-width:0}
+.recent-projects button:hover{background:#eef2e6}.recent-projects button.active{border-color:#87a568;background:#eaf1df}
+.recent-projects strong{font-size:12px;font-weight:500;flex-shrink:0}
+.recent-projects small{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;line-height:1.5!important}
