@@ -298,12 +298,18 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		// request must confirm trusting the directory (Claude asks on first use).
 		Mode        string `json:"mode"`
 		TrustFolder bool   `json:"trustFolder"`
+		// Resume is a Claude Code session ID a terminal session continues (as claude --resume).
+		Resume string `json:"resume"`
 		overrideRequest
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	req.Title = strings.TrimSpace(req.Title)
+	if req.Resume != "" {
+		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.overrideRequest)
+		return
+	}
 	if req.Title == "" {
 		req.Title = s.lang(r).T("New session", "新会话")
 	}
@@ -344,6 +350,83 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, 201, x)
 }
+
+// createResumed answers a terminal session continuing a Claude Code session:
+// the one that already does, or a new one in the session's own directory.
+func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, o overrideRequest) {
+	l := s.lang(r)
+	if mode != "terminal" {
+		fail(w, 400, l.T("Only a terminal session can resume a Claude Code session", "只有终端会话可以恢复 Claude Code 会话"))
+		return
+	}
+	if !trust {
+		fail(w, 400, l.T("A terminal session requires confirming that you trust this folder", "终端会话需要确认信任此目录"))
+		return
+	}
+	claudeID = strings.ToLower(strings.TrimSpace(claudeID))
+	if !channelUUID.MatchString(claudeID) {
+		fail(w, 400, l.T("Invalid Claude Code session ID", "无效的 Claude Code 会话 ID"))
+		return
+	}
+	var overrides store.Session
+	if e := o.apply(l, &overrides); e != nil {
+		fail(w, 400, i18n.Text(l, e))
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if x, e := s.store.FindClaude(claudeID); e == nil {
+		if x.Mode != "terminal" {
+			fail(w, 409, l.F("This Claude Code session is already “%s” in CC Remote (%s)", "这个 Claude Code 会话已是 CC Remote 中的「%s」（%s）", x.Title, modeName(l, x.Mode)))
+			return
+		}
+		s.decorateChannel(&x)
+		respond(w, 200, x)
+		return
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		fail(w, 500, l.T("Could not read sessions", "无法读取会话"))
+		return
+	}
+	n, _, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, claudeID)
+	if e != nil {
+		fail(w, 404, l.T("Claude Code session not found", "找不到这个 Claude Code 会话"))
+		return
+	}
+	cwd, e := validateCwd(l, n.Cwd)
+	if e != nil {
+		fail(w, 400, e.Error())
+		return
+	}
+	if title == "" {
+		title = n.Title
+	}
+	x, e := s.store.Create(title, cwd, claudeID, true)
+	if e == nil {
+		e = s.store.SetOverrides(x.ID, overrides.PermissionMode, overrides.Model, overrides.Effort)
+		x.PermissionMode, x.Model, x.Effort = overrides.PermissionMode, overrides.Model, overrides.Effort
+	}
+	if e == nil {
+		e = s.store.SetMode(x.ID, "terminal")
+		x.Mode = "terminal"
+	}
+	if e != nil {
+		fail(w, 500, l.T("Could not create the session", "无法创建会话"))
+		return
+	}
+	respond(w, 201, x)
+}
+
+// modeName is how the web names a session type.
+func modeName(l i18n.Lang, mode string) string {
+	switch mode {
+	case "terminal":
+		return l.T("terminal session", "终端会话")
+	case "channel":
+		return l.T("shared session", "共享会话")
+	}
+	return l.T("managed session", "托管会话")
+}
+
 func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	s.markViewed(r, r.PathValue("id"))
 	x, e := s.store.Get(r.PathValue("id"))

@@ -61,8 +61,12 @@ cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
    ccr ls                    # 最近的终端会话（按活动时间，最多 20 个），选择编号接入，0 为新建
    ccr <会话 ID 前缀或标题>
    ccr --new --title 修复登录 --model sonnet
+   ccr --resume <会话 ID>    # 以终端会话继续 Claude Code 会话：ID、ID 前缀或标题关键词；不带值则从当前目录的会话中选择
+   ccr -c                    # 继续当前目录最近的 Claude Code 会话（同 claude --continue）
    cc-remote attach --host http://127.0.0.1:8787 <会话>   # 缩写 cc-remote a
    ```
+
+   Claude Code 退出时提示的 `claude --resume <会话 ID>`，把 `claude` 换成 `ccr` 即可：宿主在该会话原来的目录里用 `--resume` 启动它，已经有对应终端会话时直接接入。不要让同一个会话同时在别的终端里运行。网页「终端历史」里的会话也可以「以终端会话继续」。
 
    按 `Ctrl+]` 断开，Claude Code 继续运行。多个前端可以同时接入，终端尺寸以最近一次调整的前端为准。Windows 的 ConPTY 只发送变化的字符，终端偶尔会留下没刷新的字符：每轮回复结束时会自动整屏重画，也可以按 `Ctrl+L`。
 6. 网页标题栏显示 Claude Code 状态栏数据：模型、推理强度、上下文用量、时长和费用；Claude 工作时显示和终端相同的状态行（如 `Composing… (8m 33s · ↓ 26.2k tokens)`）。终端里的状态栏仍是你自己配置的那个。

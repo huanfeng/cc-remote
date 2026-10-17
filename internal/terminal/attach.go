@@ -85,6 +85,7 @@ func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host str
 			return shared(append(append([]string{}, args[:i]...), args[i+1:]...))
 		}
 	}
+	args, resume := claudeResume(args)
 	fs := flag.NewFlagSet("ccr", flag.ContinueOnError)
 	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
 	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("cc-remote data directory", "cc-remote 数据目录"))
@@ -95,11 +96,15 @@ func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host str
 	mode := fs.String("permission-mode", "", i18n.T("permission mode of a new session", "新会话的权限模式"))
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]
+       ccr -r, --resume [id or search]   (continue a Claude Code session as a terminal session; no value: pick one of this directory's)
+       ccr -c, --continue                (continue this directory's most recent Claude Code session)
        ccr ls                            (recent terminal sessions in every directory; pick one to attach)
        ccr --shared [claude arguments]   (shared session: Claude Code runs in this terminal)
 
 ccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.
 `, `用法：ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [会话 ID 前缀或标题]
+      ccr -r, --resume [ID 或关键词]    （以终端会话继续 Claude Code 会话；不带值则从当前目录的会话中选择）
+      ccr -c, --continue                （继续当前目录最近的 Claude Code 会话）
       ccr ls                            （所有目录最近的终端会话，选一个接入）
       ccr --shared [claude 参数]        （共享会话：Claude Code 在当前终端里运行）
 
@@ -123,6 +128,8 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	options := map[string]any{"model": *model, "effort": *effort, "permissionMode": *mode}
 	var target remoteSession
 	switch {
+	case resume.set:
+		target, err = api.resume(resume, *title, options)
 	case *create:
 		target, err = api.create(*title, options)
 	case fs.NArg() == 1 && (fs.Arg(0) == "ls" || fs.Arg(0) == "list"):
@@ -136,6 +143,102 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 		return err
 	}
 	return api.attach(target)
+}
+
+// resumeArgs are Claude Code's resume flags given to ccr, so the command
+// Claude Code prints on exit works with ccr in place of claude.
+type resumeArgs struct {
+	set   bool
+	query string // -r/--resume value: a session ID (or prefix) or words of its title
+	last  bool   // -c/--continue
+}
+
+// claudeResume takes -r/--resume [value] and -c/--continue out of args.
+func claudeResume(args []string) ([]string, resumeArgs) {
+	var rest []string
+	var r resumeArgs
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return append(rest, args[i:]...), r
+		case a == "-r" || a == "--resume" || a == "-resume":
+			r.set = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				r.query = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--resume=") || strings.HasPrefix(a, "-resume="):
+			r.set, r.query = true, a[strings.Index(a, "=")+1:]
+		case a == "-c" || a == "--continue" || a == "-continue":
+			r.set, r.last = true, true
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return rest, r
+}
+
+// resume finds the Claude Code session to continue and the terminal session
+// continuing it (the host creates one in the session's own directory).
+func (c *client) resume(r resumeArgs, title string, options map[string]any) (remoteSession, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return remoteSession{}, err
+	}
+	var all []remoteSession // the host's list of Claude Code sessions, newest first
+	if err = c.do("GET", "/api/native/sessions", nil, &all); err != nil {
+		return remoteSession{}, err
+	}
+	var here []remoteSession
+	for _, x := range all {
+		if samePath(x.Cwd, cwd) {
+			here = append(here, x)
+		}
+	}
+	var list []remoteSession
+	switch {
+	case r.query != "":
+		q := strings.ToLower(r.query)
+		for _, x := range all {
+			if strings.HasPrefix(x.ID, q) {
+				list = append(list, x)
+			}
+		}
+		if len(list) == 0 {
+			for _, x := range here {
+				if strings.Contains(strings.ToLower(x.Title), q) {
+					list = append(list, x)
+				}
+			}
+		}
+		if len(list) == 0 {
+			return remoteSession{}, i18n.Errorf("no Claude Code session matches %q", "没有匹配 %q 的 Claude Code 会话", r.query)
+		}
+	case len(here) == 0:
+		return remoteSession{}, errors.New(i18n.T("no Claude Code session in this directory to continue", "当前目录没有可继续的 Claude Code 会话"))
+	case r.last:
+		list = here[:1]
+	default:
+		list = here
+	}
+	target := list[0]
+	if len(list) > 1 {
+		fmt.Println(i18n.T("Claude Code sessions:", "Claude Code 会话："))
+		if target, err = choose(list, false, nil); err != nil {
+			return remoteSession{}, err
+		}
+	}
+	// Continuing a session is trusting its directory, as running claude --resume there.
+	body := map[string]any{"title": title, "mode": "terminal", "trustFolder": true, "resume": target.ID}
+	for k, v := range options {
+		if v != "" {
+			body[k] = v
+		}
+	}
+	var x remoteSession
+	err = c.do("POST", "/api/sessions", body, &x)
+	return x, err
 }
 
 func newClient(host, dataDir string) (*client, error) {
@@ -317,6 +420,10 @@ func choose(list []remoteSession, allowNew bool, create func() (remoteSession, e
 		list = list[:recentLimit]
 	}
 	for i, x := range list {
+		if x.Mode == "" { // a Claude Code session, not one the host holds
+			fmt.Printf("%2d. %s  [%s]  %s  (%s)\n", i+1, x.Title, ago(x.UpdatedAt), x.Cwd, x.ID[:8])
+			continue
+		}
 		state := i18n.T("not running", "未运行")
 		if x.Online {
 			state = statusText(x.Status)

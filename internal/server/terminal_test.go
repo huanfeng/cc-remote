@@ -414,3 +414,40 @@ func TestTerminalStatusLine(t *testing.T) {
 		t.Fatalf("live status not shown: %s", b)
 	}
 }
+
+// ccr --resume: a terminal session continues a Claude Code session in its own
+// directory, and resuming it again finds that session instead of a second one.
+func TestTerminalResumesNativeSession(t *testing.T) {
+	s, ts, _ := setup(t, nil)
+	cwd := t.TempDir()
+	id := store.ID()
+	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "resume-test")
+	_ = os.MkdirAll(dir, 0700)
+	user, _ := json.Marshal(map[string]any{"type": "user", "cwd": cwd, "message": map[string]string{"content": "fix the login page"}})
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), append(user, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"mode": "terminal", "trustFolder": true, "resume": strings.ToUpper(id), "cwd": t.TempDir()}
+	code, b := request(t, ts, "POST", "/api/sessions", body, testToken)
+	var x store.Session
+	_ = json.Unmarshal(b, &x)
+	if code != 201 || x.Mode != "terminal" || x.ClaudeSessionID != id || !samePathForTest(x.Cwd, cwd) {
+		t.Fatalf("resume %d %s", code, b)
+	}
+	code, b = request(t, ts, "POST", "/api/sessions", body, testToken)
+	var again store.Session
+	_ = json.Unmarshal(b, &again)
+	if code != 200 || again.ID != x.ID {
+		t.Fatalf("second resume %d %s", code, b)
+	}
+	if code, b = request(t, ts, "POST", "/api/sessions", map[string]any{"mode": "terminal", "trustFolder": true, "resume": store.ID()}, testToken); code != 404 {
+		t.Fatalf("unknown session %d %s", code, b)
+	}
+	if code, b = request(t, ts, "POST", "/api/sessions", map[string]any{"resume": id}, testToken); code != 400 {
+		t.Fatalf("managed resume %d %s", code, b)
+	}
+}
+
+func samePathForTest(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}

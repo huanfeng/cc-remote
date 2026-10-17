@@ -87,13 +87,22 @@ cd your-project
 ccr
 ```
 
-Claude Code opens in the terminal as usual, and the session appears in the web UI. The first run asks you to confirm loading the development channel in the terminal. (If `ccr` is not found right after installing, open a new terminal.)
+Claude Code opens in the terminal as usual and the session appears in the web UI. The host runs it: close the terminal and it keeps going; run `ccr` again to attach. (If `ccr` is not found right after installing, open a new terminal.)
 
 ## Usage
 
-### Shared terminal (ccr)
+### Terminal sessions (ccr)
 
-`ccr` is short for `cc-remote -- claude`; arguments go straight to Claude Code, e.g. `ccr --model sonnet` or `ccr --resume <session-uuid>`. Terminal and web use the same process and context, and leaving the web UI does not affect the terminal. Stopping generation and native commands such as `/compact` stay in the terminal.
+```sh
+ccr                      # attach to this directory's terminal session, or start one
+ccr ls                   # recent terminal sessions; pick one to attach
+ccr <id prefix or title> # attach to that session
+ccr --new --model sonnet # start a new one here (also --title, --effort, --permission-mode)
+ccr --resume <id>        # continue a Claude Code session as a terminal session (no id: pick one of this directory's)
+ccr -c                   # continue this directory's most recent Claude Code session
+```
+
+Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. The older shared mode (Claude Code runs in your terminal, the web joins over Channels) is `ccr --shared [claude arguments]`.
 
 ### Managed sessions
 

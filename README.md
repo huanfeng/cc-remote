@@ -96,11 +96,15 @@ ccr                      # 接入当前目录的终端会话，没有就新建
 ccr ls                   # 列出最近的终端会话，选择一个接入
 ccr <ID前缀或标题>        # 接入指定会话
 ccr --new --model sonnet # 在当前目录新建（可选 --title、--effort、--permission-mode）
+ccr --resume <会话ID>    # 以终端会话继续 Claude Code 会话（不带 ID 则从当前目录的会话中选择）
+ccr -c                   # 继续当前目录最近的 Claude Code 会话
 ```
+
+Claude Code 退出时提示的 `claude --resume <会话ID>`，把 `claude` 换成 `ccr` 就会在宿主上继续这个会话。
 
 终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。`cc-remote attach`（缩写 `cc-remote a`）是同样的功能，需要指定 `--host` 时使用。
 
-旧的共享会话（Claude Code 运行在当前终端里，网页经 Channels 接入）改为 `ccr --shared [claude 参数]`，例如 `ccr --shared --resume <会话UUID>`。
+旧的共享会话（Claude Code 运行在当前终端里，网页经 Channels 接入）改为 `ccr --shared [claude 参数]`。
 
 ### 托管会话
 
