@@ -3,15 +3,18 @@ import { CloseIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
 import { Select } from './Select';
 import { hostLang, langOverride, setLang, t, type Lang } from './i18n';
+import { applyIdentity } from './hostIdentity';
 
 export type { Api } from './ModelPicker';
 export type ClaudePreferences = { model: string; effortLevel: string; permissionMode: string; revision: string; path?: string };
 export type RemotePreferences = { permissionMode: string; model: string; effort: string; revision: string };
+type IdentitySettings = { name: string; color: string; shownName: string; shownColor: string; defaultName: string; defaultColor: string; palette: { key: string; hex: string }[] };
 
 // Settings sections; add an entry here and a matching panel below to extend the dialog.
 const SECTIONS = [
   { id: 'remote', label: t('CC Remote defaults', 'CC Remote 默认'), hint: t('Recommended', '推荐') },
   { id: 'claude', label: t('Claude user settings', 'Claude 用户配置'), hint: 'settings.json' },
+  { id: 'host', label: t('This host', '此主机'), hint: t('Name and color', '名称与颜色') },
   { id: 'browser', label: t('This browser', '此浏览器'), hint: t('Language', '语言') },
 ] as const;
 // Language names are written in their own language.
@@ -27,6 +30,11 @@ export function ClaudeSettings({ api, close }: { api: Api; close: () => void }) 
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [identity, setIdentity] = useState<IdentitySettings>();
+  const [hostName, setHostName] = useState('');
+  const [hostColor, setHostColor] = useState('');
+  function showIdentity(id: IdentitySettings) { setIdentity(id); setHostName(id.name || ''); setHostColor(id.color || ''); applyIdentity({ name: id.shownName, color: id.shownColor }); }
+  useEffect(() => { if (section === 'host' && !identity) api<IdentitySettings>('/api/identity').then(showIdentity).catch(err => setError((err as Error).message)); }, [section]);
   async function load() {
     setError(''); setNotice('');
     try { const p = await api<RemotePreferences>('/api/preferences'); setPrefs(p); setSavedPrefs(p); } catch (err) { setError((err as Error).message); }
@@ -79,6 +87,18 @@ export function ClaudeSettings({ api, close }: { api: Api; close: () => void }) 
             <button className="secondary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Write Claude user settings', '写入 Claude 用户配置')}</button>
           </form> : <p>{t('Loading…', '正在读取…')}</p>}
         </div>}
+        {section === 'host' && <form onSubmit={event => { event.preventDefault(); void save(async () => { showIdentity(await api<IdentitySettings>('/api/identity', { method: 'PUT', body: JSON.stringify({ name: hostName.trim(), color: hostColor }) })); setNotice(t('Saved: the tab title, icon and logo of every page on this host change.', '已保存：此主机所有页面的标签页标题、图标和标志都会更新。')); }); }}>
+          <h3>{t('Host name and color', '主机名称与颜色')}</h3>
+          <p>{t('Tell several hosts apart in the browser: the name is in the tab title, the sidebar and the login page, the color is the tab icon and logo. Leave them empty for the defaults: the machine name, and a color picked by the name. Also: ', '在浏览器里区分多台宿主：名称显示在标签页标题、侧栏和登录页，颜色用于标签页图标和标志。留空使用默认值：机器名，以及按名称挑选的颜色。也可以用命令：')}<code>cc-remote service config --name NAME --color COLOR</code></p>
+          {identity ? <>
+            <label>{t('Name', '名称')}<input value={hostName} maxLength={40} placeholder={identity.defaultName} onChange={event => setHostName(event.target.value)} /></label>
+            <div className="host-colors" role="radiogroup" aria-label={t('Color', '颜色')}>
+              <button type="button" role="radio" aria-checked={!hostColor} className={`host-color auto${!hostColor ? ' chosen' : ''}`} style={{ background: identity.palette.find(c => c.key === identity.defaultColor)?.hex }} title={t('Automatic', '自动')} onClick={() => setHostColor('')}>{t('Auto', '自动')}</button>
+              {identity.palette.map(c => <button key={c.key} type="button" role="radio" aria-checked={hostColor === c.key} aria-label={c.key} title={c.key} className={`host-color${hostColor === c.key ? ' chosen' : ''}`} style={{ background: c.hex }} onClick={() => setHostColor(c.key)} />)}
+            </div>
+            <button className="primary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button>
+          </> : <p>{t('Loading…', '加载中…')}</p>}
+        </form>}
         {section === 'browser' && <div>
           <h3>{t('Language', '语言')}</h3>
           <p>{t('Saved in this browser only; by default the page follows the language configured on the host. Changing it reloads the page.', '只保存在此浏览器；默认跟随宿主配置的语言。切换后页面会重新加载。')}</p>

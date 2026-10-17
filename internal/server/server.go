@@ -120,6 +120,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{id}/events", s.channelEvent)
 	mux.HandleFunc("POST /api/channels/{id}/interactions", s.channelInteraction)
 	mux.HandleFunc("GET /api/info", s.info)
+	mux.HandleFunc("GET /api/identity", s.identityAPI)
+	mux.HandleFunc("PUT /api/identity", s.identityAPI)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
 	mux.HandleFunc("POST /api/admin/shutdown", s.shutdown)
@@ -234,6 +236,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
+	name, hex := s.identity().Resolved()
 	path, err := exec.LookPath(s.cfg.ClaudeExecutable)
 	version := ""
 	if err == nil {
@@ -244,7 +247,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart(), "language": s.language()})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex})
 }
 
 // language is the host's language (English when unset, as in tests).
@@ -1022,7 +1025,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if _, err := fs.Stat(s.cfg.Assets, path); err != nil {
+	if _, err := fs.Stat(s.cfg.Assets, path); err != nil && path != "host-icon.svg" {
 		if strings.Contains(filepath.Base(path), ".") {
 			http.NotFound(w, r)
 			return
@@ -1036,17 +1039,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")
 	}
-	// The page starts in the host's language: index.html carries it in <html lang>.
-	if r.URL.Path == "/index.html" || r.URL.Path == "/" {
-		if b, err := fs.ReadFile(s.cfg.Assets, "index.html"); err == nil {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			page := strings.Replace(string(b), `<html lang="zh-CN">`, `<html lang="`+map[i18n.Lang]string{i18n.ZH: "zh-CN", i18n.EN: "en"}[s.language()]+`">`, 1)
-			if r.Method == "HEAD" {
-				return
-			}
-			_, _ = io.WriteString(w, page)
-			return
-		}
+	// The page starts in the host's language, name and colour.
+	if s.identityAsset(w, r) {
+		return
 	}
 	http.FileServer(http.FS(s.cfg.Assets)).ServeHTTP(w, r)
 }

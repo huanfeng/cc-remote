@@ -35,6 +35,7 @@
 | `cc-remote.sqlite`（及 `-wal`/`-shm`） | 会话、消息事件、审批记录 |
 | `access-token` | 访问令牌（首次启动生成，权限 0600） |
 | `preferences.json` | CC Remote 默认的模型、推理强度、权限模式 |
+| `identity.json` | 主机名称与颜色（见[主机名称与颜色](#主机名称与颜色)） |
 | `service.json` | 服务配置（监听地址、Claude 路径、界面语言 `language`、服务环境变量等） |
 | `uploads/<会话 ID>/` | 上传的附件 |
 | `host.log` | 服务模式日志（10 MiB 轮转） |
@@ -90,6 +91,16 @@ cc-remote service config --lang zh      # 改为中文并重启服务
 cc-remote service config --lang auto    # 恢复跟随系统
 CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 ```
+
+## 主机名称与颜色
+
+部署了多台宿主时，用名称和颜色在浏览器里区分它们：名称显示在标签页标题（`pdev · CC Remote`）、侧栏和登录页，安装到手机桌面时也作为应用名；颜色用于标签页图标和侧栏标志。
+
+- 默认：名称为机器名（去掉域名部分），颜色按名称从调色板中挑选，所以不设置时各台宿主通常也不同色。
+- 网页：「设置 → 此主机」修改，立即生效。
+- 命令行：`cc-remote service config --name pdev --color teal`（`service install` 同样接受），无需重启服务，已打开的页面刷新后生效。`--color auto`、`--name ""` 恢复默认。
+- 颜色：`green`、`teal`、`blue`、`indigo`、`purple`、`pink`、`red`、`orange`、`amber`、`slate`，或 `#rrggbb`。
+- 保存在数据目录的 `identity.json`。登录前的页面就会显示名称（便于确认连的是哪台），因此能访问该端口的人可以看到它。
 
 ## 后台服务
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"cc-remote/internal/i18n"
+	"cc-remote/internal/identity"
 )
 
 // isolateInstallRoot points InstallRoot and the default data dir at temp dirs.
@@ -182,5 +184,33 @@ func TestAsidePathFallsBackWhenOldIsLocked(t *testing.T) {
 	}
 	if got := AsidePath(exe); !strings.HasPrefix(got, exe+".old-") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// service install/config --name --color write identity.json; auto clears the colour.
+func TestIdentityFlags(t *testing.T) {
+	dir := t.TempDir()
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	f := addIdentityFlags(fs)
+	_ = fs.Parse([]string{"--name", "pdev", "--color", "teal"})
+	if changed, err := f.apply(dir, map[string]bool{"name": true, "color": true}, false, io.Discard); !changed || err != nil {
+		t.Fatal(changed, err)
+	}
+	if id, _ := identity.Load(dir); id != (identity.Identity{Name: "pdev", Color: "teal"}) {
+		t.Fatalf("saved %+v", id)
+	}
+	*f.color = "auto"
+	if _, err := f.apply(dir, map[string]bool{"color": true}, false, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if id, _ := identity.Load(dir); id != (identity.Identity{Name: "pdev"}) {
+		t.Fatalf("auto %+v", id)
+	}
+	*f.color = "chartreuse"
+	if _, err := f.apply(dir, map[string]bool{"color": true}, false, io.Discard); err == nil {
+		t.Fatal("bad color saved")
+	}
+	if changed, _ := f.apply(dir, map[string]bool{}, false, io.Discard); changed {
+		t.Fatal("changed without flags")
 	}
 }

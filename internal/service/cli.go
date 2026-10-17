@@ -20,6 +20,7 @@ import (
 
 	"cc-remote/internal/config"
 	"cc-remote/internal/i18n"
+	"cc-remote/internal/identity"
 	"cc-remote/internal/listen"
 )
 
@@ -184,6 +185,57 @@ func resolveClaude(bin string, out io.Writer) string {
 	return path
 }
 
+// identityFlags are --name and --color: how the browser tells this host apart.
+type identityFlags struct{ name, color *string }
+
+func addIdentityFlags(fs *flag.FlagSet) identityFlags {
+	return identityFlags{
+		name:  fs.String("name", "", i18n.T("host name shown in the browser tab, sidebar and login page (empty: the machine name)", "显示在浏览器标签页、侧栏和登录页的主机名称（留空：机器名）")),
+		color: fs.String("color", "", i18n.F("host color of the tab icon and logo: %s, #rrggbb, or auto", "标签页图标和标志的主机颜色：%s、#rrggbb 或 auto", identity.Keys())),
+	}
+}
+
+// apply saves --name and --color in the data directory; it reports whether either was given.
+func (f identityFlags) apply(dataDir string, set map[string]bool, dryRun bool, out io.Writer) (bool, error) {
+	if !set["name"] && !set["color"] {
+		return false, nil
+	}
+	id, err := identity.Load(dataDir)
+	if err != nil {
+		return true, err
+	}
+	if set["name"] {
+		id.Name = *f.name
+	}
+	if set["color"] {
+		id.Color = *f.color
+		if strings.EqualFold(strings.TrimSpace(id.Color), "auto") {
+			id.Color = ""
+		}
+	}
+	if err = id.Validate(); err != nil {
+		return true, err
+	}
+	if dryRun {
+		fmt.Fprint(out, i18n.F("[dry-run] write identity.json: name %q, color %q\n", "[dry-run] 写入 identity.json：名称 %q，颜色 %q\n", id.Name, id.Color))
+		return true, nil
+	}
+	if err = identity.Save(dataDir, id); err != nil {
+		return true, err
+	}
+	name, hex := id.Resolved()
+	fmt.Fprint(out, i18n.F("Host name %s, color %s; open pages pick it up when reloaded (no restart needed).\n", "主机名称 %s，颜色 %s；已打开的页面刷新后生效（无需重启）。\n", name, hex))
+	return true, nil
+}
+
+// identityValue shows a setting, or its default marked as automatic.
+func identityValue(setting, shown string) string {
+	if setting != "" {
+		return shown
+	}
+	return shown + i18n.T(" (auto)", "（自动）")
+}
+
 // applyLanguage stores --lang: zh or en, or empty for auto (the system language).
 func applyLanguage(cfg *Config, set map[string]bool, value string) error {
 	if !set["lang"] {
@@ -290,6 +342,7 @@ func installCmd(args []string, version string) error {
 	configDir := fs.String("claude-config-dir", "", i18n.T("Claude config directory", "Claude 配置目录"))
 	allowInsecure := fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)", "允许 all:/0.0.0.0/:: 监听地址（在所有网卡上提供明文 HTTP）"))
 	lang := fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language, default), zh or en", "提示信息和 Web 界面的语言：auto（跟随系统，默认）、zh 或 en"))
+	idF := addIdentityFlags(fs)
 	noStart := fs.Bool("no-start", false, i18n.T("register without starting", "只注册，不启动"))
 	whenIdle := fs.Bool("when-idle", false, i18n.T("replace the executable without stopping a running host; it restarts itself once no session is busy", "替换可执行文件但不停止运行中的宿主；等没有忙碌的会话时它会自行重启"))
 	withAlias := fs.Bool("alias", false, i18n.T("also install the ccr alias", "同时安装 ccr 别名"))
@@ -322,6 +375,9 @@ func installCmd(args []string, version string) error {
 		return err
 	}
 	if err = applyLanguage(cfg, set, *lang); err != nil {
+		return err
+	}
+	if _, err = idF.apply(absData, set, *dryRun, out); err != nil {
 		return err
 	}
 	capture, err := envF.shouldCapture(set, cfg.Env == nil)
@@ -454,6 +510,7 @@ func configCmd(args []string) error {
 	configDir := fs.String("claude-config-dir", "", i18n.T("Claude config directory (empty to clear)", "Claude 配置目录（留空表示清除）"))
 	allowInsecure := fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (=false to revoke)", "允许 all:/0.0.0.0/:: 监听地址（=false 撤销）"))
 	lang := fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language), zh or en", "提示信息和 Web 界面的语言：auto（跟随系统）、zh 或 en"))
+	idF := addIdentityFlags(fs)
 	noRestart := fs.Bool("no-restart", false, i18n.T("save without restarting the service", "只保存，不重启服务"))
 	dryRun := fs.Bool("dry-run", false, dryRunHelp())
 	envF := addEnvFlags(fs, i18n.T("capture HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY from the current environment", "从当前环境捕获 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY"))
@@ -468,8 +525,15 @@ func configCmd(args []string) error {
 	}
 	out := os.Stdout
 	envChange := set["env"] || set["capture-env"] || set["no-capture-env"]
+	// The host reads its name and colour on every page load: no restart.
+	changed, err := idF.apply(cfg.DataDir, set, *dryRun, out)
+	if err != nil {
+		return err
+	}
 	if !set["listen"] && !set["claude"] && !set["claude-config-dir"] && !set["allow-insecure-remote"] && !set["lang"] && !envChange {
-		printConfig(cfg, out)
+		if !changed {
+			printConfig(cfg, out)
+		}
 		return nil
 	}
 	if err = applySettings(cfg, set, listenVals, *claudeBin, *configDir, *allowInsecure, out); err != nil {
@@ -526,6 +590,11 @@ func field(out io.Writer, en, zh string, value any) {
 }
 
 func printConfig(cfg *Config, out io.Writer) {
+	if id, err := identity.Load(cfg.DataDir); err == nil {
+		name, hex := id.Resolved()
+		field(out, "Host name", "主机名称", identityValue(id.Name, name))
+		field(out, "Host color", "主机颜色", identityValue(id.Color, hex))
+	}
 	field(out, "Listen", "监听地址", strings.Join(cfg.Listen, ", "))
 	field(out, "Data dir", "数据目录", cfg.DataDir)
 	field(out, "Claude", "Claude", cfg.Claude)
