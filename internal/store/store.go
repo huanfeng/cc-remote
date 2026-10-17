@@ -29,6 +29,8 @@ type Session struct {
 	PermissionMode string `json:"permissionMode"`
 	Model          string `json:"model"`
 	Effort         string `json:"effort"`
+	// ClaudeArgs are Claude Code options a terminal session starts with (ccr [claude options]).
+	ClaudeArgs []string `json:"claudeArgs,omitempty"`
 	// Queued holds web messages waiting for Claude (filled in by the server).
 	Queued []QueuedMessage `json:"queued,omitempty"`
 	// Live is a terminal session's status line data (filled in by the server).
@@ -123,7 +125,7 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}} {
+	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}} {
 		var n int
 		if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c.name).Scan(&n); err == nil && n == 0 {
 			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c.name + ` TEXT NOT NULL DEFAULT ` + c.def)
@@ -159,11 +161,15 @@ func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error
 	return x, err
 }
 
-const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort`
+const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort)
+	var args string
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args)
+	if err == nil {
+		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
+	}
 	return x, err
 }
 
@@ -203,6 +209,16 @@ func (s *Store) SetResume(id string) error {
 // SetClaudeID follows a session to a new Claude session (/clear, /resume).
 func (s *Store) SetClaudeID(id, claudeID string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET claude_id=?,updated_at=? WHERE id=?`, claudeID, now(), id)
+	return err
+}
+
+// SetClaudeArgs stores the Claude Code options a terminal session starts with.
+func (s *Store) SetClaudeArgs(id string, args []string) error {
+	if args == nil {
+		args = []string{}
+	}
+	b, _ := json.Marshal(args)
+	_, err := s.db.Exec(`UPDATE sessions SET claude_args=? WHERE id=?`, string(b), id)
 	return err
 }
 

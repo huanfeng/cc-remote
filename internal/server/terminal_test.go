@@ -42,6 +42,7 @@ func fakeTerminal() {
 	}
 	dir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "fake")
 	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "args.log"), []byte(strings.Join(os.Args[1:], " ")), 0o600)
 	for _, a := range os.Args {
 		if _, err := os.Stat(filepath.Join(dir, id+".jsonl")); a == "--resume" && err != nil {
 			os.Stdout.WriteString("No conversation found\r\n") // as Claude Code does
@@ -450,4 +451,30 @@ func TestTerminalResumesNativeSession(t *testing.T) {
 
 func samePathForTest(a, b string) bool {
 	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+// ccr [claude options]: the session's Claude Code starts with them; host options are refused.
+func TestTerminalClaudeArgs(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	body := map[string]any{"title": "args", "cwd": t.TempDir(), "mode": "terminal", "trustFolder": true}
+	for _, bad := range [][]string{{"--print"}, {"--settings", "x.json"}, {"fix the bug"}} {
+		body["claudeArgs"] = bad
+		if code, b := call(t, base, "POST", "/api/sessions", body); code != 400 {
+			t.Fatalf("%v accepted: %d %s", bad, code, b)
+		}
+	}
+	body["claudeArgs"] = []string{"--add-dir", "../lib", "--dangerously-skip-permissions"}
+	code, b := call(t, base, "POST", "/api/sessions", body)
+	var x store.Session
+	if code != 201 || json.Unmarshal(b, &x) != nil || len(x.ClaudeArgs) != 3 {
+		t.Fatalf("create %d %s", code, b)
+	}
+	if code, b = call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "hi"}); code != 202 {
+		t.Fatalf("send %d %s", code, b)
+	}
+	args := func() string {
+		b, _ := os.ReadFile(filepath.Join(s.cfg.ClaudeConfigDir, "args.log"))
+		return string(b)
+	}
+	awaitLong(t, args, func() bool { return strings.HasSuffix(args(), "--add-dir ../lib --dangerously-skip-permissions") })
 }

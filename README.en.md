@@ -102,7 +102,7 @@ ccr --resume <id>        # continue a Claude Code session as a terminal session 
 ccr -c                   # continue this directory's most recent Claude Code session
 ```
 
-Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. The older shared mode (Claude Code runs in your terminal, the web joins over Channels) is `ccr --shared [claude arguments]`.
+Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. `ccr` also takes Claude Code's options: `ccr --add-dir ../lib --model sonnet` starts a terminal session with them, and `cc-remote -- claude [options]` does the same. The older shared mode (Claude Code ran in your terminal and the web joined over Channels) was removed.
 
 ### Managed sessions
 

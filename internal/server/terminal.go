@@ -110,6 +110,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	}
 	p := s.effectivePreferences(x)
 	args = append(args, claude.LaunchFlags(p.PermissionMode, p.Model, p.Effort)...)
+	args = append(args, x.ClaudeArgs...) // checked when the session was created
 	env := terminal.CleanEnv(os.Environ())
 	env = append(env, "CC_REMOTE_ASK_FILE="+filepath.Join(dir, "ask.json"), "CC_REMOTE_TERMINAL_FILE="+filepath.Join(dir, "terminal.json"))
 	if s.cfg.ClaudeConfigEnv != "" {

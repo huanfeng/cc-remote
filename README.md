@@ -104,7 +104,7 @@ Claude Code 退出时提示的 `claude --resume <会话ID>`，把 `claude` 换�
 
 终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。`cc-remote attach`（缩写 `cc-remote a`）是同样的功能，需要指定 `--host` 时使用。
 
-旧的共享会话（Claude Code 运行在当前终端里，网页经 Channels 接入）改为 `ccr --shared [claude 参数]`。
+`ccr` 也接受 Claude Code 的参数：`ccr --add-dir ../lib --model sonnet` 带这些参数新建终端会话，`cc-remote -- claude [参数]` 与之相同。旧的共享终端（Claude Code 在当前终端里运行、网页经 Channels 接入）已移除。
 
 ### 托管会话
 

@@ -141,7 +141,7 @@ cc-remote service config --env HTTPS_PROXY= # 删除
 
 ### ccr 别名
 
-`ccr` 是 `cc-remote -- claude` 的简写，不替换 `claude` 本身。安装脚本默认创建它，也可手动管理：
+`ccr` 启动或接入终端会话（等同 `cc-remote ccr`），不替换 `claude` 本身。安装脚本默认创建它，也可手动管理：
 
 ```sh
 cc-remote alias install      # Windows：在副本目录写 ccr.cmd 并加入用户 PATH；Linux/macOS：写 ~/.local/bin/ccr，并链接 ~/.local/bin/cc-remote
@@ -151,13 +151,14 @@ cc-remote alias uninstall
 
 别名指向已安装的服务副本，并带上服务的数据目录和地址；未安装服务时指向当前可执行文件并给出警告。Windows 修改用户 PATH 后需打开新终端，cmd 和 PowerShell 均可运行 `ccr`。Linux / macOS 的程序本体在 `~/.local/share/cc-remote/bin`（macOS 为 `~/Library/Application Support/cc-remote/bin`），因此同时在 `~/.local/bin` 创建 `cc-remote` 符号链接，让 `cc-remote` 命令与 `ccr` 一样可直接使用；已有同名普通文件时不覆盖。若 `~/.local/bin` 不在 PATH 会提示添加。把可执行文件复制或链接为 `ccr` 效果相同。
 
-## ccr 与共享终端参数
+## ccr 与 Claude Code 参数
 
-- 原生的 `--model`、`--effort`、`--permission-mode`、精确 UUID 的 `--resume` / `-r` 和 `--session-id` 原样透传。
-- 命令行未给出权限参数（`--permission-mode` / `--dangerously-skip-permissions` / `--allow-dangerously-skip-permissions`）、`--model`、`--effort` 时，自动追加 CC Remote 默认值；显式参数始终优先。
-- 若危险权限模式来自网页默认设置（而不是命令行），启动时会先在终端打印醒目警告，可传 `--permission-mode default` 覆盖。
-- 为保证会话绑定，暂不接受 `--continue`、`--fork-session`、`-p`，以及覆盖 `--settings` / `--mcp-config` / `--channels`。
-- `--host` 指定本机桥接地址（默认 `http://127.0.0.1:8787`）；远端网页仍访问你配置的地址或代理。
+- `ccr` 自己的参数：`--host`（本机宿主地址，默认 `http://127.0.0.1:8787`）、`--data-dir`、`--new`、`--title`。
+- `--model`、`--effort`、`--permission-mode` 成为终端会话的设置（网页可改），未给出时用 CC Remote 默认值。
+- `-r` / `--resume [ID 或关键词]`、`-c` / `--continue` 以终端会话继续 Claude Code 会话。
+- 其它参数按 Claude Code 的规则读取（哪些参数带值、`--add-dir` 等可带多个值）并随会话保存，每次启动（包括宿主重启后用 `--resume` 恢复）都传给 Claude Code；`-n` / `--name` 同时作为会话标题。
+- 宿主自己设置或与终端会话冲突的参数会被拒绝：`--settings`、`--session-id`、`-p` / `--print`、`--output-format`、`--input-format`、`--bare`、`--safe-mode`、`--no-session-persistence`、`--fork-session`、`--bg`、`--cloud`、`--teleport` 等。
+- 带了 Claude Code 参数或用了 `--` 时总是新建会话，其余文字作为第一条消息发送（不保存，恢复会话时不会重发）。
 
 ## 权限模式、模型与推理强度
 

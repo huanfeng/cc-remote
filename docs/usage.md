@@ -4,40 +4,32 @@
 
 ## 两种会话
 
-| | 共享终端会话 | 托管会话 |
+| | 终端会话 | 托管会话 |
 | --- | --- | --- |
-| 启动方式 | 在项目目录运行 `ccr --shared`（或 `cc-remote -- claude`） | 网页「新建」 |
-| 进程 | 一个长期运行的原生交互式 Claude Code | 每轮一个 `claude -p` 子进程，用 `--resume` 恢复上下文 |
-| 终端 | 保留原生终端界面，终端和网页都能发消息 | 无终端，全部在网页操作 |
-| 停止生成 | 只能在终端 | 网页「停止」 |
-| 模型 / 权限修改 | 在终端用 `/model`、`/effort`、Shift+Tab | 网页会话设置，下一轮生效 |
-| 用量统计 | 原生记录不含用量，显示「—」 | 有费用、tokens、耗时 |
+| 启动方式 | 在项目目录运行 `ccr`，或网页「新建」选「终端会话」 | 网页「新建」 |
+| 进程 | 宿主持有一个交互式 Claude Code，本地终端随时接入 | 每轮一个 `claude -p` 子进程，用 `--resume` 恢复上下文 |
+| 终端 | 原生终端界面，终端和网页都能发消息；关闭终端不会停止它 | 无终端，全部在网页操作 |
+| 停止生成 | 终端 Esc，或网页「停止」 | 网页「停止」 |
+| 模型 / 权限修改 | 终端 `/model`、`/effort`、Shift+Tab，或网页标签 | 网页会话设置，下一轮生效 |
+| 用量统计 | 状态栏数据（模型、上下文、费用） | 有费用、tokens、耗时 |
 
-### 共享终端会话
+### 用 ccr 启动
 
-1. 确保宿主在运行（安装了服务即自动运行；未运行时 `ccr` 会自动在后台启动一个本机宿主）。
-2. 在项目目录执行 `ccr --shared`（或 `cc-remote -- claude`）。它启动原生 Claude Code，并为该进程加载 CC Remote 的 Channels 桥接组件。不带 `--shared` 的 `ccr` 使用终端会话，见下文。
-3. 首次运行时，在终端确认加载开发 Channel 和项目信任。该参数只允许加载指定的开发 Channel，不会跳过工具权限。
-4. 会话自动出现在网页「会话」列表中，显示在线/离线状态，沿用原会话标题。终端和网页都可以发消息，两端共用同一个进程和上下文；网页退出不会停止终端。
-5. 工具审批、AskUserQuestion 提问和计划确认可以在终端或网页回答，先到达的有效结果生效，另一端自动撤下。网页卡片上的「交给终端」会撤回网页提问，只在终端作答。
-
-常用形式：
+`ccr` 的用法和 `claude` 一样，只是 Claude Code 由宿主运行：
 
 ```sh
-ccr --shared                          # 新会话
-ccr --shared --model sonnet           # 参数原样传给 claude
-ccr --shared --resume <Claude 会话 UUID>   # 继续已有会话，标题自动读取
-cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
+ccr                                   # 接入当前目录的终端会话，没有就新建
+ccr --model sonnet --add-dir ../lib   # 带 Claude Code 参数新建终端会话
+ccr "修复登录页"                       # 只有提示词时是「接入指定会话」；新建并发送请写 ccr -- "修复登录页"
+ccr --resume <会话 ID>                # 以终端会话继续 Claude Code 会话（Claude Code 退出时提示的命令，把 claude 换成 ccr）
+ccr -c                                # 继续当前目录最近的会话
+cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，使用非默认数据目录
 ```
 
-- 网页「连接终端」对话框提供带当前宿主路径的完整命令，可直接复制。
-- 已有会话首次启用桥接时，需要先退出原来的 Claude Code 进程，再用 `--resume` 恢复一次；之后在终端和手机间切换无需退出或导入。不要同时启动两个相同 ID 的原生进程。
-- 正在运行但没有通过 `ccr` 启动的普通会话只能在「终端历史」里查看。
-- 在终端执行 `/resume` 或 `/clear` 改变会话 ID 时，旧的网页绑定会自动断开，避免向错误的会话投递；需要时用目标会话的连接命令重新连接。同一数据目录中，一个共享会话只允许一个终端启动器。
-- 多个终端各自注册，分别出现在会话列表。
-- 旧的 `cc-remote terminal` 子命令继续可用（支持 `--host`、`--data-dir`、`--claude`、`--claude-config-dir`、`--resume`）。
-
-参数透传规则（`--permission-mode`、`--model` 等默认值的追加，以及不支持的参数）见 [configuration.md](configuration.md#ccr-与共享终端参数)。
+- 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
+- `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
+- 宿主运行它自己配置的 Claude Code，`cc-remote -- claude` 里的 `claude` 只是占位。
+- 旧的共享终端（Claude Code 在你的终端里运行、网页经 Channels 接入）已移除；之前的共享会话仍可在网页查看。
 
 ### 托管会话
 
@@ -139,9 +131,6 @@ cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
 
 托管会话中，Claude Code 支持的其它命令都会原样交给 Claude 执行，包括内置命令（如 `/context`、`/usage`、`/init`、`/recap`）、插件命令和技能，hooks、frontmatter 等原生机制照常生效。输入 `/` 时的命令菜单就是 Claude 上一轮启动时报告的命令列表；Claude 不支持的命令会直接提示，不会消耗一轮对话。`/resume` 等只能在终端交互界面使用的命令不在列表中。
 
-### 共享会话
-
-共享会话中，Claude 运行在你的终端里，网页消息通过 Channels 送达，Claude Code 不会把它当作命令执行。因此原生命令（含 `/compact`、`/clear`）需要在终端输入。网页仍可使用 `/help`、`/status`、`/config` 等网页命令，自定义命令和技能会展开为提示词发送（只支持静态 `$ARGUMENTS`）。
 
 ## 附件
 

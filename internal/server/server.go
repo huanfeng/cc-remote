@@ -27,9 +27,9 @@ import (
 
 type Runner func(context.Context, claude.Options, func(claude.Event) error) error
 type Config struct {
-	UploadDir                                                                                 string
-	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL, TerminalCommand string
-	AttachCommand                                                                             string // cc-remote attach with this host's flags; the web appends a session
+	UploadDir                                                                string
+	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL string
+	AttachCommand                                                            string // cc-remote attach with this host's flags; the web appends a session
 	// ClaudeConfigEnv is the CLAUDE_CONFIG_DIR given to Claude Code: empty unless
 	// a config directory was chosen (setting it to ~/.claude would move .claude.json).
 	ClaudeConfigEnv string
@@ -244,7 +244,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart(), "language": s.language()})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart(), "language": s.language()})
 }
 
 // language is the host's language (English when unset, as in tests).
@@ -300,14 +300,19 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		TrustFolder bool   `json:"trustFolder"`
 		// Resume is a Claude Code session ID a terminal session continues (as claude --resume).
 		Resume string `json:"resume"`
+		// ClaudeArgs are Claude Code options a terminal session starts with.
+		ClaudeArgs []string `json:"claudeArgs"`
 		overrideRequest
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	req.Title = strings.TrimSpace(req.Title)
+	if len(req.ClaudeArgs) > 0 && !s.checkClaudeArgs(w, r, req.Mode, req.ClaudeArgs) {
+		return
+	}
 	if req.Resume != "" {
-		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.overrideRequest)
+		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.ClaudeArgs, req.overrideRequest)
 		return
 	}
 	if req.Title == "" {
@@ -344,6 +349,10 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		e = s.store.SetMode(x.ID, "terminal")
 		x.Mode = "terminal"
 	}
+	if e == nil && len(req.ClaudeArgs) > 0 {
+		e = s.store.SetClaudeArgs(x.ID, req.ClaudeArgs)
+		x.ClaudeArgs = req.ClaudeArgs
+	}
 	if e != nil {
 		fail(w, 500, s.lang(r).T("Could not create the session", "无法创建会话"))
 		return
@@ -353,7 +362,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 
 // createResumed answers a terminal session continuing a Claude Code session:
 // the one that already does, or a new one in the session's own directory.
-func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, o overrideRequest) {
+func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, claudeArgs []string, o overrideRequest) {
 	l := s.lang(r)
 	if mode != "terminal" {
 		fail(w, 400, l.T("Only a terminal session can resume a Claude Code session", "只有终端会话可以恢复 Claude Code 会话"))
@@ -409,11 +418,38 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 		e = s.store.SetMode(x.ID, "terminal")
 		x.Mode = "terminal"
 	}
+	if e == nil && len(claudeArgs) > 0 {
+		e = s.store.SetClaudeArgs(x.ID, claudeArgs)
+		x.ClaudeArgs = claudeArgs
+	}
 	if e != nil {
 		fail(w, 500, l.T("Could not create the session", "无法创建会话"))
 		return
 	}
 	respond(w, 201, x)
+}
+
+// checkClaudeArgs accepts Claude Code options for a terminal session: ones
+// the host does not set itself, and no prompt (that is sent as a message).
+func (s *Server) checkClaudeArgs(w http.ResponseWriter, r *http.Request, mode string, args []string) bool {
+	l := s.lang(r)
+	if mode != "terminal" {
+		fail(w, 400, l.T("Only a terminal session takes Claude Code options", "只有终端会话可以带 Claude Code 参数"))
+		return false
+	}
+	size := 0
+	for _, a := range args {
+		size += len(a)
+	}
+	if len(args) > 100 || size > 16<<10 {
+		fail(w, 400, l.T("Too many Claude Code options", "Claude Code 参数过多"))
+		return false
+	}
+	if bad := claude.CheckTerminalArgs(args); bad != "" {
+		fail(w, 400, l.F("A terminal session cannot pass %q to Claude Code", "终端会话不能把 %q 传给 Claude Code", bad))
+		return false
+	}
+	return true
 }
 
 // modeName is how the web names a session type.

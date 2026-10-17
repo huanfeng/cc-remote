@@ -42,9 +42,10 @@ const usageEN = `CC Remote: remote web UI for Claude Code.
 
 usage:
   cc-remote [host flags]                  run the host (web UI and API)
-  cc-remote [--data-dir D] -- claude ...  start native Claude Code shared with the web UI
   ccr [--new] [ls | session]              attach to this directory's terminal session (or start one)
-  ccr --shared [claude args]              same as "cc-remote -- claude [claude args]"
+  ccr [claude options] [prompt]           start a terminal session with Claude Code options
+  ccr -r [id] | -c                        continue a Claude Code session as a terminal session
+  cc-remote [--data-dir D] -- claude ...  same as ccr -- [claude options]
 
 commands:
   service    install/config/uninstall/start/stop/restart/status/logs the background service
@@ -63,9 +64,10 @@ const usageZH = `CC Remote：Claude Code 的远程 Web 界面。
 
 用法：
   cc-remote [宿主参数]                    运行宿主（Web 界面和 API）
-  cc-remote [--data-dir D] -- claude ...  启动与 Web 界面共享的原生 Claude Code
   ccr [--new] [ls | 会话]                 接入当前目录的终端会话（没有则新建）
-  ccr --shared [claude 参数]              等同于 "cc-remote -- claude [claude 参数]"
+  ccr [claude 参数] [提示词]              带 Claude Code 参数新建终端会话
+  ccr -r [ID] | -c                        以终端会话继续 Claude Code 会话
+  cc-remote [--data-dir D] -- claude ...  等同于 ccr -- [claude 参数]
 
 命令：
   service    安装/配置/卸载/启动/停止/重启/查看状态/查看日志（后台服务）
@@ -96,25 +98,10 @@ func main() {
 	}
 }
 
-// runCCR is ccr: a terminal session for this directory, or with --shared
-// the shared session it started before terminal sessions existed.
+// runCCR is ccr: a terminal session for this directory, a new one started
+// with Claude Code options, or a Claude Code session to continue.
 func runCCR(args []string) error {
-	return terminal.CCR(args, config.DefaultDataDir(), channel.EnsureHost, func(args []string) error {
-		// Leading cc-remote flags (from the alias) stay before "--"; the rest goes to claude.
-		var lead []string
-		for len(args) > 0 {
-			name, _, inline := strings.Cut(args[0], "=")
-			if name != "--host" && name != "-host" && name != "--data-dir" && name != "-data-dir" {
-				break
-			}
-			if inline || len(args) < 2 {
-				lead, args = append(lead, args[0]), args[1:]
-			} else {
-				lead, args = append(lead, args[0], args[1]), args[2:]
-			}
-		}
-		return channel.Launch(append(append(lead, "--claude", "claude", "--"), args...))
-	})
+	return terminal.CCR(args, config.DefaultDataDir(), channel.EnsureHost)
 }
 
 // isCCR reports whether the executable was invoked under the ccr alias name.
@@ -176,8 +163,6 @@ func run() error {
 			return service.AliasMain(os.Args[2:])
 		case "update":
 			return update.Run(version, os.Args[2:])
-		case "terminal":
-			return channel.Launch(os.Args[2:])
 		case "attach", "a":
 			return terminal.Attach(os.Args[2:], config.DefaultDataDir())
 		case "ccr":
@@ -190,10 +175,12 @@ func run() error {
 			if pos+1 >= len(os.Args) {
 				return i18n.Errorf("usage: cc-remote [--data-dir directory] -- claude [arguments]", "用法：cc-remote [--data-dir 目录] -- claude [参数]")
 			}
+			// cc-remote [--host H] [--data-dir D] -- claude [options]: like
+			// ccr, Claude Code starts with the options in a terminal session
+			// (the host runs its own configured Claude Code executable).
 			args := append([]string{}, os.Args[1:pos]...)
-			args = append(args, "--claude", os.Args[pos+1], "--")
-			args = append(args, os.Args[pos+2:]...)
-			return channel.Launch(args)
+			args = append(args, "--")
+			return runCCR(append(args, os.Args[pos+2:]...))
 		}
 	}
 	return runHost(os.Args[1:])
@@ -453,11 +440,6 @@ func runHost(argv []string) error {
 		prefix = "& "
 		quote = func(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
 	}
-	terminalCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData)
-	if configEnv != "" {
-		terminalCommand += " --claude-config-dir " + quote(configEnv)
-	}
-	terminalCommand += " -- " + quote(claudeBin)
 	attachCommand := prefix + quote(hostExe) + " attach --host " + quote(channelURL) + " --data-dir " + quote(absData)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -468,7 +450,7 @@ func runHost(argv []string) error {
 	if *opts.serviceManager != "" {
 		restart = func() { restartRequested.Store(true); stop() }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
 	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errs := make(chan error, len(listeners)+1)

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-remote/internal/claude"
 	"cc-remote/internal/i18n"
 
 	"github.com/coder/websocket"
@@ -77,15 +78,17 @@ func newTitleHelp() string {
 }
 
 // CCR is `ccr`: it attaches to this directory's terminal session, creating one
-// when there is none. ensureHost starts a background host when none runs;
-// `ccr --shared ...` runs shared (the former ccr).
-func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error, shared func(args []string) error) error {
-	for i, a := range args {
+// when there is none; with Claude Code options it starts one with them, and
+// -r/-c continue a Claude Code session. ensureHost starts a background host
+// when none runs.
+func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error) error {
+	for _, a := range args {
 		if a == "--shared" {
-			return shared(append(append([]string{}, args[:i]...), args[i+1:]...))
+			return errors.New(i18n.T("the shared mode was removed: ccr [claude options] starts Claude Code with them in a terminal session", "共享模式已移除：ccr [claude 参数] 会带着这些参数在终端会话中启动 Claude Code"))
 		}
 	}
-	args, resume := claudeResume(args)
+	split := splitCCR(args)
+	resume := split.resume
 	fs := flag.NewFlagSet("ccr", flag.ContinueOnError)
 	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
 	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("cc-remote data directory", "cc-remote 数据目录"))
@@ -99,24 +102,28 @@ func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host str
        ccr -r, --resume [id or search]   (continue a Claude Code session as a terminal session; no value: pick one of this directory's)
        ccr -c, --continue                (continue this directory's most recent Claude Code session)
        ccr ls                            (recent terminal sessions in every directory; pick one to attach)
-       ccr --shared [claude arguments]   (shared session: Claude Code runs in this terminal)
+       ccr [claude options] [prompt]     (a new terminal session: Claude Code starts with the options; the prompt is its first message)
+       ccr -- [claude options] [prompt]  (the same, everything after -- is for Claude Code)
 
 ccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.
+Claude Code options the host sets itself (--settings, --session-id, -p and the like) are refused.
 `, `用法：ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [会话 ID 前缀或标题]
       ccr -r, --resume [ID 或关键词]    （以终端会话继续 Claude Code 会话；不带值则从当前目录的会话中选择）
       ccr -c, --continue                （继续当前目录最近的 Claude Code 会话）
       ccr ls                            （所有目录最近的终端会话，选一个接入）
-      ccr --shared [claude 参数]        （共享会话：Claude Code 在当前终端里运行）
+      ccr [claude 参数] [提示词]        （新建终端会话：Claude Code 带这些参数启动，提示词作为第一条消息）
+      ccr -- [claude 参数] [提示词]     （同上，-- 之后都交给 Claude Code）
 
 ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；Claude Code 继续在宿主上运行。
+宿主自己设置的 Claude Code 参数（--settings、--session-id、-p 等）不能使用。
 `))
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(split.own); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return i18n.Errorf("%w (use ccr --shared … for other Claude Code arguments)", "%w（其它 Claude Code 参数请用 ccr --shared …）", err)
+		return err
 	}
 	if err := ensureHost(*dataDir, *host); err != nil {
 		return err
@@ -126,21 +133,35 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 		return err
 	}
 	options := map[string]any{"model": *model, "effort": *effort, "permissionMode": *mode}
+	if len(split.claude) > 0 {
+		options["claudeArgs"] = split.claude
+	}
+	if *title == "" {
+		*title = split.name()
+	}
+	// Claude Code options (or "--") start Claude Code with them, as claude
+	// does: the words are then its first message, not a session to attach.
+	launch := split.launch || len(split.claude) > 0
 	var target remoteSession
 	switch {
 	case resume.set:
 		target, err = api.resume(resume, *title, options)
-	case *create:
+	case *create || launch:
 		target, err = api.create(*title, options)
-	case fs.NArg() == 1 && (fs.Arg(0) == "ls" || fs.Arg(0) == "list"):
+	case len(split.words) == 1 && (split.words[0] == "ls" || split.words[0] == "list"):
 		target, err = api.recent(*title, options)
-	case fs.NArg() > 0:
-		target, err = api.pick(strings.Join(fs.Args(), " "))
+	case len(split.words) > 0:
+		target, err = api.pick(strings.Join(split.words, " "))
 	default:
 		target, err = api.here(*title, options)
 	}
 	if err != nil {
 		return err
+	}
+	if prompt := strings.Join(split.words, " "); prompt != "" && (launch || resume.set) {
+		if err = api.do("POST", "/api/sessions/"+target.ID+"/messages", map[string]string{"text": prompt}, nil); err != nil {
+			return err
+		}
 	}
 	return api.attach(target)
 }
@@ -153,30 +174,73 @@ type resumeArgs struct {
 	last  bool   // -c/--continue
 }
 
-// claudeResume takes -r/--resume [value] and -c/--continue out of args.
-func claudeResume(args []string) ([]string, resumeArgs) {
-	var rest []string
-	var r resumeArgs
-	for i := 0; i < len(args); i++ {
+// ccrArgs is a ccr command line split into ccr's own options, Claude Code's
+// resume options, other Claude Code options and positional words.
+type ccrArgs struct {
+	own    []string // ccr's options, for its flag set
+	resume resumeArgs
+	claude []string // Claude Code options the session starts with
+	words  []string // a session to attach, or Claude Code's first message
+	launch bool     // "--" was given: everything after it is for Claude Code
+}
+
+// ccr's own options; --model, --effort and --permission-mode are also Claude
+// Code's and become the session's settings.
+var ccrValueFlags = map[string]bool{"host": true, "data-dir": true, "title": true, "model": true, "effort": true, "permission-mode": true}
+
+func splitCCR(args []string) ccrArgs {
+	var out ccrArgs
+	afterDash := false
+	for i := 0; i < len(args); {
 		a := args[i]
+		if a == "--" && !afterDash {
+			out.launch, afterDash = true, true
+			i++
+			continue
+		}
+		name, _, inline := strings.Cut(strings.TrimLeft(a, "-"), "=")
 		switch {
-		case a == "--":
-			return append(rest, args[i:]...), r
-		case a == "-r" || a == "--resume" || a == "-resume":
-			r.set = true
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				r.query = args[i+1]
+		case !strings.HasPrefix(a, "-") || a == "-":
+			out.words = append(out.words, a)
+			i++
+		case a == "-r" || a == "--resume" || a == "-resume" || strings.HasPrefix(a, "--resume="):
+			out.resume.set = true
+			switch {
+			case inline:
+				out.resume.query = a[strings.Index(a, "=")+1:]
+			case i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
+				i++
+				out.resume.query = args[i]
+			}
+			i++
+		case a == "-c" || a == "--continue" || a == "-continue":
+			out.resume.set, out.resume.last = true, true
+			i++
+		case (strings.HasPrefix(a, "--") || !afterDash) && (ccrValueFlags[name] || name == "new" || name == "h" || name == "help"):
+			if ccrValueFlags[name] && !inline && i+1 < len(args) {
+				out.own = append(out.own, a, args[i+1])
+				i += 2
+			} else {
+				out.own = append(out.own, a)
 				i++
 			}
-		case strings.HasPrefix(a, "--resume=") || strings.HasPrefix(a, "-resume="):
-			r.set, r.query = true, a[strings.Index(a, "=")+1:]
-		case a == "-c" || a == "--continue" || a == "-continue":
-			r.set, r.last = true, true
-		default:
-			rest = append(rest, a)
+		default: // a Claude Code option, with the values Claude Code would take
+			arg := claude.ParseArgs(args[i:])[0]
+			out.claude = append(out.claude, arg.Words()...)
+			i += len(arg.Words())
 		}
 	}
-	return rest, r
+	return out
+}
+
+// name is Claude Code's -n/--name option, the session's title by default.
+func (a ccrArgs) name() string {
+	for _, arg := range claude.ParseArgs(a.claude) {
+		if (arg.Name == "-n" || arg.Name == "--name") && len(arg.Values) > 0 {
+			return arg.Values[0]
+		}
+	}
+	return ""
 }
 
 // resume finds the Claude Code session to continue and the terminal session
