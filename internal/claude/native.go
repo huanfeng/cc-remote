@@ -17,10 +17,12 @@ import (
 )
 
 type NativeSession struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Cwd         string `json:"cwd"`
-	UpdatedAt   string `json:"updatedAt"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Cwd       string `json:"cwd"`
+	UpdatedAt string `json:"updatedAt"`
+	// Truncated: the transcript is too large and only its recent part was read.
+	Truncated   bool `json:"truncated,omitempty"`
 	customTitle bool
 }
 
@@ -213,7 +215,7 @@ func inspectLine(line []byte, s *NativeSession) {
 	}
 }
 
-const maxNativeHistory = 64 * 1024 * 1024
+var maxNativeHistory int64 = 64 * 1024 * 1024 // a variable for tests
 
 // historyCache keeps parsed transcripts of recently opened sessions. A
 // transcript only grows, so a changed file is parsed from where the last read
@@ -320,15 +322,21 @@ func (e *historyEntry) refresh(path, id string) error {
 	if err != nil {
 		return err
 	}
-	if info.Size() > maxNativeHistory {
-		return errors.New(i18n.T("transcript exceeds 64 MiB history limit", "对话记录超过 64 MiB 的历史上限"))
-	}
 	if info.Size() == e.size && info.ModTime().Equal(e.mod) && e.offset > 0 {
 		return nil
 	}
 	if info.Size() < e.offset || e.offset == 0 {
 		e.offset, e.events = 0, nil
 		e.session = NativeSession{ID: id, Title: "Claude session"}
+		// A huge transcript is read from a line start in its last
+		// maxNativeHistory bytes: the recent part is what is wanted.
+		if info.Size() > maxNativeHistory {
+			start, err := lineStart(f, info.Size()-maxNativeHistory)
+			if err != nil {
+				return err
+			}
+			e.offset, e.session.Truncated = start, true
+		}
 	}
 	if _, err := f.Seek(e.offset, io.SeekStart); err != nil {
 		return err
@@ -362,6 +370,31 @@ func (e *historyEntry) refresh(path, id string) error {
 	return nil
 }
 
+// lineStart is the offset of the first line that starts at or after pos.
+func lineStart(f *os.File, pos int64) (int64, error) {
+	if pos <= 0 {
+		return 0, nil
+	}
+	if _, err := f.Seek(pos-1, io.SeekStart); err != nil {
+		return 0, err
+	}
+	r := bufio.NewReaderSize(f, 64*1024)
+	n := pos - 1
+	for {
+		chunk, err := r.ReadSlice('\n')
+		n += int64(len(chunk))
+		if err == nil {
+			return n, nil
+		}
+		if err == io.EOF {
+			return n, nil // no line starts after pos: nothing to read yet
+		}
+		if err != bufio.ErrBufferFull {
+			return 0, err
+		}
+	}
+}
+
 // transcriptEvents updates the session metadata from one transcript line and
 // returns the events it shows in history.
 func transcriptEvents(line []byte, session *NativeSession) []Event {
@@ -375,9 +408,34 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 		Message     struct {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
+		// Origin tells typed prompts (kind "human") from text Claude Code adds
+		// as a user turn, such as a background task's <task-notification>.
+		Origin struct {
+			Kind string `json:"kind"`
+		} `json:"origin"`
+		PromptSource string `json:"promptSource"`
+		Attachment   struct {
+			Type        string `json:"type"`
+			Prompt      string `json:"prompt"`
+			CommandMode string `json:"commandMode"`
+			Origin      struct {
+				Kind string `json:"kind"`
+			} `json:"origin"`
+		} `json:"attachment"`
+		Compact struct {
+			Trigger    string `json:"trigger"`
+			PreTokens  *int64 `json:"preTokens"`
+			PostTokens *int64 `json:"postTokens"`
+		} `json:"compactMetadata"`
 	}
 	if json.Unmarshal(line, &v) != nil || v.IsMeta || v.IsSidechain {
 		return nil
+	}
+	// /compact (or auto-compact): the web shows a divider, shaped like the
+	// stream-json compact_boundary of managed sessions.
+	if v.Type == "system" && v.Subtype == "compact_boundary" {
+		payload, _ := json.Marshal(map[string]any{"compact_metadata": map[string]any{"trigger": v.Compact.Trigger, "pre_tokens": v.Compact.PreTokens, "post_tokens": v.Compact.PostTokens}})
+		return []Event{{Kind: "compact", Payload: payload}}
 	}
 	// Claude Code's recap of the session, written while its user was away.
 	if v.Type == "system" && v.Subtype == "away_summary" {
@@ -391,12 +449,20 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 		}
 		return []Event{{Kind: "recap", Text: text}}
 	}
+	// A message typed while Claude worked and taken in mid-turn: Claude Code
+	// records it as a queued_command attachment, never as a user turn.
+	if v.Type == "attachment" && v.Attachment.Type == "queued_command" && v.Attachment.CommandMode == "prompt" && (v.Attachment.Origin.Kind == "" || v.Attachment.Origin.Kind == "human") {
+		if text := strings.TrimSpace(v.Attachment.Prompt); text != "" && !syntheticText(text) {
+			return []Event{{Kind: "user", Text: v.Attachment.Prompt}}
+		}
+		return nil
+	}
 	if v.Type != "user" && v.Type != "assistant" {
 		return nil
 	}
 	var out []Event
 	for _, e := range contentEvents(v.Message.Content, v.Type) {
-		if e.Kind == "user" && syntheticText(e.Text) {
+		if e.Kind == "user" && (syntheticText(e.Text) || v.Origin.Kind != "" && v.Origin.Kind != "human" || v.PromptSource == "system") {
 			continue
 		}
 		out = append(out, e)
@@ -406,7 +472,7 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 
 func syntheticText(text string) bool {
 	text = strings.TrimSpace(text)
-	for _, p := range []string{"<local-command", "<command-name>", "<system-reminder>", "[Request interrupted", "This session is being continued from a previous conversation"} {
+	for _, p := range []string{"<local-command", "<command-name>", "<system-reminder>", "[Request interrupted", "This session is being continued from a previous conversation", "<task-notification>", "<bash-stdout>", "<bash-stderr>"} {
 		if strings.HasPrefix(text, p) {
 			return true
 		}
