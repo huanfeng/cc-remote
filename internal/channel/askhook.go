@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"cc-remote/internal/claude"
 )
 
 // askConfig is written by the launcher into its per-launch config directory
@@ -39,7 +41,7 @@ type webAnswer struct {
 // planModes are the permission modes a web approval of ExitPlanMode may switch to.
 var planModes = []string{"default", "acceptEdits", "auto", "bypassPermissions"}
 
-const askTimeout = 29 * time.Minute // below the 1800 s hook timeout in settings.json
+const askTimeout = claude.AskWait + time.Minute // after the host, before Claude Code's hook timeout
 
 // AskHook is the PermissionRequest hook for AskUserQuestion and ExitPlanMode in a
 // shared terminal. Claude Code keeps its native dialog interactive while the hook

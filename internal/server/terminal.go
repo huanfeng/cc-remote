@@ -148,7 +148,7 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 		return map[string]any{"type": "command", "command": s.cfg.HostExecutable, "args": []string{arg}}
 	}
 	ask := command("channel-ask-hook")
-	ask["timeout"] = 1800
+	ask["timeout"] = claude.AskHookTimeout
 	state := []any{map[string]any{"hooks": []any{command("terminal-hook")}}}
 	config := map[string]any{"hooks": map[string]any{
 		"PermissionRequest": []any{map[string]any{"matcher": "AskUserQuestion|ExitPlanMode", "hooks": []any{ask}}},

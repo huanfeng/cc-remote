@@ -121,7 +121,7 @@ func hookSettings(exe string) []byte {
 		return map[string]any{"type": "command", "command": exe, "args": []string{arg}}
 	}
 	ask := command("channel-ask-hook")
-	ask["timeout"] = 1800
+	ask["timeout"] = claude.AskHookTimeout
 	data, _ := json.Marshal(map[string]any{"hooks": map[string]any{
 		"SessionStart":      []any{map[string]any{"hooks": []any{command("channel-session-hook")}}},
 		"PermissionRequest": []any{map[string]any{"matcher": "AskUserQuestion|ExitPlanMode", "hooks": []any{ask}}},

@@ -48,7 +48,7 @@ web                React / PWA 和嵌入式构建产物
 
 ### 提问与计划确认（PermissionRequest Hook）
 
-启动器在临时 `--settings` 中注册 `PermissionRequest` Hook（matcher `AskUserQuestion|ExitPlanMode`，命令 `cc-remote channel-ask-hook`，超时 1800 秒）。依据 Claude Code 2.1.300 的实测行为：
+启动器在临时 `--settings` 中注册 `PermissionRequest` Hook（matcher `AskUserQuestion|ExitPlanMode`，命令 `cc-remote channel-ask-hook`，超时约 7 天，见 `claude.AskWait`：离开很久后回来仍能在网页作答；宿主先于 Hook 放弃，超时记为「已超时」而不是「已在终端回答」）。依据 Claude Code 2.1.300 的实测行为：
 
 - 该 Hook 与原生对话框**并行**运行，终端对话框始终可操作。
 - 网页先答：Hook 输出决定。提问为 `updatedInput.answers`（多选标签以 `, ` 连接，可填自由文本）；批准计划时附 `setMode`（自动接受编辑 / 手动审批编辑 / 自动模式），或带修改意见「继续规划」。

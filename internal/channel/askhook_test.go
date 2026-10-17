@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"cc-remote/internal/claude"
 	"cc-remote/internal/hostlock"
 )
 
@@ -224,7 +225,7 @@ func TestHookSettingsRegistersAskHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	ask := v.Hooks["PermissionRequest"]
-	if len(ask) != 1 || ask[0].Matcher != "AskUserQuestion|ExitPlanMode" || ask[0].Hooks[0].Command != "/bin/ccr" || ask[0].Hooks[0].Args[0] != "channel-ask-hook" || ask[0].Hooks[0].Timeout != 1800 {
+	if len(ask) != 1 || ask[0].Matcher != "AskUserQuestion|ExitPlanMode" || ask[0].Hooks[0].Command != "/bin/ccr" || ask[0].Hooks[0].Args[0] != "channel-ask-hook" || ask[0].Hooks[0].Timeout != claude.AskHookTimeout {
 		t.Fatalf("ask hook %+v", ask)
 	}
 	if s := v.Hooks["SessionStart"]; len(s) != 1 || s[0].Hooks[0].Args[0] != "channel-session-hook" {

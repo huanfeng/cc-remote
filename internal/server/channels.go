@@ -234,9 +234,9 @@ func (s *Server) expireChannel(c *channelConnection) {
 }
 
 // sharedQuestionTimeout ends a waiting question before the hook gives up
-// (askTimeout, 29 min), so a long wait is recorded as expired, not as answered in
+// (claude.AskWait), so a long wait is recorded as expired, not as answered in
 // the terminal. A variable for tests.
-var sharedQuestionTimeout = 28 * time.Minute
+var sharedQuestionTimeout = claude.AskWait
 
 // channelInteraction is the long poll of a shared terminal's PermissionRequest
 // hook for AskUserQuestion / ExitPlanMode. The native dialog stays open while it
