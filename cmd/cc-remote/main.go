@@ -311,6 +311,9 @@ func runHost(argv []string) error {
 	if configDir == "" {
 		configDir = os.Getenv("CLAUDE_CONFIG_DIR")
 	}
+	// Claude Code reads .claude.json from CLAUDE_CONFIG_DIR when it is set and
+	// from the home directory otherwise: only a chosen directory is passed on.
+	explicitConfig := configDir != ""
 	if configDir == "" {
 		home, e := os.UserHomeDir()
 		if e != nil {
@@ -321,6 +324,10 @@ func runHost(argv []string) error {
 	configDir, err = filepath.Abs(configDir)
 	if err != nil {
 		return err
+	}
+	configEnv := ""
+	if explicitConfig {
+		configEnv = configDir
 	}
 	st, err := store.Open(filepath.Join(absData, "cc-remote.sqlite"))
 	if err != nil {
@@ -387,7 +394,7 @@ func runHost(argv []string) error {
 	if *opts.serviceManager != "" {
 		restart = func() { restartRequested.Store(true); stop() }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
 	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errs := make(chan error, len(listeners)+1)

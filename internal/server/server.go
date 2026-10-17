@@ -29,7 +29,10 @@ type Config struct {
 	UploadDir                                                                                 string
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL, TerminalCommand string
 	AttachCommand                                                                             string // cc-remote attach with this host's flags; the web appends a session
-	Assets                                                                                    fs.FS
+	// ClaudeConfigEnv is the CLAUDE_CONFIG_DIR given to Claude Code: empty unless
+	// a config directory was chosen (setting it to ~/.claude would move .claude.json).
+	ClaudeConfigEnv string
+	Assets          fs.FS
 	// Runner runs one turn per message instead of a long-lived process (tests).
 	Runner Runner
 	// StartProcess launches the long-lived Claude process of a managed session.

@@ -98,7 +98,7 @@ func defaultProcessStarter(cfg Config) ProcessStarter {
 // background tasks is kept so they are not killed (the settings apply once
 // it has been idle long enough to be reaped).
 func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
-	opts := claude.Options{Executable: s.cfg.ClaudeExecutable, HostExecutable: s.cfg.HostExecutable, SessionID: x.ClaudeSessionID, Cwd: x.Cwd, Resume: x.Resume, BridgeURL: s.cfg.BridgeURL, ConfigDir: s.cfg.ClaudeConfigDir}
+	opts := claude.Options{Executable: s.cfg.ClaudeExecutable, HostExecutable: s.cfg.HostExecutable, SessionID: x.ClaudeSessionID, Cwd: x.Cwd, Resume: x.Resume, BridgeURL: s.cfg.BridgeURL, ConfigDir: s.cfg.ClaudeConfigEnv}
 	p := s.effectivePreferences(x)
 	opts.PermissionMode, opts.Model, opts.Effort = p.PermissionMode, p.Model, p.Effort
 	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort}

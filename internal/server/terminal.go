@@ -112,8 +112,8 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	args = append(args, claude.LaunchFlags(p.PermissionMode, p.Model, p.Effort)...)
 	env := terminal.CleanEnv(os.Environ())
 	env = append(env, "CC_REMOTE_ASK_FILE="+filepath.Join(dir, "ask.json"), "CC_REMOTE_TERMINAL_FILE="+filepath.Join(dir, "terminal.json"))
-	if s.cfg.ClaudeConfigDir != "" {
-		env = append(env, "CLAUDE_CONFIG_DIR="+s.cfg.ClaudeConfigDir)
+	if s.cfg.ClaudeConfigEnv != "" {
+		env = append(env, "CLAUDE_CONFIG_DIR="+s.cfg.ClaudeConfigEnv)
 	}
 	exe := s.cfg.ClaudeExecutable
 	if exe == "" {
