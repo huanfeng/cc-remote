@@ -20,7 +20,7 @@
 
 .EXAMPLE
   $s = gh api repos/huanfeng/cc-remote/contents/scripts/install.ps1 -H "Accept: application/vnd.github.raw" | Out-String
-  & ([scriptblock]::Create($s)) -Listen lan:8787 -Version v0.2.0
+  & ([scriptblock]::Create($s)) -Listen lan:8787 -Version v0.2.0 -Lang zh
 #>
 [CmdletBinding()]
 param(
@@ -28,6 +28,9 @@ param(
     [string]$Version = "",
     # Listen address(es) passed to "service install --listen". Repeat or comma separate.
     [string[]]$Listen = @(),
+    # Language of messages and the web UI: auto, zh or en, passed to "service install --lang".
+    # Default: $env:CC_REMOTE_LANG; when neither is set the installed setting is kept.
+    [string]$Lang = "",
     # Skip the background service: copy the binary to -InstallDir only.
     [switch]$NoService,
     # Target directory for -NoService.
@@ -61,6 +64,13 @@ param(
         $InstallDir = Join-Path $base "cc-remote\bin"
     }
     if ($Version -and -not $Version.StartsWith("v")) { $Version = "v" + $Version }
+    if (-not $Lang) { $Lang = $env:CC_REMOTE_LANG }
+    if ($Lang) {
+        $Lang = $Lang.Trim().ToLower()
+        if ($Lang -match "^zh([-_]|$)") { $Lang = "zh" }
+        elseif ($Lang -match "^en([-_]|$)") { $Lang = "en" }
+        elseif ($Lang -ne "auto") { throw "-Lang must be auto, zh or en (got '$Lang')" }
+    }
     $listenList = @()
     foreach ($item in $Listen) {
         foreach ($part in ($item -split ",")) {
@@ -162,6 +172,7 @@ The repository may be private or the request was rate-limited. Either:
 
     $serviceArgs = @("service", "install")
     foreach ($l in $listenList) { $serviceArgs += @("--listen", $l) }
+    if ($Lang) { $serviceArgs += @("--lang", $Lang) }
     if ($Alias) { $serviceArgs += "--alias" }
     if ($NoService) {
         $plan = "copy cc-remote.exe to $InstallDir"

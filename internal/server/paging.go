@@ -167,7 +167,7 @@ func nativeEvents(x claude.NativeSession, ev []claude.Event) []store.Event {
 
 // listEvents answers an events request over a transcript held in memory:
 // ?before= gives an older page, otherwise events after ?after= (a poll).
-func listEvents(w http.ResponseWriter, r *http.Request, events []store.Event) {
+func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, events []store.Event) {
 	q := r.URL.Query()
 	compact := q.Get("compact") == "1"
 	shape := func(x []store.Event) []store.Event {
@@ -180,7 +180,7 @@ func listEvents(w http.ResponseWriter, r *http.Request, events []store.Event) {
 		before, ok := cursor(raw)
 		limit, okLimit := pageLimit(q.Get("limit"))
 		if !ok || !okLimit {
-			fail(w, 400, "无效的分页参数")
+			fail(w, 400, s.lang(r).T("Invalid paging parameters", "无效的分页参数"))
 			return
 		}
 		page, older := pageSlice(events, before, limit, pageReach)
@@ -189,12 +189,12 @@ func listEvents(w http.ResponseWriter, r *http.Request, events []store.Event) {
 	}
 	after, ok := cursor(q.Get("after"))
 	if !ok {
-		fail(w, 400, "无效的事件游标")
+		fail(w, 400, s.lang(r).T("Invalid event cursor", "无效的事件游标"))
 		return
 	}
 	if after > int64(len(events)) {
 		// The transcript was rewritten shorter and renumbered; the web reloads it.
-		fail(w, 409, "会话记录已变化，请重新加载")
+		fail(w, 409, s.lang(r).T("The session history changed; reload", "会话记录已变化，请重新加载"))
 		return
 	}
 	respond(w, 200, shape(events[after:]))
@@ -204,16 +204,16 @@ func (s *Server) eventAt(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	seq, err := strconv.ParseInt(r.PathValue("seq"), 10, 64)
 	if err != nil {
-		fail(w, 400, "无效的事件序号")
+		fail(w, 400, s.lang(r).T("Invalid event sequence number", "无效的事件序号"))
 		return
 	}
 	e, err := s.store.Event(id, seq)
 	if errors.Is(err, sql.ErrNoRows) {
-		fail(w, 404, "事件不存在")
+		fail(w, 404, s.lang(r).T("Event not found", "事件不存在"))
 		return
 	}
 	if err != nil {
-		fail(w, 500, "无法读取消息")
+		fail(w, 500, s.lang(r).T("Could not read messages", "无法读取消息"))
 		return
 	}
 	respond(w, 200, e)
@@ -222,21 +222,21 @@ func (s *Server) eventAt(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nativeEventsList(w http.ResponseWriter, r *http.Request) {
 	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, r.PathValue("id"))
 	if e != nil {
-		fail(w, 404, "无法读取原生会话："+e.Error())
+		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
 	}
-	listEvents(w, r, nativeEvents(x, ev))
+	s.listEvents(w, r, nativeEvents(x, ev))
 }
 
 func (s *Server) nativeEventAt(w http.ResponseWriter, r *http.Request) {
 	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, r.PathValue("id"))
 	if e != nil {
-		fail(w, 404, "无法读取原生会话："+e.Error())
+		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
 	}
 	seq, err := strconv.ParseInt(r.PathValue("seq"), 10, 64)
 	if err != nil || seq < 1 || seq > int64(len(ev)) {
-		fail(w, 404, "事件不存在")
+		fail(w, 404, s.lang(r).T("Event not found", "事件不存在"))
 		return
 	}
 	event := nativeEvents(x, ev[seq-1:seq])[0]

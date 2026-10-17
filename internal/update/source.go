@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"cc-remote/internal/i18n"
 )
 
 // DefaultRepo is the GitHub repository releases are fetched from; the
@@ -42,13 +44,22 @@ type source interface {
 	name() string
 }
 
-var errNotFound = errors.New("release not found")
+type notFoundError struct{}
+
+func (notFoundError) Error() string { return i18n.T("release not found", "找不到该版本") }
+
+var errNotFound error = notFoundError{}
 
 // authHelp is shown when no usable credentials exist for the private repo.
-const authHelp = `cannot access GitHub releases of %s.
+func authHelp(repo string) string {
+	return i18n.F(`cannot access GitHub releases of %s.
 The repository is private, so downloads need credentials. Either:
   1. install the GitHub CLI and run "gh auth login", or
-  2. set GITHUB_TOKEN (or GH_TOKEN) to a fine-grained token with "Contents: Read" on this repository.`
+  2. set GITHUB_TOKEN (or GH_TOKEN) to a fine-grained token with "Contents: Read" on this repository.`, `无法访问 %s 的 GitHub 发布版本。
+该仓库是私有的，下载需要凭据。任选其一：
+  1. 安装 GitHub CLI 并运行 "gh auth login"，或
+  2. 把 GITHUB_TOKEN（或 GH_TOKEN）设为对该仓库有 "Contents: Read" 权限的细粒度令牌。`, repo)
+}
 
 // pickSource prefers an authenticated gh CLI, then a token from the
 // environment, then anonymous API access (works only for public repos).
@@ -113,7 +124,7 @@ func (g *ghSource) release(ctx context.Context, tag string) (Release, error) {
 		} `json:"assets"`
 	}
 	if err := json.Unmarshal(out, &data); err != nil {
-		return Release{}, fmt.Errorf("parse gh release view output: %w", err)
+		return Release{}, i18n.Errorf("parse gh release view output: %w", "解析 gh release view 输出失败：%w", err)
 	}
 	rel := Release{Tag: data.TagName}
 	for _, a := range data.Assets {
@@ -167,11 +178,11 @@ func (s *apiSource) get(ctx context.Context, url, accept string) (*http.Response
 	case http.StatusNotFound:
 		if s.token == "" && !s.repoVisible(ctx) {
 			// GitHub answers 404 for private repos without credentials.
-			return nil, fmt.Errorf(authHelp, s.repo)
+			return nil, errors.New(authHelp(s.repo))
 		}
 		return nil, errNotFound
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, fmt.Errorf("GitHub API %s: %s (check the token and its Contents: Read permission)\n"+authHelp, resp.Status, strings.TrimSpace(string(body)), s.repo)
+		return nil, errors.New(i18n.F("GitHub API %s: %s (check the token and its Contents: Read permission)\n", "GitHub API %s：%s（请检查令牌及其 Contents: Read 权限）\n", resp.Status, strings.TrimSpace(string(body))) + authHelp(s.repo))
 	}
 	return nil, fmt.Errorf("GitHub API %s: %s", resp.Status, strings.TrimSpace(string(body)))
 }
@@ -212,7 +223,7 @@ func (s *apiSource) release(ctx context.Context, tag string) (Release, error) {
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return Release{}, fmt.Errorf("parse release JSON: %w", err)
+		return Release{}, i18n.Errorf("parse release JSON: %w", "解析版本 JSON 失败：%w", err)
 	}
 	rel := Release{Tag: data.TagName}
 	for _, a := range data.Assets {

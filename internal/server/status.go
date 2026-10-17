@@ -202,12 +202,12 @@ func (s *Server) cachedStatus() ([]store.SessionStats, []store.DailyStats, int64
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.store.List()
 	if err != nil {
-		fail(w, 500, "无法读取会话")
+		fail(w, 500, s.lang(r).T("Could not read sessions", "无法读取会话"))
 		return
 	}
 	stats, daily, uploadsBytes, err := s.cachedStatus()
 	if err != nil {
-		fail(w, 500, "无法统计会话")
+		fail(w, 500, s.lang(r).T("Could not count sessions", "无法统计会话"))
 		return
 	}
 	byID := map[string]store.SessionStats{}
@@ -295,12 +295,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sessionStats(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := s.store.Get(id); err != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	x, err := s.store.SessionStatsFor(id)
 	if err != nil {
-		fail(w, 500, "无法统计会话")
+		fail(w, 500, s.lang(r).T("Could not count sessions", "无法统计会话"))
 		return
 	}
 	respond(w, 200, x)
@@ -314,11 +314,11 @@ var proxyHeaders = []string{"Forwarded", "X-Real-Ip", "Via"}
 // shutdown is loopback-only in addition to bearer authentication, so a leaked
 // token used remotely cannot stop the host.
 func (s *Server) shutdown(w http.ResponseWriter, r *http.Request) {
-	if !localAdmin(w, r, "关闭宿主") {
+	if l := s.lang(r); !localAdmin(w, r, l, l.T("shut down the host", "关闭宿主")) {
 		return
 	}
 	if s.cfg.Shutdown == nil {
-		fail(w, 501, "当前宿主未启用远程关闭")
+		fail(w, 501, s.lang(r).T("Remote shutdown is not enabled on this host", "当前宿主未启用远程关闭"))
 		return
 	}
 	respond(w, 202, map[string]string{"status": "shutting down"})

@@ -32,7 +32,7 @@ test('results pair with their tool_use by id, even interleaved for parallel call
 test('block-array results are reduced to text and orphan results still show up', () => {
   const [group] = groupTranscript([use('a', 'Read', { file_path: 'x' }), res('a', [{ type: 'text', text: 'launched' }]), res('zz', 'lost')]);
   assert.equal(group.calls[0].resultText, 'launched');
-  assert.equal(group.calls[1].name, '工具结果');
+  assert.equal(group.calls[1].name, 'Tool result');
   assert.equal(group.calls[1].resultText, 'lost');
 });
 
@@ -81,11 +81,11 @@ test('summary label lists counts by tool, single calls show their argument', () 
     ...['f', 'g', 'h', 'i'].map(id => use(id, 'Bash', { command: 'ls' })),
     ...['j', 'k', 'l'].map(id => use(id, 'Edit', { file_path: 'y.ts' })),
   ]);
-  assert.equal(summaryLabel(group.calls), '12 次工具调用 · Read ×5 · Bash ×4 · Edit ×3');
+  assert.equal(summaryLabel(group.calls), '12 tool calls · Read ×5 · Bash ×4 · Edit ×3');
   const [single] = groupTranscript([use('a', 'Read', { file_path: 'D:\\src\\app.ts' })]);
-  assert.equal(summaryLabel(single.calls), '1 次工具调用 · Read app.ts');
+  assert.equal(summaryLabel(single.calls), '1 tool call · Read app.ts');
   const [mixed] = groupTranscript([use('a', 'Read'), use('b', 'Bash'), use('c', 'Bash'), use('d', 'Grep'), use('e', 'Glob')]);
-  assert.equal(summaryLabel(mixed.calls), '5 次工具调用 · Bash ×2 · Read · Grep · 另 1 种');
+  assert.equal(summaryLabel(mixed.calls), '5 tool calls · Bash ×2 · Read · Grep · 1 more');
 });
 
 test('argument summaries per tool', () => {
@@ -94,7 +94,7 @@ test('argument summaries per tool', () => {
   assert.equal(argSummary('Grep', { pattern: 'fun x', path: 'src' }).text, 'fun x');
   assert.equal(argSummary('WebFetch', { url: 'https://e.com', prompt: 'p' }).text, 'https://e.com');
   assert.equal(argSummary('Agent', { description: 'Review diff', prompt: 'long' }).text, 'Review diff');
-  assert.equal(argSummary('TodoWrite', { todos: [{}, {}, {}] }).text, '3 项');
+  assert.equal(argSummary('TodoWrite', { todos: [{}, {}, {}] }).text, '3 items');
   assert.equal(argSummary('Custom', { n: 1, name: 'first\nsecond' }).text, 'first');
 });
 
@@ -114,15 +114,15 @@ test('question card and tool group render answered and collapsed states', async 
   const question = { questions: [{ question: 'Q?', options: [{ label: 'A', description: 'da' }, { label: 'B' }] }] };
   const items = groupTranscript([use('q', 'AskUserQuestion', question), res('q', 'Your questions have been answered: "Q?"="B". ok'), use('a', 'Bash', { command: 'npm test' }), res('a', 'fail', true), use('b', 'Read', { file_path: '/r/x.ts' })], true);
   const card = renderToStaticMarkup(createElement(QuestionCard, { call: items[0].call, waitingHint: '' }));
-  assert.match(card, /已回答/);
+  assert.match(card, /Answered/);
   assert.match(card, /<li class="selected"><div>.*<strong>B<\/strong>/);
-  const waiting = renderToStaticMarkup(createElement(QuestionCard, { call: groupTranscript([use('w', 'AskUserQuestion', question)], true)[0].call, waitingHint: '等待回答（请在终端作答）' }));
-  assert.match(waiting, /等待回答（请在终端作答）/);
+  const waiting = renderToStaticMarkup(createElement(QuestionCard, { call: groupTranscript([use('w', 'AskUserQuestion', question)], true)[0].call, waitingHint: 'Waiting for an answer (answer in the terminal)' }));
+  assert.match(waiting, /Waiting for an answer \(answer in the terminal\)/);
   const props = { groupKey: items[1].key, calls: items[1].calls, onToggle() {}, openCalls: [], onToggleCall() {} };
   const collapsed = renderToStaticMarkup(createElement(ToolGroup, { ...props, open: false }));
-  assert.match(collapsed, /2 次工具调用 · Bash · Read/);
-  assert.match(collapsed, /1 个失败/);
-  assert.match(collapsed, /正在执行：<strong>Read<\/strong>/);
+  assert.match(collapsed, /2 tool calls · Bash · Read/);
+  assert.match(collapsed, /1 failed/);
+  assert.match(collapsed, /Running: <strong>Read<\/strong>/);
   assert.ok(!collapsed.includes('tool-calls'), 'collapsed group renders no call rows');
   const open = renderToStaticMarkup(createElement(ToolGroup, { ...props, open: true, openCalls: [items[1].calls[0].seq] }));
   assert.equal((open.match(/class="tool-call /g) || []).length, 2);
@@ -144,9 +144,9 @@ test('stabilize keeps unchanged calls and groups, replaces changed ones', () => 
 
 test('compact_boundary renders a divider with trigger and token sizes', async () => {
   const { compactSummary } = await import('../src/toolGroups.ts');
-  assert.equal(compactSummary({ compact_metadata: { trigger: 'manual', pre_tokens: 48026, post_tokens: 8969 } }), '上下文已压缩（手动） · 48.0k → 9.0k tokens');
-  assert.equal(compactSummary({ compact_metadata: { trigger: 'auto', pre_tokens: 900, post_tokens: 300 } }), '上下文已压缩（自动） · 900 → 300 tokens');
-  assert.equal(compactSummary(undefined), '上下文已压缩');
+  assert.equal(compactSummary({ compact_metadata: { trigger: 'manual', pre_tokens: 48026, post_tokens: 8969 } }), 'Context compacted (manual) · 48.0k → 9.0k tokens');
+  assert.equal(compactSummary({ compact_metadata: { trigger: 'auto', pre_tokens: 900, post_tokens: 300 } }), 'Context compacted (auto) · 900 → 300 tokens');
+  assert.equal(compactSummary(undefined), 'Context compacted');
 });
 
 test('isCompacting follows the latest system status until the boundary arrives', async () => {

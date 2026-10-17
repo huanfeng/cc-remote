@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -69,9 +70,9 @@ func sanitizeUploadName(raw string) string {
 	return name
 }
 
-func (s *Server) uploadPaths(sessionID, uploadID string) (string, string, error) {
+func (s *Server) uploadPaths(l i18n.Lang, sessionID, uploadID string) (string, string, error) {
 	if !channelUUID.MatchString(sessionID) || !channelUUID.MatchString(uploadID) || !filepath.IsAbs(s.cfg.UploadDir) {
-		return "", "", errors.New("附件存储尚未配置或附件标识无效")
+		return "", "", l.Errorf("Attachment storage is not configured or the attachment ID is invalid", "附件存储尚未配置或附件标识无效")
 	}
 	base := filepath.Join(s.cfg.UploadDir, sessionID, uploadID)
 	return base, base + ".json", nil
@@ -95,11 +96,11 @@ func (s *Server) sessionUploadDir(sessionID string) (string, error) {
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	if _, err := s.store.Get(sessionID); err != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	id := store.ID()
-	path, metaPath, err := s.uploadPaths(sessionID, id)
+	path, metaPath, err := s.uploadPaths(s.lang(r), sessionID, id)
 	if err != nil {
 		fail(w, 503, err.Error())
 		return
@@ -110,24 +111,24 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		if r.MultipartForm != nil {
 			_ = r.MultipartForm.RemoveAll()
 		}
-		fail(w, 400, "上传无效或超过 20 MiB")
+		fail(w, 400, s.lang(r).T("Invalid upload or larger than 20 MiB", "上传无效或超过 20 MiB"))
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
 	files := r.MultipartForm.File["file"]
 	if len(files) != 1 || len(r.MultipartForm.File) != 1 {
-		fail(w, 400, "每次请选择一个文件")
+		fail(w, 400, s.lang(r).T("Choose one file at a time", "每次请选择一个文件"))
 		return
 	}
 	f, err := files[0].Open()
 	if err != nil {
-		fail(w, 400, "无法读取文件")
+		fail(w, 400, s.lang(r).T("Could not read the file", "无法读取文件"))
 		return
 	}
 	defer f.Close()
 	b, err := io.ReadAll(io.LimitReader(f, maxUploadBytes+1))
 	if err != nil || len(b) > maxUploadBytes {
-		fail(w, 400, "单个文件不能超过 20 MiB")
+		fail(w, 400, s.lang(r).T("A file cannot be larger than 20 MiB", "单个文件不能超过 20 MiB"))
 		return
 	}
 	name := sanitizeUploadName(files[0].Filename)
@@ -136,11 +137,11 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	if format := imageMIMEs[sniffed]; format != "" {
 		cfg, decoded, err := image.DecodeConfig(bytes.NewReader(b))
 		if err != nil || decoded != format || cfg.Width < 1 || cfg.Height < 1 || int64(cfg.Width)*int64(cfg.Height) > 25_000_000 {
-			fail(w, 400, "图片无效：仅支持有效的 PNG、JPEG、GIF，最多 2500 万像素")
+			fail(w, 400, s.lang(r).T("Invalid image: only valid PNG, JPEG and GIF images up to 25 megapixels are supported", "图片无效：仅支持有效的 PNG、JPEG、GIF，最多 2500 万像素"))
 			return
 		}
 		if _, _, err = image.Decode(bytes.NewReader(b)); err != nil {
-			fail(w, 400, "图片内容损坏")
+			fail(w, 400, s.lang(r).T("The image is corrupt", "图片内容损坏"))
 			return
 		}
 		a.Kind, a.MIME = "image", sniffed
@@ -165,43 +166,43 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		_ = os.Remove(path)
 		_ = os.Remove(metaPath)
-		fail(w, 500, "无法保存文件")
+		fail(w, 500, s.lang(r).T("Could not save the file", "无法保存文件"))
 		return
 	}
 	respond(w, 201, a)
 }
 
-func (s *Server) loadAttachment(sessionID, id string) (attachment, string, error) {
-	path, metaPath, err := s.uploadPaths(sessionID, id)
+func (s *Server) loadAttachment(l i18n.Lang, sessionID, id string) (attachment, string, error) {
+	path, metaPath, err := s.uploadPaths(l, sessionID, id)
 	if err != nil {
 		return attachment{}, "", err
 	}
 	b, err := os.ReadFile(metaPath)
 	if err != nil {
-		return attachment{}, "", errors.New("附件不存在或不属于此会话")
+		return attachment{}, "", l.Errorf("The attachment does not exist or does not belong to this session", "附件不存在或不属于此会话")
 	}
 	var a attachment
 	if json.Unmarshal(b, &a) != nil || a.ID != id {
-		return a, "", errors.New("附件记录无效")
+		return a, "", l.Errorf("Invalid attachment record", "附件记录无效")
 	}
 	switch a.Kind {
 	case "", "image":
 		ext := imageMIMEs[a.MIME]
 		if ext == "" {
-			return a, "", errors.New("图片格式无效")
+			return a, "", l.Errorf("Invalid image format", "图片格式无效")
 		}
 		a.Kind = "image"
 		path += "." + ext
 	case "file":
 		if a.Name != sanitizeUploadName(a.Name) {
-			return a, "", errors.New("附件名称无效")
+			return a, "", l.Errorf("Invalid attachment name", "附件名称无效")
 		}
 		path += "-" + a.Name
 	default:
-		return a, "", errors.New("附件类型无效")
+		return a, "", l.Errorf("Invalid attachment kind", "附件类型无效")
 	}
 	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
-		return a, "", errors.New("附件不存在")
+		return a, "", l.Errorf("Attachment not found", "附件不存在")
 	}
 	return a, path, nil
 }
@@ -211,12 +212,12 @@ func inlineSafe(a attachment) bool { return a.Kind == "image" && imageMIMEs[a.MI
 
 func (s *Server) uploadGet(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.store.Get(r.PathValue("id")); err != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
-	a, path, err := s.loadAttachment(r.PathValue("id"), r.PathValue("uploadID"))
+	a, path, err := s.loadAttachment(s.lang(r), r.PathValue("id"), r.PathValue("uploadID"))
 	if err != nil {
-		fail(w, 404, "附件不存在")
+		fail(w, 404, s.lang(r).T("Attachment not found", "附件不存在"))
 		return
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -236,22 +237,22 @@ func (s *Server) uploadGet(w http.ResponseWriter, r *http.Request) {
 
 // Channel transports carry text. Claude's native Read tool opens the validated
 // host paths (text, PDF, images, notebooks) with normal permissions.
-func (s *Server) messageAttachments(sessionID, text string, ids []string) (string, json.RawMessage, error) {
+func (s *Server) messageAttachments(l i18n.Lang, sessionID, text string, ids []string) (string, json.RawMessage, error) {
 	if len(ids) == 0 {
 		return text, nil, nil
 	}
 	if len(ids) > maxAttachments {
-		return "", nil, fmt.Errorf("每条消息最多附带 %d 个附件", maxAttachments)
+		return "", nil, l.Errorf("A message can carry at most %d attachments", "每条消息最多附带 %d 个附件", maxAttachments)
 	}
 	items := make([]attachment, 0, len(ids))
 	lines := make([]string, 0, len(ids))
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if seen[id] {
-			return "", nil, errors.New("不能重复附加同一个文件")
+			return "", nil, l.Errorf("The same file cannot be attached twice", "不能重复附加同一个文件")
 		}
 		seen[id] = true
-		a, path, err := s.loadAttachment(sessionID, id)
+		a, path, err := s.loadAttachment(l, sessionID, id)
 		if err != nil {
 			return "", nil, err
 		}

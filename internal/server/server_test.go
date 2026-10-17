@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -317,5 +318,63 @@ func TestNativeHistoryImportRequiresStoppedConfirmation(t *testing.T) {
 	list, err := st.List()
 	if err != nil || len(list) != 1 {
 		t.Fatalf("duplicate imports %+v %v", list, err)
+	}
+}
+
+// TestErrorsFollowPageLanguage: a response is in the page's language
+// (X-CC-Lang), else in the host's; the command menu follows it too.
+func TestErrorsFollowPageLanguage(t *testing.T) {
+	_, ts, st := setup(t, nil)
+	get := func(path, lang string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", ts.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		if lang != "" {
+			req.Header.Set("X-CC-Lang", lang)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	missing := "/api/sessions/00000000-0000-0000-0000-000000000000"
+	if code, b := get(missing, ""); code != 404 || !strings.Contains(b, "Session not found") {
+		t.Fatalf("default %d %s", code, b)
+	}
+	if code, b := get(missing, "zh-CN"); code != 404 || !strings.Contains(b, "会话不存在") {
+		t.Fatalf("zh %d %s", code, b)
+	}
+	x := createSession(t, ts)
+	if code, b := get("/api/sessions/"+x.ID+"/commands", "zh"); code != 200 || !strings.Contains(b, "显示网页支持的命令") {
+		t.Fatalf("zh menu %d %s", code, b)
+	}
+	// Errors made where no request is at hand (prefs) still follow the page.
+	req, _ := http.NewRequest("PUT", ts.URL+"/api/preferences", strings.NewReader(`{"effort":"huge"}`))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-CC-Lang", "zh")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 400 || !strings.Contains(string(b), "无效的推理强度") {
+		t.Fatalf("zh prefs error %d %s", resp.StatusCode, b)
+	}
+	zh := New(st, Config{Token: testToken, Language: i18n.ZH}).Handler()
+	for lang, want := range map[string]string{"": "会话不存在", "en": "Session not found"} {
+		req := httptest.NewRequest("GET", missing, nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		if lang != "" {
+			req.Header.Set("X-CC-Lang", lang)
+		}
+		rec := httptest.NewRecorder()
+		zh.ServeHTTP(rec, req)
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("zh host, page %q: %d %s", lang, rec.Code, rec.Body.String())
+		}
 	}
 }

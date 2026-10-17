@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 func runQuiet(name string, args ...string) (string, error) {
@@ -28,7 +30,7 @@ func installBinaries(src string, dryRun bool, out io.Writer) error {
 		return err
 	}
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] copy %s -> %s\n", src, dst)
+		fmt.Fprint(out, i18n.F("[dry-run] copy %s -> %s\n", "[dry-run] 复制 %s -> %s\n", src, dst))
 		return nil
 	}
 	if !samePath(src, dst) {
@@ -36,7 +38,7 @@ func installBinaries(src string, dryRun bool, out io.Writer) error {
 			return err
 		}
 	}
-	fmt.Fprintf(out, "Installed %s\n", dst)
+	fmt.Fprint(out, i18n.F("Installed %s\n", "已安装 %s\n", dst))
 	return nil
 }
 
@@ -60,4 +62,6 @@ func homeDir(fallback string) string {
 func firewallHint([]string, io.Writer) {}
 
 // Supervise is only used by the Windows scheduled task.
-func Supervise([]string) error { return fmt.Errorf("supervise is only used on Windows") }
+func Supervise([]string) error {
+	return i18n.Errorf("supervise is only used on Windows", "supervise 仅在 Windows 上使用")
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cc-remote/internal/config"
+	"cc-remote/internal/i18n"
 )
 
 // Config is persisted as <dataDir>/service.json (and mirrored in InstallRoot
@@ -19,6 +20,8 @@ type Config struct {
 	Listen          []string `json:"listen"`
 	Claude          string   `json:"claude"`
 	ClaudeConfigDir string   `json:"claudeConfigDir,omitempty"`
+	// Language of the host's messages and web UI: "en", "zh" or empty (the system language).
+	Language string `json:"language,omitempty"`
 	// AllowInsecureRemote permits all:/0.0.0.0/:: binds (--allow-insecure-remote).
 	AllowInsecureRemote bool `json:"allowInsecureRemote,omitempty"`
 	// Env is added to the host's environment (proxy variables captured at
@@ -46,13 +49,13 @@ func InstallRoot() (string, error) {
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("cannot determine the install directory (LOCALAPPDATA and the home directory are unset): %w", err)
+			return "", i18n.Errorf("cannot determine the install directory (LOCALAPPDATA and the home directory are unset): %w", "无法确定安装目录（LOCALAPPDATA 和用户主目录都未设置）：%w", err)
 		}
 		return filepath.Join(home, "AppData", "Local", "cc-remote"), nil
 	case "darwin":
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("cannot determine the install directory (HOME is unset): %w", err)
+			return "", i18n.Errorf("cannot determine the install directory (HOME is unset): %w", "无法确定安装目录（HOME 未设置）：%w", err)
 		}
 		return filepath.Join(home, "Library", "Application Support", "cc-remote"), nil
 	}
@@ -61,7 +64,7 @@ func InstallRoot() (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("cannot determine the install directory (XDG_DATA_HOME and HOME are unset): %w", err)
+		return "", i18n.Errorf("cannot determine the install directory (XDG_DATA_HOME and HOME are unset): %w", "无法确定安装目录（XDG_DATA_HOME 和 HOME 都未设置）：%w", err)
 	}
 	return filepath.Join(home, ".local", "share", "cc-remote"), nil
 }

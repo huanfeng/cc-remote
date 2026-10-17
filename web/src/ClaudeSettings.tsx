@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 import { CloseIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
 import { Select } from './Select';
+import { hostLang, langOverride, setLang, t, type Lang } from './i18n';
 
 export type { Api } from './ModelPicker';
 export type ClaudePreferences = { model: string; effortLevel: string; permissionMode: string; revision: string; path?: string };
@@ -9,9 +10,12 @@ export type RemotePreferences = { permissionMode: string; model: string; effort:
 
 // Settings sections; add an entry here and a matching panel below to extend the dialog.
 const SECTIONS = [
-  { id: 'remote', label: 'CC Remote 默认', hint: '推荐' },
-  { id: 'claude', label: 'Claude 用户配置', hint: 'settings.json' },
+  { id: 'remote', label: t('CC Remote defaults', 'CC Remote 默认'), hint: t('Recommended', '推荐') },
+  { id: 'claude', label: t('Claude user settings', 'Claude 用户配置'), hint: 'settings.json' },
+  { id: 'browser', label: t('This browser', '此浏览器'), hint: t('Language', '语言') },
 ] as const;
+// Language names are written in their own language.
+const LANG_NAMES: Record<Lang, string> = { zh: '中文', en: 'English' };
 type SectionId = typeof SECTIONS[number]['id'];
 
 export function ClaudeSettings({ api, close }: { api: Api; close: () => void }) {
@@ -45,38 +49,43 @@ export function ClaudeSettings({ api, close }: { api: Api; close: () => void }) 
     const target = SECTIONS[(next + SECTIONS.length) % SECTIONS.length];
     setSection(target.id); document.getElementById(`settings-tab-${target.id}`)?.focus();
   };
-  return <div className="modal-backdrop"><div className="modal settings-modal" role="dialog" aria-label="设置">
-    <div className="modal-heading"><h2>设置</h2><button type="button" className="icon" aria-label="关闭设置" onClick={close}><CloseIcon size={18} /></button></div>
+  return <div className="modal-backdrop"><div className="modal settings-modal" role="dialog" aria-label={t('Settings', '设置')}>
+    <div className="modal-heading"><h2>{t('Settings', '设置')}</h2><button type="button" className="icon" aria-label={t('Close settings', '关闭设置')} onClick={close}><CloseIcon size={18} /></button></div>
     <div className="settings-layout">
-      <div className="settings-tabs" role="tablist" aria-label="设置分区" aria-orientation="vertical">
+      <div className="settings-tabs" role="tablist" aria-label={t('Settings sections', '设置分区')} aria-orientation="vertical">
         {SECTIONS.map((item, index) => <button key={item.id} id={`settings-tab-${item.id}`} type="button" role="tab" aria-selected={section === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={section === item.id ? 0 : -1} onClick={() => setSection(item.id)} onKeyDown={event => tabKey(event, index)}>{item.label}<small>{item.hint}</small></button>)}
       </div>
       <div className="settings-panel" role="tabpanel" id={`settings-panel-${section}`} aria-labelledby={`settings-tab-${section}`}>
-        {section === 'remote' && <form onSubmit={event => { event.preventDefault(); if (!prefs || !savedPrefs) return; if (!confirmMode(prefs.permissionMode, savedPrefs.permissionMode)) return; void save(async () => { const result = await api<RemotePreferences>('/api/preferences', { method: 'PUT', body: JSON.stringify({ ...prefs, confirmDangerous: dangerousMode(prefs.permissionMode) }) }); setPrefs(result); setSavedPrefs(result); setNotice('CC Remote 默认值已保存，托管会话下一轮生效。'); }); }}>
-          <h3>CC Remote 默认（推荐，不修改 Claude 配置）</h3>
-          <p>以启动参数传给托管会话和 <code>cc-remote -- claude</code> 新启动的共享终端；会话可单独覆盖。留空则跟随 Claude 自身配置。终端命令行显式传入的参数优先。</p>
+        {section === 'remote' && <form onSubmit={event => { event.preventDefault(); if (!prefs || !savedPrefs) return; if (!confirmMode(prefs.permissionMode, savedPrefs.permissionMode)) return; void save(async () => { const result = await api<RemotePreferences>('/api/preferences', { method: 'PUT', body: JSON.stringify({ ...prefs, confirmDangerous: dangerousMode(prefs.permissionMode) }) }); setPrefs(result); setSavedPrefs(result); setNotice(t('CC Remote defaults saved; managed sessions use them from their next turn.', 'CC Remote 默认值已保存，托管会话下一轮生效。')); }); }}>
+          <h3>{t('CC Remote defaults (recommended, Claude settings unchanged)', 'CC Remote 默认（推荐，不修改 Claude 配置）')}</h3>
+          <p>{t('Passed as launch flags to managed sessions and to shared terminals newly started with ', '以启动参数传给托管会话和 ')}<code>cc-remote -- claude</code>{t('; each session can override them. Leave empty to follow Claude\'s own settings. Flags given explicitly on the terminal command line take precedence.', ' 新启动的共享终端；会话可单独覆盖。留空则跟随 Claude 自身配置。终端命令行显式传入的参数优先。')}</p>
           {prefs ? <>
-            <label>权限模式<Select label="CC Remote 默认权限模式" value={prefs.permissionMode} options={permissionOptions('跟随 Claude 配置', prefs.permissionMode)} onChange={permissionMode => edit({ permissionMode })} /></label>
-            {prefs.permissionMode === 'bypassPermissions' && <small className="danger-note">跳过所有审批：Claude 可直接修改文件、执行命令。仅在可信项目中使用。</small>}
-            <label>模型<ModelPicker api={api} label="CC Remote 默认模型" inheritLabel="跟随 Claude 配置" value={prefs.model} onChange={model => edit({ model })} /></label>
-            <label>推理强度<Select label="CC Remote 默认推理强度" value={prefs.effort} options={effortOptions('跟随 Claude 配置')} onChange={effort => edit({ effort })} /></label>
-            <button className="primary" disabled={saving}>{saving ? '保存中…' : '保存 CC Remote 默认'}</button>
-          </> : <p>正在读取设置…</p>}
+            <label>{t('Permission mode', '权限模式')}<Select label={t('CC Remote default permission mode', 'CC Remote 默认权限模式')} value={prefs.permissionMode} options={permissionOptions(t('Follow Claude settings', '跟随 Claude 配置'), prefs.permissionMode)} onChange={permissionMode => edit({ permissionMode })} /></label>
+            {prefs.permissionMode === 'bypassPermissions' && <small className="danger-note">{t('Skips all approvals: Claude can edit files and run commands directly. Use it only in trusted projects.', '跳过所有审批：Claude 可直接修改文件、执行命令。仅在可信项目中使用。')}</small>}
+            <label>{t('Model', '模型')}<ModelPicker api={api} label={t('CC Remote default model', 'CC Remote 默认模型')} inheritLabel={t('Follow Claude settings', '跟随 Claude 配置')} value={prefs.model} onChange={model => edit({ model })} /></label>
+            <label>{t('Effort', '推理强度')}<Select label={t('CC Remote default effort', 'CC Remote 默认推理强度')} value={prefs.effort} options={effortOptions(t('Follow Claude settings', '跟随 Claude 配置'))} onChange={effort => edit({ effort })} /></label>
+            <button className="primary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Save CC Remote defaults', '保存 CC Remote 默认')}</button>
+          </> : <p>{t('Loading settings…', '正在读取设置…')}</p>}
         </form>}
         {section === 'claude' && <div>
-          <h3>Claude 用户配置（~/.claude/settings.json）</h3>
-          <p>修改 Claude 用户级默认值，会影响此账户下所有 Claude Code 使用（包括不经过 CC Remote 的终端）。只改写 model、effortLevel、permissions.defaultMode 三项，保留原有键顺序、缩进与换行；本次宿主运行内首次写入前备份为 <code>settings.json.cc-remote.bak</code>。</p>
-          {value && savedValue ? <form onSubmit={event => { event.preventDefault(); if (!confirmMode(value.permissionMode, savedValue.permissionMode)) return; void save(async () => { const result = await api<ClaudePreferences>('/api/claude/settings', { method: 'PUT', body: JSON.stringify({ ...value, confirmDangerous: dangerousMode(value.permissionMode) }) }); setValue(result); setSavedValue(result); setNotice('已写入 Claude 用户配置。'); }); }}>
-            <label>默认模型<ModelPicker api={api} label="Claude 默认模型" inheritLabel="跟随 Claude 默认值" value={value.model} onChange={model => editClaude({ model })} /></label>
-            <label>默认推理强度<Select label="Claude 默认推理强度" value={value.effortLevel} options={effortOptions('跟随 Claude 默认值')} onChange={effortLevel => editClaude({ effortLevel })} /></label>
-            <label>默认权限模式<Select label="Claude 默认权限模式" value={value.permissionMode} options={permissionOptions('跟随 Claude 默认值', savedValue.permissionMode)} onChange={permissionMode => editClaude({ permissionMode })} /></label>
-            <small>项目、组织策略及启动参数可能覆盖这些默认值；其它 Claude 配置原样保留。</small>
+          <h3>{t('Claude user settings (~/.claude/settings.json)', 'Claude 用户配置（~/.claude/settings.json）')}</h3>
+          <p>{t('Changes Claude\'s user-level defaults, which affects every Claude Code use under this account (including terminals that do not go through CC Remote). Only model, effortLevel and permissions.defaultMode are rewritten, keeping the existing key order, indentation and line endings; before the first write in this host run, a backup is saved as ', '修改 Claude 用户级默认值，会影响此账户下所有 Claude Code 使用（包括不经过 CC Remote 的终端）。只改写 model、effortLevel、permissions.defaultMode 三项，保留原有键顺序、缩进与换行；本次宿主运行内首次写入前备份为 ')}<code>settings.json.cc-remote.bak</code>{t('.', '。')}</p>
+          {value && savedValue ? <form onSubmit={event => { event.preventDefault(); if (!confirmMode(value.permissionMode, savedValue.permissionMode)) return; void save(async () => { const result = await api<ClaudePreferences>('/api/claude/settings', { method: 'PUT', body: JSON.stringify({ ...value, confirmDangerous: dangerousMode(value.permissionMode) }) }); setValue(result); setSavedValue(result); setNotice(t('Written to Claude user settings.', '已写入 Claude 用户配置。')); }); }}>
+            <label>{t('Default model', '默认模型')}<ModelPicker api={api} label={t('Claude default model', 'Claude 默认模型')} inheritLabel={t('Follow Claude default', '跟随 Claude 默认值')} value={value.model} onChange={model => editClaude({ model })} /></label>
+            <label>{t('Default effort', '默认推理强度')}<Select label={t('Claude default effort', 'Claude 默认推理强度')} value={value.effortLevel} options={effortOptions(t('Follow Claude default', '跟随 Claude 默认值'))} onChange={effortLevel => editClaude({ effortLevel })} /></label>
+            <label>{t('Default permission mode', '默认权限模式')}<Select label={t('Claude default permission mode', 'Claude 默认权限模式')} value={value.permissionMode} options={permissionOptions(t('Follow Claude default', '跟随 Claude 默认值'), savedValue.permissionMode)} onChange={permissionMode => editClaude({ permissionMode })} /></label>
+            <small>{t('Project and organization policies and launch flags may override these defaults; other Claude settings are kept as they are.', '项目、组织策略及启动参数可能覆盖这些默认值；其它 Claude 配置原样保留。')}</small>
             <small className="settings-path">{value.path}</small>
-            <button className="secondary" disabled={saving}>{saving ? '保存中…' : '写入 Claude 用户配置'}</button>
-          </form> : <p>正在读取…</p>}
+            <button className="secondary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Write Claude user settings', '写入 Claude 用户配置')}</button>
+          </form> : <p>{t('Loading…', '正在读取…')}</p>}
+        </div>}
+        {section === 'browser' && <div>
+          <h3>{t('Language', '语言')}</h3>
+          <p>{t('Saved in this browser only; by default the page follows the language configured on the host. Changing it reloads the page.', '只保存在此浏览器；默认跟随宿主配置的语言。切换后页面会重新加载。')}</p>
+          <label>{t('Interface language', '界面语言')}<Select label={t('Interface language', '界面语言')} value={langOverride()} options={[{ value: '', label: t(`Follow host (${LANG_NAMES[hostLang]})`, `跟随宿主（${LANG_NAMES[hostLang]}）`) }, { value: 'zh', label: LANG_NAMES.zh }, { value: 'en', label: LANG_NAMES.en }]} onChange={value => setLang(value as Lang | '')} /></label>
         </div>}
         {notice && <p role="status">{notice}</p>}
-        {error && <div className="error" role="alert">{error}<button type="button" className="secondary" onClick={() => { void load(); if (section === 'claude' || value) void loadClaude(); }}>重新加载</button></div>}
+        {error && <div className="error" role="alert">{error}<button type="button" className="secondary" onClick={() => { void load(); if (section === 'claude' || value) void loadClaude(); }}>{t('Reload', '重新加载')}</button></div>}
       </div>
     </div>
   </div></div>;

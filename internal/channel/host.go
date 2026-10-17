@@ -2,13 +2,14 @@ package channel
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"cc-remote/internal/i18n"
 )
 
 // ensureHost never starts a replacement when another service answers the port.
@@ -29,11 +30,11 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 		}
 		defer response.Body.Close()
 		if tokenErr != nil || token == "" || response.StatusCode != http.StatusOK {
-			return false, fmt.Errorf("a service is already listening at %s but does not accept this data directory's token; use the matching --data-dir or a different --host", host)
+			return false, i18n.Errorf("a service is already listening at %s but does not accept this data directory's token; use the matching --data-dir or a different --host", "%s 上已有服务在监听，但它不接受此数据目录的令牌；请使用对应的 --data-dir 或换一个 --host", host)
 		}
 		var sessions []json.RawMessage
 		if err := json.NewDecoder(response.Body).Decode(&sessions); err != nil {
-			return false, fmt.Errorf("service at %s did not return a CC Remote session list: %w", host, err)
+			return false, i18n.Errorf("service at %s did not return a CC Remote session list: %w", "%s 上的服务没有返回 CC Remote 会话列表：%w", host, err)
 		}
 		return true, nil
 	}
@@ -42,7 +43,7 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 	}
 	u, _ := url.Parse(host)
 	if u.Scheme != "http" {
-		return fmt.Errorf("host %s is unavailable; start the HTTPS host separately", host)
+		return i18n.Errorf("host %s is unavailable; start the HTTPS host separately", "宿主 %s 不可用；请另行启动 HTTPS 宿主", host)
 	}
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return err
@@ -60,7 +61,7 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 	cmd := exec.Command(exe, args...)
 	detachHost(cmd)
 	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("start host: %w", err)
+		return i18n.Errorf("start host: %w", "启动宿主失败：%w", err)
 	}
 	_ = cmd.Process.Release()
 	deadline := time.Now().Add(10 * time.Second)
@@ -70,7 +71,7 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 			return err
 		}
 	}
-	return fmt.Errorf("host did not become ready at %s; see %s", host, filepath.Join(dataDir, "host.log"))
+	return i18n.Errorf("host did not become ready at %s; see %s", "宿主没有在 %s 就绪；请查看 %s", host, filepath.Join(dataDir, "host.log"))
 }
 
 // EnsureHost makes sure a host for dataDir answers at host, starting one in

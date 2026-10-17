@@ -137,7 +137,7 @@ func TestCompactRunsAsManagedTurn(t *testing.T) {
 	_, ts, st := setup(t, func(_ context.Context, o claude.Options, _ func(claude.Event) error) error { runs <- o; return nil })
 	x := createSession(t, ts)
 	path := "/api/sessions/" + x.ID
-	if code, b := request(t, ts, "POST", path+"/commands", map[string]string{"command": "/compact"}, testToken); code != 400 || !strings.Contains(string(b), "没有可压缩") {
+	if code, b := request(t, ts, "POST", path+"/commands", map[string]string{"command": "/compact"}, testToken); code != 400 || !strings.Contains(string(b), "no context to compact") {
 		t.Fatalf("fresh session %d %s", code, b)
 	}
 	if code, _ := request(t, ts, "POST", path+"/messages", map[string]string{"text": "/compact"}, testToken); code != 400 {
@@ -159,7 +159,7 @@ func TestCompactRunsAsManagedTurn(t *testing.T) {
 	y := createSession(t, ts)
 	_ = st.SetResume(y.ID)
 	_ = st.SetMode(y.ID, "channel")
-	if code, b := request(t, ts, "POST", "/api/sessions/"+y.ID+"/commands", map[string]string{"command": "/compact"}, testToken); code != 409 || !strings.Contains(string(b), "终端") {
+	if code, b := request(t, ts, "POST", "/api/sessions/"+y.ID+"/commands", map[string]string{"command": "/compact"}, testToken); code != 409 || !strings.Contains(string(b), "terminal") {
 		t.Fatalf("channel %d %s", code, b)
 	}
 }

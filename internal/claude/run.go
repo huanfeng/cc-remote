@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 type Event struct {
@@ -64,7 +66,7 @@ func LaunchFlags(permissionMode, model, effort string) []string {
 // Cancellation stops the process tree; already completed tool side effects remain.
 func Run(ctx context.Context, o Options, emit func(Event) error) error {
 	if !uuidPattern.MatchString(o.SessionID) {
-		return errors.New("invalid Claude session UUID")
+		return errors.New(i18n.T("invalid Claude session UUID", "无效的 Claude 会话 UUID"))
 	}
 	if o.Executable == "" {
 		o.Executable = "claude"
@@ -103,7 +105,7 @@ func Run(ctx context.Context, o Options, emit func(Event) error) error {
 		return err
 	}
 	if err = cmd.Start(); err != nil {
-		return fmt.Errorf("start Claude Code: %w", err)
+		return i18n.Errorf("start Claude Code: %w", "启动 Claude Code 失败：%w", err)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -152,10 +154,10 @@ func Run(ctx context.Context, o Options, emit func(Event) error) error {
 		return parseErr
 	}
 	if waitErr != nil {
-		return fmt.Errorf("Claude Code exited: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+		return i18n.Errorf("Claude Code exited: %w: %s", "Claude Code 已退出：%w：%s", waitErr, strings.TrimSpace(stderr.String()))
 	}
 	if !sawResult {
-		return errors.New("Claude Code exited without a result event")
+		return errors.New(i18n.T("Claude Code exited without a result event", "Claude Code 退出时没有给出结果事件"))
 	}
 	return nil
 }
@@ -267,7 +269,7 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 			return []Event{e}, true, errors.New(msg)
 		}
 		if len(v.Denials) > 0 {
-			return []Event{e, {Kind: "error", Text: "Some tool permissions were denied", Payload: payload}}, true, errors.New("Claude Code reported permission denials")
+			return []Event{e, {Kind: "error", Text: i18n.T("Some tool permissions were denied", "部分工具权限被拒绝"), Payload: payload}}, true, errors.New(i18n.T("Claude Code reported permission denials", "Claude Code 报告了权限拒绝"))
 		}
 		return []Event{e}, true, nil
 	case "system":
@@ -280,7 +282,7 @@ func parseEvent(line []byte) ([]Event, bool, error) {
 		}
 		return []Event{{Kind: kind, Text: v.Subtype, Payload: payload}}, false, nil
 	case "error":
-		return []Event{{Kind: "error", Text: string(line), Payload: payload}}, false, errors.New("Claude Code emitted an error")
+		return []Event{{Kind: "error", Text: string(line), Payload: payload}}, false, errors.New(i18n.T("Claude Code emitted an error", "Claude Code 报告了错误"))
 	}
 	return nil, false, nil
 }

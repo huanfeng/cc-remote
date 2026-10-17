@@ -2,10 +2,11 @@
 package listen
 
 import (
-	"fmt"
 	"net"
 	"sort"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 // Split flattens repeated and comma separated --listen values.
@@ -37,16 +38,16 @@ func Resolve(specs []string, lanIPs func() []net.IP) (addrs []string, added stri
 	for _, spec := range specs {
 		host, port, err := net.SplitHostPort(spec)
 		if err != nil {
-			return nil, "", fmt.Errorf("invalid listen address %q: %w", spec, err)
+			return nil, "", i18n.Errorf("invalid listen address %q: %w", "无效的监听地址 %q：%w", spec, err)
 		}
 		if port == "" {
-			return nil, "", fmt.Errorf("invalid listen address %q: missing port", spec)
+			return nil, "", i18n.Errorf("invalid listen address %q: missing port", "无效的监听地址 %q：缺少端口", spec)
 		}
 		switch strings.ToLower(host) {
 		case "lan":
 			ips := lanIPs()
 			if len(ips) == 0 {
-				return nil, "", fmt.Errorf("listen address %q: no private IPv4 address found on this machine", spec)
+				return nil, "", i18n.Errorf("listen address %q: no private IPv4 address found on this machine", "监听地址 %q：本机没有私有 IPv4 地址", spec)
 			}
 			for _, ip := range ips {
 				expanded = append(expanded, net.JoinHostPort(ip.String(), port))

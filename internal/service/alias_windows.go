@@ -7,6 +7,8 @@ import (
 	"io"
 	"unsafe"
 
+	"cc-remote/internal/i18n"
+
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -52,21 +54,21 @@ func broadcastEnvironmentChange() {
 func ensureOnPath(dir string, dryRun bool, out io.Writer) error {
 	current, err := readUserPath()
 	if err != nil {
-		return fmt.Errorf("read HKCU\\Environment Path: %w", err)
+		return i18n.Errorf("read HKCU\\Environment Path: %w", "读取 HKCU\\Environment Path 失败：%w", err)
 	}
 	merged, changed := MergePath(current, dir, ";")
 	if !changed {
-		fmt.Fprintf(out, "%s is already on the user PATH\n", dir)
+		fmt.Fprint(out, i18n.F("%s is already on the user PATH\n", "%s 已在用户 PATH 中\n", dir))
 		return nil
 	}
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] set HKCU\\Environment Path (REG_EXPAND_SZ):\n  before: %s\n  after:  %s\n[dry-run] broadcast WM_SETTINGCHANGE\n", current, merged)
+		fmt.Fprint(out, i18n.F("[dry-run] set HKCU\\Environment Path (REG_EXPAND_SZ):\n  before: %s\n  after:  %s\n[dry-run] broadcast WM_SETTINGCHANGE\n", "[dry-run] 设置 HKCU\\Environment Path（REG_EXPAND_SZ）：\n  修改前：%s\n  修改后：%s\n[dry-run] 广播 WM_SETTINGCHANGE\n", current, merged))
 		return nil
 	}
 	if err = writeUserPath(merged); err != nil {
-		return fmt.Errorf("update user PATH: %w", err)
+		return i18n.Errorf("update user PATH: %w", "更新用户 PATH 失败：%w", err)
 	}
-	fmt.Fprintf(out, "Added %s to the user PATH; open a new terminal (cmd or PowerShell) to use ccr\n", dir)
+	fmt.Fprint(out, i18n.F("Added %s to the user PATH; open a new terminal (cmd or PowerShell) to use ccr\n", "已把 %s 加入用户 PATH；打开新的终端（cmd 或 PowerShell）即可使用 ccr\n", dir))
 	return nil
 }
 
@@ -80,21 +82,21 @@ func removeFromPath(dir string, dryRun bool, out io.Writer) error {
 		return nil
 	}
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] set HKCU\\Environment Path:\n  before: %s\n  after:  %s\n", current, updated)
+		fmt.Fprint(out, i18n.F("[dry-run] set HKCU\\Environment Path:\n  before: %s\n  after:  %s\n", "[dry-run] 设置 HKCU\\Environment Path：\n  修改前：%s\n  修改后：%s\n", current, updated))
 		return nil
 	}
 	if err = writeUserPath(updated); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Removed %s from the user PATH\n", dir)
+	fmt.Fprint(out, i18n.F("Removed %s from the user PATH\n", "已从用户 PATH 中移除 %s\n", dir))
 	return nil
 }
 
 func pathStatus(dir string, out io.Writer) {
 	current, err := readUserPath()
 	if err != nil {
-		fmt.Fprintf(out, "User PATH: %v\n", err)
+		fmt.Fprint(out, i18n.F("User PATH: %v\n", "用户 PATH：%v\n", err))
 		return
 	}
-	fmt.Fprintf(out, "Directory on user PATH (registry): %s\n", yesNo(PathContains(current, dir, ";")))
+	fmt.Fprint(out, i18n.F("Directory on user PATH (registry): %s\n", "目录在用户 PATH 中（注册表）：%s\n", yesNo(PathContains(current, dir, ";"))))
 }

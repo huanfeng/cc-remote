@@ -18,6 +18,8 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"cc-remote/internal/i18n"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -76,8 +78,8 @@ func installBinaries(src string, dryRun bool, out io.Writer) error {
 		return err
 	}
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] copy %s -> %s\n", src, dst)
-		fmt.Fprintf(out, "[dry-run] copy %s -> %s (GUI subsystem, no console window)\n", src, svc)
+		fmt.Fprint(out, i18n.F("[dry-run] copy %s -> %s\n", "[dry-run] 复制 %s -> %s\n", src, dst))
+		fmt.Fprint(out, i18n.F("[dry-run] copy %s -> %s (GUI subsystem, no console window)\n", "[dry-run] 复制 %s -> %s（GUI 子系统，不弹控制台窗口）\n", src, svc))
 		return nil
 	}
 	if !samePath(src, dst) {
@@ -88,7 +90,7 @@ func installBinaries(src string, dryRun bool, out io.Writer) error {
 	if err := copyExecutable(src, svc, func(b []byte) error { return SetPESubsystem(b, 2) }); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Installed %s\n", dst)
+	fmt.Fprint(out, i18n.F("Installed %s\n", "已安装 %s\n", dst))
 	return nil
 }
 
@@ -116,7 +118,7 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	}
 	xml := TaskXML(spec)
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] schtasks /Create /TN %q /XML <temp>\\task.xml /F  (UTF-16 LE with BOM):\n%s", TaskName, xml)
+		fmt.Fprint(out, i18n.F("[dry-run] schtasks /Create /TN %q /XML <temp>\\task.xml /F  (UTF-16 LE with BOM):\n%s", "[dry-run] schtasks /Create /TN %q /XML <临时目录>\\task.xml /F（带 BOM 的 UTF-16 LE）：\n%s", TaskName, xml))
 		return nil
 	}
 	dir, err := os.MkdirTemp("", "cc-remote-task-")
@@ -131,7 +133,7 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	if _, err = runQuiet("schtasks", "/Create", "/TN", TaskName, "/XML", path, "/F"); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Registered scheduled task %q (runs at logon as %s)\n", TaskName, spec.UserID)
+	fmt.Fprint(out, i18n.F("Registered scheduled task %q (runs at logon as %s)\n", "已注册计划任务 %q（以 %s 身份在登录时运行）\n", TaskName, spec.UserID))
 	return nil
 }
 
@@ -141,13 +143,13 @@ func unregister(dryRun bool, out io.Writer) error {
 		return nil
 	}
 	if !schedulerState().Installed {
-		fmt.Fprintf(out, "Scheduled task %q is not registered\n", TaskName)
+		fmt.Fprint(out, i18n.F("Scheduled task %q is not registered\n", "计划任务 %q 未注册\n", TaskName))
 		return nil
 	}
 	if _, err := runQuiet("schtasks", "/Delete", "/TN", TaskName, "/F"); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Deleted scheduled task %q\n", TaskName)
+	fmt.Fprint(out, i18n.F("Deleted scheduled task %q\n", "已删除计划任务 %q\n", TaskName))
 	return nil
 }
 
@@ -216,7 +218,7 @@ func firewallHint(exposed []string, out io.Writer) {
 		list = append(list, p)
 	}
 	sort.Strings(list)
-	fmt.Fprintln(out, "Windows Firewall may block LAN clients. Optional (run in an elevated shell; not executed):")
+	fmt.Fprintln(out, i18n.T("Windows Firewall may block LAN clients. Optional (run in an elevated shell; not executed):", "Windows 防火墙可能拦截局域网客户端。可选（在管理员终端中运行；此处不会执行）："))
 	for _, p := range list {
 		fmt.Fprintf(out, "  netsh advfirewall firewall add rule name=\"CC Remote\" dir=in action=allow protocol=TCP localport=%s profile=private\n", p)
 	}

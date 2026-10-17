@@ -1,6 +1,7 @@
 // Pure transcript shaping: folds runs of tool_use / tool_result events into
 // groups and lifts question-like tools (AskUserQuestion, ExitPlanMode) out so
 // they are never buried. No React here so node tests can import it directly.
+import { t } from './i18n.ts'; // with extension: node tests import this file directly
 
 export type TranscriptEvent = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 export type CallStatus = 'ok' | 'error' | 'running' | 'missing';
@@ -31,7 +32,7 @@ export type AgentState = (id: string) => boolean;
 /** Text of a tool_result: string content as is, block arrays reduced to their text parts. */
 export function resultText(event: TranscriptEvent): string {
   const content = event.payload?.content;
-  if (Array.isArray(content)) return content.map((block: any) => block?.type === 'text' ? block.text || '' : block?.type === 'image' ? '[图片]' : JSON.stringify(block)).join('\n');
+  if (Array.isArray(content)) return content.map((block: any) => block?.type === 'text' ? block.text || '' : block?.type === 'image' ? t('[image]', '[图片]') : JSON.stringify(block)).join('\n');
   if (typeof content === 'string') return content;
   return event.text || '';
 }
@@ -80,7 +81,7 @@ function shapeTranscript(events: TranscriptEvent[], live: boolean, children: Map
     if (event.kind === 'tool') {
       const id = event.payload?.id || '';
       const result = id ? results.get(id) : undefined;
-      call = { seq: event.seq, id, name: event.payload?.name || event.payload?.toolName || '工具', input: event.payload?.input ?? {}, result, resultText: result ? resultText(result) : '', status: result ? (result.payload?.is_error ? 'error' : 'ok') : 'missing' };
+      call = { seq: event.seq, id, name: event.payload?.name || event.payload?.toolName || t('Tool', '工具'), input: event.payload?.input ?? {}, result, resultText: result ? resultText(result) : '', status: result ? (result.payload?.is_error ? 'error' : 'ok') : 'missing' };
       const ms = result ? Date.parse(result.createdAt) - Date.parse(event.createdAt) : NaN;
       if (ms >= 1000) call.durationMs = ms;
       const cut = [event, result].flatMap(item => item?.truncated ? [item.seq] : []);
@@ -88,7 +89,7 @@ function shapeTranscript(events: TranscriptEvent[], live: boolean, children: Map
     } else {
       const id = event.payload?.tool_use_id || '';
       if (id && uses.has(id)) continue; // shown with its tool_use
-      call = { seq: event.seq, id, name: '工具结果', input: undefined, result: event, resultText: resultText(event), status: event.payload?.is_error ? 'error' : 'ok' };
+      call = { seq: event.seq, id, name: t('Tool result', '工具结果'), input: undefined, result: event, resultText: resultText(event), status: event.payload?.is_error ? 'error' : 'ok' };
       if (event.truncated) call.truncated = [event.seq];
     }
     if (SPECIAL_TOOLS.has(call.name)) { group = undefined; items.push({ type: 'special', key: call.seq, call }); continue; }
@@ -129,16 +130,16 @@ export function groupStats(calls: ToolCall[]): GroupStats {
 
 const clip = (text: string, max: number) => text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
-/** One-line label for a group: "12 次工具调用 · Read ×5 · Bash ×4 · Edit ×3". */
+/** One-line label for a group: "12 tool calls · Read ×5 · Bash ×4 · Edit ×3". */
 export function summaryLabel(calls: ToolCall[]): string {
   const { total, counts } = groupStats(calls);
   if (total === 1) {
     const arg = argSummary(calls[0].name, calls[0].input).text;
-    return `1 次工具调用 · ${calls[0].name}${arg ? ` ${clip(arg, 60)}` : ''}`;
+    return `${t('1 tool call', '1 次工具调用')} · ${calls[0].name}${arg ? ` ${clip(arg, 60)}` : ''}`;
   }
   const names = counts.slice(0, 3).map(([name, count]) => count > 1 ? `${name} ×${count}` : name);
-  if (counts.length > 3) names.push(`另 ${counts.length - 3} 种`);
-  return [`${total} 次工具调用`, ...names].join(' · ');
+  if (counts.length > 3) names.push(t(`${counts.length - 3} more`, `另 ${counts.length - 3} 种`));
+  return [t(`${total} tool calls`, `${total} 次工具调用`), ...names].join(' · ');
 }
 
 export type ArgSummary = { text: string; title?: string; dir?: string };
@@ -161,19 +162,19 @@ export function argSummary(name: string, input: any): ArgSummary {
   if (str(input.url)) return { text: input.url, title: input.url };
   if (str(input.query)) return { text: input.query };
   if (str(input.description)) return { text: input.description, title: str(input.prompt) || undefined };
-  if (Array.isArray(input.todos)) return { text: `${input.todos.length} 项` };
+  if (Array.isArray(input.todos)) return { text: t(`${input.todos.length} items`, `${input.todos.length} 项`) };
   for (const value of Object.values(input)) if (typeof value === 'string' && value.trim()) return { text: value.trim().split('\n')[0], title: value };
   return { text: '' };
 }
 
 const formatTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
-/** Divider text for a compact_boundary event: "上下文已压缩（手动）· 48.0k → 9.0k tokens". */
+/** Divider text for a compact_boundary event: "Context compacted (manual) · 48.0k → 9.0k tokens". */
 export function compactSummary(payload: any): string {
   const meta = payload?.compact_metadata || {};
-  const trigger = meta.trigger === 'manual' ? '手动' : meta.trigger === 'auto' ? '自动' : '';
+  const trigger = meta.trigger === 'manual' ? t('manual', '手动') : meta.trigger === 'auto' ? t('auto', '自动') : '';
   const sizes = Number.isFinite(meta.pre_tokens) && Number.isFinite(meta.post_tokens) ? ` · ${formatTokens(meta.pre_tokens)} → ${formatTokens(meta.post_tokens)} tokens` : '';
-  return `上下文已压缩${trigger ? `（${trigger}）` : ''}${sizes}`;
+  return t(`Context compacted${trigger ? ` (${trigger})` : ''}`, `上下文已压缩${trigger ? `（${trigger}）` : ''}`) + sizes;
 }
 
 /** Whether Claude's latest system status says it is compacting (status events are not rendered). */

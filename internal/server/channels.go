@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -71,7 +72,7 @@ func (s *Server) channelLocal(w http.ResponseWriter, r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	ip := net.ParseIP(host)
 	if err != nil || ip == nil || !ip.IsLoopback() {
-		fail(w, 403, "会话桥接仅允许本机连接")
+		fail(w, 403, s.lang(r).T("The session bridge only accepts local connections", "会话桥接仅允许本机连接"))
 		return false
 	}
 	return true
@@ -90,10 +91,10 @@ func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ID = strings.ToLower(req.ID)
 	if !channelUUID.MatchString(req.ID) {
-		fail(w, 400, "无效的 Claude 会话 ID")
+		fail(w, 400, s.lang(r).T("Invalid Claude session ID", "无效的 Claude 会话 ID"))
 		return
 	}
-	cwd, err := validateCwd(req.Cwd)
+	cwd, err := validateCwd(s.lang(r), req.Cwd)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -101,25 +102,25 @@ func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {
-		fail(w, 503, "宿主正在关闭")
+		fail(w, 503, s.lang(r).T("The host is shutting down", "宿主正在关闭"))
 		return
 	}
 	if s.channelLive(s.channels[req.ID]) {
-		fail(w, 409, "此原生会话已经连接，请勿启动第二个进程")
+		fail(w, 409, s.lang(r).T("This native session is already connected; do not start a second process", "此原生会话已经连接，请勿启动第二个进程"))
 		return
 	}
 	x, err := s.store.FindClaude(req.ID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		fail(w, 500, "读取会话失败")
+		fail(w, 500, s.lang(r).T("Failed to read the session", "读取会话失败"))
 		return
 	}
 	if err == nil && s.runs[x.ID] != nil {
-		fail(w, 409, "此会话仍由宿主执行，请先停止托管轮次")
+		fail(w, 409, s.lang(r).T("The host is still running this session; stop the managed turn first", "此会话仍由宿主执行，请先停止托管轮次"))
 		return
 	}
 	if err == nil {
 		if rt := s.procs[x.ID]; rt != nil && rt.proc != nil && rt.proc.BackgroundTasks() > 0 {
-			fail(w, 409, "此会话的托管进程仍有后台任务在运行，请等待完成后再连接终端")
+			fail(w, 409, s.lang(r).T("The session's managed process still has background tasks running; wait for them to finish before connecting a terminal", "此会话的托管进程仍有后台任务在运行，请等待完成后再连接终端"))
 			return
 		}
 		s.closeAsync(s.detachLocked(x.ID)) // the terminal takes over the conversation
@@ -135,19 +136,19 @@ func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
 		x, err = s.store.Create(title, cwd, req.ID, true)
 	}
 	if err != nil {
-		fail(w, 500, "创建会话失败")
+		fail(w, 500, s.lang(r).T("Failed to create the session", "创建会话失败"))
 		return
 	}
 	if x.Cwd != cwd {
-		fail(w, 409, "会话项目目录与原记录不一致")
+		fail(w, 409, s.lang(r).T("The session's project folder does not match the original record", "会话项目目录与原记录不一致"))
 		return
 	}
 	if err = s.store.SetMode(x.ID, "channel"); err != nil {
-		fail(w, 500, "保存会话模式失败")
+		fail(w, 500, s.lang(r).T("Failed to save the session mode", "保存会话模式失败"))
 		return
 	}
 	if old := s.channels[req.ID]; old != nil && len(old.queue) > 0 {
-		_, _ = s.store.Append(x.ID, "error", "终端连接已重建，未确认送达的消息不会自动重发。请检查会话后重新发送。", nil)
+		_, _ = s.store.Append(x.ID, "error", i18n.T("The terminal connection was re-established; messages not confirmed as delivered are not resent automatically. Check the session and send them again.", "终端连接已重建，未确认送达的消息不会自动重发。请检查会话后重新发送。"), nil)
 	}
 	c := &channelConnection{sessionID: x.ID, key: store.ID() + store.ID(), seen: time.Now(), queue: []channelCommand{}}
 	if old := s.channels[req.ID]; old != nil {
@@ -174,7 +175,7 @@ func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
 func (s *Server) channelConnection(w http.ResponseWriter, r *http.Request) *channelConnection {
 	c := s.channels[r.PathValue("id")]
 	if !s.channelLive(c) || !equalToken("Bearer "+r.Header.Get("X-Channel-Key"), c.key) {
-		fail(w, 409, "终端桥接连接已失效，请重新连接")
+		fail(w, 409, s.lang(r).T("The terminal bridge connection has expired; reconnect", "终端桥接连接已失效，请重新连接"))
 		return nil
 	}
 	return c
@@ -255,7 +256,7 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 	}
 	var object map[string]any
 	if !(req.Kind == "question" && req.ToolName == "AskUserQuestion") && !(req.Kind == "plan" && req.ToolName == "ExitPlanMode") || json.Unmarshal(req.Input, &object) != nil || object == nil {
-		fail(w, 400, "无效的交互请求")
+		fail(w, 400, s.lang(r).T("Invalid interaction request", "无效的交互请求"))
 		return
 	}
 	claudeID := strings.ToLower(r.PathValue("id"))
@@ -266,7 +267,7 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 	c := s.channels[claudeID]
 	if s.closing || !s.channelLive(c) {
 		s.mu.Unlock()
-		fail(w, 409, "终端桥接未连接")
+		fail(w, 409, s.lang(r).T("The terminal bridge is not connected", "终端桥接未连接"))
 		return
 	}
 	if historyErr == nil {
@@ -276,7 +277,7 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 	p := &pending{sessionID: c.sessionID, ctx: r.Context(), channel: make(chan answer, 1), connection: c, toolName: req.ToolName, input: req.Input}
 	if err := s.store.AddInteraction(x); err != nil {
 		s.mu.Unlock()
-		fail(w, 500, "无法保存交互请求")
+		fail(w, 500, s.lang(r).T("Could not save the interaction request", "无法保存交互请求"))
 		return
 	}
 	s.requests[x.ID] = p
@@ -446,9 +447,9 @@ func (s *Server) interactionEventLocked(id string, p *pending, outcome string, a
 var planModes = map[string]bool{"default": true, "acceptEdits": true, "auto": true, "bypassPermissions": true}
 
 // checkSharedAnswer validates a web answer for a hook-held question.
-func checkSharedAnswer(p *pending, a *answer) string {
+func checkSharedAnswer(l i18n.Lang, p *pending, a *answer) string {
 	if len(a.Message) > 64<<10 {
-		return "反馈内容过长"
+		return l.T("The feedback is too long", "反馈内容过长")
 	}
 	if a.Decision != "allow" {
 		a.Answers, a.Mode = nil, ""
@@ -460,7 +461,7 @@ func checkSharedAnswer(p *pending, a *answer) string {
 			a.Mode = "default"
 		}
 		if !planModes[a.Mode] {
-			return "无效的权限模式"
+			return l.T("Invalid permission mode", "无效的权限模式")
 		}
 		return ""
 	}
@@ -470,10 +471,10 @@ func checkSharedAnswer(p *pending, a *answer) string {
 	for _, q := range questionTexts(p.input) {
 		v := a.Answers[q]
 		if strings.TrimSpace(v) == "" {
-			return "请回答全部问题"
+			return l.T("Answer every question", "请回答全部问题")
 		}
 		if len(v) > 64<<10 {
-			return "回答内容过长"
+			return l.T("The answer is too long", "回答内容过长")
 		}
 		kept[q] = v
 	}
@@ -501,7 +502,7 @@ func (s *Server) channelCommands(w http.ResponseWriter, r *http.Request) {
 	}
 	after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	if err != nil || after < 0 {
-		fail(w, 400, "无效游标")
+		fail(w, 400, s.lang(r).T("Invalid cursor", "无效游标"))
 		return
 	}
 	s.mu.Lock()
@@ -511,7 +512,7 @@ func (s *Server) channelCommands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if after > c.next {
-		fail(w, 400, "游标超出命令范围")
+		fail(w, 400, s.lang(r).T("The cursor is beyond the command range", "游标超出命令范围"))
 		return
 	}
 	for len(c.queue) > 0 && c.queue[0].Seq <= after {
@@ -521,18 +522,18 @@ func (s *Server) channelCommands(w http.ResponseWriter, r *http.Request) {
 	c.seen = time.Now()
 	respond(w, 200, c.queue)
 }
-func (s *Server) channelMessageLocked(w http.ResponseWriter, x store.Session, text, prompt string, payload json.RawMessage) {
+func (s *Server) channelMessageLocked(w http.ResponseWriter, r *http.Request, x store.Session, text, prompt string, payload json.RawMessage) {
 	c := s.channels[x.ClaudeSessionID]
 	if !s.channelLive(c) {
-		fail(w, 409, "原生终端未连接，请在项目目录运行连接命令")
+		fail(w, 409, s.lang(r).T("The native terminal is not connected; run the connect command in the project folder", "原生终端未连接，请在项目目录运行连接命令"))
 		return
 	}
 	if len(c.queue) >= 256 {
-		fail(w, 429, "消息队列已满，请等待终端接收")
+		fail(w, 429, s.lang(r).T("The message queue is full; wait for the terminal to receive messages", "消息队列已满，请等待终端接收"))
 		return
 	}
 	if _, err := s.store.Append(x.ID, "user", text, payload); err != nil {
-		fail(w, 500, "保存消息失败")
+		fail(w, 500, s.lang(r).T("Failed to save the message", "保存消息失败"))
 		return
 	}
 	c.next++
@@ -560,11 +561,11 @@ func (s *Server) channelEvent(w http.ResponseWriter, r *http.Request) {
 	switch req.Kind {
 	case "assistant":
 		if strings.TrimSpace(req.Text) == "" {
-			fail(w, 400, "回复为空")
+			fail(w, 400, s.lang(r).T("The reply is empty", "回复为空"))
 			return
 		}
 		if _, err := s.store.Append(c.sessionID, "assistant", req.Text, req.Payload); err != nil {
-			fail(w, 500, "保存回复失败")
+			fail(w, 500, s.lang(r).T("Failed to save the reply", "保存回复失败"))
 			return
 		}
 	case "channel_permission":
@@ -575,7 +576,7 @@ func (s *Server) channelEvent(w http.ResponseWriter, r *http.Request) {
 			Preview     string `json:"input_preview"`
 		}
 		if json.Unmarshal(req.Payload, &p) != nil || !permissionID.MatchString(p.RequestID) || p.ToolName == "" {
-			fail(w, 400, "无效审批请求")
+			fail(w, 400, s.lang(r).T("Invalid approval request", "无效审批请求"))
 			return
 		}
 		// Consume prior progress before registering the new prompt, so a previous
@@ -590,26 +591,26 @@ func (s *Server) channelEvent(w http.ResponseWriter, r *http.Request) {
 		id := store.ID()
 		input, _ := json.Marshal(map[string]string{"description": p.Description, "input_preview": p.Preview})
 		if err := s.store.AddInteraction(store.Interaction{ID: id, SessionID: c.sessionID, Kind: "approval", ToolName: p.ToolName, Input: input}); err != nil {
-			fail(w, 500, "保存审批失败")
+			fail(w, 500, s.lang(r).T("Failed to save the approval", "保存审批失败"))
 			return
 		}
 		s.channelRequests[id] = &channelApproval{c, p.RequestID, p.ToolName, time.Now()}
 	default:
-		fail(w, 400, "不支持的桥接事件")
+		fail(w, 400, s.lang(r).T("Unsupported bridge event", "不支持的桥接事件"))
 		return
 	}
 	respond(w, 200, map[string]bool{"ok": true})
 }
-func (s *Server) channelResolveLocked(w http.ResponseWriter, id string, p *channelApproval, a answer) {
+func (s *Server) channelResolveLocked(w http.ResponseWriter, r *http.Request, id string, p *channelApproval, a answer) {
 	if !s.channelLive(p.connection) || time.Since(p.created) > 30*time.Minute {
 		_ = s.store.Resolve(id, "expired")
 		delete(s.channelRequests, id)
-		fail(w, 409, "原生审批已失效")
+		fail(w, 409, s.lang(r).T("The native approval has expired", "原生审批已失效"))
 		return
 	}
 	c := p.connection
 	if len(c.queue) >= 256 {
-		fail(w, 429, "终端队列已满")
+		fail(w, 429, s.lang(r).T("The terminal queue is full", "终端队列已满"))
 		return
 	}
 	if err := s.store.Resolve(id, "resolved"); err != nil {

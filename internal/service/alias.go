@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"cc-remote/internal/config"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
 )
 
@@ -18,24 +19,29 @@ type aliasOptions struct {
 	dryRun bool
 }
 
-const aliasUsage = `usage: cc-remote alias <install|uninstall|status> [--dir D]
+func aliasUsage() string {
+	return i18n.T(`usage: cc-remote alias <install|uninstall|status> [--dir D]
 
-"ccr [claude args]" runs "cc-remote -- claude [claude args]".
-`
+"ccr" runs "cc-remote ccr": see "ccr --help".
+`, `用法：cc-remote alias <install|uninstall|status> [--dir 目录]
+
+"ccr" 等同于 "cc-remote ccr"：见 "ccr --help"。
+`)
+}
 
 // AliasMain runs "cc-remote alias ...".
 func AliasMain(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
-		fmt.Print(aliasUsage)
+		fmt.Print(aliasUsage())
 		return nil
 	}
 	fs := flag.NewFlagSet("alias "+args[0], flag.ContinueOnError)
 	def, err := defaultAliasDir()
 	if err != nil {
-		def = "unavailable: " + err.Error()
+		def = i18n.T("unavailable: ", "不可用：") + err.Error()
 	}
-	dir := fs.String("dir", "", "directory for the ccr launcher (default "+def+")")
-	dryRun := fs.Bool("dry-run", false, "print what would be done without changing anything")
+	dir := fs.String("dir", "", i18n.F("directory for the ccr launcher (default %s)", "ccr 启动器所在目录（默认 %s）", def))
+	dryRun := fs.Bool("dry-run", false, dryRunHelp())
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -48,7 +54,7 @@ func AliasMain(args []string) error {
 	case "status":
 		return aliasStatus(opts, os.Stdout)
 	}
-	return fmt.Errorf("unknown alias command %q\n\n%s", args[0], aliasUsage)
+	return i18n.Errorf("unknown alias command %q\n\n%s", "未知的 alias 命令 %q\n\n%s", args[0], aliasUsage())
 }
 
 func aliasPath(dir string) (string, error) {
@@ -86,7 +92,7 @@ func aliasTarget(out io.Writer) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	fmt.Fprintf(out, "warning: service is not installed; ccr will point to %s (rebuilding or moving it breaks the alias)\n", exe)
+	fmt.Fprint(out, warning(i18n.F("service is not installed; ccr will point to %s (rebuilding or moving it breaks the alias)", "服务未安装；ccr 将指向 %s（重新构建或移动它会使别名失效）", exe)))
 	return exe, nil, nil
 }
 
@@ -127,7 +133,7 @@ func installAlias(opts aliasOptions, out io.Writer) error {
 	}
 	script := AliasScript(runtime.GOOS, exe, flags)
 	if opts.dryRun {
-		fmt.Fprintf(out, "[dry-run] write %s:\n%s\n", path, script)
+		fmt.Fprint(out, i18n.F("[dry-run] write %s:\n%s\n", "[dry-run] 写入 %s：\n%s\n", path, script))
 	} else {
 		if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return err
@@ -138,7 +144,7 @@ func installAlias(opts aliasOptions, out io.Writer) error {
 		if err = os.Chmod(path, 0755); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Wrote %s\n", path)
+		fmt.Fprint(out, wrote(path))
 	}
 	if err = linkCommand(filepath.Dir(path), exe, opts.dryRun, out); err != nil {
 		return err
@@ -163,18 +169,18 @@ func linkCommand(dir, exe string, dryRun bool, out io.Writer) error {
 		return nil
 	}
 	if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink == 0 {
-		fmt.Fprintf(out, "warning: %s exists and is not a symlink; leaving it unchanged\n", link)
+		fmt.Fprint(out, warning(i18n.F("%s exists and is not a symlink; leaving it unchanged", "%s 已存在且不是符号链接；保持不变", link)))
 		return nil
 	}
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] symlink %s -> %s\n", link, exe)
+		fmt.Fprint(out, i18n.F("[dry-run] symlink %s -> %s\n", "[dry-run] 创建符号链接 %s -> %s\n", link, exe))
 		return nil
 	}
 	_ = os.Remove(link)
 	if err := os.Symlink(exe, link); err != nil {
-		return fmt.Errorf("link %s: %w", link, err)
+		return i18n.Errorf("link %s: %w", "创建链接 %s 失败：%w", link, err)
 	}
-	fmt.Fprintf(out, "Linked %s -> %s\n", link, exe)
+	fmt.Fprint(out, i18n.F("Linked %s -> %s\n", "已链接 %s -> %s\n", link, exe))
 	return nil
 }
 
@@ -188,11 +194,11 @@ func unlinkCommand(dir string, dryRun bool, out io.Writer) {
 		return
 	}
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] remove %s\n", link)
+		fmt.Fprint(out, dryRunRemove(link))
 		return
 	}
 	if err := os.Remove(link); err == nil {
-		fmt.Fprintf(out, "Removed %s\n", link)
+		fmt.Fprint(out, removed(link))
 	}
 }
 
@@ -202,11 +208,11 @@ func uninstallAlias(opts aliasOptions, out io.Writer) error {
 		return err
 	}
 	if opts.dryRun {
-		fmt.Fprintf(out, "[dry-run] remove %s\n", path)
+		fmt.Fprint(out, dryRunRemove(path))
 	} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	} else {
-		fmt.Fprintf(out, "Removed %s\n", path)
+		fmt.Fprint(out, removed(path))
 	}
 	unlinkCommand(filepath.Dir(path), opts.dryRun, out)
 	return removeFromPath(filepath.Dir(path), opts.dryRun, out)
@@ -219,7 +225,7 @@ func aliasStatus(opts aliasOptions, out io.Writer) error {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(out, "ccr: not installed (%s)\n", path)
+		fmt.Fprint(out, i18n.F("ccr: not installed (%s)\n", "ccr\uff1a\u672a\u5b89\u88c5\uff08%s\uff09\n", path))
 	} else {
 		fmt.Fprintf(out, "ccr: %s\n%s", path, strings.TrimLeft(string(b), "\ufeff"))
 	}
@@ -228,10 +234,10 @@ func aliasStatus(opts aliasOptions, out io.Writer) error {
 		if target, err := os.Readlink(link); err == nil {
 			fmt.Fprintf(out, "cc-remote: %s -> %s\n", link, target)
 		} else {
-			fmt.Fprintf(out, "cc-remote: not linked (%s)\n", link)
+			fmt.Fprint(out, i18n.F("cc-remote: not linked (%s)\n", "cc-remote\uff1a\u672a\u94fe\u63a5\uff08%s\uff09\n", link))
 		}
 	}
-	fmt.Fprintf(out, "Directory on PATH (this shell): %s\n", yesNo(PathContains(os.Getenv("PATH"), dir, string(os.PathListSeparator))))
+	fmt.Fprint(out, i18n.F("Directory on PATH (this shell): %s\n", "\u76ee\u5f55\u5728 PATH \u4e2d\uff08\u5f53\u524d shell\uff09\uff1a%s\n", yesNo(PathContains(os.Getenv("PATH"), dir, string(os.PathListSeparator)))))
 	pathStatus(dir, out)
 	return nil
 }

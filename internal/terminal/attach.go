@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"cc-remote/internal/i18n"
+
 	"github.com/coder/websocket"
 	"golang.org/x/term"
 )
@@ -43,12 +45,12 @@ type remoteSession struct {
 // session the host holds.
 func Attach(args []string, defaultDataDir string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
-	host := fs.String("host", "http://127.0.0.1:8787", "cc-remote host URL")
-	dataDir := fs.String("data-dir", defaultDataDir, "cc-remote data directory (access token)")
-	create := fs.Bool("new", false, "start a new terminal session in the current directory")
-	title := fs.String("title", "", "title of a new session (default: directory name)")
+	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
+	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("cc-remote data directory (access token)", "cc-remote 数据目录（访问令牌所在）"))
+	create := fs.Bool("new", false, i18n.T("start a new terminal session in the current directory", "在当前目录新建终端会话"))
+	title := fs.String("title", "", newTitleHelp())
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: cc-remote attach [--new [--title T]] [session id prefix or title]")
+		fmt.Fprintln(fs.Output(), i18n.T("usage: cc-remote attach [--new [--title T]] [session id prefix or title]", "用法：cc-remote attach [--new [--title T]] [会话 ID 前缀或标题]"))
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -70,6 +72,10 @@ func Attach(args []string, defaultDataDir string) error {
 	return api.attach(target)
 }
 
+func newTitleHelp() string {
+	return i18n.T("title of a new session (default: directory name)", "新会话的标题（默认：目录名）")
+}
+
 // CCR is `ccr`: it attaches to this directory's terminal session, creating one
 // when there is none. ensureHost starts a background host when none runs;
 // `ccr --shared ...` runs shared (the former ccr).
@@ -80,26 +86,32 @@ func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host str
 		}
 	}
 	fs := flag.NewFlagSet("ccr", flag.ContinueOnError)
-	host := fs.String("host", "http://127.0.0.1:8787", "cc-remote host URL")
-	dataDir := fs.String("data-dir", defaultDataDir, "cc-remote data directory")
-	create := fs.Bool("new", false, "start a new terminal session in this directory")
-	title := fs.String("title", "", "title of a new session (default: directory name)")
-	model := fs.String("model", "", "model of a new session")
-	effort := fs.String("effort", "", "reasoning effort of a new session")
-	mode := fs.String("permission-mode", "", "permission mode of a new session")
+	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
+	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("cc-remote data directory", "cc-remote 数据目录"))
+	create := fs.Bool("new", false, i18n.T("start a new terminal session in this directory", "在当前目录新建终端会话"))
+	title := fs.String("title", "", newTitleHelp())
+	model := fs.String("model", "", i18n.T("model of a new session", "新会话的模型"))
+	effort := fs.String("effort", "", i18n.T("reasoning effort of a new session", "新会话的推理强度"))
+	mode := fs.String("permission-mode", "", i18n.T("permission mode of a new session", "新会话的权限模式"))
 	fs.Usage = func() {
-		out := fs.Output()
-		fmt.Fprintln(out, "usage: ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]")
-		fmt.Fprintln(out, "       ccr ls                            (recent terminal sessions in every directory; pick one to attach)")
-		fmt.Fprintln(out, "       ccr --shared [claude arguments]   (shared session: Claude Code runs in this terminal)")
-		fmt.Fprintln(out, "\nccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.")
+		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]
+       ccr ls                            (recent terminal sessions in every directory; pick one to attach)
+       ccr --shared [claude arguments]   (shared session: Claude Code runs in this terminal)
+
+ccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.
+`, `用法：ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [会话 ID 前缀或标题]
+      ccr ls                            （所有目录最近的终端会话，选一个接入）
+      ccr --shared [claude 参数]        （共享会话：Claude Code 在当前终端里运行）
+
+ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；Claude Code 继续在宿主上运行。
+`))
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return fmt.Errorf("%w（其它 Claude Code 参数请用 ccr --shared …）", err)
+		return i18n.Errorf("%w (use ccr --shared … for other Claude Code arguments)", "%w（其它 Claude Code 参数请用 ccr --shared …）", err)
 	}
 	if err := ensureHost(*dataDir, *host); err != nil {
 		return err
@@ -131,7 +143,7 @@ func newClient(host, dataDir string) (*client, error) {
 	if token == "" {
 		b, err := os.ReadFile(filepath.Join(dataDir, "access-token"))
 		if err != nil {
-			return nil, fmt.Errorf("读取访问令牌失败（%v）；用 --data-dir 指定宿主的数据目录", err)
+			return nil, i18n.Errorf("cannot read the access token (%v); point --data-dir at the host's data directory", "读取访问令牌失败（%v）；用 --data-dir 指定宿主的数据目录", err)
 		}
 		token = strings.TrimSpace(string(b))
 	}
@@ -157,12 +169,12 @@ func (c *client) here(title string, options map[string]any) (remoteSession, erro
 	}
 	switch len(list) {
 	case 0:
-		fmt.Println("这个目录还没有终端会话，正在新建…")
+		fmt.Println(i18n.T("No terminal session in this directory yet; starting one…", "这个目录还没有终端会话，正在新建…"))
 		return c.create(title, options)
 	case 1:
 		return list[0], nil
 	}
-	fmt.Println("这个目录有多个终端会话：")
+	fmt.Println(i18n.T("This directory has several terminal sessions:", "这个目录有多个终端会话："))
 	return choose(list, true, func() (remoteSession, error) { return c.create(title, options) })
 }
 
@@ -176,10 +188,10 @@ func (c *client) recent(title string, options map[string]any) (remoteSession, er
 		return remoteSession{}, err
 	}
 	if len(list) == 0 {
-		fmt.Println("还没有终端会话，正在当前目录新建…")
+		fmt.Println(i18n.T("No terminal sessions yet; starting one in this directory…", "还没有终端会话，正在当前目录新建…"))
 		return c.create(title, options)
 	}
-	fmt.Println("最近的终端会话：")
+	fmt.Println(i18n.T("Recent terminal sessions:", "最近的终端会话："))
 	return choose(list, true, func() (remoteSession, error) { return c.create(title, options) })
 }
 
@@ -211,7 +223,7 @@ func (c *client) do(method, path string, body any, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return fmt.Errorf("无法连接宿主 %s：%w", c.host, err)
+		return i18n.Errorf("cannot reach the host at %s: %w", "无法连接宿主 %s：%w", c.host, err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -220,7 +232,7 @@ func (c *client) do(method, path string, body any, out any) error {
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
 			return errors.New(e.Error)
 		}
-		return fmt.Errorf("宿主返回 %d", resp.StatusCode)
+		return i18n.Errorf("the host returned %d", "宿主返回 %d", resp.StatusCode)
 	}
 	if out != nil {
 		return json.Unmarshal(data, out)
@@ -271,19 +283,30 @@ func ago(at string) string {
 	}
 	switch d := time.Since(t); {
 	case d < time.Minute:
-		return "刚刚"
+		return i18n.T("just now", "刚刚")
 	case d < time.Hour:
-		return fmt.Sprintf("%d 分钟前", int(d.Minutes()))
+		return i18n.F("%dm ago", "%d 分钟前", int(d.Minutes()))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%d 小时前", int(d.Hours()))
+		return i18n.F("%dh ago", "%d 小时前", int(d.Hours()))
 	default:
-		return fmt.Sprintf("%d 天前", int(d.Hours()/24))
+		return i18n.F("%dd ago", "%d 天前", int(d.Hours()/24))
 	}
 }
 
 func statusText(status string) string {
-	if t, ok := map[string]string{"running": "执行中", "waiting": "等待回答", "idle": "就绪", "completed": "已完成", "interrupted": "已停止", "failed": "失败"}[status]; ok {
-		return t
+	switch status {
+	case "running":
+		return i18n.T("running", "执行中")
+	case "waiting":
+		return i18n.T("waiting for an answer", "等待回答")
+	case "idle":
+		return i18n.T("ready", "就绪")
+	case "completed":
+		return i18n.T("completed", "已完成")
+	case "interrupted":
+		return i18n.T("stopped", "已停止")
+	case "failed":
+		return i18n.T("failed", "失败")
 	}
 	return status
 }
@@ -294,23 +317,23 @@ func choose(list []remoteSession, allowNew bool, create func() (remoteSession, e
 		list = list[:recentLimit]
 	}
 	for i, x := range list {
-		state := "未运行"
+		state := i18n.T("not running", "未运行")
 		if x.Online {
 			state = statusText(x.Status)
 		}
 		fmt.Printf("%2d. %s  [%s · %s]  %s  (%s)\n", i+1, x.Title, state, ago(x.UpdatedAt), x.Cwd, x.ID[:8])
 	}
 	if allowNew {
-		fmt.Println(" 0. 新建终端会话")
+		fmt.Println(i18n.T(" 0. New terminal session", " 0. 新建终端会话"))
 	}
-	fmt.Print("选择会话编号：")
+	fmt.Print(i18n.T("Session number: ", "选择会话编号："))
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	n, err := strconv.Atoi(strings.TrimSpace(line))
 	if err == nil && n == 0 && allowNew {
 		return create()
 	}
 	if err != nil || n < 1 || n > len(list) {
-		return remoteSession{}, errors.New("无效的选择")
+		return remoteSession{}, errors.New(i18n.T("invalid choice", "无效的选择"))
 	}
 	return list[n-1], nil
 }
@@ -331,9 +354,9 @@ func (c *client) pick(query string) (remoteSession, error) {
 	}
 	switch {
 	case len(list) == 0 && query != "":
-		return remoteSession{}, fmt.Errorf("没有匹配 %q 的终端会话", query)
+		return remoteSession{}, i18n.Errorf("no terminal session matches %q", "没有匹配 %q 的终端会话", query)
 	case len(list) == 0:
-		return remoteSession{}, errors.New("还没有终端会话；用 cc-remote attach --new 在当前目录新建一个")
+		return remoteSession{}, errors.New(i18n.T("no terminal sessions yet; start one in this directory with cc-remote attach --new", "还没有终端会话；用 cc-remote attach --new 在当前目录新建一个"))
 	case len(list) == 1:
 		return list[0], nil
 	}
@@ -357,14 +380,14 @@ func (c *client) attach(x remoteSession) error {
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + c.token}},
 	})
 	if err != nil {
-		return fmt.Errorf("无法接入会话：%w", err)
+		return i18n.Errorf("cannot attach to the session: %w", "无法接入会话：%w", err)
 	}
 	conn.SetReadLimit(4 << 20)
 	defer conn.CloseNow()
 
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	if !term.IsTerminal(in) {
-		return errors.New("cc-remote attach 需要在终端里运行")
+		return errors.New(i18n.T("cc-remote attach must run in a terminal", "cc-remote attach 需要在终端里运行"))
 	}
 	restoreOut := enableVT(os.Stdout)
 	defer restoreOut()
@@ -377,7 +400,7 @@ func (c *client) attach(x remoteSession) error {
 		os.Stdout.WriteString(resetModes)
 		_ = term.Restore(in, old)
 		if detached {
-			fmt.Printf("\r\n已断开。会话仍在宿主上运行，在该目录运行 ccr，或 ccr %s 重新接入。\r\n", x.ID[:8])
+			fmt.Print(i18n.F("\r\nDetached. The session keeps running on the host; run ccr in that directory, or ccr %s, to attach again.\r\n", "\r\n已断开。会话仍在宿主上运行，在该目录运行 ccr，或 ccr %s 重新接入。\r\n", x.ID[:8]))
 		}
 	}()
 	os.Stdout.WriteString("\x1b[2J\x1b[H")
@@ -467,9 +490,9 @@ func (c *client) attach(x remoteSession) error {
 	case err := <-screen:
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
 			os.Stdout.WriteString(resetModes)
-			fmt.Print("\r\n会话已结束。\r\n")
+			fmt.Print(i18n.T("\r\nThe session has ended.\r\n", "\r\n会话已结束。\r\n"))
 			return nil
 		}
-		return fmt.Errorf("连接断开：%w", err)
+		return i18n.Errorf("connection lost: %w", "连接断开：%w", err)
 	}
 }

@@ -15,8 +15,12 @@ import (
 	"sync"
 	"time"
 
+	"cc-remote/internal/i18n"
+
 	pty "github.com/aymanbagabas/go-pty"
 )
+
+func errExited() error { return errors.New(i18n.T("Claude Code has exited", "Claude Code 已退出")) }
 
 // Options start a runner.
 type Options struct {
@@ -359,7 +363,7 @@ func (r *Runner) confirmTrust() {
 func (r *Runner) write(b []byte) error {
 	select {
 	case <-r.done:
-		return errors.New("Claude Code 已退出")
+		return errExited()
 	default:
 	}
 	_, err := r.pty.Write(b)
@@ -412,7 +416,7 @@ func (r *Runner) Keys(b []byte) error {
 // Resize sets the terminal size: the most recent front end to resize wins.
 func (r *Runner) Resize(cols, rows int) error {
 	if cols < 20 || rows < 5 || cols > 1000 || rows > 500 {
-		return errors.New("invalid terminal size")
+		return errors.New(i18n.T("invalid terminal size", "终端尺寸无效"))
 	}
 	r.mu.Lock()
 	same := cols == r.cols && rows == r.rows
@@ -450,7 +454,7 @@ func (r *Runner) Paste(text string) error {
 	select {
 	case <-r.ready:
 	case <-r.done:
-		return errors.New("Claude Code 已退出")
+		return errExited()
 	case <-time.After(readyWait):
 	}
 	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); {
@@ -462,7 +466,7 @@ func (r *Runner) Paste(text string) error {
 		}
 		select {
 		case <-r.done:
-			return errors.New("Claude Code 已退出")
+			return errExited()
 		case <-time.After(200 * time.Millisecond):
 		}
 	}

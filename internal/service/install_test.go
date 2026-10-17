@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"cc-remote/internal/i18n"
 )
 
 // isolateInstallRoot points InstallRoot and the default data dir at temp dirs.
@@ -106,6 +108,43 @@ func TestInsecureListenNeedsOptIn(t *testing.T) {
 	}
 	if slices.Contains(HostArgs(*cfg, "systemd"), "--allow-insecure-remote") {
 		t.Fatal("unexpected --allow-insecure-remote")
+	}
+}
+
+func TestApplyLanguage(t *testing.T) {
+	t.Cleanup(func() { i18n.Set(i18n.EN) }) // applyLanguage switches the process language
+	set := map[string]bool{"lang": true}
+	cfg := &Config{Listen: []string{"127.0.0.1:8787"}, LogFile: "host.log"}
+	if args := HostArgs(*cfg, "systemd"); !slices.Contains(args, "--lang") || args[slices.Index(args, "--lang")+1] != "en" {
+		t.Fatalf("auto not resolved to the installing command's language: %v", args)
+	}
+	for _, c := range []struct{ value, want string }{{"zh", "zh"}, {"zh-CN", "zh"}, {"en", "en"}, {"auto", ""}, {"", ""}} {
+		cfg.Language = "en"
+		if c.value == "" {
+			cfg.Language = "zh"
+		}
+		if err := applyLanguage(cfg, set, c.value); err != nil {
+			t.Fatalf("%q: %v", c.value, err)
+		}
+		if cfg.Language != c.want {
+			t.Fatalf("%q stored %q, want %q", c.value, cfg.Language, c.want)
+		}
+		want := c.want
+		if want == "" {
+			want = string(i18n.Current()) // auto: the language this command resolved
+		}
+		args := HostArgs(*cfg, "systemd")
+		i := slices.Index(args, "--lang")
+		if i < 0 || args[i+1] != want {
+			t.Fatalf("%q: host args %v", c.value, args)
+		}
+	}
+	cfg.Language = "zh"
+	if err := applyLanguage(cfg, set, "fr"); err == nil || cfg.Language != "zh" {
+		t.Fatalf("invalid language accepted: %v, stored %q", err, cfg.Language)
+	}
+	if err := applyLanguage(cfg, map[string]bool{}, "en"); err != nil || cfg.Language != "zh" {
+		t.Fatalf("unset --lang changed the setting: %v, %q", err, cfg.Language)
 	}
 }
 

@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"cc-remote/internal/i18n"
 )
 
 // ProcessHooks receive what a long-lived Claude process reports. Callbacks run
@@ -53,7 +54,7 @@ func processArgs(o Options, settings, mcp string) []string {
 // StartProcess launches Claude for o.SessionID; o.Message is ignored.
 func StartProcess(o Options, hooks ProcessHooks) (*Process, error) {
 	if !uuidPattern.MatchString(o.SessionID) {
-		return nil, errors.New("invalid Claude session UUID")
+		return nil, errors.New(i18n.T("invalid Claude session UUID", "无效的 Claude 会话 UUID"))
 	}
 	if o.Executable == "" {
 		o.Executable = "claude"
@@ -94,7 +95,7 @@ func StartProcess(o Options, hooks ProcessHooks) (*Process, error) {
 	cmd.Stderr = &stderr
 	if err = cmd.Start(); err != nil {
 		os.RemoveAll(dir)
-		return nil, fmt.Errorf("start Claude Code: %w", err)
+		return nil, i18n.Errorf("start Claude Code: %w", "启动 Claude Code 失败：%w", err)
 	}
 	p := &Process{cmd: cmd, stdin: stdin, done: make(chan struct{}), tasks: map[string]bool{}}
 	go func() {
@@ -109,10 +110,10 @@ func StartProcess(o Options, hooks ProcessHooks) (*Process, error) {
 		p.mu.Unlock()
 		err := readErr
 		if err == nil && waitErr != nil && !closed {
-			err = fmt.Errorf("Claude Code exited: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+			err = i18n.Errorf("Claude Code exited: %w: %s", "Claude Code 已退出：%w：%s", waitErr, strings.TrimSpace(stderr.String()))
 		}
 		if err == nil && !closed {
-			err = errors.New("Claude Code exited unexpectedly")
+			err = errors.New(i18n.T("Claude Code exited unexpectedly", "Claude Code 意外退出"))
 		}
 		close(p.done)
 		if hooks.Exit != nil {
@@ -195,7 +196,7 @@ func (p *Process) write(v any) error {
 	defer p.writeMu.Unlock()
 	select {
 	case <-p.done:
-		return errors.New("Claude Code is not running")
+		return errors.New(i18n.T("Claude Code is not running", "Claude Code 未在运行"))
 	default:
 	}
 	_, err = p.stdin.Write(append(b, '\n'))

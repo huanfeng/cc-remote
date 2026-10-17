@@ -6,9 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"time"
+
+	"cc-remote/internal/i18n"
 
 	_ "modernc.org/sqlite"
 )
@@ -86,7 +87,7 @@ func (s *Store) ResetContext(id string) error {
 	}
 	n, err := r.RowsAffected()
 	if err == nil && n != 1 {
-		return fmt.Errorf("managed session not found")
+		return errors.New(i18n.T("managed session not found", "找不到托管会话"))
 	}
 	return err
 }
@@ -137,7 +138,11 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		return nil, err
 	}
 	// Process-local execution cannot survive a host restart. Never replay it automatically.
-	_, err = db.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) SELECT id,'error','宿主已重启，上一轮执行中断。请检查工作区后再继续。','null',? FROM sessions WHERE status IN ('running','waiting'); UPDATE sessions SET status='interrupted' WHERE status IN ('running','waiting'); UPDATE interactions SET status='expired' WHERE status='pending';`, now())
+	note := i18n.T("The host restarted and interrupted the last turn. Check the workspace before continuing.", "宿主已重启，上一轮执行中断。请检查工作区后再继续。")
+	_, err = db.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) SELECT id,'error',?,'null',? FROM sessions WHERE status IN ('running','waiting')`, note, now())
+	if err == nil {
+		_, err = db.Exec(`UPDATE sessions SET status='interrupted' WHERE status IN ('running','waiting'); UPDATE interactions SET status='expired' WHERE status='pending';`)
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -408,7 +413,7 @@ func (s *Store) Resolve(id, status string) error {
 	}
 	n, _ := r.RowsAffected()
 	if n != 1 {
-		return fmt.Errorf("request already resolved")
+		return i18n.NewError("request already resolved", "该请求已处理")
 	}
 	return nil
 }

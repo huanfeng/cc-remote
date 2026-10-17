@@ -24,6 +24,7 @@ import (
 	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
 	"cc-remote/internal/hostlock"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
 	"cc-remote/internal/logfile"
 	"cc-remote/internal/server"
@@ -37,7 +38,7 @@ import (
 // version is replaced at build time: go build -ldflags "-X main.version=1.2.3".
 var version = "dev"
 
-const usage = `CC Remote: remote web UI for Claude Code.
+const usageEN = `CC Remote: remote web UI for Claude Code.
 
 usage:
   cc-remote [host flags]                  run the host (web UI and API)
@@ -56,6 +57,27 @@ commands:
   help       show this help
 
 host flags:
+`
+
+const usageZH = `CC Remote：Claude Code 的远程 Web 界面。
+
+用法：
+  cc-remote [宿主参数]                    运行宿主（Web 界面和 API）
+  cc-remote [--data-dir D] -- claude ...  启动与 Web 界面共享的原生 Claude Code
+  ccr [--new] [ls | 会话]                 接入当前目录的终端会话（没有则新建）
+  ccr --shared [claude 参数]              等同于 "cc-remote -- claude [claude 参数]"
+
+命令：
+  service    安装/配置/卸载/启动/停止/重启/查看状态/查看日志（后台服务）
+  alias      安装/卸载/查看 ccr 启动器
+  terminal   启动共享终端会话（"--" 的旧写法）
+  attach, a  把当前终端接入宿主上的终端会话（--new 在此新建一个）
+  ccr        ccr 启动器：见 "ccr --help"
+  update     把 cc-remote 更新到最新版本
+  version    显示版本信息
+  help       显示本帮助
+
+宿主参数：
 `
 
 type stringList []string
@@ -101,7 +123,40 @@ func isCCR(argv0 string) bool {
 	return strings.EqualFold(strings.TrimSuffix(base, filepath.Ext(base)), "ccr")
 }
 
+// cliLanguage is the language of commands run by hand: CC_REMOTE_LANG, else
+// the installed service's setting, else the system language.
+func cliLanguage() i18n.Lang {
+	if l, ok := i18n.Parse(os.Getenv("CC_REMOTE_LANG")); ok && l != i18n.Auto {
+		return l
+	}
+	if cfg, err := service.LoadConfig(""); err == nil && cfg != nil {
+		return i18n.Resolve(cfg.Language)
+	}
+	return i18n.Detect()
+}
+
 func run() error {
+	// Hooks and internal subcommands run often and print nothing for a
+	// person to read: dispatch them before cliLanguage reads service.json.
+	if len(os.Args) > 1 && !isCCR(os.Args[0]) {
+		switch os.Args[1] {
+		case "hook":
+			return claude.RunHook()
+		case "permission-mcp":
+			return claude.RunPermissionMCP()
+		case "channel":
+			return channel.Run()
+		case "channel-session-hook":
+			return channel.SessionHook()
+		case "channel-ask-hook":
+			return channel.AskHook()
+		case "terminal-hook":
+			return terminal.RunHook()
+		case "terminal-status":
+			return terminal.RunStatus()
+		}
+	}
+	i18n.Set(cliLanguage())
 	if isCCR(os.Args[0]) {
 		return runCCR(os.Args[1:])
 	}
@@ -133,30 +188,12 @@ func run() error {
 		if arg == "--" {
 			pos := i + 1
 			if pos+1 >= len(os.Args) {
-				return fmt.Errorf("usage: cc-remote [--data-dir directory] -- claude [arguments]")
+				return i18n.Errorf("usage: cc-remote [--data-dir directory] -- claude [arguments]", "用法：cc-remote [--data-dir 目录] -- claude [参数]")
 			}
 			args := append([]string{}, os.Args[1:pos]...)
 			args = append(args, "--claude", os.Args[pos+1], "--")
 			args = append(args, os.Args[pos+2:]...)
 			return channel.Launch(args)
-		}
-	}
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "hook":
-			return claude.RunHook()
-		case "permission-mcp":
-			return claude.RunPermissionMCP()
-		case "channel":
-			return channel.Run()
-		case "channel-session-hook":
-			return channel.SessionHook()
-		case "channel-ask-hook":
-			return channel.AskHook()
-		case "terminal-hook":
-			return terminal.RunHook()
-		case "terminal-status":
-			return terminal.RunStatus()
 		}
 	}
 	return runHost(os.Args[1:])
@@ -166,20 +203,22 @@ type hostOptions struct {
 	listen                                                 stringList
 	dataDir, claudeBin, configDir, logFile, serviceManager *string
 	allowInsecureRemote                                    *bool
+	lang                                                   *string
 }
 
 func hostFlags() (*flag.FlagSet, *hostOptions) {
 	fs := flag.NewFlagSet("cc-remote", flag.ExitOnError)
 	o := &hostOptions{}
-	fs.Var(&o.listen, "listen", "HTTP listen address, repeatable or comma separated (default 127.0.0.1:8787; lan:PORT = all private IPv4 addresses, all:PORT = 0.0.0.0)")
-	o.dataDir = fs.String("data-dir", config.DefaultDataDir(), "SQLite and access-token directory (or CC_REMOTE_DATA_DIR)")
-	o.claudeBin = fs.String("claude", "claude", "Claude Code executable path")
-	o.configDir = fs.String("claude-config-dir", "", "Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)")
-	o.logFile = fs.String("log-file", "", "also write logs to this file (rotated at 10 MiB, one backup)")
-	o.allowInsecureRemote = fs.Bool("allow-insecure-remote", false, "allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)")
-	o.serviceManager = fs.String("service-manager", "", "internal: set by the background service (schtasks, systemd, launchd)")
+	fs.Var(&o.listen, "listen", i18n.T("HTTP listen address, repeatable or comma separated (default 127.0.0.1:8787; lan:PORT = all private IPv4 addresses, all:PORT = 0.0.0.0)", "HTTP 监听地址，可重复或用逗号分隔（默认 127.0.0.1:8787；lan:PORT = 所有私有 IPv4 地址，all:PORT = 0.0.0.0）"))
+	o.dataDir = fs.String("data-dir", config.DefaultDataDir(), i18n.T("SQLite and access-token directory (or CC_REMOTE_DATA_DIR)", "SQLite 数据库和访问令牌所在目录（或 CC_REMOTE_DATA_DIR）"))
+	o.claudeBin = fs.String("claude", "claude", i18n.T("Claude Code executable path", "Claude Code 可执行文件路径"))
+	o.configDir = fs.String("claude-config-dir", "", i18n.T("Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)", "Claude 配置目录（默认取 CLAUDE_CONFIG_DIR 或 ~/.claude）"))
+	o.logFile = fs.String("log-file", "", i18n.T("also write logs to this file (rotated at 10 MiB, one backup)", "同时把日志写入此文件（满 10 MiB 轮转，保留一份备份）"))
+	o.allowInsecureRemote = fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)", "允许 all:/0.0.0.0/:: 监听地址（在所有网卡上提供明文 HTTP）"))
+	o.lang = fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language), zh or en (or CC_REMOTE_LANG)", "提示信息和 Web 界面的语言：auto（跟随系统）、zh 或 en（或 CC_REMOTE_LANG）"))
+	o.serviceManager = fs.String("service-manager", "", i18n.T("internal: set by the background service (schtasks, systemd, launchd)", "内部使用：由后台服务设置（schtasks、systemd、launchd）"))
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), usage)
+		fmt.Fprint(fs.Output(), i18n.T(usageEN, usageZH))
 		fs.PrintDefaults()
 	}
 	return fs, o
@@ -207,13 +246,44 @@ func warnExposure(bound []string) {
 			continue
 		}
 		log.Printf("WARNING: %s is reachable from other machines over plain HTTP. Anyone with the access token can run code as this user; use only on a trusted LAN or behind HTTPS / a tunnel.", addr)
-		log.Printf("警告：%s 可被其它机器以明文 HTTP 访问。持有访问令牌即可以当前用户身份执行代码；仅在可信局域网使用，或置于 HTTPS 反代 / 隧道之后。", addr)
 	}
 }
 
+// langArg finds --lang before flags are parsed, so the help text and parse
+// errors already use it.
+func langArg(argv []string) string {
+	for i, arg := range argv {
+		if arg == "--" {
+			break
+		}
+		name, value, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if name != "lang" || !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if inline {
+			return value
+		}
+		if i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
+}
+
 func runHost(argv []string) error {
+	// Without --lang the host speaks like the other commands (run set it).
+	if l, ok := i18n.Parse(langArg(argv)); ok && l != i18n.Auto {
+		i18n.Set(l)
+	}
 	fs, opts := hostFlags()
 	_ = fs.Parse(argv)
+	if *opts.lang != "" {
+		l, ok := i18n.Parse(*opts.lang)
+		if !ok {
+			return i18n.Errorf("--lang must be auto, zh or en (got %q)", "--lang 只能是 auto、zh 或 en（收到 %q）", *opts.lang)
+		}
+		i18n.Set(i18n.Resolve(string(l)))
+	}
 	if *opts.logFile != "" {
 		path, err := filepath.Abs(*opts.logFile)
 		if err != nil {
@@ -254,7 +324,7 @@ func runHost(argv []string) error {
 		specs = []string{"127.0.0.1:8787"}
 	}
 	if bad := listen.Insecure(specs); len(bad) > 0 && !*opts.allowInsecureRemote {
-		return fmt.Errorf("--listen %s binds every interface over plain HTTP; use lan:PORT or a specific address, or pass --allow-insecure-remote if you really mean it", strings.Join(bad, ","))
+		return i18n.Errorf("--listen %s binds every interface over plain HTTP; use lan:PORT or a specific address, or pass --allow-insecure-remote if you really mean it", "--listen %s 会在所有网卡上提供明文 HTTP；请改用 lan:PORT 或具体地址，确有需要时加 --allow-insecure-remote", strings.Join(bad, ","))
 	}
 	addrs, added, err := listen.Resolve(specs, nil)
 	if err != nil {
@@ -297,7 +367,7 @@ func runHost(argv []string) error {
 		log.Printf("Access token file: %s", tokenFile)
 	}
 	if len(token) < 16 {
-		return fmt.Errorf("CC_REMOTE_TOKEN must be at least 16 characters")
+		return i18n.Errorf("CC_REMOTE_TOKEN must be at least 16 characters", "CC_REMOTE_TOKEN 至少需要 16 个字符")
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -343,7 +413,7 @@ func runHost(argv []string) error {
 	for _, addr := range addrs {
 		l, e := net.Listen("tcp", addr)
 		if e != nil {
-			e = fmt.Errorf("listen on %s: %w", addr, e)
+			e = i18n.Errorf("listen on %s: %w", "监听 %s 失败：%w", addr, e)
 			if addrInUse(e) {
 				return conflict(e)
 			}
@@ -383,7 +453,11 @@ func runHost(argv []string) error {
 		prefix = "& "
 		quote = func(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
 	}
-	terminalCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData) + " --claude-config-dir " + quote(configDir) + " -- " + quote(claudeBin)
+	terminalCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData)
+	if configEnv != "" {
+		terminalCommand += " --claude-config-dir " + quote(configEnv)
+	}
+	terminalCommand += " -- " + quote(claudeBin)
 	attachCommand := prefix + quote(hostExe) + " attach --host " + quote(channelURL) + " --data-dir " + quote(absData)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -394,7 +468,7 @@ func runHost(argv []string) error {
 	if *opts.serviceManager != "" {
 		restart = func() { restartRequested.Store(true); stop() }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", TerminalCommand: terminalCommand, AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
 	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errs := make(chan error, len(listeners)+1)

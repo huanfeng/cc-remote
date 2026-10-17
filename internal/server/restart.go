@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"cc-remote/internal/i18n"
 )
 
 // restartPoll is how often a pending restart checks whether the host is idle.
@@ -15,16 +17,17 @@ var restartPoll = 3 * time.Second
 
 // localAdmin allows a request only from this machine, directly: a leaked
 // token used remotely (or through a local reverse proxy) cannot stop the host.
-func localAdmin(w http.ResponseWriter, r *http.Request, action string) bool {
+// action names what is refused, in the language l.
+func localAdmin(w http.ResponseWriter, r *http.Request, l i18n.Lang, action string) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	ip := net.ParseIP(host)
 	if err != nil || ip == nil || !ip.IsLoopback() {
-		fail(w, 403, "仅允许本机"+action)
+		fail(w, 403, l.F("Only this machine may %s", "仅允许本机%s", action))
 		return false
 	}
 	for name := range r.Header {
 		if slices.Contains(proxyHeaders, name) || strings.HasPrefix(name, "X-Forwarded-") {
-			fail(w, 403, "仅允许本机直接"+action+"，不接受经反向代理转发的请求")
+			fail(w, 403, l.F("Only this machine may %s directly; requests relayed by a reverse proxy are not accepted", "仅允许本机直接%s，不接受经反向代理转发的请求", action))
 			return false
 		}
 	}
@@ -36,7 +39,7 @@ func localAdmin(w http.ResponseWriter, r *http.Request, action string) bool {
 func (s *Server) busySessions() []string {
 	list, err := s.store.List()
 	if err != nil {
-		return []string{"（无法读取会话）"}
+		return []string{i18n.T("(could not read sessions)", "（无法读取会话）")}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,11 +66,11 @@ func (s *Server) pendingRestart() bool {
 // with a restart code, and the service manager starts it again (running a
 // newly installed binary). With "idle" it first waits until no session is busy.
 func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
-	if !localAdmin(w, r, "重启宿主") {
+	if l := s.lang(r); !localAdmin(w, r, l, l.T("restart the host", "重启宿主")) {
 		return
 	}
 	if s.cfg.Restart == nil {
-		fail(w, 501, "当前宿主不是作为服务运行，无法自动重启")
+		fail(w, 501, s.lang(r).T("This host is not running as a service and cannot restart itself", "当前宿主不是作为服务运行，无法自动重启"))
 		return
 	}
 	var req struct {

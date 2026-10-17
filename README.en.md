@@ -60,7 +60,9 @@ To pass options (for example, to allow LAN access):
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh -s -- --listen lan:8787
 ```
 
-Other options: `-Version` / `--version`, `-NoService` / `--no-service`, `-NoAlias` / `--no-alias`, `-DryRun` / `--dry-run`. See [docs/release.md](docs/release.md) (Chinese).
+Other options: `-Version` / `--version`, `-Lang` / `--lang`, `-NoService` / `--no-service`, `-NoAlias` / `--no-alias`, `-DryRun` / `--dry-run`. See [docs/release.md](docs/release.md) (Chinese).
+
+Language: command output and the web UI follow the system language (English or Chinese) by default. Choose one at install time with `-Lang en` / `--lang zh` (or the `CC_REMOTE_LANG` environment variable), and change it later with `cc-remote service config --lang zh|en|auto`; the web UI can also pick its own language per browser in its settings. See [docs/configuration.md](docs/configuration.md) (Chinese).
 
 ### 2. Open the web UI and log in
 

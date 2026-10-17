@@ -83,6 +83,7 @@ $s = gh api repos/huanfeng/cc-remote/contents/scripts/install.ps1 -H "Accept: ap
 | --- | --- |
 | `-Version v0.2.0` | 指定版本，默认最新正式版 |
 | `-Listen a,b` | 传给 `service install --listen`，可重复或逗号分隔 |
+| `-Lang zh` | 界面语言 `auto` / `zh` / `en`，传给 `service install --lang`；默认取 `$env:CC_REMOTE_LANG`，都未设置时沿用已安装的设置 |
 | `-NoService` | 不装服务，只把 exe 复制到 `-InstallDir`（默认 `%LOCALAPPDATA%\cc-remote\bin`） |
 | `-NoAlias` / `-Alias:$false` | 不创建 `ccr` 别名（默认创建） |
 | `-DryRun` | 只解析版本和附件并打印计划，不下载不安装 |
@@ -107,7 +108,7 @@ curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.
   https://api.github.com/repos/huanfeng/cc-remote/contents/scripts/install.sh | sh -s -- --listen lan:8787
 ```
 
-参数：`--version vX.Y.Z`、`--listen ADDR`（可重复/逗号分隔）、`--no-service`、`--dir DIR`（`--no-service` 的目标，默认 `~/.local/bin`）、`--no-alias`、`--dry-run`。需要 `curl`（或 `wget`）、`tar`、`sha256sum`/`shasum`；使用令牌下载时必须有 `curl`（附件下载会重定向到存储主机，只有 curl 分支能保证令牌不随重定向发出）。
+参数：`--version vX.Y.Z`、`--listen ADDR`（可重复/逗号分隔）、`--lang auto|zh|en`（默认取 `CC_REMOTE_LANG`，都未设置时沿用已安装的设置）、`--no-service`、`--dir DIR`（`--no-service` 的目标，默认 `~/.local/bin`）、`--no-alias`、`--dry-run`。需要 `curl`（或 `wget`）、`tar`、`sha256sum`/`shasum`；使用令牌下载时必须有 `curl`（附件下载会重定向到存储主机，只有 curl 分支能保证令牌不随重定向发出）。
 
 不传 `--listen` 重新运行即为更新：沿用已安装服务的数据目录、监听地址和 Claude 设置。`--listen` 绑定所有网卡（`all:`/`0.0.0.0`）会被拒绝，需要时请直接运行 `cc-remote service install --listen all:8787 --allow-insecure-remote`。
 

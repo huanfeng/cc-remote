@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 const managerName = "launchd"
@@ -30,7 +32,7 @@ func renderPlist(cfg *Config) string {
 func register(cfg *Config, dryRun bool, out io.Writer) error {
 	path, plist := plistPath(), renderPlist(cfg)
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] write %s:\n%s[dry-run] launchctl bootout %s/%s; launchctl bootstrap %s %s\n", path, plist, domain(), LaunchdLabel, domain(), path)
+		fmt.Fprint(out, i18n.F("[dry-run] write %s:\n%s[dry-run] launchctl bootout %s/%s; launchctl bootstrap %s %s\n", "[dry-run] 写入 %s：\n%s[dry-run] launchctl bootout %s/%s；launchctl bootstrap %s %s\n", path, plist, domain(), LaunchdLabel, domain(), path))
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -44,21 +46,21 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	if _, err := runQuiet("launchctl", "bootstrap", domain(), path); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Registered LaunchAgent %s\n", path)
+	fmt.Fprint(out, i18n.F("Registered LaunchAgent %s\n", "已注册 LaunchAgent %s\n", path))
 	return nil
 }
 
 func unregister(dryRun bool, out io.Writer) error {
 	path := plistPath()
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] launchctl bootout %s/%s; remove %s\n", domain(), LaunchdLabel, path)
+		fmt.Fprint(out, i18n.F("[dry-run] launchctl bootout %s/%s; remove %s\n", "[dry-run] launchctl bootout %s/%s；删除 %s\n", domain(), LaunchdLabel, path))
 		return nil
 	}
 	_, _ = runQuiet("launchctl", "bootout", domain()+"/"+LaunchdLabel)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	fmt.Fprintf(out, "Removed LaunchAgent %s\n", path)
+	fmt.Fprint(out, i18n.F("Removed LaunchAgent %s\n", "已删除 LaunchAgent %s\n", path))
 	return nil
 }
 

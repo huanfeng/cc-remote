@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from './i18n';
 
 export const SIDEBAR_DEFAULT = 248, SIDEBAR_MIN = 200, SIDEBAR_MAX = 480;
 const STORAGE_KEY = 'cc-sidebar-width';
@@ -34,7 +35,7 @@ export function SidebarResizer({ width, max, onChange }: { width: number; max: n
     setDragging(false); document.body.classList.remove('resizing-sidebar');
   };
   useEffect(() => end, []);
-  return <div className={`sidebar-resizer${dragging ? ' dragging' : ''}`} role="separator" aria-orientation="vertical" aria-label="调整会话列表宽度（双击恢复默认）" aria-valuenow={width} aria-valuemin={SIDEBAR_MIN} aria-valuemax={max} tabIndex={0} title="拖动调整宽度，双击恢复默认"
+  return <div className={`sidebar-resizer${dragging ? ' dragging' : ''}`} role="separator" aria-orientation="vertical" aria-label={t('Resize session list (double-click to reset)', '调整会话列表宽度（双击恢复默认）')} aria-valuenow={width} aria-valuemin={SIDEBAR_MIN} aria-valuemax={max} tabIndex={0} title={t('Drag to resize, double-click to reset', '拖动调整宽度，双击恢复默认')}
     onPointerDown={event => {
       if (event.button !== 0) return;
       event.preventDefault();

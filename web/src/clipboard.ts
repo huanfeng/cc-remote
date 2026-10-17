@@ -1,3 +1,5 @@
+import { t } from './i18n.ts'; // with extension: node tests import this file directly
+
 // The legacy path supports remote HTTP origins without the Clipboard API.
 // Some browsers block both paths; the caller must offer manual selection.
 export async function copyText(text: string): Promise<void> {
@@ -20,7 +22,7 @@ export async function copyText(text: string): Promise<void> {
     input.focus({ preventScroll: true });
     input.select();
     input.setSelectionRange(0, text.length);
-    if (!document.execCommand('copy')) throw new Error('自动复制不可用');
+    if (!document.execCommand('copy')) throw new Error(t('Automatic copy is unavailable', '自动复制不可用'));
   } finally {
     input.remove();
     if (focused instanceof HTMLElement && focused.isConnected) focused.focus({ preventScroll: true });

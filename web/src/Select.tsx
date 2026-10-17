@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckIcon, ChevronDownIcon } from './icons';
+import { t } from './i18n';
 
 export type SelectTone = 'warn' | 'danger';
 export type SelectOption = { value: string; label: string; description?: string; tag?: string; tone?: SelectTone };
@@ -9,7 +10,7 @@ const GAP = 4, MARGIN = 8, MAX_HEIGHT = 300;
 const HIDDEN: CSSProperties = { position: 'fixed', top: 0, left: 0, visibility: 'hidden' };
 
 /** Select-only combobox: focus stays on the trigger, the listbox is portaled to body so modal overflow never clips it. */
-export function Select({ value, options, onChange, label, placeholder = '请选择', className = '', title, disabled }: { value: string; options: SelectOption[]; onChange: (value: string) => void; label: string; placeholder?: string; className?: string; title?: string; disabled?: boolean }) {
+export function Select({ value, options, onChange, label, placeholder = t('Select…', '请选择'), className = '', title, disabled }: { value: string; options: SelectOption[]; onChange: (value: string) => void; label: string; placeholder?: string; className?: string; title?: string; disabled?: boolean }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLUListElement>(null);

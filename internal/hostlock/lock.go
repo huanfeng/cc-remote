@@ -1,9 +1,10 @@
 package hostlock
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
+
+	"cc-remote/internal/i18n"
 )
 
 // Acquire holds an OS-owned lock for the lifetime of a host process. A stale
@@ -15,7 +16,7 @@ func Acquire(dir string) (func(), error) {
 	}
 	if err = lock(f); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("此数据目录已被另一个宿主使用：%w", err)
+		return nil, i18n.Errorf("this data directory is in use by another host: %w", "此数据目录已被另一个宿主使用：%w", err)
 	}
 	return func() { unlock(f); f.Close() }, nil
 }

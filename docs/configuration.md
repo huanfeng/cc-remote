@@ -12,6 +12,7 @@
 | `--claude-config-dir` | `CLAUDE_CONFIG_DIR` 或 `~/.claude` | 原生历史发现和实际执行使用的 Claude 配置目录 |
 | `--log-file` | 空（仅 stderr） | 同时写入日志文件，10 MiB 轮转并保留一个 `.1` 备份；Go 运行时崩溃信息也写入该文件 |
 | `--allow-insecure-remote` | 关 | 允许 `all:PORT` / `0.0.0.0` / `::` 这类绑定所有网卡的地址 |
+| `--lang` | `auto` | 提示信息和 Web 界面的默认语言：`auto`（跟随系统）、`zh` 或 `en`，见[界面语言](#界面语言) |
 
 其它子命令：`service`、`alias`、`update`、`version`、`terminal`（旧形式），`cc-remote help` 和 `cc-remote service --help` 查看用法。
 
@@ -34,7 +35,7 @@
 | `cc-remote.sqlite`（及 `-wal`/`-shm`） | 会话、消息事件、审批记录 |
 | `access-token` | 访问令牌（首次启动生成，权限 0600） |
 | `preferences.json` | CC Remote 默认的模型、推理强度、权限模式 |
-| `service.json` | 服务配置（监听地址、Claude 路径、服务环境变量等） |
+| `service.json` | 服务配置（监听地址、Claude 路径、界面语言 `language`、服务环境变量等） |
 | `uploads/<会话 ID>/` | 上传的附件 |
 | `host.log` | 服务模式日志（10 MiB 轮转） |
 
@@ -47,6 +48,7 @@
 | `CC_REMOTE_DATA_DIR` | 默认数据目录 |
 | `CC_REMOTE_TOKEN` | 指定访问令牌（至少 16 个字符），代替 `access-token` 文件 |
 | `CLAUDE_CONFIG_DIR` | Claude 配置目录（同 Claude Code 本身） |
+| `CC_REMOTE_LANG` | 界面语言 `zh` / `en`（`auto` 表示跟随系统），优先于 `service.json` 的设置；安装脚本把它作为 `--lang` 的默认值 |
 | `CC_REMOTE_REPO` | 安装脚本和 `cc-remote update` 使用的仓库，默认 `huanfeng/cc-remote` |
 | `CC_REMOTE_API_URL` | 安装脚本使用的 GitHub API 地址，默认 `https://api.github.com` |
 | `GITHUB_TOKEN` / `GH_TOKEN` | 安装 / 更新时使用的 GitHub 令牌（可选） |
@@ -71,7 +73,23 @@ cc-remote --listen 127.0.0.1:8787,lan:8787
 
 - 重复地址自动去重；已有同端口的 `0.0.0.0` 时，其它同端口地址跳过。
 - 回环地址始终可达：解析结果里既没有回环地址也没有 `0.0.0.0`/`::` 时，自动追加 `127.0.0.1:<第一个地址的端口>` 并写日志。`service` 子命令、`ccr` 等本机工具只连回环地址，访问令牌不会发往其它主机。
-- 监听非回环地址时启动日志会打印中英文安全警告，参见 [security.md](security.md)。
+- 监听非回环地址时启动日志会打印安全警告（宿主日志统一为英文），`service install/config/status` 也会按界面语言提示，参见 [security.md](security.md)。
+
+## 界面语言
+
+命令行输出（`cc-remote`、`ccr`、`service`、`update` 等）和 Web 界面的默认语言支持简体中文和英文：
+
+- 宿主：`--lang auto|zh|en`。`auto`（默认）跟随系统语言：Windows 取用户界面语言，Linux / macOS 依次取 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`；中文环境为中文，其它为英文。
+- 后台服务：`service install --lang zh` 或 `service config --lang en` 保存到 `service.json` 的 `language` 字段（`auto` 清除该字段），服务启动宿主时以 `--lang` 传入。重装 / `update` 未传 `--lang` 时沿用原设置。`auto` 在安装、`service config`、`update` 时按当前终端的语言确定（launchd / systemd 启动的宿主拿不到你的 `LANG`），之后改了系统语言，再执行一次 `service config --lang auto` 即可。
+- 手动运行的命令和手动启动的宿主（未传 `--lang`）：依次取环境变量 `CC_REMOTE_LANG`、已安装服务的 `language`、系统语言。
+- Web 界面：默认使用宿主的语言，每个浏览器可以在网页设置中单独选择语言。
+- 宿主日志（`host.log`）、Claude Code 看到的钩子 / MCP 文本不翻译，保持英文。
+
+```sh
+cc-remote service config --lang zh      # 改为中文并重启服务
+cc-remote service config --lang auto    # 恢复跟随系统
+CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
+```
 
 ## 后台服务
 
@@ -96,8 +114,8 @@ cc-remote service stop | start | restart
 cc-remote service uninstall                                 # 保留数据目录；--purge-binary 同时删除副本
 ```
 
-- `install` 参数：`--listen`（可重复）、`--data-dir`、`--claude`（安装时解析为绝对路径）、`--claude-config-dir`、`--allow-insecure-remote`、`--env` / `--capture-env` / `--no-capture-env`、`--no-start`、`--alias`、`--dry-run`（只打印将执行的操作、任务 XML / unit / plist；环境变量值打码）。
-- 重复安装（包括 `update` 和安装脚本）未传 `--data-dir` 时，沿用安装目录中 `service.json` 副本记录的数据目录、监听地址、Claude 路径、Claude 配置目录和服务环境变量；显式传入的参数覆盖原值。
+- `install` 参数：`--listen`（可重复）、`--data-dir`、`--claude`（安装时解析为绝对路径）、`--claude-config-dir`、`--allow-insecure-remote`、`--lang`、`--env` / `--capture-env` / `--no-capture-env`、`--no-start`、`--alias`、`--dry-run`（只打印将执行的操作、任务 XML / unit / plist；环境变量值打码）。
+- 重复安装（包括 `update` 和安装脚本）未传 `--data-dir` 时，沿用安装目录中 `service.json` 副本记录的数据目录、监听地址、Claude 路径、Claude 配置目录、界面语言和服务环境变量；显式传入的参数覆盖原值。
 - 配置保存在 `<数据目录>/service.json`，安装目录保留一份副本，`config`/`start`/`stop`/`status`/`logs`/`uninstall` 据此找到非默认数据目录。
 - `stop` 先请求宿主优雅退出（不会被服务管理器重新拉起），15 秒未退出再强制结束。宿主异常退出时自动重启。
 - 数据目录锁或端口被其它进程（通常是另一个 cc-remote）占用时，宿主以退出码 75 退出；Windows 监督进程连续 3 次遇到后停止重试并在 `host.log` 中说明原因。

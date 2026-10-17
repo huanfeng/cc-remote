@@ -15,6 +15,7 @@ import (
 	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
 	"cc-remote/internal/hostlock"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/prefs"
 	"cc-remote/internal/store"
 )
@@ -23,11 +24,11 @@ var launchUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 
 func Launch(args []string) error {
 	fs := flag.NewFlagSet("terminal", flag.ContinueOnError)
-	host := fs.String("host", "http://127.0.0.1:8787", "cc-remote host URL")
-	dataDir := fs.String("data-dir", config.DefaultDataDir(), "cc-remote data directory (or CC_REMOTE_DATA_DIR)")
-	claudeBin := fs.String("claude", "claude", "Claude Code executable path")
-	configDir := fs.String("claude-config-dir", "", "Claude config directory")
-	resume := fs.String("resume", "", "Claude session UUID to resume")
+	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
+	dataDir := fs.String("data-dir", config.DefaultDataDir(), i18n.T("cc-remote data directory (or CC_REMOTE_DATA_DIR)", "cc-remote 数据目录（或 CC_REMOTE_DATA_DIR）"))
+	claudeBin := fs.String("claude", "claude", i18n.T("Claude Code executable path", "Claude Code 可执行文件路径"))
+	configDir := fs.String("claude-config-dir", "", i18n.T("Claude config directory", "Claude 配置目录"))
+	resume := fs.String("resume", "", i18n.T("Claude session UUID to resume", "要恢复的 Claude 会话 UUID"))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -45,7 +46,7 @@ func Launch(args []string) error {
 	// Like managed runs, a corrupt preferences file is reported and ignored.
 	p, _, err := prefs.Load(absData)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "警告：无法读取 CC Remote 默认设置，本次不应用：%v\n", err)
+		fmt.Fprint(os.Stderr, i18n.F("warning: cannot read the CC Remote defaults; not applying them this time: %v\n", "警告：无法读取 CC Remote 默认设置，本次不应用：%v\n", err))
 		p = prefs.Preferences{}
 	}
 	if warning := inheritedDangerWarning(nativeArgs, p); warning != "" {
@@ -57,7 +58,7 @@ func Launch(args []string) error {
 	}
 	token, err := tokenFrom(absData, "")
 	if err != nil {
-		return fmt.Errorf("read access token: %w", err)
+		return i18n.Errorf("read access token: %w", "读取访问令牌失败：%w", err)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -69,7 +70,7 @@ func Launch(args []string) error {
 	}
 	release, err := hostlock.Acquire(lockDir)
 	if err != nil {
-		return fmt.Errorf("this shared session already has a terminal launcher: %w", err)
+		return i18n.Errorf("this shared session already has a terminal launcher: %w", "这个共享会话已经有一个终端启动器：%w", err)
 	}
 	defer release()
 	exe, err := os.Executable()
@@ -220,27 +221,27 @@ func prepareNativeArgs(args []string, resume string) ([]string, string, error) {
 		name, value, equals := strings.Cut(args[i], "=")
 		switch name {
 		case "-p", "--print", "--continue", "-c", "--fork-session", "--remote-control", "--settings", "--mcp-config", "--dangerously-load-development-channels", "--channels":
-			return nil, "", fmt.Errorf("%s cannot be combined with shared terminal mode", name)
+			return nil, "", i18n.Errorf("%s cannot be combined with shared terminal mode", "%s 不能与共享终端模式同时使用", name)
 		case "--resume", "-r", "--session-id":
 			if hasSession || id != "" {
-				return nil, "", fmt.Errorf("specify only one Claude session UUID")
+				return nil, "", i18n.Errorf("specify only one Claude session UUID", "只能指定一个 Claude 会话 UUID")
 			}
 			if !equals {
 				i++
 				if i >= len(args) {
-					return nil, "", fmt.Errorf("%s requires a session UUID", name)
+					return nil, "", i18n.Errorf("%s requires a session UUID", "%s 需要一个会话 UUID", name)
 				}
 				value = args[i]
 			}
 			id = strings.ToLower(strings.TrimSpace(value))
 			if !launchUUID.MatchString(id) {
-				return nil, "", fmt.Errorf("%s requires an explicit session UUID", name)
+				return nil, "", i18n.Errorf("%s requires an explicit session UUID", "%s 需要明确的会话 UUID", name)
 			}
 			hasSession = true
 		}
 	}
 	if id != "" && !launchUUID.MatchString(id) {
-		return nil, "", fmt.Errorf("invalid Claude session UUID")
+		return nil, "", i18n.Errorf("invalid Claude session UUID", "无效的 Claude 会话 UUID")
 	}
 	if !hasSession {
 		if id == "" {
@@ -287,5 +288,5 @@ func inheritedDangerWarning(args []string, p prefs.Preferences) string {
 	if !prefs.Dangerous(p.PermissionMode) || hasFlag(args, permissionFlags...) {
 		return ""
 	}
-	return fmt.Sprintf("警告：CC Remote 默认权限模式为 %s（来自网页设置），本终端会话将跳过工具审批；传 --permission-mode default 可覆盖。", p.PermissionMode)
+	return i18n.F("WARNING: the CC Remote default permission mode is %s (from the web settings), so this terminal session skips tool approvals; pass --permission-mode default to override.", "警告：CC Remote 默认权限模式为 %s（来自网页设置），本终端会话将跳过工具审批；传 --permission-mode default 可覆盖。", p.PermissionMode)
 }

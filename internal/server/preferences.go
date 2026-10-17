@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/prefs"
 	"cc-remote/internal/store"
 )
@@ -16,16 +17,18 @@ type preferencesBody struct {
 	ConfirmDangerous bool   `json:"confirmDangerous,omitempty"`
 }
 
-const channelOverrideMessage = "共享终端会话由运行中的终端进程持有，网页无法实时切换模型、推理强度或权限模式；请在终端执行 /model、/effort，或按 Shift+Tab 切换权限模式"
+func channelOverrideMessage(l i18n.Lang) string {
+	return l.T("A shared terminal session is held by its running terminal process, so the web cannot switch the model, reasoning effort or permission mode live; run /model or /effort in the terminal, or press Shift+Tab to switch the permission mode", "共享终端会话由运行中的终端进程持有，网页无法实时切换模型、推理强度或权限模式；请在终端执行 /model、/effort，或按 Shift+Tab 切换权限模式")
+}
 
 // Called under s.configMu.
-func (s *Server) savePreferences(next prefs.Preferences, revision string, confirm bool) (preferencesBody, error) {
+func (s *Server) savePreferences(l i18n.Lang, next prefs.Preferences, revision string, confirm bool) (preferencesBody, error) {
 	old, _, err := prefs.Load(s.cfg.DataDir)
 	if err != nil {
 		return preferencesBody{}, err
 	}
 	if next.PermissionMode != old.PermissionMode && prefs.Dangerous(next.PermissionMode) && !confirm {
-		return preferencesBody{}, errConfirmDangerous
+		return preferencesBody{}, errConfirmDangerous(l)
 	}
 	saved, rev, err := prefs.Save(s.cfg.DataDir, next, revision)
 	return preferencesBody{Preferences: saved, Revision: rev}, err
@@ -37,7 +40,7 @@ func (s *Server) preferences(w http.ResponseWriter, r *http.Request) {
 		p, rev, err := prefs.Load(s.cfg.DataDir)
 		s.configMu.Unlock()
 		if err != nil {
-			fail(w, 500, err.Error())
+			fail(w, 500, i18n.Text(s.lang(r), err))
 			return
 		}
 		respond(w, 200, preferencesBody{Preferences: p, Revision: rev})
@@ -48,14 +51,14 @@ func (s *Server) preferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.configMu.Lock()
-	result, err := s.savePreferences(req.Preferences, req.Revision, req.ConfirmDangerous)
+	result, err := s.savePreferences(s.lang(r), req.Preferences, req.Revision, req.ConfirmDangerous)
 	s.configMu.Unlock()
 	if err != nil {
 		status := 400
 		if errors.Is(err, prefs.ErrConflict) {
 			status = 409
 		}
-		fail(w, status, err.Error())
+		fail(w, status, i18n.Text(s.lang(r), err))
 		return
 	}
 	respond(w, 200, result)
@@ -69,7 +72,7 @@ type overrideRequest struct {
 }
 
 // apply merges the requested fields into x and validates the result.
-func (o overrideRequest) apply(x *store.Session) error {
+func (o overrideRequest) apply(l i18n.Lang, x *store.Session) error {
 	before := x.PermissionMode
 	if o.PermissionMode != nil {
 		x.PermissionMode = *o.PermissionMode
@@ -84,7 +87,7 @@ func (o overrideRequest) apply(x *store.Session) error {
 		return err
 	}
 	if x.PermissionMode != before && prefs.Dangerous(x.PermissionMode) && !o.ConfirmDangerous {
-		return errConfirmDangerous
+		return errConfirmDangerous(l)
 	}
 	return nil
 }
@@ -113,19 +116,19 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 	defer s.configMu.Unlock()
 	x, err := s.store.Get(id)
 	if err != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	if x.Mode == "channel" {
-		fail(w, 409, channelOverrideMessage)
+		fail(w, 409, channelOverrideMessage(s.lang(r)))
 		return
 	}
-	if err = req.apply(&x); err != nil {
-		fail(w, 400, err.Error())
+	if err = req.apply(s.lang(r), &x); err != nil {
+		fail(w, 400, i18n.Text(s.lang(r), err))
 		return
 	}
 	if err = s.store.SetOverrides(id, x.PermissionMode, x.Model, x.Effort); err != nil {
-		fail(w, 500, "无法保存会话设置")
+		fail(w, 500, s.lang(r).T("Could not save session settings", "无法保存会话设置"))
 		return
 	}
 	s.mu.Lock()

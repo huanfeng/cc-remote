@@ -7,11 +7,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 // Empty fields mean "follow Claude's own configuration".
@@ -21,7 +22,16 @@ type Preferences struct {
 	Effort         string `json:"effort"`
 }
 
-var ErrConflict = errors.New("CC Remote 默认设置已被其它端修改，请重新加载后保存")
+type conflictError struct{}
+
+func (e conflictError) Error() string { return e.In(i18n.Current()) }
+
+func (conflictError) In(l i18n.Lang) string {
+	return l.T("CC Remote defaults were changed elsewhere; reload before saving", "CC Remote 默认设置已被其它端修改，请重新加载后保存")
+}
+
+// ErrConflict reports a save against a stale revision.
+var ErrConflict error = conflictError{}
 
 const fileName = "preferences.json"
 
@@ -62,13 +72,13 @@ func Dangerous(mode string) bool {
 
 func (p Preferences) Validate() error {
 	if !ValidPermissionMode(p.PermissionMode) {
-		return fmt.Errorf("无效的权限模式：%s", p.PermissionMode)
+		return i18n.NewError("invalid permission mode: %s", "无效的权限模式：%s", p.PermissionMode)
 	}
 	if !ValidEffort(p.Effort) {
-		return fmt.Errorf("无效的推理强度：%s", p.Effort)
+		return i18n.NewError("invalid reasoning effort: %s", "无效的推理强度：%s", p.Effort)
 	}
 	if !ValidModel(p.Model) {
-		return fmt.Errorf("模型名称无效或过长")
+		return i18n.NewError("model name is invalid or too long", "模型名称无效或过长")
 	}
 	return nil
 }
@@ -101,7 +111,7 @@ func Load(dataDir string) (Preferences, string, error) {
 		return p, "", err
 	}
 	if err = json.Unmarshal(b, &p); err != nil {
-		return Preferences{}, "", fmt.Errorf("preferences.json 不是有效 JSON：%w", err)
+		return Preferences{}, "", i18n.Errorf("preferences.json is not valid JSON: %w", "preferences.json 不是有效 JSON：%w", err)
 	}
 	p.Model = strings.TrimSpace(p.Model)
 	if err = p.Validate(); err != nil {
@@ -117,7 +127,7 @@ func Save(dataDir string, p Preferences, revision string) (Preferences, string, 
 		return p, "", err
 	}
 	if dataDir == "" {
-		return p, "", errors.New("未配置数据目录")
+		return p, "", i18n.NewError("no data directory configured", "未配置数据目录")
 	}
 	_, current, err := Load(dataDir)
 	if err != nil {

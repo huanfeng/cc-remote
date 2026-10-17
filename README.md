@@ -58,7 +58,9 @@ curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/instal
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh -s -- --listen lan:8787
 ```
 
-其它参数：`-Version` / `--version`、`-NoService` / `--no-service`、`-NoAlias` / `--no-alias`、`-DryRun` / `--dry-run`，详见 [docs/release.md](docs/release.md)。
+其它参数：`-Version` / `--version`、`-Lang` / `--lang`、`-NoService` / `--no-service`、`-NoAlias` / `--no-alias`、`-DryRun` / `--dry-run`，详见 [docs/release.md](docs/release.md)。
+
+界面语言：命令行输出和网页默认跟随系统语言（中文或英文）。安装时可用 `-Lang zh` / `--lang en`（或环境变量 `CC_REMOTE_LANG`）指定，之后用 `cc-remote service config --lang zh|en|auto` 修改；网页还可以在设置里为当前浏览器单独选择语言。详见 [docs/configuration.md](docs/configuration.md#界面语言)。
 
 ### 2. 打开网页并登录
 

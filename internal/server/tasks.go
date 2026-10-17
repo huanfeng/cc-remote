@@ -57,12 +57,12 @@ var taskSubtypes = []string{"task_started", "task_progress", "task_updated", "ta
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, e := s.store.Get(id); e != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	events, err := s.store.TaskEvents(id)
 	if err != nil {
-		fail(w, 500, "无法读取任务")
+		fail(w, 500, s.lang(r).T("Could not read tasks", "无法读取任务"))
 		return
 	}
 	byID := map[string]*taskInfo{}

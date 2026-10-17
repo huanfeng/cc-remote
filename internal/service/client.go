@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
 )
 
@@ -92,7 +92,7 @@ func gracefulShutdown(url, token string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("shutdown endpoint returned %s %s", resp.Status, strings.TrimSpace(string(b)))
+		return i18n.Errorf("shutdown endpoint returned %s %s", "停止接口返回 %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	return nil
 }
@@ -119,7 +119,7 @@ func requestRestart(url, token string) (busy []string, supported bool, err error
 	}
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, true, fmt.Errorf("restart endpoint returned %s %s", resp.Status, strings.TrimSpace(string(b)))
+		return nil, true, i18n.Errorf("restart endpoint returned %s %s", "重启接口返回 %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var out struct {
 		Busy []string `json:"busy"`
@@ -143,9 +143,9 @@ func fetchStatus(url, token string) (map[string]any, string, error) {
 		err = json.NewDecoder(resp.Body).Decode(&v)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return nil, path, fmt.Errorf("%s returned %s", path, resp.Status)
+			return nil, path, i18n.Errorf("%s returned %s", "%s 返回 %s", path, resp.Status)
 		}
 		return v, path, err
 	}
-	return nil, "", fmt.Errorf("host has neither /api/status nor /api/info")
+	return nil, "", i18n.Errorf("host has neither /api/status nor /api/info", "宿主既没有 /api/status 也没有 /api/info")
 }

@@ -97,6 +97,10 @@ cc-remote --data-dir /path/to/data -- claude   # 使用非默认数据目录
 
 生效顺序与写入细节见 [configuration.md](configuration.md#权限模式模型与推理强度)。
 
+### 界面语言
+
+网页和命令行支持简体中文和英文，默认跟随宿主的语言设置（安装时的 `--lang`，未设置时跟随系统）。网页可以在设置里为当前浏览器单独选择语言，不影响其它设备；命令行可用 `cc-remote service config --lang zh|en|auto` 修改服务的语言，或用环境变量 `CC_REMOTE_LANG` 临时指定。详见 [configuration.md](configuration.md#界面语言)。
+
 ### 模型选择器
 
 设置、新建会话和会话设置共用同一个模型选择器，可以输入任意模型 ID，也可以从列表选择。列表来自 Claude Code 官方别名、settings 中的 `model`/`availableModels`/模型类环境变量、本机会话最近使用的模型，以及配置了 API 密钥时的 `/v1/models`；缓存 10 分钟，可手动刷新。

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 	"cc-remote/internal/terminal"
 
@@ -77,19 +77,19 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if ts := s.terminals[x.ID]; ts != nil {
 		select {
 		case <-ts.runner.Done(): // exited; terminalExited cleans up shortly
-			return nil, errors.New("Claude Code 刚刚退出，请稍后重试")
+			return nil, i18n.Errorf("Claude Code just exited; try again shortly", "Claude Code 刚刚退出，请稍后重试")
 		default:
 			return ts, nil
 		}
 	}
 	if s.closing {
-		return nil, errors.New("宿主正在关闭")
+		return nil, i18n.Errorf("The host is shutting down", "宿主正在关闭")
 	}
-	if _, err := validateCwd(x.Cwd); err != nil {
+	if _, err := validateCwd(i18n.Current(), x.Cwd); err != nil {
 		return nil, err
 	}
 	if s.cfg.DataDir == "" || s.cfg.HostExecutable == "" {
-		return nil, errors.New("宿主没有配置数据目录或可执行文件路径")
+		return nil, i18n.Errorf("The host has no data directory or executable path configured", "宿主没有配置数据目录或可执行文件路径")
 	}
 	dir := filepath.Join(s.cfg.DataDir, "terminal-config", x.ID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -438,14 +438,14 @@ func (s *Server) terminalExited(ts *terminalSession) {
 	}
 	if x, err := s.store.Get(ts.id); err == nil {
 		if !ts.closing {
-			note := "Claude Code 已退出"
+			note := i18n.T("Claude Code exited", "Claude Code 已退出")
 			if len(ts.queued) > 0 {
-				note += "，以上排队消息未执行，请重新发送"
+				note += i18n.T("; the queued messages above did not run, send them again", "，以上排队消息未执行，请重新发送")
 			}
 			if err := ts.runner.Err(); err != nil {
-				note += "（" + err.Error() + "）"
+				note += i18n.F(" (%s)", "（%s）", err.Error())
 			}
-			_, _ = s.store.Append(ts.id, "error", note+"。下次发送消息时会恢复会话。", nil)
+			_, _ = s.store.Append(ts.id, "error", note+i18n.T(". The session resumes with your next message.", "。下次发送消息时会恢复会话。"), nil)
 		}
 		if x.Status == "running" || x.Status == "waiting" {
 			_ = s.store.SetStatus(ts.id, "interrupted")
@@ -465,14 +465,14 @@ func (s *Server) closeTerminalAsync(ts *terminalSession) {
 }
 
 // terminalMessageLocked sends a web message to a terminal session.
-func (s *Server) terminalMessageLocked(w http.ResponseWriter, x store.Session, prompt string, message store.QueuedMessage) {
+func (s *Server) terminalMessageLocked(w http.ResponseWriter, r *http.Request, x store.Session, prompt string, message store.QueuedMessage) {
 	ts, err := s.terminalLocked(x)
 	if err != nil {
-		fail(w, 500, "无法启动 Claude Code："+err.Error())
+		fail(w, 500, s.lang(r).T("Could not start Claude Code: ", "无法启动 Claude Code：")+err.Error())
 		return
 	}
 	if len(ts.queued) >= maxQueuedMessages {
-		fail(w, 429, "排队的消息过多，请等待 Claude 处理")
+		fail(w, 429, s.lang(r).T("Too many queued messages; wait for Claude to process them", "排队的消息过多，请等待 Claude 处理"))
 		return
 	}
 	status := "queued"
@@ -483,7 +483,7 @@ func (s *Server) terminalMessageLocked(w http.ResponseWriter, x store.Session, p
 	select {
 	case ts.send <- prompt:
 	default:
-		fail(w, 429, "排队的消息过多，请等待 Claude 处理")
+		fail(w, 429, s.lang(r).T("Too many queued messages; wait for Claude to process them", "排队的消息过多，请等待 Claude 处理"))
 		return
 	}
 	// Local commands (/compact, /clear) never show up as a prompt: not queued.
@@ -494,10 +494,10 @@ func (s *Server) terminalMessageLocked(w http.ResponseWriter, x store.Session, p
 }
 
 // terminalStopLocked presses Esc; a second stop soon after presses Ctrl+C.
-func (s *Server) terminalStopLocked(w http.ResponseWriter, id string) {
+func (s *Server) terminalStopLocked(w http.ResponseWriter, r *http.Request, id string) {
 	ts := s.terminals[id]
 	if ts == nil {
-		fail(w, 409, "Claude Code 没有运行")
+		fail(w, 409, s.lang(r).T("Claude Code is not running", "Claude Code 没有运行"))
 		return
 	}
 	var err error
@@ -535,7 +535,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fail(w, 400, "无效的 hook 内容")
+		fail(w, 400, s.lang(r).T("Invalid hook payload", "无效的 hook 内容"))
 		return
 	}
 	id := r.PathValue("id")
@@ -543,7 +543,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 	ts := s.terminals[id]
 	if ts == nil {
 		s.mu.Unlock()
-		fail(w, 404, "终端会话没有运行")
+		fail(w, 404, s.lang(r).T("The terminal session is not running", "终端会话没有运行"))
 		return
 	}
 	switch req.Event {
@@ -598,7 +598,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 // to another Claude session id (/resume): not one another session owns.
 func (s *Server) rebindFreeLocked(id, next string, ts *terminalSession) bool {
 	if other, err := s.store.FindClaude(next); err == nil && other.ID != id {
-		_, _ = s.store.Append(id, "error", "终端里切换到了另一个网页会话正在使用的 Claude 会话，网页不会跟随；请回到原会话或在该会话中继续。", nil)
+		_, _ = s.store.Append(id, "error", i18n.T("The terminal switched to a Claude session another web session is using; the web does not follow it. Go back to the original session or continue in that one.", "终端里切换到了另一个网页会话正在使用的 Claude 会话，网页不会跟随；请回到原会话或在该会话中继续。"), nil)
 		return false
 	}
 	if c := s.channels[next]; c != nil && c != ts.conn {
@@ -635,7 +635,7 @@ func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		fail(w, 400, "无效的状态内容")
+		fail(w, 400, s.lang(r).T("Invalid status payload", "无效的状态内容"))
 		return
 	}
 	effort, _ := in.Effort.(string)
@@ -665,14 +665,14 @@ func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 	x, err := s.store.Get(r.PathValue("id"))
 	if err != nil || x.Mode != "terminal" {
-		fail(w, 404, "终端会话不存在")
+		fail(w, 404, s.lang(r).T("Terminal session not found", "终端会话不存在"))
 		return
 	}
 	s.mu.Lock()
 	ts, err := s.terminalLocked(x)
 	s.mu.Unlock()
 	if err != nil {
-		fail(w, 500, "无法启动 Claude Code："+err.Error())
+		fail(w, 500, s.lang(r).T("Could not start Claude Code: ", "无法启动 Claude Code：")+err.Error())
 		return
 	}
 	c, err := websocket.Accept(w, r, nil)
@@ -730,10 +730,10 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case chunk, ok := <-sub.C:
 			if !ok {
-				reason := "已断开"
+				reason := i18n.T("Disconnected", "已断开")
 				select {
 				case <-ts.runner.Done():
-					reason = "Claude Code 已退出"
+					reason = i18n.T("Claude Code exited", "Claude Code 已退出")
 				default:
 				}
 				_ = c.Close(websocket.StatusNormalClosure, reason)

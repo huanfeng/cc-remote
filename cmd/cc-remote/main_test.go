@@ -40,3 +40,15 @@ func TestAddrInUse(t *testing.T) {
 		t.Fatal("false positive")
 	}
 }
+
+func TestLangArg(t *testing.T) {
+	for want, argv := range map[string][]string{
+		"en": {"--listen", "x", "--lang", "en", "-h"},
+		"zh": {"-lang=zh"},
+		"":   {"--", "--lang", "en"},
+	} {
+		if got := langArg(argv); got != want {
+			t.Errorf("langArg(%v) = %q, want %q", argv, got, want)
+		}
+	}
+}

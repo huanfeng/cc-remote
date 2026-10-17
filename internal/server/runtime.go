@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -126,7 +127,7 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 		close(rt.ready)
 		if err != nil {
 			s.mu.Unlock()
-			s.processExit(rt, errors.New("无法启动 Claude Code："+err.Error()))
+			s.processExit(rt, i18n.Errorf("Could not start Claude Code: %w", "无法启动 Claude Code：%w", err))
 			return
 		}
 		detached := rt.stopping
@@ -368,7 +369,7 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 		return
 	}
 	if err == nil && !rt.stopping {
-		err = errors.New("Claude Code exited")
+		err = i18n.Errorf("Claude Code exited", "Claude Code 已退出")
 	}
 	unsent := rt.sent
 	rt.sent, rt.unwritten = nil, 0
@@ -382,7 +383,7 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 		}
 	}
 	if len(unsent) > 0 && !rt.stopping {
-		if _, e := s.store.Append(rt.id, "error", "Claude Code 已退出，以上排队消息未执行，请重新发送。", nil); e != nil {
+		if _, e := s.store.Append(rt.id, "error", i18n.T("Claude Code exited; the queued messages above did not run, send them again.", "Claude Code 已退出，以上排队消息未执行，请重新发送。"), nil); e != nil {
 			log.Printf("save execution error: %v", e)
 		}
 	}

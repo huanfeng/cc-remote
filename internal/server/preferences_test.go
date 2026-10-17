@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -36,7 +37,7 @@ func TestPreferencesAPIConflictAndDangerousConfirm(t *testing.T) {
 	}
 	stale := p.Revision
 	p.PermissionMode, p.Model, p.Effort = "bypassPermissions", "opus", "high"
-	if code, b = request(t, ts, "PUT", "/api/preferences", p, testToken); code != 400 || !strings.Contains(string(b), "确认") {
+	if code, b = request(t, ts, "PUT", "/api/preferences", p, testToken); code != 400 || !strings.Contains(string(b), "confirm") {
 		t.Fatalf("dangerous mode without confirm %d %s", code, b)
 	}
 	p.ConfirmDangerous = true
@@ -131,7 +132,7 @@ func TestModelAndPermissionCommandsUseSessionAndPreferences(t *testing.T) {
 	if code, b = request(t, ts, "POST", path, map[string]string{"command": "/effort --default high"}, testToken); code != 200 {
 		t.Fatalf("default effort %d %s", code, b)
 	}
-	if code, b = request(t, ts, "POST", path, map[string]string{"command": "/permission-mode bypassPermissions"}, testToken); code != 200 || !strings.Contains(string(b), "审批") {
+	if code, b = request(t, ts, "POST", path, map[string]string{"command": "/permission-mode bypassPermissions"}, testToken); code != 200 || !strings.Contains(string(b), "approvals") {
 		t.Fatalf("permission mode %d %s", code, b)
 	}
 	got, _ := st.Get(x.ID)
@@ -191,7 +192,7 @@ func TestSettingsWriterPreservesFormattingBacksUpAndConfirmsDangerous(t *testing
 	var x claudeSettings
 	_ = json.Unmarshal(b, &x)
 	x.PermissionMode = "bypassPermissions"
-	if code, b := request(t, ts, "PUT", "/api/claude/settings", x, testToken); code != 400 || !strings.Contains(string(b), "确认") {
+	if code, b := request(t, ts, "PUT", "/api/claude/settings", x, testToken); code != 400 || !strings.Contains(string(b), "confirm") {
 		t.Fatalf("no confirm %d %s", code, b)
 	}
 	x.ConfirmDangerous = true
@@ -243,7 +244,7 @@ func TestModelsMergeSourcesRestrictAndDegrade(t *testing.T) {
 	_ = os.MkdirAll(project, 0700)
 	_ = os.WriteFile(filepath.Join(project, "abcd1234-1234-1234-1234-123456789abc.jsonl"), []byte(`{"type":"assistant","message":{"model":"claude-recent-1"}}`+"\n"), 0600)
 
-	list := s.modelList("", true)
+	list := s.modelList(i18n.EN, "", true)
 	sources := map[string]string{}
 	for _, m := range list.Models {
 		if _, dup := sources[m.ID]; dup {
@@ -265,7 +266,7 @@ func TestModelsMergeSourcesRestrictAndDegrade(t *testing.T) {
 	cwd := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(cwd, ".claude"), 0700)
 	_ = os.WriteFile(filepath.Join(cwd, ".claude", "settings.json"), []byte(`{"availableModels":["sonnet","claude-api-model"]}`), 0600)
-	list = s.modelList(cwd, false)
+	list = s.modelList(i18n.EN, cwd, false)
 	ids := []string{}
 	for _, m := range list.Models {
 		ids = append(ids, m.ID)
@@ -276,7 +277,7 @@ func TestModelsMergeSourcesRestrictAndDegrade(t *testing.T) {
 
 	// API failure degrades to a warning; cache serves until refresh.
 	t.Setenv("ANTHROPIC_API_KEY", "wrong")
-	cached := s.modelList("", false)
+	cached := s.modelList(i18n.EN, "", false)
 	if len(cached.Warnings) != 0 {
 		t.Fatal("cache not used")
 	}
@@ -295,7 +296,7 @@ func TestModelsMergeSourcesRestrictAndDegrade(t *testing.T) {
 func TestModelsBaseURLAndCredentialLayers(t *testing.T) {
 	for raw, ok := range map[string]bool{"": true, "https://proxy.example/anthropic/": true, "http://127.0.0.1:9000": true, "http://localhost:1": true, "http://[::1]:2": true,
 		"http://proxy.example": false, "http://10.0.0.1": false, "ftp://x": false, "https://user:pw@x": false, "not a url": false} {
-		if _, err := modelsBaseURL(raw); (err == nil) != ok {
+		if _, err := modelsBaseURL(i18n.EN, raw); (err == nil) != ok {
 			t.Errorf("%q: %v", raw, err)
 		}
 	}
@@ -320,7 +321,7 @@ func TestModelsAPIDoesNotFollowRedirects(t *testing.T) {
 	defer api.Close()
 	t.Setenv("ANTHROPIC_API_KEY", "secret-key")
 	t.Setenv("ANTHROPIC_BASE_URL", api.URL)
-	_, attempted, err := fetchAPIModels(modelSettings{})
+	_, attempted, err := fetchAPIModels(i18n.EN, modelSettings{})
 	if !attempted || err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("redirect result %v %v", attempted, err)
 	}
@@ -336,7 +337,7 @@ func TestModelListConcurrentCallersShareOneCollection(t *testing.T) {
 	s, _, _ := setup(t, nil)
 	done := make(chan modelList, 8)
 	for range 8 {
-		go func() { done <- s.modelList("", false) }()
+		go func() { done <- s.modelList(i18n.EN, "", false) }()
 	}
 	for range 8 {
 		if l := <-done; len(l.Models) == 0 {

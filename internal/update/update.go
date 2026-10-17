@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"time"
 
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/service"
 )
 
@@ -38,15 +39,15 @@ type updater struct {
 // current is the version compiled into the running binary (main.version).
 func Run(current string, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
-	check := fs.Bool("check", false, "only report whether a newer release exists")
-	version := fs.String("version", "", "install this release tag instead of the latest (e.g. v0.2.0)")
-	yes := fs.Bool("yes", false, "install even when not newer (dev builds, reinstall, downgrade)")
-	whenIdle := fs.Bool("when-idle", false, "install without stopping the running service; it restarts itself once no session is busy")
+	check := fs.Bool("check", false, i18n.T("only report whether a newer release exists", "只检查是否有更新的版本"))
+	version := fs.String("version", "", i18n.T("install this release tag instead of the latest (e.g. v0.2.0)", "安装指定版本标签而不是最新版（例如 v0.2.0）"))
+	yes := fs.Bool("yes", false, i18n.T("install even when not newer (dev builds, reinstall, downgrade)", "即使不是更新的版本也安装（开发版、重装、降级）"))
+	whenIdle := fs.Bool("when-idle", false, i18n.T("install without stopping the running service; it restarts itself once no session is busy", "安装时不停止运行中的服务；等没有忙碌的会话时它会自行重启"))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes] [--when-idle]")
+		return i18n.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes] [--when-idle]", "用法：cc-remote update [--check] [--version vX.Y.Z] [--yes] [--when-idle]")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -89,37 +90,37 @@ func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) err
 	rel, err := u.src.release(ctx, tag)
 	if errors.Is(err, errNotFound) {
 		if tag != "" {
-			return fmt.Errorf("release %s not found in %s", tag, u.repo)
+			return i18n.Errorf("release %s not found in %s", "在 %[2]s 中找不到版本 %[1]s", tag, u.repo)
 		}
 		// GitHub's "latest" release never includes prereleases.
-		return fmt.Errorf("no stable release found in %s (prereleases are skipped; pass --version <tag> to install one)", u.repo)
+		return i18n.Errorf("no stable release found in %s (prereleases are skipped; pass --version <tag> to install one)", "%s 中没有正式版本（预发布版本会被跳过；用 --version <标签> 安装指定版本）", u.repo)
 	}
 	if err != nil {
 		return err
 	}
 	cmp, comparable := compareVersions(rel.Tag, u.current)
-	fmt.Fprintf(u.out, "current version: %s\nrelease version: %s (via %s)\n", u.current, rel.Tag, u.src.name())
+	fmt.Fprint(u.out, i18n.F("current version: %s\nrelease version: %s (via %s)\n", "当前版本：%s\n发布版本：%s（通过 %s）\n", u.current, rel.Tag, u.src.name()))
 	if check {
 		switch {
 		case !comparable:
-			fmt.Fprintf(u.out, "current build is not a release version; run \"cc-remote update --yes\" to install %s\n", rel.Tag)
+			fmt.Fprint(u.out, i18n.F("current build is not a release version; run \"cc-remote update --yes\" to install %s\n", "当前构建不是正式版本；运行 \"cc-remote update --yes\" 安装 %s\n", rel.Tag))
 		case cmp > 0:
-			fmt.Fprintln(u.out, "a newer release is available; run \"cc-remote update\" to install it")
+			fmt.Fprintln(u.out, i18n.T("a newer release is available; run \"cc-remote update\" to install it", "有更新的版本；运行 \"cc-remote update\" 安装"))
 		default:
-			fmt.Fprintln(u.out, "already up to date")
+			fmt.Fprintln(u.out, i18n.T("already up to date", "已是最新版本"))
 		}
 		return nil
 	}
 	if !yes {
 		switch {
 		case !comparable:
-			fmt.Fprintf(u.out, "current build %q is not a release version; rerun with --yes to install %s\n", u.current, rel.Tag)
+			fmt.Fprint(u.out, i18n.F("current build %q is not a release version; rerun with --yes to install %s\n", "当前构建 %q 不是正式版本；加 --yes 重新运行以安装 %s\n", u.current, rel.Tag))
 			return nil
 		case cmp == 0:
-			fmt.Fprintln(u.out, "already up to date (use --yes to reinstall)")
+			fmt.Fprintln(u.out, i18n.T("already up to date (use --yes to reinstall)", "已是最新版本（用 --yes 重新安装）"))
 			return nil
 		case cmp < 0:
-			fmt.Fprintf(u.out, "%s is older than the current version; rerun with --yes to downgrade\n", rel.Tag)
+			fmt.Fprint(u.out, i18n.F("%s is older than the current version; rerun with --yes to downgrade\n", "%s 比当前版本旧；加 --yes 重新运行以降级\n", rel.Tag))
 			return nil
 		}
 	}
@@ -140,7 +141,7 @@ func (u *updater) fetch(ctx context.Context, rel Release) (string, func(), error
 	}
 	sumsAsset, ok := findAsset(rel.Assets, checksumsName)
 	if !ok {
-		return "", nil, fmt.Errorf("release %s has no %s; refusing to install unverified files", rel.Tag, checksumsName)
+		return "", nil, i18n.Errorf("release %s has no %s; refusing to install unverified files", "版本 %s 没有 %s；拒绝安装未经校验的文件", rel.Tag, checksumsName)
 	}
 	tmp, err := os.MkdirTemp("", "cc-remote-update-")
 	if err != nil {
@@ -152,7 +153,7 @@ func (u *updater) fetch(ctx context.Context, rel Release) (string, func(), error
 	if err := os.MkdirAll(dl, 0o755); err != nil {
 		return fail(err)
 	}
-	fmt.Fprintf(u.out, "downloading %s\n", asset.Name)
+	fmt.Fprint(u.out, i18n.F("downloading %s\n", "正在下载 %s\n", asset.Name))
 	archive, err := u.src.download(ctx, rel, asset, dl)
 	if err != nil {
 		return fail(err)
@@ -172,12 +173,12 @@ func (u *updater) fetch(ctx context.Context, rel Release) (string, func(), error
 	}
 	want, ok := sums[asset.Name]
 	if !ok {
-		return fail(fmt.Errorf("%s has no entry for %s", checksumsName, asset.Name))
+		return fail(i18n.Errorf("%s has no entry for %s", "%s 中没有 %s 的条目", checksumsName, asset.Name))
 	}
 	if err := verifyFile(archive, want); err != nil {
 		return fail(err)
 	}
-	fmt.Fprintln(u.out, "sha256 verified")
+	fmt.Fprintln(u.out, i18n.T("sha256 verified", "sha256 校验通过"))
 	bin, err := extractArchive(archive, filepath.Join(tmp, "extract"), u.goos)
 	if err != nil {
 		return fail(err)
@@ -198,21 +199,21 @@ func (u *updater) serviceInstalled() bool {
 // stable location and starts it again; otherwise the executable is swapped.
 func (u *updater) apply(bin, tag string) error {
 	if u.serviceInstalled() {
-		fmt.Fprintf(u.out, "service installation found at %s; running \"service install\" from %s\n", u.installedPath, tag)
+		fmt.Fprint(u.out, i18n.F("service installation found at %s; running \"service install\" from %s\n", "在 %s 发现服务安装；运行 %s 的 \"service install\"\n", u.installedPath, tag))
 		args := []string{"service", "install"}
 		if u.whenIdle {
 			args = append(args, "--when-idle")
 		}
 		if err := u.runCmd(bin, args...); err != nil {
-			return fmt.Errorf("service install with the new binary failed: %w", err)
+			return i18n.Errorf("service install with the new binary failed: %w", "用新版本执行 service install 失败：%w", err)
 		}
-		fmt.Fprintf(u.out, "updated to %s\n", tag)
+		fmt.Fprint(u.out, i18n.F("updated to %s\n", "已更新到 %s\n", tag))
 		return nil
 	}
 	if err := replaceExecutable(u.exePath, bin, u.goos); err != nil {
 		return err
 	}
-	fmt.Fprintf(u.out, "updated %s to %s\n", u.exePath, tag)
+	fmt.Fprint(u.out, i18n.F("updated %s to %s\n", "已把 %s 更新到 %s\n", u.exePath, tag))
 	return nil
 }
 
@@ -223,24 +224,24 @@ func (u *updater) apply(bin, tag string) error {
 func replaceExecutable(target, newBin, goos string) error {
 	staged := target + ".new"
 	if err := copyFile(newBin, staged); err != nil {
-		return fmt.Errorf("stage new binary next to %s: %w", target, err)
+		return i18n.Errorf("stage new binary next to %s: %w", "在 %s 旁暂存新版本失败：%w", target, err)
 	}
 	if goos == "windows" {
 		old := service.AsidePath(target)
 		if err := os.Rename(target, old); err != nil && !os.IsNotExist(err) {
 			os.Remove(staged)
-			return fmt.Errorf("move running executable aside: %w", err)
+			return i18n.Errorf("move running executable aside: %w", "移开正在运行的可执行文件失败：%w", err)
 		}
 		if err := os.Rename(staged, target); err != nil {
 			os.Rename(old, target)
 			os.Remove(staged)
-			return fmt.Errorf("install new executable: %w", err)
+			return i18n.Errorf("install new executable: %w", "安装新的可执行文件失败：%w", err)
 		}
 		return nil
 	}
 	if err := os.Rename(staged, target); err != nil {
 		os.Remove(staged)
-		return fmt.Errorf("install new executable: %w", err)
+		return i18n.Errorf("install new executable: %w", "安装新的可执行文件失败：%w", err)
 	}
 	return nil
 }

@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 // proxyEnvNames are captured automatically from the installing process. Only
@@ -84,16 +86,16 @@ func deleteEnv(env map[string]string, key string, foldCase bool) bool {
 func parseEnvFlag(s string) (key, value string, err error) {
 	key, value, ok := strings.Cut(s, "=")
 	if !ok {
-		return "", "", fmt.Errorf("invalid --env %q: expected KEY=VALUE (KEY= removes it)", s)
+		return "", "", i18n.Errorf("invalid --env %q: expected KEY=VALUE (KEY= removes it)", "无效的 --env %q：应为 KEY=VALUE（KEY= 表示删除）", s)
 	}
 	if key == "" || strings.ContainsAny(key, " \t\r\n\x00") {
-		return "", "", fmt.Errorf("invalid --env %q: bad variable name", s)
+		return "", "", i18n.Errorf("invalid --env %q: bad variable name", "无效的 --env %q：变量名不合法", s)
 	}
 	if strings.ContainsRune(value, 0) {
-		return "", "", fmt.Errorf("invalid --env %q: value contains NUL", key)
+		return "", "", i18n.Errorf("invalid --env %q: value contains NUL", "无效的 --env %q：值包含 NUL", key)
 	}
 	if strings.EqualFold(key, managerEnvName) {
-		return "", "", fmt.Errorf("--env %s is set by the service itself", managerEnvName)
+		return "", "", i18n.Errorf("--env %s is set by the service itself", "--env %s 由服务自己设置", managerEnvName)
 	}
 	return key, value, nil
 }
@@ -140,20 +142,20 @@ func applyEnv(cfg *Config, capture bool, environ, envVals []string, foldCase boo
 			setEnv(cfg.Env, k, got[k], foldCase)
 		}
 		if len(got) == 0 {
-			fmt.Fprintln(out, "No proxy variables (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY) found in the current environment")
+			fmt.Fprintln(out, i18n.T("No proxy variables (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY) found in the current environment", "当前环境中没有代理变量（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY）"))
 		} else {
-			fmt.Fprintf(out, "Captured service environment: %s\n", envSummary(got))
+			fmt.Fprint(out, i18n.F("Captured service environment: %s\n", "已捕获服务环境变量：%s\n", envSummary(got)))
 		}
 	}
 	for _, p := range parsed {
 		if p.v == "" {
 			if deleteEnv(cfg.Env, p.k, foldCase) {
-				fmt.Fprintf(out, "Removed service environment: %s\n", p.k)
+				fmt.Fprint(out, i18n.F("Removed service environment: %s\n", "已删除服务环境变量：%s\n", p.k))
 			}
 			continue
 		}
 		setEnv(cfg.Env, p.k, p.v, foldCase)
-		fmt.Fprintf(out, "Set service environment: %s\n", envDisplay(p.k, p.v))
+		fmt.Fprint(out, i18n.F("Set service environment: %s\n", "已设置服务环境变量：%s\n", envDisplay(p.k, p.v)))
 	}
 	return nil
 }

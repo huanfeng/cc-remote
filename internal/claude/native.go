@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cc-remote/internal/i18n"
 )
 
 type NativeSession struct {
@@ -235,7 +237,7 @@ type historyEntry struct {
 
 func NativeHistory(configDir, id string) (NativeSession, []Event, error) {
 	if !uuidPattern.MatchString(id) {
-		return NativeSession{}, nil, errors.New("invalid Claude session UUID")
+		return NativeSession{}, nil, errors.New(i18n.T("invalid Claude session UUID", "无效的 Claude 会话 UUID"))
 	}
 	path, err := nativePath(configDir, id)
 	if err != nil {
@@ -319,7 +321,7 @@ func (e *historyEntry) refresh(path, id string) error {
 		return err
 	}
 	if info.Size() > maxNativeHistory {
-		return errors.New("transcript exceeds 64 MiB history limit")
+		return errors.New(i18n.T("transcript exceeds 64 MiB history limit", "对话记录超过 64 MiB 的历史上限"))
 	}
 	if info.Size() == e.size && info.ModTime().Equal(e.mod) && e.offset > 0 {
 		return nil

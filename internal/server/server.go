@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -32,7 +33,9 @@ type Config struct {
 	// ClaudeConfigEnv is the CLAUDE_CONFIG_DIR given to Claude Code: empty unless
 	// a config directory was chosen (setting it to ~/.claude would move .claude.json).
 	ClaudeConfigEnv string
-	Assets          fs.FS
+	// Language of the host's messages and the web UI (a page can choose its own).
+	Language i18n.Lang
+	Assets   fs.FS
 	// Runner runs one turn per message instead of a long-lived process (tests).
 	Runner Runner
 	// StartProcess launches the long-lived Claude process of a managed session.
@@ -159,11 +162,11 @@ func (s *Server) Handler() http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 			if r.URL.Path != "/api/bridge/request" && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
-				fail(w, 401, "访问凭证无效")
+				fail(w, 401, s.lang(r).T("Invalid access token", "访问凭证无效"))
 				return
 			}
 			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r) {
-				fail(w, 403, "不允许跨站访问")
+				fail(w, 403, s.lang(r).T("Cross-site requests are not allowed", "不允许跨站访问"))
 				return
 			}
 		}
@@ -214,13 +217,18 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	defer r.Body.Close()
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
+	// A free function has no host setting at hand; the process language is the same.
+	l, ok := i18n.Parse(r.Header.Get("X-CC-Lang"))
+	if !ok || l == i18n.Auto {
+		l = i18n.Current()
+	}
 	if err := d.Decode(v); err != nil {
-		fail(w, 400, "无效的请求内容")
+		fail(w, 400, l.T("Invalid request body", "无效的请求内容"))
 		return false
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
-		fail(w, 400, "只允许一个完整 JSON 对象")
+		fail(w, 400, l.T("Only one complete JSON object is allowed", "只允许一个完整 JSON 对象"))
 		return false
 	}
 	return true
@@ -236,12 +244,29 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart()})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "terminalCommand": s.cfg.TerminalCommand, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart(), "language": s.language()})
 }
+
+// language is the host's language (English when unset, as in tests).
+func (s *Server) language() i18n.Lang {
+	if s.cfg.Language == i18n.ZH {
+		return i18n.ZH
+	}
+	return i18n.EN
+}
+
+// lang is the language of a response: the page's choice (X-CC-Lang), else the host's.
+func (s *Server) lang(r *http.Request) i18n.Lang {
+	if l, ok := i18n.Parse(r.Header.Get("X-CC-Lang")); ok && l != i18n.Auto {
+		return l
+	}
+	return s.language()
+}
+
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	x, e := s.store.List()
 	if e != nil {
-		fail(w, 500, "无法读取会话")
+		fail(w, 500, s.lang(r).T("Could not read sessions", "无法读取会话"))
 		return
 	}
 	s.mu.Lock()
@@ -251,9 +276,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	respond(w, 200, x)
 }
-func validateCwd(cwd string) (string, error) {
+func validateCwd(l i18n.Lang, cwd string) (string, error) {
 	if !filepath.IsAbs(cwd) {
-		return "", errors.New("请输入宿主上的绝对目录路径")
+		return "", l.Errorf("Enter an absolute folder path on the host", "请输入宿主上的绝对目录路径")
 	}
 	p, e := filepath.Abs(cwd)
 	if e != nil {
@@ -261,7 +286,7 @@ func validateCwd(cwd string) (string, error) {
 	}
 	f, e := os.Stat(p)
 	if e != nil || !f.IsDir() {
-		return "", errors.New("工作目录不存在或不是目录")
+		return "", l.Errorf("The working folder does not exist or is not a folder", "工作目录不存在或不是目录")
 	}
 	return p, nil
 }
@@ -280,28 +305,28 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
-		req.Title = "新会话"
+		req.Title = s.lang(r).T("New session", "新会话")
 	}
 	if len(req.Title) > 300 {
-		fail(w, 400, "会话名称过长")
+		fail(w, 400, s.lang(r).T("Session name is too long", "会话名称过长"))
 		return
 	}
-	cwd, e := validateCwd(req.Cwd)
+	cwd, e := validateCwd(s.lang(r), req.Cwd)
 	if e != nil {
 		fail(w, 400, e.Error())
 		return
 	}
 	var overrides store.Session
-	if e = req.apply(&overrides); e != nil {
+	if e = req.apply(s.lang(r), &overrides); e != nil {
 		fail(w, 400, e.Error())
 		return
 	}
 	if req.Mode != "" && req.Mode != "managed" && req.Mode != "terminal" {
-		fail(w, 400, "无效的会话类型")
+		fail(w, 400, s.lang(r).T("Invalid session type", "无效的会话类型"))
 		return
 	}
 	if req.Mode == "terminal" && !req.TrustFolder {
-		fail(w, 400, "终端会话需要确认信任此目录")
+		fail(w, 400, s.lang(r).T("A terminal session requires confirming that you trust this folder", "终端会话需要确认信任此目录"))
 		return
 	}
 	x, e := s.store.Create(req.Title, cwd, store.ID(), false)
@@ -314,7 +339,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		x.Mode = "terminal"
 	}
 	if e != nil {
-		fail(w, 500, "无法创建会话")
+		fail(w, 500, s.lang(r).T("Could not create the session", "无法创建会话"))
 		return
 	}
 	respond(w, 201, x)
@@ -323,14 +348,14 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	s.markViewed(r, r.PathValue("id"))
 	x, e := s.store.Get(r.PathValue("id"))
 	if e != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	q := r.URL.Query()
 	tail := q.Get("tail")
 	limit, ok := pageLimit(tail)
 	if !ok {
-		fail(w, 400, "无效的分页参数")
+		fail(w, 400, s.lang(r).T("Invalid paging parameters", "无效的分页参数"))
 		return
 	}
 	var events []store.Event
@@ -341,7 +366,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		events, e = s.store.Events(x.ID, 0)
 	}
 	if e != nil {
-		fail(w, 500, "无法读取消息")
+		fail(w, 500, s.lang(r).T("Could not read messages", "无法读取消息"))
 		return
 	}
 	if q.Get("compact") == "1" {
@@ -356,7 +381,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.markViewed(r, id)
 	if _, e := s.store.Get(id); e != nil {
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	q := r.URL.Query()
@@ -365,12 +390,12 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		before, ok := cursor(raw)
 		limit, okLimit := pageLimit(q.Get("limit"))
 		if !ok || !okLimit {
-			fail(w, 400, "无效的分页参数")
+			fail(w, 400, s.lang(r).T("Invalid paging parameters", "无效的分页参数"))
 			return
 		}
 		page, older, e := s.store.EventsPage(id, before, limit, pageReach)
 		if e != nil {
-			fail(w, 500, "无法读取消息")
+			fail(w, 500, s.lang(r).T("Could not read messages", "无法读取消息"))
 			return
 		}
 		if compact {
@@ -381,12 +406,12 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 	after, ok := cursor(q.Get("after"))
 	if !ok {
-		fail(w, 400, "无效的事件游标")
+		fail(w, 400, s.lang(r).T("Invalid event cursor", "无效的事件游标"))
 		return
 	}
 	x, e := s.store.Events(id, after)
 	if e != nil {
-		fail(w, 500, "无法读取消息")
+		fail(w, 500, s.lang(r).T("Could not read messages", "无法读取消息"))
 		return
 	}
 	if compact {
@@ -405,36 +430,36 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Text = strings.TrimSpace(req.Text)
 	if (req.Text == "" && len(req.AttachmentIDs) == 0) || len(req.Text) > 1<<20 {
-		fail(w, 400, "消息为空或超过 1 MiB")
+		fail(w, 400, s.lang(r).T("The message is empty or larger than 1 MiB", "消息为空或超过 1 MiB"))
 		return
 	}
 	id := r.PathValue("id")
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
-		fail(w, 503, "宿主正在关闭")
+		fail(w, 503, s.lang(r).T("The host is shutting down", "宿主正在关闭"))
 		return
 	}
 	x, e := s.store.Get(id)
 	if e != nil {
 		s.mu.Unlock()
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	if x.Mode == "terminal" {
 		// Claude Code's own terminal runs every command and skill itself.
 		if strings.HasPrefix(req.Text, "/") && len(req.AttachmentIDs) > 0 {
 			s.mu.Unlock()
-			fail(w, 400, "命令不能附带附件")
+			fail(w, 400, s.lang(r).T("Commands cannot carry attachments", "命令不能附带附件"))
 			return
 		}
-		prompt, payload, e := s.messageAttachments(x.ID, req.Text, req.AttachmentIDs)
+		prompt, payload, e := s.messageAttachments(s.lang(r), x.ID, req.Text, req.AttachmentIDs)
 		if e != nil {
 			s.mu.Unlock()
 			fail(w, 400, e.Error())
 			return
 		}
-		s.terminalMessageLocked(w, x, prompt, store.QueuedMessage{Text: req.Text, Payload: payload})
+		s.terminalMessageLocked(w, r, x, prompt, store.QueuedMessage{Text: req.Text, Payload: payload})
 		s.mu.Unlock()
 		return
 	}
@@ -442,7 +467,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	name, args, _ := strings.Cut(strings.TrimPrefix(req.Text, "/"), " ")
 	native := strings.HasPrefix(req.Text, "/") && s.nativeCommand(x, name)
 	if strings.HasPrefix(req.Text, "/") && name == "compact" {
-		message, code := compactBlocked(x)
+		message, code := compactBlocked(s.lang(r), x)
 		if code != 0 {
 			s.mu.Unlock()
 			fail(w, code, message)
@@ -454,15 +479,15 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		// Claude Code runs the command itself (print mode), so it is sent verbatim.
 		if len(req.AttachmentIDs) > 0 {
 			s.mu.Unlock()
-			fail(w, 400, "/"+name+" 命令不能附带附件")
+			fail(w, 400, s.lang(r).F("/%s cannot carry attachments", "/%s 命令不能附带附件", name))
 			return
 		}
 	} else if strings.HasPrefix(req.Text, "/") {
 		var found bool
-		promptText, found, e = s.skillPrompt(x.Cwd, name, strings.TrimSpace(args))
+		promptText, found, e = s.skillPrompt(s.lang(r), x.Cwd, name, strings.TrimSpace(args))
 		if e != nil || !found {
 			s.mu.Unlock()
-			message := "请通过命令入口执行内置 / 命令"
+			message := s.lang(r).T("Run built-in / commands from the command menu", "请通过命令入口执行内置 / 命令")
 			if e != nil {
 				message = e.Error()
 			}
@@ -470,25 +495,25 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	prompt, payload, e := s.messageAttachments(x.ID, promptText, req.AttachmentIDs)
+	prompt, payload, e := s.messageAttachments(s.lang(r), x.ID, promptText, req.AttachmentIDs)
 	if e != nil {
 		s.mu.Unlock()
 		fail(w, 400, e.Error())
 		return
 	}
 	if x.Mode == "channel" {
-		s.channelMessageLocked(w, x, req.Text, prompt, payload)
+		s.channelMessageLocked(w, r, x, req.Text, prompt, payload)
 		s.mu.Unlock()
 		return
 	}
-	if _, e = validateCwd(x.Cwd); e != nil {
+	if _, e = validateCwd(s.lang(r), x.Cwd); e != nil {
 		s.mu.Unlock()
 		fail(w, 400, e.Error())
 		return
 	}
 	if rt := s.procs[id]; rt != nil && len(rt.sent) >= maxQueuedMessages {
 		s.mu.Unlock()
-		fail(w, 429, "排队的消息过多，请等待当前轮次完成")
+		fail(w, 429, s.lang(r).T("Too many queued messages; wait for the current turn to finish", "排队的消息过多，请等待当前轮次完成"))
 		return
 	}
 	if len(payload) == 0 {
@@ -507,7 +532,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if s.terminals[r.PathValue("id")] != nil {
-		s.terminalStopLocked(w, r.PathValue("id"))
+		s.terminalStopLocked(w, r, r.PathValue("id"))
 		s.mu.Unlock()
 		return
 	}
@@ -517,7 +542,7 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	if !ok {
-		fail(w, 409, "会话没有正在运行的轮次")
+		fail(w, 409, s.lang(r).T("The session has no running turn", "会话没有正在运行的轮次"))
 		return
 	}
 	respond(w, 200, map[string]string{"status": "stopping"})
@@ -534,7 +559,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	x, err := s.store.Get(id)
 	if err != nil {
 		s.mu.Unlock()
-		fail(w, 404, "会话不存在")
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
 	s.decorateChannel(&x)
@@ -550,13 +575,13 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if x.Online {
 		s.mu.Unlock()
-		fail(w, 409, "共享终端在线，请先退出终端")
+		fail(w, 409, s.lang(r).T("The shared terminal is online; exit it first", "共享终端在线，请先退出终端"))
 		return
 	}
 	if run != nil {
 		if r.URL.Query().Get("stop") != "1" {
 			s.mu.Unlock()
-			fail(w, 409, "请先停止执行")
+			fail(w, 409, s.lang(r).T("Stop the run first", "请先停止执行"))
 			return
 		}
 		run.cancel()
@@ -568,7 +593,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-run.done:
 		case <-timer.C:
-			fail(w, 504, "停止执行超时，请稍后重试")
+			fail(w, 504, s.lang(r).T("Timed out stopping the run; try again later", "停止执行超时，请稍后重试"))
 			return
 		case <-r.Context().Done():
 			return
@@ -579,7 +604,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	s.decorateChannel(&x)
 	if s.runs[id] != nil || x.Online {
 		s.mu.Unlock()
-		fail(w, 409, "会话已重新开始执行或终端已连接，请重试")
+		fail(w, 409, s.lang(r).T("The session started running again or a terminal connected; try again", "会话已重新开始执行或终端已连接，请重试"))
 		return
 	}
 	for rid, p := range s.requests {
@@ -607,7 +632,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	err = s.store.Delete(id)
 	s.mu.Unlock()
 	if err != nil {
-		fail(w, 500, "无法删除会话")
+		fail(w, 500, s.lang(r).T("Could not delete the session", "无法删除会话"))
 		return
 	}
 	s.mu.Lock()
@@ -628,7 +653,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || !net.ParseIP(host).IsLoopback() {
-		fail(w, 403, "仅允许本机桥接")
+		fail(w, 403, s.lang(r).T("Only local bridge connections are allowed", "仅允许本机桥接"))
 		return
 	}
 	s.mu.Lock()
@@ -639,7 +664,7 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	if run == nil {
-		fail(w, 401, "执行凭证无效或已失效")
+		fail(w, 401, s.lang(r).T("The run credential is invalid or expired", "执行凭证无效或已失效"))
 		return
 	}
 	defer func() {
@@ -656,7 +681,7 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if (req.Kind != "approval" && req.Kind != "question" && req.Kind != "plan") || !json.Valid(req.Input) {
-		fail(w, 400, "无效的交互类型")
+		fail(w, 400, s.lang(r).T("Invalid interaction kind", "无效的交互类型"))
 		return
 	}
 	x := store.Interaction{ID: store.ID(), SessionID: run.sessionID, Kind: req.Kind, ToolName: req.ToolName, Input: req.Input}
@@ -664,12 +689,12 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if run.ctx.Err() != nil || s.runs[run.sessionID] != run {
 		s.mu.Unlock()
-		fail(w, 409, "执行已停止")
+		fail(w, 409, s.lang(r).T("The run has stopped", "执行已停止"))
 		return
 	}
 	if err := s.store.AddInteraction(x); err != nil {
 		s.mu.Unlock()
-		fail(w, 500, "无法保存交互请求")
+		fail(w, 500, s.lang(r).T("Could not save the interaction request", "无法保存交互请求"))
 		return
 	}
 	s.requests[x.ID] = p
@@ -704,7 +729,7 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 	case a := <-p.channel:
 		respond(w, 200, a)
 	case <-run.ctx.Done():
-		fail(w, 409, "执行已停止")
+		fail(w, 409, s.lang(r).T("The run has stopped", "执行已停止"))
 	case <-r.Context().Done():
 		return
 	case <-timer.C:
@@ -723,7 +748,7 @@ func (s *Server) pending(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	x, e := s.store.Pending(r.URL.Query().Get("sessionId"))
 	if e != nil {
-		fail(w, 500, "无法读取交互请求")
+		fail(w, 500, s.lang(r).T("Could not read interaction requests", "无法读取交互请求"))
 		return
 	}
 	respond(w, 200, x)
@@ -734,7 +759,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.Decision != "allow" && a.Decision != "deny" && a.Decision != "terminal" {
-		fail(w, 400, "无效的审批结果")
+		fail(w, 400, s.lang(r).T("Invalid approval decision", "无效的审批结果"))
 		return
 	}
 	id := r.PathValue("id")
@@ -742,20 +767,20 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if p, ok := s.channelRequests[id]; ok {
 		if a.Decision == "terminal" {
-			fail(w, 400, "无效的审批结果")
+			fail(w, 400, s.lang(r).T("Invalid approval decision", "无效的审批结果"))
 			return
 		}
-		s.channelResolveLocked(w, id, p, a)
+		s.channelResolveLocked(w, r, id, p, a)
 		return
 	}
 	p, ok := s.requests[id]
 	if !ok || p.ctx.Err() != nil {
-		fail(w, 409, "请求已处理或已失效")
+		fail(w, 409, s.lang(r).T("The request was already handled or has expired", "请求已处理或已失效"))
 		return
 	}
 	status := "resolved"
 	if p.connection != nil {
-		if msg := checkSharedAnswer(p, &a); msg != "" {
+		if msg := checkSharedAnswer(s.lang(r), p, &a); msg != "" {
 			fail(w, 400, msg)
 			return
 		}
@@ -763,11 +788,11 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 			status = "terminal"
 		}
 	} else if a.Decision == "terminal" || a.Mode != "" || a.Message != "" {
-		fail(w, 400, "无效的审批结果")
+		fail(w, 400, s.lang(r).T("Invalid approval decision", "无效的审批结果"))
 		return
 	}
 	if err := s.store.Resolve(id, status); err != nil {
-		fail(w, 409, err.Error())
+		fail(w, 409, i18n.Text(s.lang(r), err))
 		return
 	}
 	delete(s.requests, id)
@@ -785,7 +810,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nativeList(w http.ResponseWriter, r *http.Request) {
 	x, e := claude.ListNative(s.cfg.ClaudeConfigDir)
 	if e != nil {
-		fail(w, 500, "无法读取 Claude Code 原生会话："+e.Error())
+		fail(w, 500, s.lang(r).T("Could not read Claude Code's native sessions: ", "无法读取 Claude Code 原生会话：")+e.Error())
 		return
 	}
 	respond(w, 200, x)
@@ -793,7 +818,7 @@ func (s *Server) nativeList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) nativeGet(w http.ResponseWriter, r *http.Request) {
 	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, r.PathValue("id"))
 	if e != nil {
-		fail(w, 404, "无法读取原生会话："+e.Error())
+		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
 	}
 	q := r.URL.Query()
@@ -802,7 +827,7 @@ func (s *Server) nativeGet(w http.ResponseWriter, r *http.Request) {
 	if tail := q.Get("tail"); tail != "" {
 		limit, ok := pageLimit(tail)
 		if !ok {
-			fail(w, 400, "无效的分页参数")
+			fail(w, 400, s.lang(r).T("Invalid paging parameters", "无效的分页参数"))
 			return
 		}
 		out, older = pageSlice(out, 0, limit, pageReach)
@@ -820,7 +845,7 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !req.ConfirmStopped {
-		fail(w, 400, "请先停止原生会话再交接")
+		fail(w, 400, s.lang(r).T("Stop the native session before handing it over", "请先停止原生会话再交接"))
 		return
 	}
 	id := r.PathValue("id")
@@ -830,27 +855,27 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, x)
 		return
 	} else if !errors.Is(e, sql.ErrNoRows) {
-		fail(w, 500, "无法读取会话")
+		fail(w, 500, s.lang(r).T("Could not read sessions", "无法读取会话"))
 		return
 	}
 	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, id)
 	if e != nil {
-		fail(w, 404, "无法读取原生会话："+e.Error())
+		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
 	}
-	cwd, e := validateCwd(x.Cwd)
+	cwd, e := validateCwd(s.lang(r), x.Cwd)
 	if e != nil {
 		fail(w, 400, e.Error())
 		return
 	}
 	managed, e := s.store.Create(x.Title, cwd, x.ID, true)
 	if e != nil {
-		fail(w, 500, "无法导入会话")
+		fail(w, 500, s.lang(r).T("Could not import the session", "无法导入会话"))
 		return
 	}
 	for _, v := range ev {
 		if _, e = s.store.Append(managed.ID, v.Kind, v.Text, v.Payload); e != nil {
-			fail(w, 500, "无法保存历史")
+			fail(w, 500, s.lang(r).T("Could not save the history", "无法保存历史"))
 			return
 		}
 	}
@@ -859,11 +884,11 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
-		fail(w, 404, "接口不存在")
+		fail(w, 404, s.lang(r).T("API endpoint not found", "接口不存在"))
 		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
-		fail(w, 405, "方法不支持")
+		fail(w, 405, s.lang(r).T("Method not allowed", "方法不支持"))
 		return
 	}
 	if s.cfg.Assets == nil {
@@ -891,6 +916,18 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")
+	}
+	// The page starts in the host's language: index.html carries it in <html lang>.
+	if r.URL.Path == "/index.html" || r.URL.Path == "/" {
+		if b, err := fs.ReadFile(s.cfg.Assets, "index.html"); err == nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			page := strings.Replace(string(b), `<html lang="zh-CN">`, `<html lang="`+map[i18n.Lang]string{i18n.ZH: "zh-CN", i18n.EN: "en"}[s.language()]+`">`, 1)
+			if r.Method == "HEAD" {
+				return
+			}
+			_, _ = io.WriteString(w, page)
+			return
+		}
 	}
 	http.FileServer(http.FS(s.cfg.Assets)).ServeHTTP(w, r)
 }

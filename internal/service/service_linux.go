@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 const (
@@ -31,7 +33,7 @@ func renderUnit(cfg *Config) string {
 func register(cfg *Config, dryRun bool, out io.Writer) error {
 	path, unit := unitPath(), renderUnit(cfg)
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] write %s:\n%s[dry-run] systemctl --user daemon-reload && systemctl --user enable %s\n", path, unit, unitName)
+		fmt.Fprint(out, i18n.F("[dry-run] write %s:\n%s[dry-run] systemctl --user daemon-reload && systemctl --user enable %s\n", "[dry-run] 写入 %s：\n%s[dry-run] systemctl --user daemon-reload && systemctl --user enable %s\n", path, unit, unitName))
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -46,15 +48,15 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	if _, err := runQuiet("systemctl", "--user", "enable", unitName); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Registered systemd user unit %s\n", path)
-	fmt.Fprintf(out, "Tip: to start at boot without logging in, run: loginctl enable-linger %s\n", os.Getenv("USER"))
+	fmt.Fprint(out, i18n.F("Registered systemd user unit %s\n", "已注册 systemd 用户单元 %s\n", path))
+	fmt.Fprint(out, i18n.F("Tip: to start at boot without logging in, run: loginctl enable-linger %s\n", "提示：要在开机后无需登录就启动，请运行：loginctl enable-linger %s\n", os.Getenv("USER")))
 	return nil
 }
 
 func unregister(dryRun bool, out io.Writer) error {
 	path := unitPath()
 	if dryRun {
-		fmt.Fprintf(out, "[dry-run] systemctl --user disable --now %s; remove %s; systemctl --user daemon-reload\n", unitName, path)
+		fmt.Fprint(out, i18n.F("[dry-run] systemctl --user disable --now %s; remove %s; systemctl --user daemon-reload\n", "[dry-run] systemctl --user disable --now %s；删除 %s；systemctl --user daemon-reload\n", unitName, path))
 		return nil
 	}
 	_, _ = runQuiet("systemctl", "--user", "disable", "--now", unitName)
@@ -62,7 +64,7 @@ func unregister(dryRun bool, out io.Writer) error {
 		return err
 	}
 	_, _ = runQuiet("systemctl", "--user", "daemon-reload")
-	fmt.Fprintf(out, "Removed systemd user unit %s\n", path)
+	fmt.Fprint(out, i18n.F("Removed systemd user unit %s\n", "已删除 systemd 用户单元 %s\n", path))
 	return nil
 }
 

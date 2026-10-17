@@ -11,18 +11,20 @@
 #   2. GITHUB_TOKEN / GH_TOKEN with "Contents: Read" on the repository.
 #
 # Usage:
-#   sh install.sh [--version vX.Y.Z] [--listen ADDR]... [--no-service]
-#                 [--dir DIR] [--no-alias] [--dry-run]
+#   sh install.sh [--version vX.Y.Z] [--listen ADDR]... [--lang auto|zh|en]
+#                 [--no-service] [--dir DIR] [--no-alias] [--dry-run]
 #   gh api repos/huanfeng/cc-remote/contents/scripts/install.sh \
 #     -H "Accept: application/vnd.github.raw" | sh -s -- --listen lan:8787
 #
 # Environment: CC_REMOTE_REPO (default huanfeng/cc-remote), GITHUB_TOKEN/GH_TOKEN,
-# CC_REMOTE_API_URL (GitHub API base, default https://api.github.com).
+# CC_REMOTE_API_URL (GitHub API base, default https://api.github.com),
+# CC_REMOTE_LANG (default for --lang; unset keeps the installed setting).
 
 set -eu
 
 REPO="${CC_REMOTE_REPO:-huanfeng/cc-remote}"
 API="${CC_REMOTE_API_URL:-https://api.github.com}"
+LANG_OPT="${CC_REMOTE_LANG:-}"
 VERSION=""
 INSTALL_DIR="${HOME}/.local/bin"
 NO_SERVICE=0
@@ -42,7 +44,7 @@ missing_release() {
 }
 
 usage() {
-	sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' || true
+	sed -n '2,21p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' || true
 	exit "${1:-0}"
 }
 
@@ -62,6 +64,8 @@ while [ $# -gt 0 ]; do
 		--version=*) VERSION=${1#*=}; shift ;;
 		--listen) [ $# -ge 2 ] || die "--listen needs a value"; add_listen "$2"; shift 2 ;;
 		--listen=*) add_listen "${1#*=}"; shift ;;
+		--lang) [ $# -ge 2 ] || die "--lang needs a value"; LANG_OPT=$2; shift 2 ;;
+		--lang=*) LANG_OPT=${1#*=}; shift ;;
 		--dir) [ $# -ge 2 ] || die "--dir needs a value"; INSTALL_DIR=$2; shift 2 ;;
 		--dir=*) INSTALL_DIR=${1#*=}; shift ;;
 		--no-service) NO_SERVICE=1; shift ;;
@@ -76,6 +80,12 @@ done
 case "$VERSION" in
 	""|v*) ;;
 	*) VERSION="v$VERSION" ;;
+esac
+case "$LANG_OPT" in
+	""|auto|zh|en) ;;
+	zh[-_]*) LANG_OPT=zh ;;
+	en[-_]*) LANG_OPT=en ;;
+	*) die "--lang must be auto, zh or en (got $LANG_OPT)" ;;
 esac
 
 # --- platform ---------------------------------------------------------------
@@ -196,6 +206,7 @@ asset_id() { awk -v n="$1" '$1 == n { print $2; exit }' "$TMP/assets"; }
 
 set --
 for a in $LISTEN; do set -- "$@" --listen "$a"; done
+if [ -n "$LANG_OPT" ]; then set -- "$@" --lang "$LANG_OPT"; fi
 if [ "$NO_SERVICE" = 1 ]; then
 	PLAN="copy cc-remote to $INSTALL_DIR"
 	[ "$ALIAS" = 1 ] && PLAN="$PLAN; run: $INSTALL_DIR/cc-remote alias install"

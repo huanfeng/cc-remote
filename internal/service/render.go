@@ -5,10 +5,11 @@ import (
 	"encoding/binary"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf16"
+
+	"cc-remote/internal/i18n"
 )
 
 // TaskName is the Windows Task Scheduler task name.
@@ -234,18 +235,25 @@ func HostArgs(cfg Config, manager string) []string {
 	if cfg.AllowInsecureRemote {
 		args = append(args, "--allow-insecure-remote")
 	}
+	// "auto" is resolved now, by the command that installs or updates the
+	// service: launchd and systemd start the host without the user's LANG.
+	lang := cfg.Language
+	if lang == "" {
+		lang = string(i18n.Current())
+	}
+	args = append(args, "--lang", lang)
 	return append(args, "--log-file", cfg.LogFile, "--service-manager", manager)
 }
 
 // SetPESubsystem rewrites the PE optional header subsystem (2 = GUI, 3 = console).
 func SetPESubsystem(b []byte, subsystem uint16) error {
 	if len(b) < 0x40 || b[0] != 'M' || b[1] != 'Z' {
-		return errors.New("not a PE executable")
+		return errors.New(i18n.T("not a PE executable", "不是 PE 可执行文件"))
 	}
 	pe := int(binary.LittleEndian.Uint32(b[0x3C:]))
 	off := pe + 4 + 20 + 68
 	if pe < 0 || off+2 > len(b) || string(b[pe:pe+4]) != "PE\x00\x00" {
-		return fmt.Errorf("invalid PE header")
+		return errors.New(i18n.T("invalid PE header", "PE 文件头无效"))
 	}
 	binary.LittleEndian.PutUint16(b[off:], subsystem)
 	return nil

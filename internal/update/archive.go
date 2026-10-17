@@ -7,11 +7,12 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"cc-remote/internal/i18n"
 )
 
 // selectAsset picks the release archive for goos/goarch. Release archives are
@@ -27,7 +28,7 @@ func selectAsset(assets []Asset, goos, goarch string) (Asset, error) {
 			return a, nil
 		}
 	}
-	return Asset{}, fmt.Errorf("release has no asset for %s/%s (expected cc-remote_<version>%s)", goos, goarch, suffix)
+	return Asset{}, i18n.Errorf("release has no asset for %s/%s (expected cc-remote_<version>%s)", "该版本没有 %s/%s 的文件（应为 cc-remote_<版本>%s）", goos, goarch, suffix)
 }
 
 func findAsset(assets []Asset, name string) (Asset, bool) {
@@ -50,14 +51,14 @@ func parseChecksums(r io.Reader) (map[string]string, error) {
 		}
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
-			return nil, fmt.Errorf("malformed checksum line %q", line)
+			return nil, i18n.Errorf("malformed checksum line %q", "校验和行格式错误 %q", line)
 		}
 		sum := strings.ToLower(fields[0])
 		if len(sum) != sha256.Size*2 {
-			return nil, fmt.Errorf("malformed sha256 %q", fields[0])
+			return nil, i18n.Errorf("malformed sha256 %q", "sha256 格式错误 %q", fields[0])
 		}
 		if _, err := hex.DecodeString(sum); err != nil {
-			return nil, fmt.Errorf("malformed sha256 %q", fields[0])
+			return nil, i18n.Errorf("malformed sha256 %q", "sha256 格式错误 %q", fields[0])
 		}
 		sums[strings.TrimPrefix(fields[1], "*")] = sum
 	}
@@ -76,7 +77,7 @@ func verifyFile(path, want string) error {
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(got, want) {
-		return fmt.Errorf("sha256 mismatch for %s: got %s, want %s", filepath.Base(path), got, want)
+		return i18n.Errorf("sha256 mismatch for %s: got %s, want %s", "%s 的 sha256 不匹配：实际 %s，应为 %s", filepath.Base(path), got, want)
 	}
 	return nil
 }
@@ -91,7 +92,7 @@ func safeJoin(dir, name string) (string, error) {
 	}
 	if clean == "." || filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" ||
 		clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.HasPrefix(name, "/") {
-		return "", fmt.Errorf("archive entry %q escapes the destination", name)
+		return "", i18n.Errorf("archive entry %q escapes the destination", "压缩包条目 %q 越出了目标目录", name)
 	}
 	return filepath.Join(dir, clean), nil
 }
@@ -132,7 +133,7 @@ func extractZip(archive, dst string) error {
 			continue // skip symlinks and other special entries
 		}
 		if target == dst {
-			return fmt.Errorf("archive entry %q is not a file name", f.Name)
+			return i18n.Errorf("archive entry %q is not a file name", "压缩包条目 %q 不是文件名", f.Name)
 		}
 		rc, err := f.Open()
 		if err != nil {
@@ -178,7 +179,7 @@ func extractTarGz(archive, dst string) error {
 			}
 		case tar.TypeReg:
 			if target == dst {
-				return fmt.Errorf("archive entry %q is not a file name", hdr.Name)
+				return i18n.Errorf("archive entry %q is not a file name", "压缩包条目 %q 不是文件名", hdr.Name)
 			}
 			if err := writeEntry(target, tr, 0o755); err != nil {
 				return err
@@ -199,7 +200,7 @@ func extractArchive(archive, dst, goos string) (string, error) {
 	case strings.HasSuffix(archive, ".tar.gz"):
 		err = extractTarGz(archive, dst)
 	default:
-		err = fmt.Errorf("unsupported archive %s", filepath.Base(archive))
+		err = i18n.Errorf("unsupported archive %s", "不支持的压缩包 %s", filepath.Base(archive))
 	}
 	if err != nil {
 		return "", err
@@ -219,7 +220,7 @@ func extractArchive(archive, dst, goos string) (string, error) {
 		return "", err
 	}
 	if found == "" {
-		return "", fmt.Errorf("archive %s does not contain %s", filepath.Base(archive), name)
+		return "", i18n.Errorf("archive %s does not contain %s", "压缩包 %s 中没有 %s", filepath.Base(archive), name)
 	}
 	return found, nil
 }

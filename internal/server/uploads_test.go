@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
 
@@ -95,17 +96,17 @@ func TestImageUploadsAreAuthenticatedValidatedAndSessionScoped(t *testing.T) {
 	if c, _ = request(t, ts, "POST", "/api/sessions/"+other.ID+"/messages", map[string]any{"text": "analyze", "attachmentIds": []string{item.ID}}, testToken); c != 400 {
 		t.Fatal("cross-session image message")
 	}
-	if _, _, err := s.messageAttachments(a.ID, "", []string{"../outside"}); err == nil {
+	if _, _, err := s.messageAttachments(i18n.EN, a.ID, "", []string{"../outside"}); err == nil {
 		t.Fatal("path traversal image accepted")
 	}
-	if _, _, err := s.messageAttachments(a.ID, "", []string{item.ID, item.ID}); err == nil {
+	if _, _, err := s.messageAttachments(i18n.EN, a.ID, "", []string{item.ID, item.ID}); err == nil {
 		t.Fatal("duplicate image accepted")
 	}
 	if c, b = request(t, ts, "POST", "/api/sessions/"+a.ID+"/messages", map[string]any{"text": "", "attachmentIds": []string{item.ID}}, testToken); c != 202 {
 		t.Fatalf("image-only message: %d %s", c, b)
 	}
 	o := <-runs
-	_, imagePath, _ := s.loadAttachment(a.ID, item.ID)
+	_, imagePath, _ := s.loadAttachment(i18n.EN, a.ID, item.ID)
 	encodedPath, _ := json.Marshal(imagePath)
 	if !strings.Contains(o.Message, string(encodedPath)) || !strings.Contains(o.Message, "Read tool") {
 		t.Fatalf("image not supplied to Claude: %s", o.Message)
@@ -119,7 +120,7 @@ func TestImageUploadsAreAuthenticatedValidatedAndSessionScoped(t *testing.T) {
 	}
 	// Metadata and image remain readable after constructing a fresh server.
 	reopened := New(st, Config{UploadDir: s.cfg.UploadDir})
-	if _, path, err := reopened.loadAttachment(a.ID, item.ID); err != nil || path != filepath.Clean(imagePath) {
+	if _, path, err := reopened.loadAttachment(i18n.EN, a.ID, item.ID); err != nil || path != filepath.Clean(imagePath) {
 		t.Fatalf("not persistent: %s %v", path, err)
 	}
 }
@@ -185,7 +186,7 @@ func TestFileUploadsAreStoredAsIsAndDownloaded(t *testing.T) {
 	if txt.Kind != "file" || txt.Name != "笔记 notes.txt" || !strings.HasPrefix(txt.MIME, "text/plain") || txt.Size != len(text) {
 		t.Fatalf("bad file metadata %+v", txt)
 	}
-	_, path, err := s.loadAttachment(a.ID, txt.ID)
+	_, path, err := s.loadAttachment(i18n.EN, a.ID, txt.ID)
 	if err != nil || filepath.Dir(path) != filepath.Join(s.cfg.UploadDir, a.ID) || !strings.HasSuffix(path, "-笔记 notes.txt") {
 		t.Fatalf("stored outside session dir: %s %v", path, err)
 	}
@@ -231,9 +232,9 @@ func TestFileUploadsAreStoredAsIsAndDownloaded(t *testing.T) {
 		t.Fatalf("file not supplied to Claude: %s", o.Message)
 	}
 	// Metadata tampered to escape the session directory is rejected.
-	_, metaPath, _ := s.uploadPaths(a.ID, txt.ID)
+	_, metaPath, _ := s.uploadPaths(i18n.EN, a.ID, txt.ID)
 	_ = os.WriteFile(metaPath, []byte(`{"id":"`+txt.ID+`","kind":"file","name":"../../outside.txt","mime":"text/plain"}`), 0600)
-	if _, _, err = s.loadAttachment(a.ID, txt.ID); err == nil {
+	if _, _, err = s.loadAttachment(i18n.EN, a.ID, txt.ID); err == nil {
 		t.Fatal("traversal name in metadata accepted")
 	}
 }
@@ -252,10 +253,10 @@ func TestAttachmentCountLimit(t *testing.T) {
 		}
 		ids = append(ids, item.ID)
 	}
-	if _, _, err := s.messageAttachments(a.ID, "", ids); err == nil {
+	if _, _, err := s.messageAttachments(i18n.EN, a.ID, "", ids); err == nil {
 		t.Fatal("more than 8 attachments accepted")
 	}
-	if _, _, err := s.messageAttachments(a.ID, "", ids[:maxAttachments]); err != nil {
+	if _, _, err := s.messageAttachments(i18n.EN, a.ID, "", ids[:maxAttachments]); err != nil {
 		t.Fatal(err)
 	}
 }

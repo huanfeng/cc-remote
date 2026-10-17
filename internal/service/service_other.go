@@ -3,13 +3,20 @@
 package service
 
 import (
-	"errors"
 	"io"
+
+	"cc-remote/internal/i18n"
 )
 
 const managerName = "unsupported"
 
-var errUnsupported = errors.New("service management is not supported on this platform")
+type unsupportedError struct{}
+
+func (unsupportedError) Error() string {
+	return i18n.T("service management is not supported on this platform", "此平台不支持服务管理")
+}
+
+var errUnsupported error = unsupportedError{}
 
 func installBinaries(string, bool, io.Writer) error { return errUnsupported }
 func register(*Config, bool, io.Writer) error       { return errUnsupported }

@@ -55,7 +55,7 @@ test('a denied modern clipboard falls back to selection-based copying', async ()
 
 test('a blocked legacy copy reports failure and still removes temporary input', async () => {
   await environment({ secure: false, legacy: false }, async (state, previous) => {
-    await assert.rejects(copyText('manual command'), /自动复制不可用/);
+    await assert.rejects(copyText('manual command'), /Automatic copy is unavailable/);
     assert.equal(state.nodes.length, 0);
     assert.equal(state.focused, previous);
   });

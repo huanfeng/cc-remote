@@ -81,7 +81,7 @@ test('rendered fixture contains tables, insight cards, code blocks and safe link
   assert.ok(!/<p>[^<]*─{10}/.test(html), 'no box-drawing rule glued into a paragraph');
   assert.match(html, /│ host     │ 托管会话     │/);
   assert.match(html, /★ Insight ─+  \(代码块里不应被转换\)/);
-  assert.match(html, /<div class="md-code-bar"><span>go<\/span><button type="button">复制<\/button>/);
+  assert.match(html, /<div class="md-code-bar"><span>go<\/span><button type="button">Copy<\/button>/);
   assert.match(html, /<input type="checkbox" disabled="" checked=""\/>/);
   assert.match(html, /<del>删除线<\/del>/);
   assert.match(html, /<a href="https:\/\/example.com\/docs" target="_blank" rel="noopener noreferrer">文档<\/a>/);

@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { copyText } from './clipboard';
+import { t } from './i18n';
 import { INSIGHT_LANG, normalizeClaudeMarkdown } from './markdownPreprocess';
 import './markdown.css';
 
@@ -30,7 +31,7 @@ function CodeBlock({ code, lang, children }: { code: string; lang: string; child
     window.setTimeout(() => setState('idle'), 1600);
   };
   return <div className="md-code">
-    <div className="md-code-bar"><span>{lang}</span><button type="button" onClick={() => void copy()}>{state === 'copied' ? '已复制' : state === 'failed' ? '复制失败' : '复制'}</button></div>
+    <div className="md-code-bar"><span>{lang}</span><button type="button" onClick={() => void copy()}>{state === 'copied' ? t('Copied', '已复制') : state === 'failed' ? t('Copy failed', '复制失败') : t('Copy', '复制')}</button></div>
     <pre>{children}</pre>
   </div>;
 }
