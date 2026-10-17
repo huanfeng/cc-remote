@@ -50,7 +50,6 @@ usage:
 commands:
   service    install/config/uninstall/start/stop/restart/status/logs the background service
   alias      install/uninstall/status the ccr launcher
-  terminal   start a shared terminal session (legacy form of "--")
   attach, a  connect this terminal to a terminal session the host holds (--new starts one here)
   ccr        the ccr launcher: see "ccr --help"
   update     update cc-remote to the latest release
@@ -72,7 +71,6 @@ const usageZH = `CC Remote：Claude Code 的远程 Web 界面。
 命令：
   service    安装/配置/卸载/启动/停止/重启/查看状态/查看日志（后台服务）
   alias      安装/卸载/查看 ccr 启动器
-  terminal   启动共享终端会话（"--" 的旧写法）
   attach, a  把当前终端接入宿主上的终端会话（--new 在此新建一个）
   ccr        ccr 启动器：见 "ccr --help"
   update     把 cc-remote 更新到最新版本
