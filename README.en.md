@@ -94,7 +94,7 @@ Claude Code opens in the terminal as usual and the session appears in the web UI
 ### Terminal sessions (ccr)
 
 ```sh
-ccr                      # attach to this directory's terminal session, or start one
+ccr                      # pick one of this directory's terminal sessions (Enter: the latest with no terminal attached), or start one
 ccr ls                   # recent terminal sessions; pick one to attach
 ccr <id prefix or title> # attach to that session
 ccr --new --model sonnet # start a new one here (also --title, --effort, --permission-mode)

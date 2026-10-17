@@ -92,7 +92,7 @@ ccr
 ### 终端会话（ccr）
 
 ```sh
-ccr                      # 接入当前目录的终端会话，没有就新建
+ccr                      # 选择当前目录的终端会话接入（回车 = 最近一个没有终端接入的），没有就新建
 ccr ls                   # 列出最近的终端会话，选择一个接入
 ccr <ID前缀或标题>        # 接入指定会话
 ccr --new --model sonnet # 在当前目录新建（可选 --title、--effort、--permission-mode）

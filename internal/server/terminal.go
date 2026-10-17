@@ -757,6 +757,7 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 	if ts == nil {
 		return
 	}
+	x.Attached = ts.runner.Attached()
 	live := store.LiveStatus{}
 	if ts.live != nil {
 		live = *ts.live

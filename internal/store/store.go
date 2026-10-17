@@ -33,6 +33,8 @@ type Session struct {
 	ClaudeArgs []string `json:"claudeArgs,omitempty"`
 	// Queued holds web messages waiting for Claude (filled in by the server).
 	Queued []QueuedMessage `json:"queued,omitempty"`
+	// Attached counts the terminals attached to a terminal session (filled in by the server).
+	Attached int `json:"attached,omitempty"`
 	// Live is a terminal session's status line data (filled in by the server).
 	Live *LiveStatus `json:"live,omitempty"`
 }

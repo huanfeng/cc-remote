@@ -38,6 +38,8 @@ type remoteSession struct {
 	Mode   string `json:"mode"`
 	Status string `json:"status"`
 	Online bool   `json:"online"`
+	// Attached counts the terminals attached to it now.
+	Attached int `json:"attached"`
 	// UpdatedAt is the last activity (RFC 3339).
 	UpdatedAt string `json:"updatedAt"`
 }
@@ -69,6 +71,9 @@ func Attach(args []string, defaultDataDir string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if !confirmAttached(target) {
+		return errors.New(i18n.T("not attached", "未接入"))
 	}
 	return api.attach(target)
 }
@@ -157,6 +162,9 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	}
 	if err != nil {
 		return err
+	}
+	if !confirmAttached(target) {
+		return errors.New(i18n.T("not attached; ccr --new starts another session in this directory", "未接入；ccr --new 可以在当前目录另开一个会话"))
 	}
 	if prompt := strings.Join(split.words, " "); prompt != "" && (launch || resume.set) {
 		if err = api.do("POST", "/api/sessions/"+target.ID+"/messages", map[string]string{"text": prompt}, nil); err != nil {
@@ -289,7 +297,7 @@ func (c *client) resume(r resumeArgs, title string, options map[string]any) (rem
 	target := list[0]
 	if len(list) > 1 {
 		fmt.Println(i18n.T("Claude Code sessions:", "Claude Code 会话："))
-		if target, err = choose(list, false, nil); err != nil {
+		if target, err = choose(list, nil); err != nil {
 			return remoteSession{}, err
 		}
 	}
@@ -334,15 +342,14 @@ func (c *client) here(title string, options map[string]any) (remoteSession, erro
 			list = append(list, x)
 		}
 	}
-	switch len(list) {
-	case 0:
+	if len(list) == 0 {
 		fmt.Println(i18n.T("No terminal session in this directory yet; starting one…", "这个目录还没有终端会话，正在新建…"))
 		return c.create(title, options)
-	case 1:
-		return list[0], nil
 	}
-	fmt.Println(i18n.T("This directory has several terminal sessions:", "这个目录有多个终端会话："))
-	return choose(list, true, func() (remoteSession, error) { return c.create(title, options) })
+	// A directory usually has several sessions: always ask, Enter taking the
+	// most recent one no terminal is attached to.
+	fmt.Println(i18n.F("Terminal sessions in this directory (%d):", "这个目录的终端会话（%d 个）：", len(list)))
+	return choose(list, func() (remoteSession, error) { return c.create(title, options) })
 }
 
 // recentLimit is how many sessions the pickers list.
@@ -359,7 +366,7 @@ func (c *client) recent(title string, options map[string]any) (remoteSession, er
 		return c.create(title, options)
 	}
 	fmt.Println(i18n.T("Recent terminal sessions:", "最近的终端会话："))
-	return choose(list, true, func() (remoteSession, error) { return c.create(title, options) })
+	return choose(list, func() (remoteSession, error) { return c.create(title, options) })
 }
 
 func samePath(a, b string) bool {
@@ -479,34 +486,89 @@ func statusText(status string) string {
 }
 
 // choose asks for one of list by number; with create, 0 starts a new session.
-func choose(list []remoteSession, allowNew bool, create func() (remoteSession, error)) (remoteSession, error) {
+func choose(list []remoteSession, create func() (remoteSession, error)) (remoteSession, error) {
 	if len(list) > recentLimit {
 		list = list[:recentLimit]
 	}
+	// The default: the most recent session no terminal is attached to, else a
+	// new one (or the first when none can be created).
+	def := -1
 	for i, x := range list {
-		if x.Mode == "" { // a Claude Code session, not one the host holds
-			fmt.Printf("%2d. %s  [%s]  %s  (%s)\n", i+1, x.Title, ago(x.UpdatedAt), x.Cwd, x.ID[:8])
-			continue
+		if x.Attached == 0 {
+			def = i
+			break
 		}
-		state := i18n.T("not running", "未运行")
-		if x.Online {
-			state = statusText(x.Status)
+	}
+	if def < 0 && create == nil {
+		def = 0
+	}
+	showCwd := false
+	for _, x := range list {
+		showCwd = showCwd || !samePath(x.Cwd, list[0].Cwd)
+	}
+	for i, x := range list {
+		mark := " "
+		if i == def {
+			mark = "*"
 		}
-		fmt.Printf("%2d. %s  [%s · %s]  %s  (%s)\n", i+1, x.Title, state, ago(x.UpdatedAt), x.Cwd, x.ID[:8])
+		where := ""
+		if showCwd {
+			where = "  " + x.Cwd
+		}
+		fmt.Printf("%s%2d. %s  [%s]%s  (%s)\n", mark, i+1, x.Title, sessionState(x), where, x.ID[:8])
 	}
-	if allowNew {
-		fmt.Println(i18n.T(" 0. New terminal session", " 0. 新建终端会话"))
+	if create != nil {
+		mark := " "
+		if def < 0 {
+			mark = "*"
+		}
+		fmt.Println(mark + i18n.T(" 0. New terminal session", " 0. 新建终端会话"))
 	}
-	fmt.Print(i18n.T("Session number: ", "选择会话编号："))
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	n, err := strconv.Atoi(strings.TrimSpace(line))
-	if err == nil && n == 0 && allowNew {
+	fmt.Print(i18n.F("Session number (Enter: %d): ", "选择会话编号（回车 = %d）：", def+1))
+	line, _ := stdin.ReadString('\n')
+	n, err := def+1, error(nil)
+	if line = strings.TrimSpace(line); line != "" {
+		n, err = strconv.Atoi(line)
+	}
+	if err == nil && n == 0 && create != nil {
 		return create()
 	}
 	if err != nil || n < 1 || n > len(list) {
 		return remoteSession{}, errors.New(i18n.T("invalid choice", "无效的选择"))
 	}
 	return list[n-1], nil
+}
+
+// stdin is shared by the prompts, so a line typed ahead is not lost between them.
+var stdin = bufio.NewReader(os.Stdin)
+
+// sessionState is a session's state for the picker: running or not, the
+// terminals attached to it and its last activity.
+func sessionState(x remoteSession) string {
+	if x.Mode == "" { // a Claude Code session, not one the host holds
+		return ago(x.UpdatedAt)
+	}
+	state := i18n.T("not running", "未运行")
+	if x.Online {
+		state = statusText(x.Status)
+	}
+	if x.Attached > 0 {
+		state += " · " + i18n.F("%d terminal(s) attached", "已有 %d 个终端接入", x.Attached)
+	}
+	return state + " · " + ago(x.UpdatedAt)
+}
+
+// confirmAttached asks before attaching to a session another terminal is
+// attached to: both show the same screen and type into the same Claude Code.
+func confirmAttached(x remoteSession) bool {
+	if x.Attached == 0 {
+		return true
+	}
+	fmt.Print(i18n.F("“%s” already has %d terminal(s) attached: they share the screen and type into the same Claude Code. Attach anyway? [y/N] ",
+		"「%s」已有 %d 个终端接入：画面同步，输入会进入同一个 Claude Code。仍然接入？[y/N] ", x.Title, x.Attached))
+	line, _ := stdin.ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes" || answer == "是"
 }
 
 func (c *client) pick(query string) (remoteSession, error) {
@@ -531,7 +593,7 @@ func (c *client) pick(query string) (remoteSession, error) {
 	case len(list) == 1:
 		return list[0], nil
 	}
-	return choose(list, false, nil)
+	return choose(list, nil)
 }
 
 func (c *client) attach(x remoteSession) error {

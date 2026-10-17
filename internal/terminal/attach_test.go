@@ -1,7 +1,9 @@
 package terminal
 
 import (
+	"bufio"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -34,5 +36,41 @@ func TestSplitCCR(t *testing.T) {
 	}
 	if n := splitCCR([]string{"--add-dir", "a", "-n", "Login fix"}).name(); n != "Login fix" {
 		t.Errorf("name %q", n)
+	}
+}
+
+// ccr in a directory with sessions asks which; Enter takes the most recent one
+// no terminal is attached to, and attaching to a busy one needs a yes.
+func TestChoose(t *testing.T) {
+	list := []remoteSession{
+		{ID: "11111111-a", Title: "busy", Mode: "terminal", Online: true, Status: "running", Attached: 1},
+		{ID: "22222222-b", Title: "free", Mode: "terminal"},
+	}
+	created := false
+	create := func() (remoteSession, error) { created = true; return remoteSession{ID: "new"}, nil }
+	answer := func(input string) {
+		stdin = bufio.NewReader(strings.NewReader(input))
+	}
+	answer("\n")
+	if x, err := choose(list, create); err != nil || x.Title != "free" {
+		t.Fatalf("default %+v %v", x, err)
+	}
+	answer("0\n")
+	if x, _ := choose(list, create); !created || x.ID != "new" {
+		t.Fatalf("new %+v", x)
+	}
+	// Every session attached: Enter starts a new one.
+	list[1].Attached, created = 2, false
+	answer("\n")
+	if _, _ = choose(list, create); !created {
+		t.Fatal("did not default to a new session")
+	}
+	answer("y\n")
+	if !confirmAttached(list[0]) {
+		t.Fatal("yes refused")
+	}
+	answer("\n")
+	if confirmAttached(list[0]) || !confirmAttached(remoteSession{}) {
+		t.Fatal("attached without a yes, or asked for a free session")
 	}
 }

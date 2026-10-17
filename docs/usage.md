@@ -18,7 +18,7 @@
 `ccr` 的用法和 `claude` 一样，只是 Claude Code 由宿主运行：
 
 ```sh
-ccr                                   # 接入当前目录的终端会话，没有就新建
+ccr                                   # 选择当前目录的终端会话接入，没有就新建
 ccr --model sonnet --add-dir ../lib   # 带 Claude Code 参数新建终端会话
 ccr "修复登录页"                       # 只有提示词时是「接入指定会话」；新建并发送请写 ccr -- "修复登录页"
 ccr --resume <会话 ID>                # 以终端会话继续 Claude Code 会话（Claude Code 退出时提示的命令，把 claude 换成 ccr）
@@ -26,6 +26,8 @@ ccr -c                                # 继续当前目录最近的会话
 cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，使用非默认数据目录
 ```
 
+- 当前目录已有终端会话时，`ccr` 列出它们（状态、已接入的终端数、最近活动）让你选择：回车选最近一个没有终端接入的会话，都有终端接入时回车新建，`0` 新建。
+- 接入一个已有终端接入的会话前会先确认：两个终端画面同步，输入会进入同一个 Claude Code。
 - 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
 - `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
 - 宿主运行它自己配置的 Claude Code，`cc-remote -- claude` 里的 `claude` 只是占位。
@@ -49,7 +51,7 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 3. 点击会话标题栏的终端图标，复制接入命令，在宿主上运行即可在本地终端中操作同一个 Claude Code：
 
    ```sh
-   ccr                       # 接入当前目录的终端会话，没有就新建（宿主未运行时自动在后台启动）
+   ccr                       # 选择当前目录的终端会话接入，没有就新建（宿主未运行时自动在后台启动）
    ccr ls                    # 最近的终端会话（按活动时间，最多 20 个），选择编号接入，0 为新建
    ccr <会话 ID 前缀或标题>
    ccr --new --title 修复登录 --model sonnet
