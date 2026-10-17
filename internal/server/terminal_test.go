@@ -478,3 +478,31 @@ func TestTerminalClaudeArgs(t *testing.T) {
 	}
 	awaitLong(t, args, func() bool { return strings.HasSuffix(args(), "--add-dir ../lib --dangerously-skip-permissions") })
 }
+
+// The terminal sessions running when the host stops start again with the next
+// host (an update restarts it), once.
+func TestTerminalSessionsRestoredAfterRestart(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	path := filepath.Join(s.cfg.DataDir, restoreFile)
+	data, _ := json.Marshal([]string{x.ID, "missing"})
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.RestoreTerminals()
+	s.mu.Lock()
+	running := s.terminals[x.ID] != nil
+	s.mu.Unlock()
+	if _, err := os.Stat(path); !running || !os.IsNotExist(err) {
+		t.Fatalf("restored %v, list left: %v", running, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	if b, err := os.ReadFile(path); err != nil || json.Unmarshal(b, &ids) != nil || len(ids) != 1 || ids[0] != x.ID {
+		t.Fatalf("saved %q %v", ids, err)
+	}
+}

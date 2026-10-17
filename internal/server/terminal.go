@@ -815,6 +815,13 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case chunk, ok := <-sub.C:
 			if !ok {
+				s.mu.Lock()
+				closing := s.closing
+				s.mu.Unlock()
+				if closing { // the host stops: attach waits and attaches again
+					_ = c.Close(websocket.StatusGoingAway, "host restarting")
+					return
+				}
 				reason := i18n.T("Disconnected", "已断开")
 				select {
 				case <-ts.runner.Done():

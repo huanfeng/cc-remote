@@ -461,6 +461,7 @@ func runHost(argv []string) error {
 	}
 	warnExposure(bound)
 	log.Printf("Claude config: %s", configDir)
+	go app.RestoreTerminals() // the sessions running when the host last stopped
 	select {
 	case <-ctx.Done():
 	case e := <-errs:

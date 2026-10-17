@@ -91,6 +91,7 @@ type Server struct {
 	requests        map[string]*pending
 	closing         bool
 	restartPending  bool // a restart waits for busy sessions (update installed)
+	closedOnce      bool // Close saved the running terminal sessions
 	channels        map[string]*channelConnection
 	channelRequests map[string]*channelApproval
 	modelCache      modelsCache
@@ -1076,7 +1077,12 @@ func (s *Server) Close(ctx context.Context) error {
 		s.reaperStopped = true
 		close(s.stopReaper)
 	}
-	// Terminal sessions end with the host; they resume (--resume) on next use.
+	// Terminal sessions end with the host; the next host starts the running
+	// ones again (RestoreTerminals), and others resume (--resume) on next use.
+	if !s.closedOnce {
+		s.closedOnce = true
+		s.saveRunningTerminalsLocked()
+	}
 	for _, ts := range s.terminals {
 		s.closeTerminalAsync(ts)
 	}

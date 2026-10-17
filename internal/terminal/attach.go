@@ -596,7 +596,34 @@ func (c *client) pick(query string) (remoteSession, error) {
 	return choose(list, nil)
 }
 
+// errHostRestart: the stream ended because the host stopped (an update, a
+// restart) or the connection dropped; the session comes back with the host.
+var errHostRestart = errors.New("host restarting")
+
+// hostWait is how long attach waits for a restarting host.
+const hostWait = 3 * time.Minute
+
+// attach connects this terminal to a session. When the host restarts (e.g.
+// an update), it waits for the host and attaches again: the host resumes the
+// session, so the terminal carries on instead of exiting.
 func (c *client) attach(x remoteSession) error {
+	for {
+		err := c.attachOnce(x)
+		if !errors.Is(err, errHostRestart) {
+			return err
+		}
+		fmt.Print(i18n.T("\r\nThe host is restarting (an update?); attaching again when it is back… (Ctrl+C to quit)\r\n", "\r\n宿主正在重启（可能在更新），恢复后自动重新接入…（Ctrl+C 退出）\r\n"))
+		deadline := time.Now().Add(hostWait)
+		for c.do(http.MethodGet, "/api/info", nil, nil) != nil {
+			if time.Now().After(deadline) {
+				return i18n.Errorf("the host did not come back within %v; run ccr again once it runs", "宿主 %v 内没有恢复；宿主运行后再执行 ccr", hostWait)
+			}
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+func (c *client) attachOnce(x remoteSession) error {
 	u, err := url.Parse(c.host)
 	if err != nil {
 		return err
@@ -721,6 +748,10 @@ func (c *client) attach(x remoteSession) error {
 		}
 		return nil
 	case err := <-screen:
+		// The host stops (StatusGoingAway) or the connection drops: wait for it.
+		if status := websocket.CloseStatus(err); status == websocket.StatusGoingAway || status == -1 && ctx.Err() == nil {
+			return errHostRestart
+		}
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
 			os.Stdout.WriteString(resetModes)
 			fmt.Print(i18n.T("\r\nThe session has ended.\r\n", "\r\n会话已结束。\r\n"))
