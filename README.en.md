@@ -111,17 +111,31 @@ Click "新建" (New) in the web UI and enter a name and an existing project dire
 
 More — web commands (`/model`, `/effort`, `/status` …), attachments, settings dialogs, refresh recovery — in [docs/usage.md](docs/usage.md) (Chinese).
 
-### Phone / LAN access
+### Connecting and networking
 
-The host listens on `127.0.0.1` only by default. To reach it from your phone over the LAN:
+CC Remote only runs a plain **HTTP server** on the host (`127.0.0.1:8787` by default); if your browser can reach that address, it works. It does **not** handle HTTPS certificates, NAT traversal, domains or port forwarding — that is your own network setup, so pair it with an existing tool if you need it.
+
+| Where you are | What to do |
+| --- | --- |
+| Same computer | Nothing; open <http://127.0.0.1:8787> |
+| Same LAN (phone, another computer) | Listen on the LAN address (below) and open `http://<your computer's LAN IP>:8787` |
+| Internet / a different network | Your choice: a VPN-style mesh (Tailscale, ZeroTier, WireGuard, …), a tunnel (Cloudflare Tunnel, frp, …) or an HTTPS reverse proxy (Caddy, nginx, …) |
+
+To let LAN devices connect:
 
 ```sh
 cc-remote service config --listen 127.0.0.1:8787,lan:8787
 ```
 
-Then open `http://<your computer's LAN IP>:8787` on the phone.
+> The access token is effectively the right to run code on your computer, and LAN access is plain HTTP. Use it only on networks you trust, or put it behind an HTTPS reverse proxy or tunnel with its own authentication. See [docs/security.md](docs/security.md) (Chinese).
 
-> The access token is effectively the right to run code on your computer, and LAN access is plain HTTP. Use it only on networks you trust, or put it behind an HTTPS reverse proxy or tunnel. See [docs/security.md](docs/security.md) (Chinese).
+If you can't connect, check from near to far:
+
+1. **Same computer**: open `http://127.0.0.1:8787` on the host. If that fails the service isn't running — check `cc-remote service status` and `cc-remote service logs`.
+2. **LAN**: make sure `lan:8787` is configured as above, you are using the host's current LAN IP (restart the service after DHCP changes it), the OS firewall allows the port, and both devices are on the same subnet (guest Wi-Fi and the router's "AP isolation" block device-to-device traffic).
+3. **Internet**: confirm the LAN works first, then look at your tunnel / proxy / VPN. If a reverse proxy gets "不允许跨站访问" (cross-site access not allowed), the proxy must keep the original `Host` or send `X-Forwarded-Host`; see the example in [docs/security.md](docs/security.md#反向代理).
+
+Network setup beyond the first two steps is outside what this project supports; please refer to the documentation of the tool you use.
 
 ### Managing the service
 
