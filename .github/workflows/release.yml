@@ -63,7 +63,10 @@ jobs:
           echo "Releasing v$version (prerelease=$pre)"
 
   web:
+    needs: meta
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -84,6 +87,22 @@ jobs:
         with:
           name: web-dist
           path: web/dist
+          if-no-files-found: error
+          retention-days: 1
+      # The standalone frontend: a static site that connects to several hosts
+      # (each started with --allow-origin). The _web suffix never matches an
+      # os/arch, so `cc-remote update` does not pick it.
+      - working-directory: web
+        run: pnpm run build:standalone
+      - name: Package standalone frontend
+        run: |
+          mkdir -p out
+          (cd web/dist-standalone && zip -9 -q -r "../../out/cc-remote_${VERSION}_web.zip" .)
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pkg-web
+          path: out/*
           if-no-files-found: error
           retention-days: 1
 
@@ -143,7 +162,7 @@ jobs:
           retention-days: 1
 
   release:
-    needs: [meta, build]
+    needs: [meta, web, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write

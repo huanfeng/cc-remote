@@ -2,6 +2,7 @@ import { lang, t } from './i18n';
 import { useEffect, useRef, useState } from 'react';
 import './features.css';
 import { CloseIcon, PlusIcon } from './icons';
+import { apiUrl } from './hosts';
 
 export type Attachment = { id: string; kind?: string; name: string; mime: string; size: number; url: string };
 
@@ -18,7 +19,7 @@ export async function uploadFiles(token: string, sessionId: string, files: File[
   const result: Attachment[] = [];
   for (const file of files) {
     const body = new FormData(); body.append('file', file);
-    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/uploads`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-CC-Lang': lang }, body });
+    const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/uploads`), { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-CC-Lang': lang }, body });
     if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || t(`Failed to upload "${file.name}"`, `「${file.name}」上传失败`)); }
     result.push(await response.json());
   }
@@ -28,7 +29,7 @@ export async function uploadFiles(token: string, sessionId: string, files: File[
 // URLs come only from the authenticated host upload API.
 function fetchUpload(item: Attachment, token: string, signal?: AbortSignal) {
   if (!item.url.startsWith('/api/sessions/')) return Promise.reject(new Error(t('Invalid attachment URL', '附件地址无效')));
-  return fetch(item.url, { headers: { Authorization: `Bearer ${token}` }, signal }).then(response => { if (!response.ok) throw new Error(t('Attachment unavailable', '附件不可用')); return response.blob(); });
+  return fetch(apiUrl(item.url), { headers: { Authorization: `Bearer ${token}` }, signal }).then(response => { if (!response.ok) throw new Error(t('Attachment unavailable', '附件不可用')); return response.blob(); });
 }
 
 function ImageAttachment({ item, token, remove }: { item: Attachment; token: string; remove?: () => void }) {

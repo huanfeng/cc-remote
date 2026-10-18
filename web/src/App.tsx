@@ -4,6 +4,8 @@ import { ClaudeSettings } from './ClaudeSettings';
 import { StatusPanel } from './StatusPanel';
 import { AttachButton, AttachmentList, uploadFiles, type Attachment } from './Attachments';
 import { SessionStatus } from './SessionStatus';
+import { STANDALONE, apiBase, apiUrl, clearToken, currentHost, hostKey, loadToken, saveToken } from './hosts';
+import { HostLogin, HostSwitcher, connectError } from './HostSwitcher';
 import { QuickSwitch, type QuickKind, type QuickTarget } from './QuickSwitch';
 import { ComposerInput } from './ComposerInput';
 import { copyText } from './clipboard';
@@ -43,19 +45,19 @@ function blankTab(key: string, id: string, native: boolean, session?: Session, s
 const pickDraft = (tab: Pick<ConversationTab, 'draft' | 'attachments' | 'questionDrafts' | 'answers'>) => ({ draft: tab.draft, attachments: tab.attachments, questionDrafts: tab.questionDrafts, answers: tab.answers });
 const cleanURL = () => location.pathname + location.search;
 // Storage can be missing or throw (private mode, quota, blocked site data); UI state is a convenience.
-function loadUI(): UIState { try { return deserialize(localStorage.getItem(UI_KEY), Date.now()); } catch { return emptyUI(); } }
-function saveUI(state: UIState) { for (const max of [MAX_UI_CHARS, MAX_UI_CHARS / 8]) { try { localStorage.setItem(UI_KEY, serialize(state, Date.now(), max)); return; } catch {} } }
-function loadViews(): Record<string, ViewState> { try { return parseViews(sessionStorage.getItem(VIEW_KEY)); } catch { return {}; } }
-function saveViews(text: string) { try { sessionStorage.setItem(VIEW_KEY, text); } catch {} }
+function loadUI(): UIState { try { return deserialize(localStorage.getItem(hostKey(UI_KEY)), Date.now()); } catch { return emptyUI(); } }
+function saveUI(state: UIState) { for (const max of [MAX_UI_CHARS, MAX_UI_CHARS / 8]) { try { localStorage.setItem(hostKey(UI_KEY), serialize(state, Date.now(), max)); return; } catch {} } }
+function loadViews(): Record<string, ViewState> { try { return parseViews(sessionStorage.getItem(hostKey(VIEW_KEY))); } catch { return {}; } }
+function saveViews(text: string) { try { sessionStorage.setItem(hostKey(VIEW_KEY), text); } catch {} }
 // Transcripts load from the end, PAGE events at a time; older pages load on scroll-up.
 const PAGE = 200;
 // Session lists render LIST_RENDER rows at a time and keep the newest LIST_CACHE in storage,
 // so the list shows at once after a reload and refreshes in the background.
 const LIST_RENDER = 200, LIST_CACHE = 300;
-const listKey = (native: boolean) => `${UI_PREFIX}-list-${native ? 'native' : 'session'}`;
+const listKey = (native: boolean) => hostKey(`${UI_PREFIX}-list-${native ? 'native' : 'session'}`);
 function loadList(native: boolean): Session[] { try { const items = JSON.parse(localStorage.getItem(listKey(native)) || '[]'); return Array.isArray(items) ? items : []; } catch { return []; } }
 function saveList(native: boolean, items: Session[]) { try { localStorage.setItem(listKey(native), JSON.stringify(items.slice(0, LIST_CACHE))); } catch {} }
-function clearUI() { for (const name of ['localStorage', 'sessionStorage'] as const) { try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith(UI_PREFIX)) storage.removeItem(key); } catch {} } }
+function clearUI() { for (const name of ['localStorage', 'sessionStorage'] as const) { try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith(UI_PREFIX) && key.endsWith(hostKey(''))) storage.removeItem(key); } catch {} } }
 
 const NO_CALLS: number[] = [];
 const NO_DRAFT: QuestionDraft = {};
@@ -99,7 +101,7 @@ function messages(events: Event[]) {
 }
 
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem('cc-token') || sessionStorage.getItem('cc-token') || '');
+  const [token, setToken] = useState(loadToken);
   const [credential, setCredential] = useState('');
   const [connected, setConnected] = useState(false);
   const [info, setInfo] = useState<Info>();
@@ -155,13 +157,16 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const sidebar = useSidebarWidth();
   // The bearer token travels in clear text when this page is served over plain http from another machine.
+  // A standalone page also checks its own address: its storage holds every host's token.
+  const plainAddress = [new URL(apiBase || location.href), ...(STANDALONE ? [new URL(location.href)] : [])].find(where => {
+    const host = where.hostname.replace(/^\[|\]$/g, '');
+    return where.protocol === 'http:' && !(host === 'localhost' || host === '::1' || /^127\./.test(host));
+  })?.host;
   const [plainHttp, setPlainHttp] = useState(() => {
-    const host = location.hostname.replace(/^\[|\]$/g, '');
-    const local = host === 'localhost' || host === '::1' || /^127\./.test(host);
-    try { if (sessionStorage.getItem('cc-plain-http-dismissed') === '1') return false; } catch {}
-    return location.protocol === 'http:' && !local;
+    try { if (sessionStorage.getItem(hostKey('cc-plain-http-dismissed')) === '1') return false; } catch {}
+    return !!plainAddress;
   });
-  const dismissPlainHttp = () => { setPlainHttp(false); try { sessionStorage.setItem('cc-plain-http-dismissed', '1'); } catch {} };
+  const dismissPlainHttp = () => { setPlainHttp(false); try { sessionStorage.setItem(hostKey('cc-plain-http-dismissed'), '1'); } catch {} };
   const [uploading, setUploading] = useState(false);
   const [commands, setCommands] = useState<Command[]>([]);
   const attachments = activeTab?.attachments || [];
@@ -176,12 +181,12 @@ export default function App() {
   const api = useCallback(async <T,>(path: string, options?: RequestInit): Promise<T> => {
     const cacheable = (options?.method || 'GET').toUpperCase() === 'GET' && !/[?&](after|before)=/.test(path);
     const cached = cacheable ? etags.current.get(path) : undefined;
-    const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-CC-Lang': lang, ...(cached ? { 'If-None-Match': cached.tag } : {}), ...options?.headers }, cache: 'no-store' });
+    const response = await fetch(apiUrl(path), { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-CC-Lang': lang, ...(cached ? { 'If-None-Match': cached.tag } : {}), ...options?.headers }, cache: 'no-store' }).catch(err => { throw STANDALONE && !options?.signal?.aborted ? new Error(connectError()) : err; });
     if (response.status === 304 && cached) return cached.data as T;
     if (!response.ok) {
       let message = t(`Request failed (${response.status})`, `请求失败 (${response.status})`);
       try { const body = await response.json(); message = body.error || body.message || message; } catch {}
-      if (response.status === 401) { setConnected(false); localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); for (const view of [false, true]) try { localStorage.removeItem(listKey(view)); } catch {} }
+      if (response.status === 401) { setConnected(false); clearToken(); for (const view of [false, true]) try { localStorage.removeItem(listKey(view)); } catch {} }
       throw Object.assign(new Error(message), { status: response.status });
     }
     if (response.status === 204) return undefined as T;
@@ -202,7 +207,7 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
     let active = true;
-    api<Info>('/api/info').then(data => { if (active) { setInfo(data); setConnected(true); setCwd(data.cwd); setError(''); localStorage.setItem('cc-token', token); sessionStorage.removeItem('cc-token'); } }).catch(err => { if (active) setError(err.message); });
+    api<Info>('/api/info').then(data => { if (active) { setInfo(data); setConnected(true); setCwd(data.cwd); setError(''); saveToken(token); } }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
   }, [api, token]);
   useEffect(() => {
@@ -345,7 +350,7 @@ export default function App() {
   // so a later write from this page never brings back stale text. Selection is not synced.
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== UI_KEY || !event.newValue) return;
+      if (event.key !== hostKey(UI_KEY) || !event.newValue) return;
       const stored = deserialize(event.newValue, Date.now());
       for (const tab of tabsRef.current) {
         if (tab.native || tab.id in draftChanges.current) continue;
@@ -718,10 +723,11 @@ export default function App() {
       await list();
     });
   }
-  if (!connected) return <main className="login"><form className="login-card" onSubmit={event => { event.preventDefault(); if (token === credential) api<Info>('/api/info').then(data => { setInfo(data); setConnected(true); setError(''); localStorage.setItem('cc-token', token); }).catch(err => setError(err.message)); else { setError(''); setToken(credential.trim()); } }}><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1><span className="login-host"><span className="login-host-dot" />{host.name}</span><p>{t('Continue your Claude Code work from your phone.', '从手机继续你的 Claude Code 工作。')}</p><label>{t('Host access token', '宿主访问令牌')}<input type="password" value={credential} onChange={event => setCredential(event.target.value)} placeholder={t('Enter the token configured when starting the host', '输入启动宿主时配置的令牌')} autoComplete="current-password" required /></label>{error && <div className="error" role="alert">{error}</div>}<button className="primary">{t('Connect to host', '连接宿主')} <span>→</span></button><small>{t('Connects to this address · the token is saved on this device and cleared when you sign out', '连接至当前地址 · 令牌保存在此设备，退出登录时清除')}</small></form></main>;
+  if (!connected && STANDALONE) return <main className="login"><HostLogin initialUrl={currentHost?.url} error={error} /></main>;
+  if (!connected) return <main className="login"><form className="login-card" onSubmit={event => { event.preventDefault(); if (token === credential) api<Info>('/api/info').then(data => { setInfo(data); setConnected(true); setError(''); saveToken(token); }).catch(err => setError(err.message)); else { setError(''); setToken(credential.trim()); } }}><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1><span className="login-host"><span className="login-host-dot" />{host.name}</span><p>{t('Continue your Claude Code work from your phone.', '从手机继续你的 Claude Code 工作。')}</p><label>{t('Host access token', '宿主访问令牌')}<input type="password" value={credential} onChange={event => setCredential(event.target.value)} placeholder={t('Enter the token configured when starting the host', '输入启动宿主时配置的令牌')} autoComplete="current-password" required /></label>{error && <div className="error" role="alert">{error}</div>}<button className="primary">{t('Connect to host', '连接宿主')} <span>→</span></button><small>{t('Connects to this address · the token is saved on this device and cleared when you sign out', '连接至当前地址 · 令牌保存在此设备，退出登录时清除')}</small></form></main>;
   return <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--sidebar-width': `${sidebar.width}px` } as CSSProperties}>
     {drawer && <button className="backdrop" aria-label={t('Close session list', '关闭会话列表')} onClick={() => setDrawer(false)} />}
-    <aside className={`sidebar ${drawer ? 'open' : ''}`}><div className="brand"><div className="brand-symbol">↗</div><div className="brand-text"><div className="brand-name"><span title={`${host.name} · CC Remote`}>{host.name}</span><span className="version-pill" title={t(`Host version ${hostVersion}`, `宿主版本 ${hostVersion}`)}>{hostVersion}</span></div><span className="brand-status" title={info?.claudeVersion || (info?.claudeAvailable ? t('Claude Code connected', 'Claude Code 已连接') : t('Claude Code not found', '未找到 Claude Code'))}><span className={`dot ${info?.claudeAvailable ? 'idle' : 'error'}`} /><span>{info?.claudeAvailable ? t('Claude Code connected', 'Claude Code 已连接') : t('Claude Code not found', '未找到 Claude Code')}</span></span></div><button className="icon brand-action" title={t('Sign out', '退出登录')} aria-label={t('Sign out', '退出登录')} onClick={() => { localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); clearTimeout(persistTimer.current); persistTimer.current = 0; draftChanges.current = {}; pendingLayout.current = undefined; pendingViews.current = ''; savedDrafts.current.clear(); savedLayout.current = ''; savedViews.current = ''; clearUI(); setRestored(false); setRouteNotice(''); history.replaceState(null, '', cleanURL()); setToken(''); setConnected(false); setCredential(''); setError(''); setSelected(''); setSessions([]); setTabs([]); }}><LogoutIcon size={16} /></button><button className="mobile icon brand-action" aria-label={t('Close session list', '关闭会话列表')} onClick={() => setDrawer(false)}><CloseIcon size={18} /></button></div>
+    <aside className={`sidebar ${drawer ? 'open' : ''}`}><div className="brand"><div className="brand-symbol">↗</div><div className="brand-text"><div className="brand-name"><span title={`${host.name} · CC Remote`}>{host.name}</span><span className="version-pill" title={t(`Host version ${hostVersion}`, `宿主版本 ${hostVersion}`)}>{hostVersion}</span></div><span className="brand-status" title={info?.claudeVersion || (info?.claudeAvailable ? t('Claude Code connected', 'Claude Code 已连接') : t('Claude Code not found', '未找到 Claude Code'))}><span className={`dot ${info?.claudeAvailable ? 'idle' : 'error'}`} /><span>{info?.claudeAvailable ? t('Claude Code connected', 'Claude Code 已连接') : t('Claude Code not found', '未找到 Claude Code')}</span></span>{STANDALONE && <HostSwitcher />}</div><button className="icon brand-action" title={t('Sign out', '退出登录')} aria-label={t('Sign out', '退出登录')} onClick={() => { clearToken(); clearTimeout(persistTimer.current); persistTimer.current = 0; draftChanges.current = {}; pendingLayout.current = undefined; pendingViews.current = ''; savedDrafts.current.clear(); savedLayout.current = ''; savedViews.current = ''; clearUI(); setRestored(false); setRouteNotice(''); history.replaceState(null, '', cleanURL()); setToken(''); setConnected(false); setCredential(''); setError(''); setSelected(''); setSessions([]); setTabs([]); }}><LogoutIcon size={16} /></button><button className="mobile icon brand-action" aria-label={t('Close session list', '关闭会话列表')} onClick={() => setDrawer(false)}><CloseIcon size={18} /></button></div>
       <div className="sidebar-actions"><button className="new-session primary-action" title={t('New session', '新建会话')} aria-label={t('New session', '新建会话')} onClick={() => setCreate(true)}><PlusIcon size={15} /><span>{t('New', '新建')}</span></button></div>
       <div className="tabs"><button className={!native ? 'active' : ''} onClick={() => switchTab(false)}>{t('Sessions', '会话')}</button><button className={native ? 'active' : ''} onClick={() => switchTab(true)}>{t('Terminal history', '终端历史')}</button></div>
       <input className="session-search" aria-label={t('Search sessions', '搜索会话')} placeholder={t('Search by name or project directory', '搜索名称或项目目录')} value={search} onChange={event => setSearch(event.target.value)} />
@@ -742,7 +748,7 @@ export default function App() {
     </aside>
     {!sidebarCollapsed && <SidebarResizer width={sidebar.width} max={sidebar.max} onChange={sidebar.set} />}
     <main className="workspace"><header className="topbar"><button className="desktop icon" aria-label={sidebarCollapsed ? t('Expand session list', '展开会话列表') : t('Collapse session list', '折叠会话列表')} title={sidebarCollapsed ? t('Expand session list', '展开会话列表') : t('Collapse session list', '折叠会话列表')} onClick={() => setSidebarCollapsed(old => { localStorage.setItem('cc-sidebar-collapsed', String(!old)); return !old; })}><MenuIcon size={18} /></button><button className="mobile icon" aria-label={t('Open session list', '打开会话列表')} onClick={() => setDrawer(true)}><MenuIcon size={18} /></button><div className="header-title"><h1>{current?.title || t('Workspace', '工作空间')}</h1><div className="header-sub">{current && !native ? <button type="button" className="badge mobile-badge" aria-haspopup="dialog" onClick={event => showStatus(event.currentTarget.getBoundingClientRect())}>{headerStatus}</button> : <span className="badge mobile-badge">{headerStatus}</span>}{current && !native && <SessionChips session={current} defaults={defaults} open={showStatus} />}<p title={current?.cwd || info?.cwd}>{current?.cwd || info?.cwd}</p></div></div><span className="badge desktop-badge">{headerStatus}</span>{selected && <button className={`icon topbar-extra${toolsExpanded ? ' active' : ''}`} title={toolsExpanded ? t('Collapse all tool calls', '折叠全部工具调用') : t('Expand all tool calls', '展开全部工具调用')} aria-label={toolsExpanded ? t('Collapse all tool calls', '折叠全部工具调用') : t('Expand all tool calls', '展开全部工具调用')} aria-pressed={toolsExpanded} onClick={toggleAllTools}>{toolsExpanded ? <CollapseAllIcon size={17} /> : <ExpandAllIcon size={17} />}</button>}{tasks.length > 0 && <button className={`icon task-button${runningTasks ? ' active' : ''}`} title={runningTasks ? t(`${runningTasks} tasks running`, `${runningTasks} 个任务运行中`) : t('Subagents and background tasks', '子 agent 与后台任务')} aria-label={t('Subagents and background tasks', '子 agent 与后台任务')} onClick={() => setTasksOpen(true)}><AgentIcon size={17} />{runningTasks > 0 && <span className="task-count">{runningTasks}</span>}</button>}<button className="icon topbar-extra" title={t('Refresh sessions', '刷新会话')} aria-label={t('Refresh sessions', '刷新会话')} onClick={() => action(list)}><RefreshIcon size={17} /></button>{attaching && <button className="icon topbar-extra" title={t('Attach from a local terminal', '在本地终端接入')} aria-label={t('Attach from a local terminal', '在本地终端接入')} onClick={() => setSharing(true)}><TerminalIcon size={17} /></button>}{current && !native && <button className="icon topbar-extra" title={t('Session settings', '会话设置')} aria-label={t('Session settings', '会话设置')} onClick={() => setSessionSettingsOpen(true)}><GearIcon size={17} /></button>}<TopbarMenu actions={topbarActions} /></header>
-      {plainHttp && <div className="plain-http-banner banner" role="status">{t(`You are connected over plain HTTP (${location.host}); the access token and session content travel the network unencrypted. Use an HTTPS reverse proxy or a VPN instead.`, `当前通过明文 HTTP 访问（${location.host}），访问令牌和会话内容会在网络中明文传输。建议改用 HTTPS 反向代理或 VPN。`)}<button className="icon-button" onClick={dismissPlainHttp} aria-label={t('Dismiss plain HTTP warning', '关闭明文访问提示')}><CloseIcon size={14} /></button></div>}
+      {plainHttp && <div className="plain-http-banner banner" role="status">{t(`You are connected over plain HTTP (${plainAddress}); the access token and session content travel the network unencrypted. Use an HTTPS reverse proxy or a VPN instead.`, `当前通过明文 HTTP 访问（${plainAddress}），访问令牌和会话内容会在网络中明文传输。建议改用 HTTPS 反向代理或 VPN。`)}<button className="icon-button" onClick={dismissPlainHttp} aria-label={t('Dismiss plain HTTP warning', '关闭明文访问提示')}><CloseIcon size={14} /></button></div>}
       {error && <div className="error banner" role="alert">{error}<button className="icon-button" onClick={() => setError('')} aria-label={t('Dismiss error', '关闭错误')}><CloseIcon size={14} /></button></div>}
       {routeNotice && <div className="command-notice" role="status"><span>{routeNotice}</span><button className="icon-button" aria-label={t('Dismiss notice', '关闭提示')} onClick={() => setRouteNotice('')}><CloseIcon size={14} /></button></div>}
       {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label={t('Dismiss command result', '关闭命令结果')} onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} close={() => setSettingsOpen(false)} />}{tasksOpen && <TaskPanel tasks={tasks} close={() => setTasksOpen(false)} locate={locateTask} />}{statusOpen && <StatusPanel api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{statusAnchor && current && !native && <SessionStatus session={current} defaults={defaults} label={headerStatus} anchor={statusAnchor} close={() => setStatusAnchor(null)} quick={(kind, anchor) => setQuick({ kind, anchor })} settings={() => setSessionSettingsOpen(true)} />}{quick && current && !native && <QuickSwitch api={api} sessionId={current.id} target={quick} current={quick.kind === 'model' ? (current.mode === 'terminal' ? current.live?.modelId || current.model || '' : current.model || '') : (current.mode === 'terminal' ? current.live?.effort || current.effort || '' : current.effort || '')} inherit={current.mode === 'terminal' ? undefined : quick.kind === 'model' ? defaults?.model || '' : defaults?.effort || ''} close={() => setQuick(null)} pick={value => void quickPick(quick.kind, value)} />}{sessionSettingsOpen && current && !native && <SessionSettings api={api} session={current} defaults={defaults} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>{t('Take your work with you.', '把工作带到身边。')}</h2><p>{t('Pick a session, or start a new task in a project directory.', '选择一个会话，或在项目目录中开始新的任务。')}<br/>{t('Sessions keep running on the host; close the page and come back later.', '会话持续在宿主运行，关闭页面也可以稍后回来。')}</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />{t('New session', '新建会话')}</button></div>{!info?.claudeAvailable && <p className="error">{t('Install Claude Code on the host and sign in first.', '请先在宿主安装 Claude Code 并完成登录。')}</p>}</div> : <>

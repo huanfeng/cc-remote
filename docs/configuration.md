@@ -13,8 +13,9 @@
 | `--log-file` | 空（仅 stderr） | 同时写入日志文件，10 MiB 轮转并保留一个 `.1` 备份；Go 运行时崩溃信息也写入该文件 |
 | `--allow-insecure-remote` | 关 | 允许 `all:PORT` / `0.0.0.0` / `::` 这类绑定所有网卡的地址 |
 | `--lang` | `auto` | 提示信息和 Web 界面的默认语言：`auto`（跟随系统）、`zh` 或 `en`，见[界面语言](#界面语言) |
+| `--allow-origin` | 空 | 允许访问此宿主的[独立网页前端](#独立网页前端)来源，如 `https://ccr.example.com`；可重复或逗号分隔 |
 
-其它子命令：`service`、`alias`、`update`、`version`、`terminal`（旧形式），`cc-remote help` 和 `cc-remote service --help` 查看用法。
+其它子命令：`service`、`alias`、`update`、`version`、`attach`、`ccr`，`cc-remote help` 和 `cc-remote service --help` 查看用法。
 
 一个数据目录同时只允许一个宿主运行。重启宿主会把仍在运行的轮次标记为中断、使旧审批失效，不会自动重放命令。
 
@@ -49,6 +50,7 @@
 | `CC_REMOTE_DATA_DIR` | 默认数据目录 |
 | `CC_REMOTE_TOKEN` | 指定访问令牌（至少 16 个字符），代替 `access-token` 文件 |
 | `CLAUDE_CONFIG_DIR` | Claude 配置目录（同 Claude Code 本身） |
+| `CC_REMOTE_ALLOW_ORIGINS` | 同 `--allow-origin`，逗号分隔；服务模式用 `service config --env` 设置 |
 | `CC_REMOTE_LANG` | 界面语言 `zh` / `en`（`auto` 表示跟随系统），优先于 `service.json` 的设置；安装脚本把它作为 `--lang` 的默认值 |
 | `CC_REMOTE_REPO` | 安装脚本和 `cc-remote update` 使用的仓库，默认 `huanfeng/cc-remote` |
 | `CC_REMOTE_API_URL` | 安装脚本使用的 GitHub API 地址，默认 `https://api.github.com` |
@@ -101,6 +103,27 @@ CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 - 命令行：`cc-remote service config --name pdev --color teal`（`service install` 同样接受），无需重启服务，已打开的页面刷新后生效。`--color auto`、`--name ""` 恢复默认。
 - 颜色：`green`、`teal`、`blue`、`indigo`、`purple`、`pink`、`red`、`orange`、`amber`、`slate`，或 `#rrggbb`。
 - 保存在数据目录的 `identity.json`。登录前的页面就会显示名称（便于确认连的是哪台），因此能访问该端口的人可以看到它。
+
+## 独立网页前端
+
+每台宿主都自带网页。部署了多台宿主时，也可以用一个单独部署的静态前端连接它们：侧栏宿主名称下的「N 个宿主」可切换、添加或移除宿主，并显示各宿主是否在线、有几个会话在执行或等待操作。
+
+1. 部署前端：从 Release 下载 `cc-remote_<版本>_web.zip`，解压到任意静态网站（Nginx、Caddy、Cloudflare Pages、GitHub Pages 等），子路径也可以。也可以在源码中运行 `pnpm run build:standalone`（产物在 `web/dist-standalone`）。
+2. 允许该前端访问每台宿主。来源只写协议、域名和端口，不带路径：
+
+   ```sh
+   cc-remote --allow-origin https://ccr.example.com              # 前台运行
+   cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com   # 后台服务，自动重启
+   ```
+
+3. 打开前端，填入宿主地址（如 `https://w1.example.com:58985`）和该宿主的访问令牌。
+
+注意：
+
+- 前端通过 HTTPS 提供时，浏览器不允许它访问 `http://` 的宿主（`localhost` / `127.0.0.1` 除外），宿主需要放在 HTTPS 反向代理后面。宿主在局域网地址、前端在公网时，宿主会回应 Chrome 的私有网络访问预检；较新的浏览器还可能弹出「访问本地网络」的授权提示，允许即可。
+- 静态站请只通过 HTTPS 提供，并加上响应头 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`（页面自带的 CSP 无法设置 `frame-ancestors`）。页面通过明文 HTTP 打开时会显示警告：它的存储里保存着所有宿主的令牌。
+- 宿主列表和各宿主的令牌保存在这个前端所在浏览器的本地存储中；「移除」会一并删除该宿主的令牌、草稿和标签页记录。各宿主的会话、草稿互不混用。
+- 未列入 `--allow-origin` 的网站即使拿到令牌也无法在浏览器里调用 API（跨站请求返回 403，预检不放行）。宿主自带网页不受此设置影响。
 
 ## 后台服务
 

@@ -33,6 +33,9 @@ type Config struct {
 	// ClaudeConfigEnv is the CLAUDE_CONFIG_DIR given to Claude Code: empty unless
 	// a config directory was chosen (setting it to ~/.claude would move .claude.json).
 	ClaudeConfigEnv string
+	// AllowOrigins are standalone web frontends (normalized origins) allowed to
+	// call the API from another site; see cors.go.
+	AllowOrigins []string
 	// Language of the host's messages and the web UI (a page can choose its own).
 	Language i18n.Lang
 	Assets   fs.FS
@@ -165,11 +168,14 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
+			if s.cors(w, r) {
+				return
+			}
 			if r.URL.Path != "/api/bridge/request" && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
 				fail(w, 401, s.lang(r).T("Invalid access token", "访问凭证无效"))
 				return
 			}
-			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r) {
+			if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r) && !s.allowedOrigin(origin) {
 				fail(w, 403, s.lang(r).T("Cross-site requests are not allowed", "不允许跨站访问"))
 				return
 			}
@@ -182,7 +188,8 @@ func (s *Server) Handler() http.Handler {
 // reverse proxy that rewrites Host to the upstream address, the public host
 // arrives in X-Forwarded-Host instead. Trusting that header is safe here: a
 // cross-site page cannot set it (or the token's Authorization header) without
-// a CORS preflight, which the host never grants.
+// a CORS preflight, which the host grants only to --allow-origin sites and never
+// for X-Forwarded-Host (keep it out of Access-Control-Allow-Headers).
 func sameOrigin(origin string, r *http.Request) bool {
 	u, err := url.Parse(origin)
 	if err != nil || u.Host == "" {

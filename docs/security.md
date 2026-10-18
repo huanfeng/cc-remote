@@ -35,6 +35,15 @@ location / {
 
 经代理访问时，代理本身就是公网入口：请在代理层加一道认证（Basic Auth、SSO 等），不要只依赖访问令牌。
 
+## 独立网页前端（跨站访问）
+
+`--allow-origin`（或 `CC_REMOTE_ALLOW_ORIGINS`）列出的网站可以在浏览器里调用 API：宿主对这些来源回应 CORS 预检，并允许它们读取响应。请求仍需携带访问令牌；令牌只保存在使用该前端的浏览器里。
+
+- 只列入你自己控制的网站。列入的网站一旦被篡改，它的脚本就能读取在该站登录过的令牌。
+- 来源按协议、域名、端口精确匹配，不支持通配符。
+- 代理层的认证（Basic Auth、SSO 等）与独立前端不兼容：跨站请求的 `Authorization` 头已用于访问令牌，浏览器也不会带上代理的 Cookie 或 Basic 凭据。需要这类认证时，独立前端访问的宿主请改用 VPN 等网络层限制。
+- 独立前端的页面自带 CSP（不加载外部脚本和图片，Markdown 里的远程图片不会被请求）。`frame-ancestors` 只能通过响应头设置，请在静态站上配置 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`，并只通过 HTTPS 提供。
+
 ## 仅限本机的接口
 
 - `POST /api/admin/shutdown`（`service stop` 使用）必须来自回环地址、携带令牌，且不得带 `Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、`X-Real-IP` 等代理头，因此经本机反向代理转发的远程请求也会被拒绝。

@@ -56,6 +56,10 @@ jobs:
         working-directory: web
         run: pnpm run build
 
+      - name: Build the standalone frontend
+        working-directory: web
+        run: pnpm run build:standalone
+
       - name: Web unit tests
         working-directory: web
         shell: bash

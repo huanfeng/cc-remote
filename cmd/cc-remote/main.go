@@ -185,7 +185,7 @@ func run() error {
 }
 
 type hostOptions struct {
-	listen                                                 stringList
+	listen, allowOrigin                                    stringList
 	dataDir, claudeBin, configDir, logFile, serviceManager *string
 	allowInsecureRemote                                    *bool
 	lang                                                   *string
@@ -200,6 +200,7 @@ func hostFlags() (*flag.FlagSet, *hostOptions) {
 	o.configDir = fs.String("claude-config-dir", "", i18n.T("Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)", "Claude 配置目录（默认取 CLAUDE_CONFIG_DIR 或 ~/.claude）"))
 	o.logFile = fs.String("log-file", "", i18n.T("also write logs to this file (rotated at 10 MiB, one backup)", "同时把日志写入此文件（满 10 MiB 轮转，保留一份备份）"))
 	o.allowInsecureRemote = fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)", "允许 all:/0.0.0.0/:: 监听地址（在所有网卡上提供明文 HTTP）"))
+	fs.Var(&o.allowOrigin, "allow-origin", i18n.T("origin of a standalone web frontend allowed to use this host, such as https://ccr.example.com; repeatable or comma separated (or CC_REMOTE_ALLOW_ORIGINS)", "允许使用此宿主的独立网页前端来源，例如 https://ccr.example.com；可重复或用逗号分隔（或 CC_REMOTE_ALLOW_ORIGINS）"))
 	o.lang = fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language), zh or en (or CC_REMOTE_LANG)", "提示信息和 Web 界面的语言：auto（跟随系统）、zh 或 en（或 CC_REMOTE_LANG）"))
 	o.serviceManager = fs.String("service-manager", "", i18n.T("internal: set by the background service (schtasks, systemd, launchd)", "内部使用：由后台服务设置（schtasks、systemd、launchd）"))
 	fs.Usage = func() {
@@ -317,6 +318,14 @@ func runHost(argv []string) error {
 	}
 	if added != "" {
 		log.Printf("No loopback listen address configured; also listening on %s for local tools", added)
+	}
+	var origins []string
+	for _, x := range listen.Split(append(stringList{os.Getenv("CC_REMOTE_ALLOW_ORIGINS")}, opts.allowOrigin...)) {
+		o := server.NormalizeOrigin(x)
+		if o == "" {
+			return i18n.Errorf("invalid --allow-origin %q: expected scheme://host[:port], such as https://ccr.example.com", "无效的 --allow-origin %q：应为 scheme://host[:port]，例如 https://ccr.example.com", x)
+		}
+		origins = append(origins, o)
 	}
 	absData, err := filepath.Abs(*opts.dataDir)
 	if err != nil {
@@ -448,7 +457,7 @@ func runHost(argv []string) error {
 	if *opts.serviceManager != "" {
 		restart = func() { restartRequested.Store(true); stop() }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
 	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	errs := make(chan error, len(listeners)+1)
@@ -460,6 +469,9 @@ func runHost(argv []string) error {
 		log.Printf("CC Remote listening at http://%s", addr)
 	}
 	warnExposure(bound)
+	if len(origins) > 0 {
+		log.Printf("Standalone web frontends allowed: %s", strings.Join(origins, ", "))
+	}
 	log.Printf("Claude config: %s", configDir)
 	go app.RestoreTerminals() // the sessions running when the host last stopped
 	select {

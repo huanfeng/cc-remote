@@ -143,3 +143,31 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .recap-label{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .recap-label .icon-button{background:none;color:var(--muted);padding:2px;border-radius:5px;display:inline-grid;place-items:center}
 .recap-label .icon-button:hover{background:#e6eadc}
+/* The login card shrinks to narrow screens (a grid track otherwise grows to its 400px). */
+.login{grid-template-columns:minmax(0,1fr);justify-items:center}
+/* Standalone frontend: the host list and adding a host. */
+.host-login .host-login-cancel{width:100%;margin-top:10px}
+.host-login-others{display:flex;flex-direction:column;gap:6px;margin-top:22px}
+.host-login-others button{display:grid;grid-template-columns:auto 1fr;column-gap:10px;align-items:center;text-align:left;background:#f3f4ec;border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:inherit;font-size:13px}
+.host-login-others button small{grid-column:2;margin:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-login-others button:hover{background:#e8eddc}
+.modal-backdrop>.host-login{max-height:90dvh;overflow:auto}
+.host-swatch{width:10px;height:10px;border-radius:3px;flex-shrink:0;display:inline-block}
+.host-switcher{position:relative;margin-top:3px}
+.host-switch{background:none;color:var(--muted);font-size:10px;padding:2px 0;border-radius:5px}
+.host-switch:hover{color:#273c2d}
+.host-menu{position:absolute;left:-42px;top:calc(100% + 6px);z-index:40;width:min(300px,calc(100vw - 24px));display:flex;flex-direction:column;gap:2px}
+.host-row{display:flex;align-items:center;gap:2px;border-radius:8px}
+.host-row.current{background:#edf1e4}
+.host-row>button:first-child{flex:1;min-width:0;display:flex;align-items:center;gap:9px;background:none;color:inherit;padding:8px 8px;text-align:left;border-radius:8px}
+.host-row>button:first-child:hover{background:#e6eddc}
+.host-text{flex:1;min-width:0;display:flex;flex-direction:column}
+.host-text strong{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-text small{font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-state{font-size:10.5px;color:var(--muted);white-space:nowrap}
+.host-row .icon-button{background:none;color:var(--muted);padding:6px;border-radius:6px;display:inline-grid;place-items:center}
+.host-row .icon-button:hover{background:#e6eadc}
+.host-add{display:flex;align-items:center;gap:8px;background:none;color:#4e6243;padding:9px 8px;border-radius:8px;font-size:13px;border-top:1px solid var(--line)}
+.host-add:hover{background:#e6eddc}
+.host-login h2{font-size:20px;font-weight:500;margin:0 0 4px}
+.host-menu small,.host-switch{letter-spacing:normal;font-weight:400}
