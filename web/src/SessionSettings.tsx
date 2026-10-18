@@ -25,23 +25,23 @@ function useEscape(close: () => void) {
   }, []);
 }
 
-/** Effective settings in the top bar: override, or Default(<inherited>). The model
- * and effort chips open a list to switch at once (quick); the others open the settings. */
-export function SessionChips({ session, defaults, open, quick }: { session: SessionInfo; defaults?: Defaults; open: () => void; quick?: (kind: 'model' | 'effort', anchor: DOMRect) => void }) {
-  if (session.mode === 'channel') return <button type="button" className="session-chips" title={t('Session settings', '会话设置')} onClick={open}><span className="chip inherited">{t('Settings held by the terminal', '设置由终端持有')}</span></button>;
-  const button = (className: string, title: string, text: string, kind?: 'model' | 'effort') => <button type="button" className={className} title={kind && quick ? t(`${title} (click to switch)`, `${title}（点击切换）`) : title} aria-haspopup={kind && quick ? 'listbox' : undefined}
-    onClick={event => { if (kind && quick) quick(kind, event.currentTarget.getBoundingClientRect()); else open(); }}>{text}</button>;
-  const chip = (label: string, value: string | undefined, inherited: string | undefined, tone = '', kind?: 'model' | 'effort') => {
+/** Effective settings in the top bar: override, or Default(<inherited>). Any chip opens
+ * the session status (open), which has the full values, the switches and the settings. */
+export function SessionChips({ session, defaults, open }: { session: SessionInfo; defaults?: Defaults; open: (anchor: DOMRect) => void }) {
+  const show = (event: { currentTarget: Element }) => open(event.currentTarget.getBoundingClientRect());
+  if (session.mode === 'channel') return <button type="button" className="session-chips" title={t('Session status', '会话状态')} onClick={show}><span className="chip inherited">{t('Settings held by the terminal', '设置由终端持有')}</span></button>;
+  const button = (className: string, title: string, text: string) => <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={show}>{text}</button>;
+  const chip = (label: string, value: string | undefined, inherited: string | undefined, tone = '') => {
     const shown = value || t(`Default(${inherited || 'Claude settings'})`, `默认(${inherited || 'Claude 配置'})`);
-    return button(`chip${value ? '' : ' inherited'}${tone}`, t(`${label}: ${shown}`, `${label}：${shown}`), shown, kind);
+    return button(`chip${value ? '' : ' inherited'}${tone}`, t(`${label}: ${shown}`, `${label}：${shown}`), shown);
   };
   const live = session.mode === 'terminal' ? session.live : undefined;
   if (live?.model) {
     const effort = live.effort || session.effort || defaults?.effort;
     const pct = Math.round(live.contextPercent);
     return <div className="session-chips">
-      {button('chip', t(`Model: ${live.model}${live.modelId ? ` (${live.modelId})` : ''}`, `模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`), live.model, 'model')}
-      {effort && button('chip', t(`Effort: ${effort}`, `推理强度：${effort}`), effort, 'effort')}
+      {button('chip', t(`Model: ${live.model}${live.modelId ? ` (${live.modelId})` : ''}`, `模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`), live.model)}
+      {effort && button('chip', t(`Effort: ${effort}`, `推理强度：${effort}`), effort)}
       {live.contextSize > 0 && button(`chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`, t(`Context: ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`, `上下文：${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`), t(`Context ${pct}% · ${compact(live.contextTokens)}/${compact(live.contextSize)}`, `上下文 ${pct}% · ${compact(live.contextTokens)}/${compact(live.contextSize)}`))}
       {live.durationMs > 0 && button('chip inherited', t('Session duration', '会话时长'), duration(live.durationMs / 1000))}
       {live.costUSD > 0 && button('chip inherited', t('Cost of this run (estimated at API prices)', '本次运行的费用（按 API 价格估算）'), `$${live.costUSD.toFixed(2)}`)}
@@ -49,7 +49,7 @@ export function SessionChips({ session, defaults, open, quick }: { session: Sess
   }
   const perm = session.permissionMode || defaults?.permissionMode || '';
   return <div className="session-chips">
-    {chip(t('Model', '模型'), session.model, defaults?.model, '', 'model')}{chip(t('Effort', '推理强度'), session.effort, defaults?.effort, '', 'effort')}{chip(t('Permission mode', '权限模式'), session.permissionMode, defaults?.permissionMode, permTone(perm))}
+    {chip(t('Model', '模型'), session.model, defaults?.model)}{chip(t('Effort', '推理强度'), session.effort, defaults?.effort)}{chip(t('Permission mode', '权限模式'), session.permissionMode, defaults?.permissionMode, permTone(perm))}
   </div>;
 }
 
