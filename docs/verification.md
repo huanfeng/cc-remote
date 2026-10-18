@@ -34,6 +34,8 @@
 
 ## V2：原生终端与网页共享会话（2026-10-15）
 
+> 共享模式后来已移除，由终端会话取代；以下为当时的验证记录。
+
 Windows Claude Code 2.1.299 + 实际 Channels MCP + 浏览器完成验证：
 
 1. 网页向原生交互式 Claude Code 发送消息，通过 reply 工具收到 CHANNEL_REMOTE_OK。

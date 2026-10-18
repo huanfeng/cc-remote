@@ -7,7 +7,7 @@ import (
 )
 
 // SessionStats is derived from stored events. Token and cost figures come from
-// Claude's stream-json result events, so shared-terminal sessions without
+// Claude's stream-json result events, so terminal sessions without
 // result events report CostKnown=false.
 type SessionStats struct {
 	SessionID           string  `json:"sessionId"`

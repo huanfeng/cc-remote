@@ -129,10 +129,10 @@ func run() error {
 			return claude.RunHook()
 		case "permission-mcp":
 			return claude.RunPermissionMCP()
-		case "channel":
-			return channel.Run()
-		case "channel-session-hook":
-			return channel.SessionHook()
+		case "channel", "channel-session-hook":
+			// Retired shared mode: a Claude Code process launched before the
+			// upgrade may still call these; do nothing rather than start a host.
+			return nil
 		case "channel-ask-hook":
 			return channel.AskHook()
 		case "terminal-hook":
@@ -339,6 +339,10 @@ func runHost(argv []string) error {
 		return conflict(err)
 	}
 	defer release()
+	// Leftovers of the retired shared mode's launcher (best effort).
+	for _, dir := range []string{"channel-config", "channel-locks"} {
+		_ = os.RemoveAll(filepath.Join(absData, dir))
+	}
 	token := strings.TrimSpace(os.Getenv("CC_REMOTE_TOKEN"))
 	tokenFile := filepath.Join(absData, "access-token")
 	if token == "" {

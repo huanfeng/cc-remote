@@ -2,17 +2,14 @@ package server
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,51 +20,34 @@ import (
 
 const channelTTL = 45 * time.Second
 
-type channelCommand struct {
-	Seq    int64  `json:"seq"`
-	Method string `json:"method"`
-	Params any    `json:"params"`
-}
+// channelConnection binds a running terminal session to its current Claude
+// session ID for the ask hook and transcript sync.
 type channelConnection struct {
-	sessionID, key string
-	seen           time.Time
-	next           int64
-	queue          []channelCommand
-	// keyPrefix scopes transcript keys; a terminal session uses its Claude
-	// session ID, so /clear's new transcript is not mistaken for the old one.
+	sessionID string
+	seen      time.Time
+	// keyPrefix scopes transcript keys by Claude session ID, so /clear's new
+	// transcript is not mistaken for the old one.
 	keyPrefix string
-}
-type channelApproval struct {
-	connection *channelConnection
-	requestID  string
-	toolName   string
-	created    time.Time
+	// synced: the first sync checked whether the session was synced by a
+	// host without task events (store.LegacyTasksKey).
+	synced, legacy bool
 }
 
 var channelUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-var permissionID = regexp.MustCompile(`^[a-km-z]{5}$`)
 
 func (s *Server) channelLive(c *channelConnection) bool {
 	return c != nil && time.Since(c.seen) < channelTTL
 }
-func (s *Server) decorateChannel(x *store.Session) {
+func (s *Server) decorate(x *store.Session) {
 	if rt := s.procs[x.ID]; rt != nil && len(rt.sent) > 0 {
 		x.Queued = rt.queuedMessages()
 	}
 	if x.Mode == "terminal" {
 		s.decorateTerminalLocked(x)
-		return
-	}
-	if x.Mode != "channel" {
-		return
-	}
-	x.Online = s.channelLive(s.channels[x.ClaudeSessionID])
-	if !x.Online {
-		x.Status = "offline"
 	}
 }
 
-// Bridge registration and control are local-only, in addition to bearer authentication.
+// Hook callbacks are local-only, in addition to bearer authentication.
 func (s *Server) channelLocal(w http.ResponseWriter, r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	ip := net.ParseIP(host)
@@ -77,168 +57,13 @@ func (s *Server) channelLocal(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
-func (s *Server) channelRegister(w http.ResponseWriter, r *http.Request) {
-	if !s.channelLocal(w, r) {
-		return
-	}
-	var req struct {
-		ID    string `json:"id"`
-		Cwd   string `json:"cwd"`
-		Title string `json:"title"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	req.ID = strings.ToLower(req.ID)
-	if !channelUUID.MatchString(req.ID) {
-		fail(w, 400, s.lang(r).T("Invalid Claude session ID", "无效的 Claude 会话 ID"))
-		return
-	}
-	cwd, err := validateCwd(s.lang(r), req.Cwd)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closing {
-		fail(w, 503, s.lang(r).T("The host is shutting down", "宿主正在关闭"))
-		return
-	}
-	if s.channelLive(s.channels[req.ID]) {
-		fail(w, 409, s.lang(r).T("This native session is already connected; do not start a second process", "此原生会话已经连接，请勿启动第二个进程"))
-		return
-	}
-	x, err := s.store.FindClaude(req.ID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		fail(w, 500, s.lang(r).T("Failed to read the session", "读取会话失败"))
-		return
-	}
-	if err == nil && s.runs[x.ID] != nil {
-		fail(w, 409, s.lang(r).T("The host is still running this session; stop the managed turn first", "此会话仍由宿主执行，请先停止托管轮次"))
-		return
-	}
-	if err == nil {
-		if rt := s.procs[x.ID]; rt != nil && rt.proc != nil && rt.proc.BackgroundTasks() > 0 {
-			fail(w, 409, s.lang(r).T("The session's managed process still has background tasks running; wait for them to finish before connecting a terminal", "此会话的托管进程仍有后台任务在运行，请等待完成后再连接终端"))
-			return
-		}
-		s.closeAsync(s.detachLocked(x.ID)) // the terminal takes over the conversation
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		title := strings.TrimSpace(req.Title)
-		if title == "" {
-			title = "Claude Code"
-		}
-		if n, _, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, req.ID); e == nil && n.Title != "Claude session" {
-			title = n.Title
-		}
-		x, err = s.store.Create(title, cwd, req.ID, true)
-	}
-	if err != nil {
-		fail(w, 500, s.lang(r).T("Failed to create the session", "创建会话失败"))
-		return
-	}
-	if x.Cwd != cwd {
-		fail(w, 409, s.lang(r).T("The session's project folder does not match the original record", "会话项目目录与原记录不一致"))
-		return
-	}
-	if err = s.store.SetMode(x.ID, "channel"); err != nil {
-		fail(w, 500, s.lang(r).T("Failed to save the session mode", "保存会话模式失败"))
-		return
-	}
-	if old := s.channels[req.ID]; old != nil && len(old.queue) > 0 {
-		_, _ = s.store.Append(x.ID, "error", i18n.T("The terminal connection was re-established; messages not confirmed as delivered are not resent automatically. Check the session and send them again.", "终端连接已重建，未确认送达的消息不会自动重发。请检查会话后重新发送。"), nil)
-	}
-	c := &channelConnection{sessionID: x.ID, key: store.ID() + store.ID(), seen: time.Now(), queue: []channelCommand{}}
-	if old := s.channels[req.ID]; old != nil {
-		// The bridge re-registers the same Claude session (e.g. after a missed
-		// heartbeat); a hook still long-polling keeps its question on the new
-		// connection. Questions whose hook is gone expire with the old one.
-		for _, p := range s.requests {
-			if p.connection == old && p.ctx.Err() == nil {
-				p.connection = c
-			}
-		}
-	}
-	s.expireChannel(s.channels[req.ID])
-	s.channels[req.ID] = c
-	_ = s.store.SetStatus(x.ID, "idle")
-	s.syncTranscript(c)
-	x, _ = s.store.Get(x.ID)
-	s.decorateChannel(&x)
-	respond(w, 200, struct {
-		store.Session
-		ConnectionKey string `json:"connectionKey"`
-	}{x, c.key})
-}
-func (s *Server) channelConnection(w http.ResponseWriter, r *http.Request) *channelConnection {
-	c := s.channels[r.PathValue("id")]
-	if !s.channelLive(c) || !equalToken("Bearer "+r.Header.Get("X-Channel-Key"), c.key) {
-		fail(w, 409, s.lang(r).T("The terminal bridge connection has expired; reconnect", "终端桥接连接已失效，请重新连接"))
-		return nil
-	}
-	return c
-}
-func (s *Server) channelHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if !s.channelLocal(w, r) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.channelConnection(w, r)
-	if c == nil {
-		return
-	}
-	c.seen = time.Now()
-	s.syncTranscript(c)
-	for id, p := range s.channelRequests {
-		if p.connection == c && time.Since(p.created) > 30*time.Minute {
-			_ = s.store.Resolve(id, "expired")
-			delete(s.channelRequests, id)
-		}
-	}
-	respond(w, 200, map[string]bool{"online": true})
-}
-func (s *Server) channelDisconnect(w http.ResponseWriter, r *http.Request) {
-	if !s.channelLocal(w, r) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.channelConnection(w, r)
-	if c == nil {
-		return
-	}
-	s.syncTranscript(c)
-	s.expireChannel(c)
-	delete(s.channels, r.PathValue("id"))
-	_ = s.store.SetStatus(c.sessionID, "offline")
-	respond(w, 200, map[string]bool{"online": false})
-}
-func (s *Server) expireChannel(c *channelConnection) {
-	if c == nil {
-		return
-	}
-	for id, p := range s.channelRequests {
-		if p.connection == c {
-			_ = s.store.Resolve(id, "expired")
-			delete(s.channelRequests, id)
-		}
-	}
-	for id, p := range s.requests {
-		if p.connection == c {
-			s.finishSharedLocked(id, p, "expired")
-		}
-	}
-}
 
 // sharedQuestionTimeout ends a waiting question before the hook gives up
 // (claude.AskWait), so a long wait is recorded as expired, not as answered in
 // the terminal. A variable for tests.
 var sharedQuestionTimeout = claude.AskWait
 
-// channelInteraction is the long poll of a shared terminal's PermissionRequest
+// channelInteraction is the long poll of a terminal session's PermissionRequest
 // hook for AskUserQuestion / ExitPlanMode. The native dialog stays open while it
 // waits; the web answers through POST /api/requests/{id} like a managed question.
 // A canceled request means the hook gave up because the terminal answered.
@@ -267,7 +92,7 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 	c := s.channels[claudeID]
 	if s.closing || !s.channelLive(c) {
 		s.mu.Unlock()
-		fail(w, 409, s.lang(r).T("The terminal bridge is not connected", "终端桥接未连接"))
+		fail(w, 409, s.lang(r).T("The terminal session is not running", "终端会话没有运行"))
 		return
 	}
 	if historyErr == nil {
@@ -496,149 +321,6 @@ func questionTexts(input json.RawMessage) []string {
 	}
 	return out
 }
-func (s *Server) channelCommands(w http.ResponseWriter, r *http.Request) {
-	if !s.channelLocal(w, r) {
-		return
-	}
-	after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	if err != nil || after < 0 {
-		fail(w, 400, s.lang(r).T("Invalid cursor", "无效游标"))
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.channelConnection(w, r)
-	if c == nil {
-		return
-	}
-	if after > c.next {
-		fail(w, 400, s.lang(r).T("The cursor is beyond the command range", "游标超出命令范围"))
-		return
-	}
-	for len(c.queue) > 0 && c.queue[0].Seq <= after {
-		c.queue = c.queue[1:]
-	}
-	// Polls are also a heartbeat; messages stay queued until the next acknowledged cursor.
-	c.seen = time.Now()
-	respond(w, 200, c.queue)
-}
-func (s *Server) channelMessageLocked(w http.ResponseWriter, r *http.Request, x store.Session, text, prompt string, payload json.RawMessage) {
-	c := s.channels[x.ClaudeSessionID]
-	if !s.channelLive(c) {
-		fail(w, 409, s.lang(r).T("The native terminal is not connected; run the connect command in the project folder", "原生终端未连接，请在项目目录运行连接命令"))
-		return
-	}
-	if len(c.queue) >= 256 {
-		fail(w, 429, s.lang(r).T("The message queue is full; wait for the terminal to receive messages", "消息队列已满，请等待终端接收"))
-		return
-	}
-	if _, err := s.store.Append(x.ID, "user", text, payload); err != nil {
-		fail(w, 500, s.lang(r).T("Failed to save the message", "保存消息失败"))
-		return
-	}
-	c.next++
-	c.queue = append(c.queue, channelCommand{c.next, "notifications/claude/channel", map[string]any{"content": prompt, "meta": map[string]string{"source": "cc-remote", "chat_id": x.ClaudeSessionID}}})
-	respond(w, 202, map[string]string{"status": "queued"})
-}
-func (s *Server) channelEvent(w http.ResponseWriter, r *http.Request) {
-	if !s.channelLocal(w, r) {
-		return
-	}
-	var req struct {
-		Kind    string          `json:"kind"`
-		Text    string          `json:"text"`
-		Payload json.RawMessage `json:"payload"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	c := s.channelConnection(w, r)
-	if c == nil {
-		return
-	}
-	switch req.Kind {
-	case "assistant":
-		if strings.TrimSpace(req.Text) == "" {
-			fail(w, 400, s.lang(r).T("The reply is empty", "回复为空"))
-			return
-		}
-		if _, err := s.store.Append(c.sessionID, "assistant", req.Text, req.Payload); err != nil {
-			fail(w, 500, s.lang(r).T("Failed to save the reply", "保存回复失败"))
-			return
-		}
-	case "channel_permission":
-		var p struct {
-			RequestID   string `json:"request_id"`
-			ToolName    string `json:"tool_name"`
-			Description string `json:"description"`
-			Preview     string `json:"input_preview"`
-		}
-		if json.Unmarshal(req.Payload, &p) != nil || !permissionID.MatchString(p.RequestID) || p.ToolName == "" {
-			fail(w, 400, s.lang(r).T("Invalid approval request", "无效审批请求"))
-			return
-		}
-		// Consume prior progress before registering the new prompt, so a previous
-		// call to the same tool cannot expire this newly received approval.
-		s.syncTranscript(c)
-		for _, old := range s.channelRequests {
-			if old.connection == c && old.requestID == p.RequestID {
-				respond(w, 200, map[string]bool{"ok": true})
-				return
-			}
-		}
-		id := store.ID()
-		input, _ := json.Marshal(map[string]string{"description": p.Description, "input_preview": p.Preview})
-		if err := s.store.AddInteraction(store.Interaction{ID: id, SessionID: c.sessionID, Kind: "approval", ToolName: p.ToolName, Input: input}); err != nil {
-			fail(w, 500, s.lang(r).T("Failed to save the approval", "保存审批失败"))
-			return
-		}
-		s.channelRequests[id] = &channelApproval{c, p.RequestID, p.ToolName, time.Now()}
-	default:
-		fail(w, 400, s.lang(r).T("Unsupported bridge event", "不支持的桥接事件"))
-		return
-	}
-	respond(w, 200, map[string]bool{"ok": true})
-}
-func (s *Server) channelResolveLocked(w http.ResponseWriter, r *http.Request, id string, p *channelApproval, a answer) {
-	if !s.channelLive(p.connection) || time.Since(p.created) > 30*time.Minute {
-		_ = s.store.Resolve(id, "expired")
-		delete(s.channelRequests, id)
-		fail(w, 409, s.lang(r).T("The native approval has expired", "原生审批已失效"))
-		return
-	}
-	c := p.connection
-	if len(c.queue) >= 256 {
-		fail(w, 429, s.lang(r).T("The terminal queue is full", "终端队列已满"))
-		return
-	}
-	if err := s.store.Resolve(id, "resolved"); err != nil {
-		fail(w, 409, err.Error())
-		return
-	}
-	c.next++
-	c.queue = append(c.queue, channelCommand{c.next, "notifications/claude/channel/permission", map[string]string{"request_id": p.requestID, "behavior": a.Decision}})
-	delete(s.channelRequests, id)
-	respond(w, 200, map[string]string{"status": "forwarded"})
-}
-func (s *Server) syncTranscript(c *channelConnection) {
-	var claudeID string
-	for id, x := range s.channels {
-		if x == c {
-			claudeID = id
-			break
-		}
-	}
-	if claudeID == "" {
-		return
-	}
-	n, events, err := claude.NativeHistory(s.cfg.ClaudeConfigDir, claudeID)
-	if err != nil {
-		return
-	}
-	s.applyTranscriptLocked(c, n, events)
-}
 
 // applyTranscriptLocked records a parsed transcript. It may be parsed without
 // s.mu: a snapshot is a prefix of any later one and recording is idempotent, so
@@ -646,6 +328,11 @@ func (s *Server) syncTranscript(c *channelConnection) {
 func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSession, events []claude.Event) {
 	if n.Title != "Claude session" {
 		_ = s.store.SetTitle(c.sessionID, n.Title)
+	}
+	if !c.synced {
+		c.synced = true
+		c.legacy = s.store.TranscriptFlag(c.sessionID, store.LegacyTasksKey)
+		_ = s.store.MarkTranscript(c.sessionID, store.TranscriptV2Key)
 	}
 	occurrences := map[string]int{}
 	toolNames := map[string]string{}
@@ -662,7 +349,8 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 			toolNames[tool.ID] = tool.Name
 			toolInputs[tool.ID] = tool.Input
 		}
-		// Remote prompts have already been recorded by the message endpoint.
+		// Transcripts of sessions migrated from the retired shared mode carry web
+		// prompts as <channel> tags; the web already recorded those messages.
 		if ev.Kind == "user" && strings.HasPrefix(strings.TrimSpace(ev.Text), "<channel ") {
 			continue
 		}
@@ -670,22 +358,14 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		key := hex.EncodeToString(hash[:])
 		occurrences[key]++
 		key = fmt.Sprintf("%s%s:%d", c.keyPrefix, key, occurrences[key])
+		if c.legacy && (ev.Kind == "status" || ev.Kind == "teammate") {
+			// Old history the earlier host showed without them (teammate
+			// messages as user turns, which the web splits).
+			_ = s.store.MarkTranscript(c.sessionID, key)
+			continue
+		}
 		added, e := s.store.RecordTranscript(c.sessionID, key, ev.Kind, ev.Text, ev.Payload)
-		// A completed tool result after a prompt means the terminal has progressed.
-		// Claude remains the authority on whether a relayed verdict is still valid.
 		if added && e == nil && ev.Kind == "tool_result" {
-			matches := 0
-			for _, p := range s.channelRequests {
-				if p.connection == c && toolNames[tool.ToolUseID] == p.toolName {
-					matches++
-				}
-			}
-			for id, p := range s.channelRequests {
-				if matches == 1 && p.connection == c && toolNames[tool.ToolUseID] == p.toolName {
-					_ = s.store.Resolve(id, "expired")
-					delete(s.channelRequests, id)
-				}
-			}
 			// Backstop for a hook that missed the terminal answer: the question is over.
 			for id, p := range s.requests {
 				if p.connection == c && toolNames[tool.ToolUseID] == p.toolName && (p.toolName != "AskUserQuestion" || slices.Equal(questionTexts(toolInputs[tool.ToolUseID]), questionTexts(p.input))) {
@@ -693,5 +373,9 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 				}
 			}
 		}
+	}
+	if c.legacy {
+		c.legacy = false
+		_ = s.store.ClearTranscriptFlag(c.sessionID, store.LegacyTasksKey)
 	}
 }

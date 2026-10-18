@@ -24,6 +24,7 @@ type NativeSession struct {
 	// Truncated: the transcript is too large and only its recent part was read.
 	Truncated   bool `json:"truncated,omitempty"`
 	customTitle bool
+	launches    map[string]launch // background tool calls awaiting their result, by id
 }
 
 type nativeFile struct {
@@ -413,8 +414,9 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 		Origin struct {
 			Kind string `json:"kind"`
 		} `json:"origin"`
-		PromptSource string `json:"promptSource"`
-		Attachment   struct {
+		PromptSource  string          `json:"promptSource"`
+		ToolUseResult json.RawMessage `json:"toolUseResult"`
+		Attachment    struct {
 			Type        string `json:"type"`
 			Prompt      string `json:"prompt"`
 			CommandMode string `json:"commandMode"`
@@ -449,6 +451,13 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 		}
 		return []Event{{Kind: "recap", Text: text}}
 	}
+	// Background work reports as turns Claude Code adds: a task's end, or a
+	// teammate's messages (see tasks.go).
+	if v.Type == "attachment" && v.Attachment.Type == "queued_command" {
+		if events, ok := noticeEvents(v.Attachment.Prompt); ok {
+			return events
+		}
+	}
 	// A message typed while Claude worked and taken in mid-turn: Claude Code
 	// records it as a queued_command attachment, never as a user turn.
 	if v.Type == "attachment" && v.Attachment.Type == "queued_command" && v.Attachment.CommandMode == "prompt" && (v.Attachment.Origin.Kind == "" || v.Attachment.Origin.Kind == "human") {
@@ -462,10 +471,26 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 	}
 	var out []Event
 	for _, e := range contentEvents(v.Message.Content, v.Type) {
+		if e.Kind == "user" {
+			if events, ok := noticeEvents(e.Text); ok {
+				out = append(out, events...)
+				continue
+			}
+		}
 		if e.Kind == "user" && (syntheticText(e.Text) || v.Origin.Kind != "" && v.Origin.Kind != "human" || v.PromptSource == "system") {
 			continue
 		}
 		out = append(out, e)
+		switch e.Kind {
+		case "tool":
+			noteLaunch(session, e.Payload)
+		case "tool_result":
+			if len(v.ToolUseResult) > 0 {
+				if started := launchEvent(session, e.Payload, v.ToolUseResult); started != nil {
+					out = append(out, *started)
+				}
+			}
+		}
 	}
 	return out
 }

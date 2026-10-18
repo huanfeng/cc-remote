@@ -11,7 +11,7 @@ CC Remote 由三部分组成，编译为一个可执行文件：
 ```text
 cmd/cc-remote      宿主入口和 hook / MCP 子命令
 internal/claude    Claude Code 进程、事件解析、审批桥接、原生历史
-internal/channel   原生终端启动器与 Channels MCP 桥接
+internal/channel   终端会话的提问 / 计划 Hook（channel-ask-hook）与 ccr 拉起宿主
 internal/server    HTTP API、会话执行和交互生命周期
 internal/store     SQLite 会话、事件和待回答记录
 internal/prefs     CC Remote 默认偏好（preferences.json）
@@ -33,29 +33,23 @@ web                React / PWA 和嵌入式构建产物
 - 每轮开始时 Claude 回显本轮处理的消息（合并的消息以换行连接一起回显），cc-remote 据此把消息逐条记入聊天记录；回显前网页显示为「等待处理」。斜杠命令在输出之后才回显，因此以本轮第一条输出为准提前记录。`result` 的 `queued_turn_count` 实测不可靠，不用于判断。
 - 会话忙碌期间（Claude 在一轮中，包括它自行发起的轮次——例如后台 agent 完成后的汇报，`result` 带 `origin`；有已发送但尚未回显的消息；或有未回答的审批请求，包括轮次之间后台 agent 发起的审批）状态为执行中。空闲 30 分钟且无后台任务时进程退出，下条消息用 `--resume <ID>` 拉起；模型、推理强度、权限模式变化后，空闲时下一条消息也会重启进程。
 - 设置环境变量 `CC_REMOTE_ONESHOT=1` 可回退为每轮一个 `claude -p` 进程的旧模式。
-- 子 agent：子 agent 内部的消息带 `parent_tool_use_id`，宿主把它写进事件 payload，网页按它把这些消息嵌套到对应的 Agent 调用卡片里；这些输出不算作会话的一轮，后台 agent 在会话空闲时继续工作不会让会话变成执行中。`task_started`、`task_progress`、`task_updated`、`task_notification` 系统事件由 `/api/sessions/{id}/tasks` 按任务汇总（状态、进度、工具次数、tokens、耗时、最终报告），宿主进程已不在而任务仍显示运行中的，报告为已中断。终端历史和共享会话的子 agent 过程记录在单独的文件里，目前只显示调用和最终结果。
+- 子 agent：子 agent 内部的消息带 `parent_tool_use_id`，宿主把它写进事件 payload，网页按它把这些消息嵌套到对应的 Agent 调用卡片里；这些输出不算作会话的一轮，后台 agent 在会话空闲时继续工作不会让会话变成执行中。`task_started`、`task_progress`、`task_updated`、`task_notification` 系统事件由 `/api/sessions/{id}/tasks` 按任务汇总（状态、进度、工具次数、tokens、耗时、最终报告），宿主进程已不在而任务仍显示运行中的，报告为已中断。终端历史和终端会话的子 agent 过程记录在单独的文件里，目前只显示调用和最终结果。
 - 审批：通过权限 MCP 和 Hook 把 Claude 的审批请求、AskUserQuestion 提问和 ExitPlanMode 计划确认转成网页卡片。它们经本机独立监听端口回到宿主，每轮使用独立的短期凭证；不修改用户 / 项目的 Claude 设置，不默认绕过权限。
 - 用户已有的 allow/deny 规则仍然生效，并非每个工具调用都会弹出审批。「允许」只同意本次请求；待回答请求最多等待约 30 分钟，停止轮次或重启后失效。
 - 停止执行：发送 `interrupt` 控制请求，只中断当前轮，进程和上下文保留，排队的消息继续执行；再次停止，或中断后 15 秒仍未结束，则结束进程；删除会话、`/clear`、宿主退出时结束进程（Windows 终止进程树，Linux / macOS 终止进程组）。已完成的文件修改无法撤销。
 
-## 共享终端会话（Channels 桥接）
+## 终端会话的提问与计划确认（PermissionRequest Hook）
 
-- `ccr`（`cc-remote -- claude`）启动原生交互式 Claude Code，并通过临时 `--mcp-config` 和 `--dangerously-load-development-channels server:cc-remote` 加载 CC Remote 的 Channels MCP 服务器。
-- 网页消息通过 MCP 通知投递给该进程，Claude 通过 reply 工具回复；终端本地的消息与工具过程从原生历史（JSONL）定期同步到网页。它不是终端的逐帧镜像，也不保证字符级流式同步。
-- 工具审批经 Channels 的审批转发到网页；终端和网页都可回答，由 Claude Code 接受先到达的有效结果。
-- 消息队列只存在于宿主内存，投递确认后清除；连接断开期间拒绝新消息。宿主重启后不重放旧命令，桥接需要重新注册。投递确认表示已写入 MCP 通道，不代表模型已经执行。
-- 连接按代际隔离：会话 ID 变化（`/resume`、`/clear`，由 SessionStart Hook 检测）时断开旧绑定，避免投递到错误的会话。
-
-### 提问与计划确认（PermissionRequest Hook）
-
-启动器在临时 `--settings` 中注册 `PermissionRequest` Hook（matcher `AskUserQuestion|ExitPlanMode`，命令 `cc-remote channel-ask-hook`，超时约 7 天，见 `claude.AskWait`：离开很久后回来仍能在网页作答；宿主先于 Hook 放弃，超时记为「已超时」而不是「已在终端回答」）。依据 Claude Code 2.1.300 的实测行为：
+终端会话由宿主在伪终端中运行交互式 Claude Code（见 [design/terminal-sessions.md](design/terminal-sessions.md)），网页从原生记录（JSONL）同步对话。宿主在会话的 `--settings` 中注册 `PermissionRequest` Hook（matcher `AskUserQuestion|ExitPlanMode`，命令 `cc-remote channel-ask-hook`，超时约 7 天，见 `claude.AskWait`：离开很久后回来仍能在网页作答；宿主先于 Hook 放弃，超时记为「已超时」而不是「已在终端回答」）。Hook 长轮询 `POST /api/channels/{Claude 会话 ID}/interactions`，网页经 `POST /api/requests/{id}` 回答。依据 Claude Code 2.1.300 的实测行为：
 
 - 该 Hook 与原生对话框**并行**运行，终端对话框始终可操作。
 - 网页先答：Hook 输出决定。提问为 `updatedInput.answers`（多选标签以 `, ` 连接，可填自由文本）；批准计划时附 `setMode`（自动接受编辑 / 手动审批编辑 / 自动模式），或带修改意见「继续规划」。
 - 终端先答：Hook 轮询 transcript 发现对应 tool_result 后静默退出，网页卡片标记「已在终端回答」。
 - 「交给终端」撤回网页卡片，只在终端作答。
 - Hook 一律 fail-open：会话不匹配、宿主不可达或任何错误都不输出决定，原生对话框照常可用。
-- Hook 连接宿主所需的令牌写在启动器临时配置目录的 0600 文件中（经 `CC_REMOTE_ASK_FILE` 定位），不进入环境变量。
+- Hook 连接宿主所需的令牌写在会话配置目录的 0600 文件 `ask.json` 中（经 `CC_REMOTE_ASK_FILE` 定位），不进入环境变量。
+
+早期的共享终端模式（Claude Code 在用户自己的终端里运行，网页经 Channels MCP 桥接）已移除；数据库中的共享会话在宿主启动时转为终端会话，沿用原 Claude 会话 ID，下次使用时以 `--resume` 恢复。
 
 ## 持久化与恢复
 
@@ -71,11 +65,8 @@ web                React / PWA 和嵌入式构建产物
 
 ## 已知限制
 
-- **Channels 处于官方研究预览阶段**。开发 Channel 参数可能受账户 / 组织政策限制；需要支持 Channels 及审批转发的近期 Claude Code。实际集成在 Claude Code 2.1.299 / 2.1.300 上验证，旧版本不保证兼容。
-- 共享会话暂不支持网页停止生成；项目信任、MCP 启用确认也留在终端。
-- 共享会话的提问 / 计划卡片依赖 Hook 与原生对话框并行的行为；设置了 `disableAllHooks` 或组织 `allowManagedHooksOnly` 时只能在终端作答，Claude Code 后续若改变该行为也可能失效。
-- Channel 没有公开的审批撤销通知。审批依据后续对应的工具结果清理，断线 / 重连 / 超时也会使旧卡片失效；终端先回答时网页可能短暂显示旧卡片，最终由 Claude Code 校验请求 ID。
-- 共享终端只能依据连接状态和收到的审批请求显示状态，无法精确显示终端本地每一轮的执行阶段；原生记录不含用量。
+- 终端会话的提问 / 计划卡片依赖 Hook 与原生对话框并行的行为；设置了 `disableAllHooks` 或组织 `allowManagedHooksOnly` 时只能在终端作答，Claude Code 后续若改变该行为也可能失效。
+- 终端会话的原生记录不含用量，状态页的费用与 tokens 显示为「—」。
 - 导入原生会话依赖用户确认原进程已停止，未自动检测所有原生进程。
 - 同一目录的多个会话可能修改相同文件，目前不自动创建 worktree。
 - 原生历史单文件最多读取 64 MiB，会话发现最多 5000 个文件；大历史、分叉 / 压缩后的记录暂无完整分页和分支选择。

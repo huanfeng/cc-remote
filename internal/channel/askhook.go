@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -17,13 +18,13 @@ import (
 	"cc-remote/internal/claude"
 )
 
-// askConfig is written by the launcher into its per-launch config directory
-// (0600/0700 on Unix; Windows does not enforce these modes, the directory only
-// inherits the data directory's ACL). The hook finds it through
+// askConfig is ask.json, written by the host into a terminal session's config
+// directory (0600/0700 on Unix; Windows does not enforce these modes, the
+// directory only inherits the data directory's ACL). The hook finds it through
 // CC_REMOTE_ASK_FILE. That variable is inherited by every subprocess of Claude,
-// so the model's tools can read the file and its token — the same exposure as the
-// MCP config with CC_REMOTE_TOKEN in that directory. It only keeps the token out
-// of the environment itself.
+// so the model's tools can read the file and its token. It only keeps the token
+// out of the environment itself. BindingFile is empty for terminal sessions: the
+// host follows /clear and /resume and rewrites the file.
 type askConfig struct {
 	Host        string `json:"host"`
 	Token       string `json:"token"`
@@ -41,10 +42,12 @@ type webAnswer struct {
 // planModes are the permission modes a web approval of ExitPlanMode may switch to.
 var planModes = []string{"default", "acceptEdits", "auto", "bypassPermissions"}
 
+var launchUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 const askTimeout = claude.AskWait + time.Minute // after the host, before Claude Code's hook timeout
 
 // AskHook is the PermissionRequest hook for AskUserQuestion and ExitPlanMode in a
-// shared terminal. Claude Code keeps its native dialog interactive while the hook
+// terminal session. Claude Code keeps its native dialog interactive while the hook
 // runs, so the web and the terminal can both answer; the first answer wins.
 // The hook fails open: on any problem it prints nothing and the dialog stays.
 func AskHook() error {

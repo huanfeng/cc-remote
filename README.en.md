@@ -22,7 +22,7 @@ CC Remote is a small host program (a single executable) that runs on your comput
 
 - **Share a terminal session with the web**: run `ccr` in a project to start native Claude Code; the web UI talks to that very process, so you can keep going away from your desk.
 - **Managed sessions**: start sessions from the browser in any project directory, run several in parallel, and close the tab without stopping them.
-- **Answer approvals, questions and plans from the web**: tool permissions, AskUserQuestion choices and plan approvals show up as cards; in shared sessions, whichever side answers first wins.
+- **Answer approvals, questions and plans from the web**: tool permissions, AskUserQuestion choices and plan approvals show up as cards; in terminal sessions, whichever side answers first wins.
 - **Per-session model and permission mode**: every permission mode (including `bypassPermissions`, behind a confirmation) and reasoning effort, without touching your `~/.claude/settings.json`.
 - **Attachments**: paste, drop or pick files to send to Claude, with thumbnails for images.
 - **Background service with auto start**: one command registers a per-user service (Windows Task Scheduler / systemd / launchd) and adds the `ccr` shortcut.
@@ -103,7 +103,7 @@ ccr --resume <id>        # continue a Claude Code session as a terminal session 
 ccr -c                   # continue this directory's most recent Claude Code session
 ```
 
-Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. `ccr` also takes Claude Code's options: `ccr --add-dir ../lib --model sonnet` starts a terminal session with them, and `cc-remote -- claude [options]` does the same. The older shared mode (Claude Code ran in your terminal and the web joined over Channels) was removed.
+Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. `ccr` also takes Claude Code's options: `ccr --add-dir ../lib --model sonnet` starts a terminal session with them, and `cc-remote -- claude [options]` does the same. The older shared mode (Claude Code ran in your terminal and the web joined over Channels) was removed; existing shared sessions became terminal sessions and resume their context the next time you use them.
 
 ### Managed sessions
 
@@ -159,7 +159,7 @@ In the `access-token` file in the data directory (paths under Quick start). Dele
 **On Windows the service doesn't see my data / `ccr` can't connect.**
 If you ran cc-remote from the built-in terminal of an MSIX-packaged app (some desktop AI clients), `%APPDATA%` was redirected into that app's private folder. Run `ccr` and `cc-remote` from a regular PowerShell or cmd window.
 
-**No question / plan cards in the web UI for a shared session?**
+**No question / plan cards in the web UI for a terminal session?**
 That relies on a Claude Code hook. With `disableAllHooks` or an organization policy that only allows managed hooks, questions and plan approvals can only be answered in the terminal.
 
 ## Building from source

@@ -30,7 +30,6 @@ select{font:inherit;color:inherit;background:#fff;border:1px solid #daddd2;borde
 .modal .session-settings-title{margin:4px 0 0;font-size:13px;color:#46553f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-settings fieldset{border:0;padding:0;margin:0;min-width:0}.session-settings fieldset:disabled{opacity:.55}
 .session-settings fieldset label{margin:12px 0}
-.modal .channel-note{background:#f2f0e6;border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:#5c6455}
 .modal .effective-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 0;font-size:12px}.modal .effective-line small{display:inline}
 .session-info{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px;margin:8px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#f8f7f1}
 .session-info .wide{grid-column:1/-1}.session-info>div:nth-child(-n+2){grid-column:span 2}.session-info dt{font-size:10px;color:var(--muted)}
@@ -171,3 +170,11 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .host-add:hover{background:#e6eddc}
 .host-login h2{font-size:20px;font-weight:500;margin:0 0 4px}
 .host-menu small,.host-switch{letter-spacing:normal;font-weight:400}
+.teammate-message{margin:12px 0;border:1px solid #e0e5d6;border-left:3px solid var(--teammate);border-radius:0 10px 10px 0;background:#f6f7f0;font-size:12px}
+.teammate-message summary{display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;color:#737c6a;list-style:none;min-width:0}
+.teammate-message summary::-webkit-details-marker{display:none}
+.teammate-message summary svg:first-child{color:var(--teammate);flex-shrink:0}
+.teammate-message summary strong{color:var(--teammate);font-weight:600;flex-shrink:0}
+.teammate-message summary>span:not(.tool-group-chevron){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.teammate-message[open] .tool-group-chevron{transform:rotate(180deg)}
+.teammate-body{padding:4px 16px 14px;font-size:13px;line-height:1.8;overflow-wrap:anywhere}

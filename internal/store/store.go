@@ -141,6 +141,21 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
+	if err = migrateSharedSessions(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Sessions synced before transcripts carried task and teammate events
+	// are flagged once, so their first sync does not append those of the
+	// whole history (see TranscriptFlag).
+	if _, err = db.Exec(`INSERT OR IGNORE INTO channel_transcript SELECT DISTINCT session_id,? FROM channel_transcript c WHERE NOT EXISTS (SELECT 1 FROM channel_transcript v WHERE v.session_id=c.session_id AND v.event_key=?)`, LegacyTasksKey, TranscriptV2Key); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`INSERT OR IGNORE INTO channel_transcript SELECT DISTINCT session_id,? FROM channel_transcript`, TranscriptV2Key); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// Process-local execution cannot survive a host restart. Never replay it automatically.
 	note := i18n.T("The host restarted and interrupted the last turn. Check the workspace before continuing.", "宿主已重启，上一轮执行中断。请检查工作区后再继续。")
 	_, err = db.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) SELECT id,'error',?,'null',? FROM sessions WHERE status IN ('running','waiting')`, note, now())
@@ -155,6 +170,25 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// migrateSharedSessions turns sessions of the retired shared mode ("channel")
+// into stopped terminal sessions, which resume the same Claude session. Their
+// recorded transcript keys get the terminal sessions' Claude session ID prefix,
+// so the history is not recorded a second time.
+func migrateSharedSessions(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE channel_transcript SET event_key=(SELECT lower(claude_id) FROM sessions WHERE sessions.id=channel_transcript.session_id)||':'||event_key WHERE session_id IN (SELECT id FROM sessions WHERE mode='channel')`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE sessions SET mode='terminal',status='idle' WHERE mode='channel'`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
 func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error) {
 	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: claudeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: "managed"}
@@ -265,7 +299,7 @@ func (s *Store) Delete(id string) error {
 	return tx.Commit()
 }
 
-// RecordTranscript keeps repeated heartbeat scans and reconnects idempotent.
+// RecordTranscript keeps repeated transcript scans idempotent.
 func (s *Store) RecordTranscript(id, key, kind, text string, payload json.RawMessage) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -288,6 +322,34 @@ func (s *Store) RecordTranscript(id, key, kind, text string, payload json.RawMes
 		return false, err
 	}
 	return true, tx.Commit()
+}
+
+// Transcript flags live among a session's recorded transcript keys, which
+// never start with "!". TranscriptV2Key marks a session synced by a host that
+// records task and teammate events; LegacyTasksKey one synced before, whose
+// next sync only registers those events (they are its old history).
+const (
+	TranscriptV2Key = "!transcript-v2"
+	LegacyTasksKey  = "!legacy-tasks"
+)
+
+// MarkTranscript registers a transcript key without recording an event.
+func (s *Store) MarkTranscript(id, key string) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO channel_transcript VALUES(?,?)`, id, key)
+	return err
+}
+
+// TranscriptFlag reports whether a session has the flag key.
+func (s *Store) TranscriptFlag(id, key string) bool {
+	var n int
+	_ = s.db.QueryRow(`SELECT count(*) FROM channel_transcript WHERE session_id=? AND event_key=?`, id, key).Scan(&n)
+	return n > 0
+}
+
+// ClearTranscriptFlag removes a flag key.
+func (s *Store) ClearTranscriptFlag(id, key string) error {
+	_, err := s.db.Exec(`DELETE FROM channel_transcript WHERE session_id=? AND event_key=?`, id, key)
+	return err
 }
 
 func (s *Store) Append(id, kind, text string, payload json.RawMessage) (Event, error) {

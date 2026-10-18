@@ -21,10 +21,10 @@ import (
 
 // Terminal sessions run an interactive Claude Code in a pseudo-terminal the
 // host owns (see docs/design/terminal-sessions.md). Terminal front ends
-// (cc-remote attach) stream its screen; the web shows the transcript, like a
-// shared session, and sends messages as pasted text. A terminal session
-// registers a channelConnection so the shared-session transcript sync and the
-// AskUserQuestion / ExitPlanMode hook bridge work for it unchanged.
+// (cc-remote attach) stream its screen; the web shows the transcript and sends
+// messages as pasted text. A terminal session registers a channelConnection for
+// the transcript sync and the AskUserQuestion / ExitPlanMode hook bridge
+// (channels.go).
 
 const (
 	terminalSync      = time.Second
@@ -53,6 +53,7 @@ type terminalSession struct {
 	live         *store.LiveStatus // from the status line
 	viewedAt     time.Time         // the web last showed this session (polling with viewing=1)
 	away         bool              // Claude Code was told nobody looks (focus out)
+	started      time.Time         // tasks recorded before this belong to an earlier Claude Code
 }
 
 type terminalQueued struct {
@@ -97,7 +98,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, cwd: x.Cwd, send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
+	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, cwd: x.Cwd, started: time.Now(), send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
 	if err := s.writeTerminalConfig(ts); err != nil {
 		return nil, err
 	}
@@ -129,7 +130,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 		return nil, err
 	}
 	ts.runner = r
-	ts.conn = &channelConnection{sessionID: x.ID, key: store.ID() + store.ID(), seen: time.Now(), queue: []channelCommand{}, keyPrefix: ts.claudeID + ":"}
+	ts.conn = &channelConnection{sessionID: x.ID, seen: time.Now(), keyPrefix: ts.claudeID + ":"}
 	s.terminals[x.ID] = ts
 	s.channels[ts.claudeID] = ts.conn
 	if !x.Resume {

@@ -1,8 +1,15 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"cc-remote/internal/claude"
+	"cc-remote/internal/store"
 )
 
 // Task events fold into one entry per task; a task left running by a Claude
@@ -35,4 +42,56 @@ func TestTasksFoldClaudeTaskEvents(t *testing.T) {
 	if bg.ID != "b2" || !bg.Background || bg.LastTool != "Read" || bg.ToolUses != 2 || bg.Status != "interrupted" {
 		t.Fatalf("orphaned task %+v", bg)
 	}
+}
+
+// A terminal session's tasks come from its transcript. The first sync after an
+// upgrade does not append the old history's task events, and tasks an earlier
+// Claude Code left running end once the terminal runs a new one.
+func TestTerminalTranscriptTasks(t *testing.T) {
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	id := store.ID()
+	x, _ := connectTerminal(t, s, st, id, t.TempDir())
+	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "tasks-test")
+	_ = os.MkdirAll(dir, 0700)
+	path := filepath.Join(dir, id+".jsonl")
+	launch := func(n string) {
+		appendTranscript(t, path, map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": "toolu_" + n, "name": "Agent", "input": map[string]any{"description": "Task " + n, "run_in_background": true}}}}})
+		appendTranscript(t, path, map[string]any{"type": "user", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_" + n, "content": "launched"}}}, "toolUseResult": map[string]any{"status": "async_launched", "agentId": "a" + n}})
+	}
+	tasks := func() map[string]string {
+		t.Helper()
+		code, b := request(t, ts, "GET", "/api/sessions/"+x.ID+"/tasks", nil, testToken)
+		var list []taskInfo
+		if code != 200 || json.Unmarshal(b, &list) != nil {
+			t.Fatalf("%d %s", code, b)
+		}
+		out := map[string]string{}
+		for _, task := range list {
+			out[task.ID] = task.Status
+		}
+		return out
+	}
+	launch("1")
+	_ = st.MarkTranscript(x.ID, store.LegacyTasksKey) // synced by an earlier host
+	syncConnection(t, s, id)
+	if got := tasks(); len(got) != 0 {
+		t.Fatalf("old history's tasks appended: %v", got)
+	}
+	launch("2")
+	syncConnection(t, s, id)
+	s.mu.Lock()
+	s.terminals[x.ID] = &terminalSession{id: x.ID, started: time.Now().Add(-time.Hour)}
+	s.mu.Unlock()
+	if got := tasks(); len(got) != 1 || got["a2"] != "running" {
+		t.Fatalf("tasks %v", got)
+	}
+	s.mu.Lock()
+	s.terminals[x.ID].started = time.Now().Add(time.Hour) // a new Claude Code since
+	s.mu.Unlock()
+	if got := tasks(); got["a2"] != "interrupted" {
+		t.Fatalf("task of an earlier Claude Code: %v", got)
+	}
+	s.mu.Lock()
+	delete(s.terminals, x.ID)
+	s.mu.Unlock()
 }

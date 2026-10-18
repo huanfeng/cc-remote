@@ -17,10 +17,6 @@ type preferencesBody struct {
 	ConfirmDangerous bool   `json:"confirmDangerous,omitempty"`
 }
 
-func channelOverrideMessage(l i18n.Lang) string {
-	return l.T("A shared terminal session is held by its running terminal process, so the web cannot switch the model, reasoning effort or permission mode live; run /model or /effort in the terminal, or press Shift+Tab to switch the permission mode", "共享终端会话由运行中的终端进程持有，网页无法实时切换模型、推理强度或权限模式；请在终端执行 /model、/effort，或按 Shift+Tab 切换权限模式")
-}
-
 // Called under s.configMu.
 func (s *Server) savePreferences(l i18n.Lang, next prefs.Preferences, revision string, confirm bool) (preferencesBody, error) {
 	old, _, err := prefs.Load(s.cfg.DataDir)
@@ -119,10 +115,6 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
-	if x.Mode == "channel" {
-		fail(w, 409, channelOverrideMessage(s.lang(r)))
-		return
-	}
 	if err = req.apply(s.lang(r), &x); err != nil {
 		fail(w, 400, i18n.Text(s.lang(r), err))
 		return
@@ -132,7 +124,7 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.decorateChannel(&x)
+	s.decorate(&x)
 	s.mu.Unlock()
 	respond(w, 200, x)
 }

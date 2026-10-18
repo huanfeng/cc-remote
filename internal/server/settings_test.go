@@ -123,15 +123,10 @@ func TestCommandClearChangesContextWithoutDeletingHistory(t *testing.T) {
 	if code != 200 || !strings.Contains(string(b), `"name":"usage"`) || strings.Count(string(b), `"name":"model"`) != 1 {
 		t.Fatalf("menu %d %s", code, b)
 	}
-	_ = st.SetMode(x.ID, "channel")
-	code, _ = request(t, ts, "POST", path, map[string]string{"command": "/clear"}, testToken)
-	if code != 409 {
-		t.Fatalf("shared context reset %d", code)
-	}
 }
 
 // TestCompactRunsAsManagedTurn: /compact is passed to Claude verbatim on a
-// resumed managed session; fresh, busy-with-attachments and shared sessions are refused.
+// resumed managed session; fresh sessions and attachments are refused.
 func TestCompactRunsAsManagedTurn(t *testing.T) {
 	runs := make(chan claude.Options, 1)
 	_, ts, st := setup(t, func(_ context.Context, o claude.Options, _ func(claude.Event) error) error { runs <- o; return nil })
@@ -155,11 +150,5 @@ func TestCompactRunsAsManagedTurn(t *testing.T) {
 	}
 	if o := <-runs; o.Message != "/compact keep the API notes" || !o.Resume {
 		t.Fatalf("runner got %q resume=%v", o.Message, o.Resume)
-	}
-	y := createSession(t, ts)
-	_ = st.SetResume(y.ID)
-	_ = st.SetMode(y.ID, "channel")
-	if code, b := request(t, ts, "POST", "/api/sessions/"+y.ID+"/commands", map[string]string{"command": "/compact"}, testToken); code != 409 || !strings.Contains(string(b), "terminal") {
-		t.Fatalf("channel %d %s", code, b)
 	}
 }

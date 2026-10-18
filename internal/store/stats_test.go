@@ -15,7 +15,7 @@ func TestSessionStats(t *testing.T) {
 	}
 	defer st.Close()
 	managed, _ := st.Create("managed", t.TempDir(), ID(), false)
-	channel, _ := st.Create("channel", t.TempDir(), ID(), true)
+	term, _ := st.Create("terminal", t.TempDir(), ID(), true)
 	empty, _ := st.Create("empty", t.TempDir(), ID(), false)
 	result := func(cost float64, isError bool) json.RawMessage {
 		b, _ := json.Marshal(map[string]any{"type": "result", "is_error": isError, "total_cost_usd": cost, "duration_ms": 1500, "num_turns": 3,
@@ -36,13 +36,13 @@ func TestSessionStats(t *testing.T) {
 		}
 	}
 	// Transcript rows are stored without validation; malformed JSON must not break aggregation.
-	if _, err := st.RecordTranscript(channel.ID, "k1", "user", "hi", nil); err != nil {
+	if _, err := st.RecordTranscript(term.ID, "k1", "user", "hi", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.RecordTranscript(channel.ID, "k2", "assistant", "hello", json.RawMessage(`{bad`)); err != nil {
+	if _, err := st.RecordTranscript(term.ID, "k2", "assistant", "hello", json.RawMessage(`{bad`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.RecordTranscript(channel.ID, "k3", "tool", "", json.RawMessage(`{"type":"tool_use"}`)); err != nil {
+	if _, err := st.RecordTranscript(term.ID, "k3", "tool", "", json.RawMessage(`{"type":"tool_use"}`)); err != nil {
 		t.Fatal(err)
 	}
 	all, err := st.AllSessionStats()
@@ -60,9 +60,9 @@ func TestSessionStats(t *testing.T) {
 		m.CacheReadTokens != 3000 || m.CacheCreationTokens != 150 || m.DurationMs != 4500 || m.ToolCalls != 1 || m.Errors != 3 || m.LastActivityAt == "" {
 		t.Fatalf("managed stats: %+v", m)
 	}
-	c, _ := st.SessionStatsFor(channel.ID)
+	c, _ := st.SessionStatsFor(term.ID)
 	if c.Turns != 1 || c.ToolCalls != 1 || c.CostKnown || c.CostUSD != 0 || c.InputTokens != 0 {
-		t.Fatalf("channel stats: %+v", c)
+		t.Fatalf("terminal stats: %+v", c)
 	}
 	e, err := st.SessionStatsFor(empty.ID)
 	if err != nil || e.SessionID != empty.ID || e.Turns != 0 || e.LastActivityAt != "" {

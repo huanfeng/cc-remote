@@ -6,15 +6,15 @@
 
 - [x] 托管多会话：结构化对话、工具过程、权限审批、提问、恢复上下文、停止执行。
 - [x] 原生历史查看和导入，直接沿用原会话标题，不要求命名。
-- [x] 原生终端与网页通过 Claude Channels 共用一个交互式 Claude 进程；消息、工具审批和历史同步。
-- [x] 共享终端 AskUserQuestion / ExitPlanMode 双端作答：`PermissionRequest` Hook `channel-ask-hook` 长轮询 `POST /api/channels/{id}/interactions`，网页经 `POST /api/requests/{id}` 回答（`decision: allow|deny|terminal`，计划可带 `mode`/`message`），终端先答时 Hook 轮询 transcript 退出、宿主同步兜底；`interaction` 事件记录结果（web/handoff/terminal/expired），网页卡片原位作答并显示「已在终端/网页回答」、「交给终端」。真实 Claude Code 2.1.300 + haiku 验证网页回答、终端回答、网页批准计划（acceptEdits）三种路径。
+- [x] 原生终端与网页通过 Claude Channels 共用一个交互式 Claude 进程；消息、工具审批和历史同步。（共享模式已移除，由终端会话取代；已有共享会话在宿主启动时迁移为终端会话。）
+- [x] 共享终端（现为终端会话）AskUserQuestion / ExitPlanMode 双端作答：`PermissionRequest` Hook `channel-ask-hook` 长轮询 `POST /api/channels/{id}/interactions`，网页经 `POST /api/requests/{id}` 回答（`decision: allow|deny|terminal`，计划可带 `mode`/`message`），终端先答时 Hook 轮询 transcript 退出、宿主同步兜底；`interaction` 事件记录结果（web/handoff/terminal/expired），网页卡片原位作答并显示「已在终端/网页回答」、「交给终端」。真实 Claude Code 2.1.300 + haiku 验证网页回答、终端回答、网页批准计划（acceptEdits）三种路径。
 - [x] 连接代际隔离、离线拒绝、队列确认、审批一次性响应、会话 ID 变更断开保护。
 
 ## 本次迭代
 
 - [x] 空白页新建/连接按钮、连接说明复制按钮增加内边距及间距，手机纵向排列；复制支持普通 HTTP 降级、成功反馈及手动选择兜底。
 - [x] PC 与手机统一使用左侧会话列表（手机为抽屉菜单），取消顶部标签和重复的已打开列表。打开过的会话显示「已缓存」，切换保留消息、草稿、截图、滚动位置、工具展开和待提交回答。
-- [x] 侧栏显示执行中、等待操作、已完成、失败、共享终端在线/离线状态；执行中有动态圆点。后台缓存会话持续刷新，即使正在查看终端历史。
+- [x] 侧栏显示执行中、等待操作、已完成、失败状态；执行中有动态圆点。后台缓存会话持续刷新，即使正在查看终端历史。
 - [x] 「×」释放指定会话的页面缓存，清除该会话未发送草稿；宿主任务继续运行，已发送历史不删除。
 - [x] 紧凑对话布局、可折叠左栏，手机使用抽屉菜单。
 - [x] Enter / Ctrl+Enter 发送可选并记忆；Shift+Enter 换行，中文输入法组合输入不发送。
@@ -54,9 +54,9 @@ Windows 服务实测：计划任务无窗口运行、强杀后 5 秒内重启、
 ## 使用约定与边界
 
 - PC/手机切换会话不会丢界面缓存；刷新页面按 URL hash 回到原会话并恢复打开列表、草稿、附件和未提交回答（localStorage，7 天过期），滚动与展开状态按标签页恢复（sessionStorage）；释放缓存会清除该会话草稿，已发送消息保存在 SQLite。
-- 网页设置修改用户级 Claude 默认值；项目/组织设置可能覆盖。托管下一轮读取，已运行的共享 Claude 需重启或在终端用原生命令即时修改。
-- 托管会话中 Claude init 事件 `slash_commands` 列出的命令（内置、插件、技能）以 `-p --resume` 原样交给 Claude（2.1.300 实测 `/compact`、`/context`、`/usage` 可用；`/clear` 在 `-p` 下会换会话 ID，故由 cc-remote 自己重置）。共享会话的原生命令仍在终端执行；共享会话的自定义技能只展开提示词，不执行 frontmatter 的 hooks、隔离上下文等原生机制；动态 shell 和位置参数明确提示使用终端。
-- 共享模式的停止生成暂留在终端；提问选项和计划确认依赖 `PermissionRequest` Hook 与原生对话框并行（2.1.300 实测），Hook 被禁用时回退为仅终端作答。Channels 是官方预览接口，不保证所有账户或组织允许。
+- 网页设置修改用户级 Claude 默认值；项目/组织设置可能覆盖。托管下一轮读取，运行中的终端会话需重启 Claude Code 或在终端用原生命令即时修改。
+- 托管会话中 Claude init 事件 `slash_commands` 列出的命令（内置、插件、技能）以 `-p --resume` 原样交给 Claude（2.1.300 实测 `/compact`、`/context`、`/usage` 可用；`/clear` 在 `-p` 下会换会话 ID，故由 cc-remote 自己重置）。
+- 终端会话的提问选项和计划确认依赖 `PermissionRequest` Hook 与原生对话框并行（2.1.300 实测），Hook 被禁用时回退为仅终端作答。
 - 图片保存在宿主，取消附加不会删除已上传文件；尚未实现清理策略。
 - 同项目多会话会操作相同文件，尚无自动 worktree 隔离。
 - PWA 支持静态资源缓存，尚无离线消息队列或推送通知。

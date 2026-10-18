@@ -12,7 +12,6 @@ const compact = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000
 
 export type Defaults = { permissionMode: string; model: string; effort: string };
 
-const CHANNEL_NOTE = t('Shared terminal: the model, effort and permission mode are held by the running terminal process and cannot be switched from the web. Run /model or /effort in the terminal, or press Shift+Tab to switch the permission mode.', '共享终端：模型、推理强度与权限模式由运行中的终端进程持有，网页无法切换。请在终端执行 /model、/effort，或按 Shift+Tab 切换权限模式。');
 const permTone = (mode: string) => mode === 'bypassPermissions' ? ' danger' : dangerousMode(mode) ? ' warn' : '';
 
 /** Closes a dialog on Escape; the latest callback is used without re-subscribing. */
@@ -29,7 +28,6 @@ function useEscape(close: () => void) {
  * the session status (open), which has the full values, the switches and the settings. */
 export function SessionChips({ session, defaults, open }: { session: SessionInfo; defaults?: Defaults; open: (anchor: DOMRect) => void }) {
   const show = (event: { currentTarget: Element }) => open(event.currentTarget.getBoundingClientRect());
-  if (session.mode === 'channel') return <button type="button" className="session-chips" title={t('Session status', '会话状态')} onClick={show}><span className="chip inherited">{t('Settings held by the terminal', '设置由终端持有')}</span></button>;
   const button = (className: string, title: string, text: string) => <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={show}>{text}</button>;
   const chip = (label: string, value: string | undefined, inherited: string | undefined, tone = '') => {
     const shown = value || t(`Default(${inherited || 'Claude settings'})`, `默认(${inherited || 'Claude 配置'})`);
@@ -54,7 +52,6 @@ export function SessionChips({ session, defaults, open }: { session: SessionInfo
 }
 
 export function SessionSettings<T extends SessionInfo>({ api, session, defaults, close, onUpdated, onDelete }: { api: Api; session: T; defaults?: Defaults; close: () => void; onUpdated: (session: T) => void; onDelete: () => void }) {
-  const channel = session.mode === 'channel';
   const saved = { permissionMode: session.permissionMode || '', model: session.model || '', effort: session.effort || '' };
   const [draft, setDraft] = useState(saved);
   const [stats, setStats] = useState<Stats>();
@@ -78,20 +75,20 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
     } catch (err) { setError((err as Error).message); } finally { setSaving(false); }
   }
   const created = session.createdAt ? new Date(session.createdAt).toLocaleString(locale) : '—';
-  const mode = session.mode === 'channel' ? `${t('Shared terminal', '共享终端')} · ${session.online ? t('online', '在线') : t('offline', '离线')}` : t('Managed', '托管');
+  const mode = session.mode === 'terminal' ? t('Terminal', '终端') : t('Managed', '托管');
   return <div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) close(); }}>
-    <form className="modal session-settings" role="dialog" aria-modal="true" aria-label={t('Session settings', '会话设置')} onSubmit={event => { event.preventDefault(); if (!channel && changed) void save(); }}>
+    <form className="modal session-settings" role="dialog" aria-modal="true" aria-label={t('Session settings', '会话设置')} onSubmit={event => { event.preventDefault(); if (changed) void save(); }}>
       <div className="modal-heading"><h2>{t('Session settings', '会话设置')}</h2><button type="button" className="icon" aria-label={t('Close session settings', '关闭会话设置')} onClick={close}><CloseIcon size={18} /></button></div>
       <p className="session-settings-title" title={session.title}>{session.title || t('Untitled session', '未命名会话')}</p>
       <h3>{t('Launch settings', '启动参数')}</h3>
-      {channel ? <p className="channel-note">{CHANNEL_NOTE}</p> : <p>{t('Applies to this session only, from its next turn; leave empty to use the CC Remote defaults in Settings.', '仅作用于此会话，下一轮执行生效；留空跟随「设置」中的 CC Remote 默认值。')}</p>}
-      <fieldset disabled={channel || saving}>
+      <p>{t('Applies to this session only, from its next turn; leave empty to use the CC Remote defaults in Settings.', '仅作用于此会话，下一轮执行生效；留空跟随「设置」中的 CC Remote 默认值。')}</p>
+      <fieldset disabled={saving}>
         <label>{t('Model', '模型')}<ModelPicker api={api} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></label>
         <div className="new-session-overrides">
-          <label>{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} disabled={channel || saving} value={draft.effort} options={effortOptions(inherit(defaults?.effort))} onChange={effort => setDraft(old => ({ ...old, effort }))} /></label>
-          <label>{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} disabled={channel || saving} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></label>
+          <label>{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} disabled={saving} value={draft.effort} options={effortOptions(inherit(defaults?.effort))} onChange={effort => setDraft(old => ({ ...old, effort }))} /></label>
+          <label>{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} disabled={saving} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></label>
         </div>
-        {!channel && <p className="effective-line">{t('Effective permission mode: ', '生效权限模式：')}<span className={`chip${permTone(effective)}`}>{effective || t('Claude settings', 'Claude 配置')}</span>{effective === 'bypassPermissions' && <small className="danger-note">{t('Skips all approvals; use it only in trusted projects.', '跳过所有审批，仅在可信项目中使用。')}</small>}</p>}
+        {<p className="effective-line">{t('Effective permission mode: ', '生效权限模式：')}<span className={`chip${permTone(effective)}`}>{effective || t('Claude settings', 'Claude 配置')}</span>{effective === 'bypassPermissions' && <small className="danger-note">{t('Skips all approvals; use it only in trusted projects.', '跳过所有审批，仅在可信项目中使用。')}</small>}</p>}
       </fieldset>
       <h3>{t('Session info', '会话信息')}</h3>
       <dl className="session-info">
@@ -111,17 +108,16 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
       </section>
       {error && <div className="error" role="alert">{error}</div>}
       <div className="modal-actions">
-        {!channel && <button type="button" className="secondary reset" disabled={saving || (!draft.permissionMode && !draft.model.trim() && !draft.effort)} onClick={() => setDraft({ permissionMode: '', model: '', effort: '' })}>{t('Reset all to defaults', '全部恢复默认')}</button>}
+        {<button type="button" className="secondary reset" disabled={saving || (!draft.permissionMode && !draft.model.trim() && !draft.effort)} onClick={() => setDraft({ permissionMode: '', model: '', effort: '' })}>{t('Reset all to defaults', '全部恢复默认')}</button>}
         <button type="button" className="secondary" onClick={close}>{t('Cancel', '取消')}</button>
-        {!channel && <button className="primary" disabled={saving || !changed}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button>}
+        {<button className="primary" disabled={saving || !changed}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button>}
       </div>
     </form>
   </div>;
 }
 
 export function DeleteSessionDialog({ session, close, confirm }: { session: SessionInfo; close: () => void; confirm: (stop: boolean) => Promise<void> }) {
-  const running = session.mode !== 'channel' && ['running', 'waiting'].includes(session.status || '');
-  const online = session.mode === 'channel' && !!session.online;
+  const running = ['running', 'waiting'].includes(session.status || '');
   const [stop, setStop] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -136,13 +132,12 @@ export function DeleteSessionDialog({ session, close, confirm }: { session: Sess
       <p className="confirm-target" title={session.cwd}><strong>{session.title || t('Untitled session', '未命名会话')}</strong><small>{session.cwd}</small></p>
       <div id="delete-detail">
         <p>{t('This permanently deletes, for this session in CC Remote:', '将永久删除 CC Remote 中此会话的：')}</p>
-        <ul><li>{t('Web messages and tool event records', '网页消息与工具事件记录')}</li><li>{t('Approval / question records', '审批 / 提问记录')}</li><li>{t('Shared terminal sync records', '共享终端同步记录')}</li><li>{t('Images and files uploaded to the host', '上传到宿主的图片和文件')}</li></ul>
+        <ul><li>{t('Web messages and tool event records', '网页消息与工具事件记录')}</li><li>{t('Approval / question records', '审批 / 提问记录')}</li><li>{t('Terminal transcript sync records', '终端记录同步标记')}</li><li>{t('Images and files uploaded to the host', '上传到宿主的图片和文件')}</li></ul>
         <p>{t('Claude Code\'s native session history (the JSONL under ~/.claude) ', 'Claude Code 原生会话历史（~/.claude 下的 JSONL）')}<strong>{t('is not deleted', '不会删除')}</strong>{t(' and can still be viewed or resumed under "Terminal history". This cannot be undone.', '，仍可在「终端历史」中查看或恢复。此操作无法撤销。')}</p>
       </div>
-      {online && <div className="error" role="alert">{t('The shared terminal is online; exit Claude Code in the terminal before deleting.', '共享终端在线，请先退出终端中的 Claude Code 再删除。')}</div>}
       {running && <label className="checkbox"><input type="checkbox" checked={stop} onChange={event => setStop(event.target.checked)} />{t('This session is running; stop the current run before deleting', '此会话正在执行，先停止当前执行再删除')}</label>}
       {error && <div className="error" role="alert">{error}</div>}
-      <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={close}>{t('Cancel', '取消')}</button><button type="button" className="danger-button solid" disabled={busy || online || (running && !stop)} onClick={() => void submit()}>{busy ? t('Deleting…', '删除中…') : running ? t('Stop and delete', '停止并删除') : t('Delete session', '删除会话')}</button></div>
+      <div className="modal-actions"><button type="button" className="secondary" disabled={busy} onClick={close}>{t('Cancel', '取消')}</button><button type="button" className="danger-button solid" disabled={busy || (running && !stop)} onClick={() => void submit()}>{busy ? t('Deleting…', '删除中…') : running ? t('Stop and delete', '停止并删除') : t('Delete session', '删除会话')}</button></div>
     </div>
   </div>;
 }

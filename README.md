@@ -20,7 +20,7 @@ CC Remote 是一个运行在你电脑上的小型宿主程序（单个可执行�
 
 - **终端与网页接力**：在项目里运行 `ccr`，宿主持有一个交互式 Claude Code，本地终端接入使用；按 `Ctrl+]` 离开后它继续运行，网页和手机可以接着发消息，再运行 `ccr` 就接回来。子 agent 等长任务不会因为切换而中断。
 - **网页托管会话**：直接在网页新建会话、指定项目目录，多个会话并行执行，关掉浏览器任务也不会停。
-- **审批、提问、计划都能在网页回答**：工具权限审批、AskUserQuestion 选项、计划确认以卡片呈现；共享会话中网页和终端谁先答谁生效。
+- **审批、提问、计划都能在网页回答**：工具权限审批、AskUserQuestion 选项、计划确认以卡片呈现；终端会话中网页和终端谁先答谁生效。
 - **按会话设置模型与权限模式**：支持全部权限模式（含 `bypassPermissions`，需二次确认）和推理强度，不改动你的 `~/.claude/settings.json`。
 - **附件**：粘贴、拖放或选择文件发送给 Claude，图片带缩略图预览。
 - **后台服务、开机自启**：一条命令注册为当前用户的系统服务（Windows 计划任务 / systemd / launchd），附带 `ccr` 快捷命令。
@@ -105,7 +105,7 @@ Claude Code 退出时提示的 `claude --resume <会话ID>`，把 `claude` 换�
 
 终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。`cc-remote attach`（缩写 `cc-remote a`）是同样的功能，需要指定 `--host` 时使用。
 
-`ccr` 也接受 Claude Code 的参数：`ccr --add-dir ../lib --model sonnet` 带这些参数新建终端会话，`cc-remote -- claude [参数]` 与之相同。旧的共享终端（Claude Code 在当前终端里运行、网页经 Channels 接入）已移除。
+`ccr` 也接受 Claude Code 的参数：`ccr --add-dir ../lib --model sonnet` 带这些参数新建终端会话，`cc-remote -- claude [参数]` 与之相同。旧的共享终端（Claude Code 在当前终端里运行、网页经 Channels 接入）已移除，原有的共享会话自动转为终端会话，下次使用时恢复上下文。
 
 ### 托管会话
 
@@ -159,7 +159,7 @@ cc-remote service config --listen 127.0.0.1:8787,lan:8787
 **Windows 上服务看不到我的数据 / `ccr` 连不上？**
 如果你在 MSIX 打包的应用（部分桌面 AI 客户端）内置终端里运行过 cc-remote，`%APPDATA%` 会被虚拟化到该应用的私有目录。请在普通 PowerShell / cmd 中运行 `ccr` 和 `cc-remote`。
 
-**共享会话里网页没有出现提问 / 计划卡片？**
+**终端会话里网页没有出现提问 / 计划卡片？**
 该功能依赖 Claude Code 的 Hook。设置了 `disableAllHooks` 或组织策略只允许托管 Hook 时，提问和计划确认只能在终端作答。
 
 ## 从源码构建

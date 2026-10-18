@@ -1,4 +1,4 @@
-import { memo, useEffect } from 'react';
+import { memo, useEffect, type CSSProperties } from 'react';
 import Markdown from './Markdown';
 import { AgentIcon, CheckIcon, ChevronDownIcon, CloseIcon, TerminalIcon } from './icons';
 import { LongPre, ToolGroup } from './ToolGroup';
@@ -16,7 +16,7 @@ export type NestedProps = {
   tasks: Map<string, TaskInfo>;
 };
 
-const STATUS: Record<string, string> = { running: t('Running', '运行中'), completed: t('Completed', '已完成'), failed: t('Failed', '失败'), killed: t('Stopped', '已停止'), stopped: t('Stopped', '已停止'), interrupted: t('Interrupted', '已中断'), error: t('Failed', '失败'), missing: t('No result recorded', '未记录结果'), ok: t('Completed', '已完成') };
+const STATUS: Record<string, string> = { running: t('Running', '运行中'), idle: t('Idle', '空闲'), completed: t('Completed', '已完成'), failed: t('Failed', '失败'), killed: t('Stopped', '已停止'), stopped: t('Stopped', '已停止'), interrupted: t('Interrupted', '已中断'), error: t('Failed', '失败'), missing: t('No result recorded', '未记录结果'), ok: t('Completed', '已完成') };
 /** Running shows a spinner, finished states a mark; idle agents keep the agent icon. */
 function StatusIcon({ status, shell }: { status: string; shell?: boolean }) {
   if (status === 'running') return <span className="tool-spinner" />;
@@ -25,7 +25,7 @@ function StatusIcon({ status, shell }: { status: string; shell?: boolean }) {
   return shell ? <TerminalIcon size={13} /> : <AgentIcon size={13} />;
 }
 /** Kind label of a task: shell commands run in the background; agents are foreground or background. */
-const taskKind = (task: TaskInfo) => task.taskType === 'local_bash' ? t('Background command', '后台命令') : task.background ? t('Background', '后台') : t('Foreground', '前台');
+const taskKind = (task: TaskInfo) => task.taskType === 'local_bash' ? t('Background command', '后台命令') : task.taskType === 'in_process_teammate' ? t('Teammate', '队友') : task.background ? t('Background', '后台') : t('Foreground', '前台');
 const toolCount = (n: number) => t(n === 1 ? '1 tool use' : `${n} tool uses`, `${n} 次工具`);
 const compact = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
@@ -81,7 +81,7 @@ function AgentCardView({ call, items, nested }: { call: ToolCall; items: Transcr
   return <section className={`agent-card is-${status}${open ? ' open' : ''}`} data-agent={call.id}>
     <button type="button" className="agent-summary" aria-expanded={open} onClick={() => nested.onToggleGroup(call.seq, !open)}>
       <span className={`agent-icon is-${status}`}><StatusIcon status={status} /></span>
-      <span className="agent-title"><strong>{description}</strong>{type && <span className="agent-type">{type}</span>}{background && <span className="agent-type">{t('Background', '后台')}</span>}</span>
+      <span className="agent-title"><strong>{description}</strong>{type && <span className="agent-type">{type}</span>}{background && <span className="agent-type">{task ? taskKind(task) : t('Background', '后台')}</span>}</span>
       {meta && <span className="agent-meta">{meta}</span>}
       <span className={`tool-badge agent-status is-${status}`}>{STATUS[status] || status}</span>
       <span className="tool-group-chevron"><ChevronDownIcon size={14} /></span>
@@ -91,13 +91,24 @@ function AgentCardView({ call, items, nested }: { call: ToolCall; items: Transcr
       {placeholder && !prompt && <p className="tool-detail-note">{t('This subagent was started in earlier messages; scroll up to load them and see its task.', '这个子 agent 的调用在更早的消息里，向上滚动加载后可以看到任务说明。')}</p>}
       {prompt && <><div className="tool-detail-label">{t('Task', '任务说明')}</div><LongPre text={prompt} /></>}
       {items.length > 0 && <div className="agent-transcript"><NestedItems items={items} nested={nested} /></div>}
-      {items.length === 0 && !running && !result && <p className="tool-detail-note">{t('The subagent\'s steps were not recorded (terminal history and shared sessions keep only the final result)', '没有记录子 agent 的过程（终端历史和共享会话只保存最终结果）')}</p>}
+      {items.length === 0 && !running && !result && <p className="tool-detail-note">{t('The subagent\'s steps were not recorded (terminal history and terminal sessions keep only the final result)', '没有记录子 agent 的过程（终端历史和终端会话只保存最终结果）')}</p>}
       {running ? <p className="tool-detail-note">{t('Subagent running…', '子 agent 执行中…')}</p> : result ? <><div className="tool-detail-label">{status === 'failed' ? t('Result (failed)', '结果（失败）') : t('Result', '结果')}</div><div className="agent-result"><Markdown text={result} /></div></> : null}
     </div>}
   </section>;
 }
 
 export const AgentCard = memo(AgentCardView);
+
+// Claude Code names a teammate's colour; these are the readable shades of them.
+const TEAMMATE_COLORS: Record<string, string> = { red: '#c0504d', blue: '#4a78b5', green: '#5e8f4c', yellow: '#b08a2a', purple: '#8a5fb0', orange: '#c97a3a', pink: '#c0608f', cyan: '#3c8f9a' };
+
+/** A message a teammate sent the lead: its summary, opened it shows the whole message. */
+export function TeammateMessage({ name, color, summary, text }: { name?: string; color?: string; summary?: string; text: string }) {
+  return <details className="teammate-message" style={{ '--teammate': TEAMMATE_COLORS[color || ''] || '#78866e' } as CSSProperties}>
+    <summary><AgentIcon size={13} /><strong>@{name || t('teammate', '队友')}</strong><span>{summary || t('Message from a teammate', '队友发来的消息')}</span><span className="tool-group-chevron"><ChevronDownIcon size={14} /></span></summary>
+    <div className="teammate-body"><Markdown text={text} /></div>
+  </details>;
+}
 
 /** Panel of the session's subagents and background tasks; picking one jumps to its card. */
 export function TaskPanel({ tasks, close, locate }: { tasks: TaskInfo[]; close: () => void; locate: (task: TaskInfo) => void }) {

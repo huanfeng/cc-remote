@@ -157,6 +157,50 @@ INSERT INTO sessions VALUES('old','Old','/tmp','abcd1234-1234-1234-1234-12345678
 	}
 }
 
+// Sessions of the retired shared mode reopen as stopped terminal sessions whose
+// recorded transcript is not recorded again; the migration is idempotent.
+func TestMigratesSharedSessionsToTerminal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := s.Create("Shared", "/tmp", "ABCD1234-1234-1234-1234-123456789ABC", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := s.Create("Managed", "/tmp", ID(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetMode(shared.ID, "channel"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetStatus(shared.ID, "offline"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RecordTranscript(shared.ID, "hash:1", "assistant", "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	for range 2 {
+		if s, err = Open(path); err != nil {
+			t.Fatal(err)
+		}
+		x, err := s.Get(shared.ID)
+		if err != nil || x.Mode != "terminal" || x.Status != "idle" || x.ClaudeSessionID != shared.ClaudeSessionID || !x.Resume {
+			t.Fatalf("migrated %+v %v", x, err)
+		}
+		if added, err := s.RecordTranscript(shared.ID, "abcd1234-1234-1234-1234-123456789abc:hash:1", "assistant", "hello", nil); err != nil || added {
+			t.Fatalf("transcript recorded again: %v %v", added, err)
+		}
+		if y, err := s.Get(managed.ID); err != nil || y.Mode != "managed" {
+			t.Fatalf("managed session changed %+v %v", y, err)
+		}
+		s.Close()
+	}
+}
+
 // Task events come from the partial index, not a scan of the session's events.
 func TestTaskEventsUsePartialIndex(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
@@ -186,5 +230,40 @@ func TestTaskEventsUsePartialIndex(t *testing.T) {
 	}
 	if !strings.Contains(plan, "events_tasks") {
 		t.Fatalf("plan does not use the partial index: %s", plan)
+	}
+}
+
+// A session synced by a host without task events is flagged once; one synced
+// by this host (TranscriptV2Key) never is.
+func TestLegacyTranscriptFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := s.Create("Old", "/tmp", ID(), true)
+	current, _ := s.Create("Current", "/tmp", ID(), true)
+	if _, err = s.RecordTranscript(old.ID, "abc:hash:1", "assistant", "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.MarkTranscript(current.ID, TranscriptV2Key)
+	_, _ = s.RecordTranscript(current.ID, "abc:hash:2", "assistant", "hi", nil)
+	s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	if !s.TranscriptFlag(old.ID, LegacyTasksKey) || !s.TranscriptFlag(old.ID, TranscriptV2Key) || s.TranscriptFlag(current.ID, LegacyTasksKey) {
+		t.Fatal("flags after the upgrade")
+	}
+	if err = s.ClearTranscriptFlag(old.ID, LegacyTasksKey); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.TranscriptFlag(old.ID, LegacyTasksKey) {
+		t.Fatal("flagged again on the next start")
 	}
 }

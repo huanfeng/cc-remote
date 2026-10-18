@@ -235,7 +235,7 @@ func (s *Server) uploadGet(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, path)
 }
 
-// Channel transports carry text. Claude's native Read tool opens the validated
+// Messages carry text. Claude's native Read tool opens the validated
 // host paths (text, PDF, images, notebooks) with normal permissions.
 func (s *Server) messageAttachments(l i18n.Lang, sessionID, text string, ids []string) (string, json.RawMessage, error) {
 	if len(ids) == 0 {

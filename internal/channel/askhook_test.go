@@ -12,9 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"cc-remote/internal/claude"
-	"cc-remote/internal/hostlock"
 )
 
 const askSession = "abcd1234-1234-1234-1234-123456789abc"
@@ -165,9 +162,10 @@ func TestAskHookFailsOpen(t *testing.T) {
 }
 
 func TestAskHookStopsWhenTerminalAnswers(t *testing.T) {
-	canceled := make(chan struct{})
+	canceled, asked := make(chan struct{}), make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body) // the server watches for disconnects once the body is read
+		close(asked)
 		<-r.Context().Done()
 		close(canceled)
 	}))
@@ -181,16 +179,26 @@ func TestAskHookStopsWhenTerminalAnswers(t *testing.T) {
 	if err := os.WriteFile(transcript, []byte(old+current), 0600); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan string)
+	done := make(chan string, 1)
+	// Bounded, so a failure cannot leave the long poll (and ts.Close) waiting.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	go func() {
 		var out bytes.Buffer
-		_ = askHook(context.Background(), hookInput(t, askSession, "AskUserQuestion", askQuestion, transcript), &out, cfg, 20*time.Millisecond)
+		_ = askHook(ctx, hookInput(t, askSession, "AskUserQuestion", askQuestion, transcript), &out, cfg, 20*time.Millisecond)
 		done <- out.String()
 	}()
+	// The terminal answers once the question is on the web and the watcher
+	// has had its first look (a result seen on the first look is an older call's).
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("hook never asked the host")
+	}
 	select {
 	case <-done:
 		t.Fatal("hook ended before the terminal answered")
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond):
 	}
 	f, _ := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0600)
 	_, _ = f.WriteString(toolLine(map[string]any{"type": "tool_result", "tool_use_id": "toolu_new", "content": "answered in terminal"}))
@@ -207,29 +215,6 @@ func TestAskHookStopsWhenTerminalAnswers(t *testing.T) {
 	case <-canceled:
 	case <-time.After(5 * time.Second):
 		t.Fatal("host long poll not canceled")
-	}
-}
-
-func TestHookSettingsRegistersAskHook(t *testing.T) {
-	var v struct {
-		Hooks map[string][]struct {
-			Matcher string `json:"matcher"`
-			Hooks   []struct {
-				Command string   `json:"command"`
-				Args    []string `json:"args"`
-				Timeout int      `json:"timeout"`
-			} `json:"hooks"`
-		} `json:"hooks"`
-	}
-	if err := json.Unmarshal(hookSettings("/bin/ccr"), &v); err != nil {
-		t.Fatal(err)
-	}
-	ask := v.Hooks["PermissionRequest"]
-	if len(ask) != 1 || ask[0].Matcher != "AskUserQuestion|ExitPlanMode" || ask[0].Hooks[0].Command != "/bin/ccr" || ask[0].Hooks[0].Args[0] != "channel-ask-hook" || ask[0].Hooks[0].Timeout != claude.AskHookTimeout {
-		t.Fatalf("ask hook %+v", ask)
-	}
-	if s := v.Hooks["SessionStart"]; len(s) != 1 || s[0].Hooks[0].Args[0] != "channel-session-hook" {
-		t.Fatalf("session hook %+v", s)
 	}
 }
 
@@ -299,37 +284,5 @@ func TestWatchTranscriptFirstLookNeedsSuccessfulRead(t *testing.T) {
 	}()
 	if watchTranscript(ctx, path, "AskUserQuestion", askQuestion, "", 10*time.Millisecond) {
 		t.Fatal("an earlier answered question ended the hook")
-	}
-}
-
-func TestCleanStaleConfigs(t *testing.T) {
-	data := t.TempDir()
-	own, busy, gone := askSession, "bbbbbbbb-1234-1234-1234-123456789abc", "cccccccc-1234-1234-1234-123456789abc"
-	mk := func(name, session string, age time.Duration) string {
-		dir := filepath.Join(data, "channel-config", name)
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		_ = os.WriteFile(filepath.Join(dir, session+".json"), []byte("{}"), 0600)
-		old := time.Now().Add(-age)
-		_ = os.Chtimes(dir, old, old)
-		return dir
-	}
-	ownOld := mk("session-1", own, 48*time.Hour)
-	busyOld := mk("session-2", busy, 48*time.Hour)
-	goneOld := mk("session-3", gone, 48*time.Hour)
-	fresh := mk("session-4", gone, time.Minute)
-	lockDir := filepath.Join(data, "channel-locks", busy)
-	_ = os.MkdirAll(lockDir, 0700)
-	release, err := hostlock.Acquire(lockDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	cleanStaleConfigs(data, own, 24*time.Hour)
-	for dir, want := range map[string]bool{ownOld: false, busyOld: true, goneOld: false, fresh: true} {
-		if got := fileExists(dir); got != want {
-			t.Errorf("%s exists=%v, want %v", filepath.Base(dir), got, want)
-		}
 	}
 }

@@ -63,10 +63,10 @@ type execution struct {
 	done      chan struct{}
 }
 type answer struct {
-	// allow / deny; "terminal" (shared terminal only) hands the prompt back to the native dialog.
+	// allow / deny; "terminal" (terminal sessions only) hands the prompt back to the native dialog.
 	Decision string            `json:"decision"`
 	Answers  map[string]string `json:"answers,omitempty"`
-	// Shared terminal ExitPlanMode only: permission mode after approval, feedback on rejection.
+	// Terminal session ExitPlanMode only: permission mode after approval, feedback on rejection.
 	Mode    string `json:"mode,omitempty"`
 	Message string `json:"message,omitempty"`
 }
@@ -74,31 +74,30 @@ type pending struct {
 	sessionID string
 	ctx       context.Context
 	channel   chan answer
-	// Set for a shared terminal question held by its PermissionRequest hook.
+	// Set for a terminal session question held by its PermissionRequest hook.
 	connection *channelConnection
 	toolName   string
 	input      json.RawMessage
 }
 type Server struct {
-	store           *store.Store
-	cfg             Config
-	mu              sync.Mutex
-	runs            map[string]*execution
-	procs           map[string]*sessionRuntime
-	terminals       map[string]*terminalSession // running terminal sessions by session ID
-	startProcess    ProcessStarter
-	stopReaper      chan struct{}
-	closers         sync.WaitGroup // detached processes being closed
-	reaperStopped   bool
-	idleTimeout     time.Duration // guarded by mu
-	requests        map[string]*pending
-	closing         bool
-	restartPending  bool // a restart waits for busy sessions (update installed)
-	closedOnce      bool // Close saved the running terminal sessions
-	channels        map[string]*channelConnection
-	channelRequests map[string]*channelApproval
-	modelCache      modelsCache
-	statusCache     statusCache
+	store          *store.Store
+	cfg            Config
+	mu             sync.Mutex
+	runs           map[string]*execution
+	procs          map[string]*sessionRuntime
+	terminals      map[string]*terminalSession // running terminal sessions by session ID
+	startProcess   ProcessStarter
+	stopReaper     chan struct{}
+	closers        sync.WaitGroup // detached processes being closed
+	reaperStopped  bool
+	idleTimeout    time.Duration // guarded by mu
+	requests       map[string]*pending
+	closing        bool
+	restartPending bool // a restart waits for busy sessions (update installed)
+	closedOnce     bool // Close saved the running terminal sessions
+	channels       map[string]*channelConnection
+	modelCache     modelsCache
+	statusCache    statusCache
 	// configMu serializes writers of preferences.json, Claude settings.json and
 	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.
 	configMu sync.Mutex
@@ -109,7 +108,7 @@ func New(st *store.Store, cfg Config) *Server {
 	if start == nil {
 		start = defaultProcessStarter(cfg)
 	}
-	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}, channelRequests: map[string]*channelApproval{}}
+	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
 	return s
 }
@@ -117,11 +116,6 @@ func New(st *store.Store, cfg Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/bridge/request", s.bridge)
-	mux.HandleFunc("POST /api/channels/register", s.channelRegister)
-	mux.HandleFunc("GET /api/channels/{id}/commands", s.channelCommands)
-	mux.HandleFunc("POST /api/channels/{id}/heartbeat", s.channelHeartbeat)
-	mux.HandleFunc("POST /api/channels/{id}/disconnect", s.channelDisconnect)
-	mux.HandleFunc("POST /api/channels/{id}/events", s.channelEvent)
 	mux.HandleFunc("POST /api/channels/{id}/interactions", s.channelInteraction)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/identity", s.identityAPI)
@@ -256,7 +250,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "channelExperimental": true, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex})
 }
 
 // language is the host's language (English when unset, as in tests).
@@ -283,7 +277,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	for i := range x {
-		s.decorateChannel(&x[i])
+		s.decorate(&x[i])
 	}
 	s.mu.Unlock()
 	respond(w, 200, x)
@@ -401,7 +395,7 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 			fail(w, 409, l.F("This Claude Code session is already “%s” in CC Remote (%s)", "这个 Claude Code 会话已是 CC Remote 中的「%s」（%s）", x.Title, modeName(l, x.Mode)))
 			return
 		}
-		s.decorateChannel(&x)
+		s.decorate(&x)
 		respond(w, 200, x)
 		return
 	} else if !errors.Is(e, sql.ErrNoRows) {
@@ -469,8 +463,6 @@ func modeName(l i18n.Lang, mode string) string {
 	switch mode {
 	case "terminal":
 		return l.T("terminal session", "终端会话")
-	case "channel":
-		return l.T("shared session", "共享会话")
 	}
 	return l.T("managed session", "托管会话")
 }
@@ -504,7 +496,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		events = trimEvents(events)
 	}
 	s.mu.Lock()
-	s.decorateChannel(&x)
+	s.decorate(&x)
 	s.mu.Unlock()
 	respond(w, 200, map[string]any{"session": x, "events": events, "hasMore": older})
 }
@@ -632,11 +624,6 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
-	if x.Mode == "channel" {
-		s.channelMessageLocked(w, r, x, req.Text, prompt, payload)
-		s.mu.Unlock()
-		return
-	}
 	if _, e = validateCwd(s.lang(r), x.Cwd); e != nil {
 		s.mu.Unlock()
 		fail(w, 400, e.Error())
@@ -705,7 +692,6 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
-	s.decorateChannel(&x)
 	run := s.runs[id]
 	if ts := s.terminals[id]; ts != nil {
 		// Deleting ends the terminal session's Claude Code (its history stays).
@@ -714,12 +700,6 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 			delete(s.channels, ts.claudeID)
 		}
 		s.closeTerminalAsync(ts)
-		x.Online = false
-	}
-	if x.Online {
-		s.mu.Unlock()
-		fail(w, 409, s.lang(r).T("The shared terminal is online; exit it first", "共享终端在线，请先退出终端"))
-		return
 	}
 	if run != nil {
 		if r.URL.Query().Get("stop") != "1" {
@@ -744,7 +724,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	x.Online = false
-	s.decorateChannel(&x)
+	s.decorate(&x)
 	if s.runs[id] != nil || x.Online {
 		s.mu.Unlock()
 		fail(w, 409, s.lang(r).T("The session started running again or a terminal connected; try again", "会话已重新开始执行或终端已连接，请重试"))
@@ -760,11 +740,6 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 				default:
 				}
 			}
-		}
-	}
-	for rid, p := range s.channelRequests {
-		if p.connection.sessionID == id {
-			delete(s.channelRequests, rid)
 		}
 	}
 	for cid, c := range s.channels {
@@ -881,14 +856,6 @@ func (s *Server) bridge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pending(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	for id, p := range s.channelRequests {
-		if !s.channelLive(p.connection) || time.Since(p.created) > 30*time.Minute {
-			_ = s.store.Resolve(id, "expired")
-			delete(s.channelRequests, id)
-		}
-	}
-	s.mu.Unlock()
 	x, e := s.store.Pending(r.URL.Query().Get("sessionId"))
 	if e != nil {
 		fail(w, 500, s.lang(r).T("Could not read interaction requests", "无法读取交互请求"))
@@ -908,14 +875,6 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p, ok := s.channelRequests[id]; ok {
-		if a.Decision == "terminal" {
-			fail(w, 400, s.lang(r).T("Invalid approval decision", "无效的审批结果"))
-			return
-		}
-		s.channelResolveLocked(w, r, id, p, a)
-		return
-	}
 	p, ok := s.requests[id]
 	if !ok || p.ctx.Err() != nil {
 		fail(w, 409, s.lang(r).T("The request was already handled or has expired", "请求已处理或已失效"))
@@ -1070,7 +1029,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
-	// Waiting shared-terminal hooks hold long polls; release them so shutdown does not wait.
+	// Waiting terminal session hooks hold long polls; release them so shutdown does not wait.
 	for id, p := range s.requests {
 		if p.connection != nil {
 			s.finishSharedLocked(id, p, "expired")

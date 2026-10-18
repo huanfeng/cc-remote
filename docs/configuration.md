@@ -200,8 +200,8 @@ cc-remote alias uninstall
 
 - 前两级以 `--permission-mode`、`--model`、`--effort` 启动参数传给 `claude`，**不修改** `~/.claude/settings.json`。
 - 支持全部 7 种权限模式。`bypassPermissions`（跳过所有审批）、`dontAsk`、`auto` 需要二次确认；该确认只是防误点，不是安全边界——任何持有访问令牌的人都能设置这些模式。用户已有的 allow/deny 规则仍然生效。
-- 托管会话的修改下一轮生效；共享终端由运行中的进程持有，需在终端用 `/model`、`/effort` 或 Shift+Tab 修改。
-- `preferences.json` 损坏时，托管会话与共享终端都会给出警告并忽略默认设置继续运行。
+- 托管会话的修改下一轮生效；终端会话在下次启动 Claude Code 时生效，运行中可在终端用 `/model`、`/effort` 或 Shift+Tab 即时修改。
+- `preferences.json` 损坏时，托管会话与终端会话都会记录警告并忽略默认设置继续运行。
 - 模型名只接受字母或数字开头、由字母数字和 `._:/[]@-` 组成、最长 200 字符的值。留空或 `inherit` 表示清除覆盖、不传 `--model`；`default` 是 Claude Code 自身的模型别名，会原样作为 `--model default` 传递。
 
 ### 模型列表

@@ -11,7 +11,7 @@ export type HostStatus = {
   version: string; pid: number; startedAt: string; uptimeSeconds: number; listen: string; listeners: { address: string; loopback: boolean; insecure?: boolean }[];
   dataDir: string; claudeConfigDir: string; logFile: string; goVersion: string; os: string; arch: string;
   claude: { executable: string; path: string; version: string; error?: string }; service: { managed: boolean; manager: string };
-  sessions: Record<'total' | 'managed' | 'channel' | 'running' | 'waiting' | 'idle' | 'online', number>;
+  sessions: Record<'total' | 'managed' | 'terminal' | 'running' | 'waiting' | 'idle', number>;
   pendingRequests: number; activeRuns: number; storage: { databaseBytes: number; uploadsBytes: number; logBytes: number };
   totals: Stats; daily: Daily[]; sessionStats: SessionRow[]; logTail: string[];
 };
@@ -105,7 +105,7 @@ export function StatusPanel({ api, close, select }: { api: Api; close: () => voi
         </div>
         <div className="status-grid">
           <div className="status-block"><h3>{t('Sessions', '会话')}</h3><dl>
-            <div><dt>{t('All', '全部')}</dt><dd>{data.sessions.total}</dd></div><div><dt>{t('Managed', '托管')}</dt><dd>{data.sessions.managed}</dd></div><div><dt>{t('Shared terminal', '共享终端')}</dt><dd>{data.sessions.channel}<small>{t(` · online ${data.sessions.online}`, ` · 在线 ${data.sessions.online}`)}</small></dd></div>
+            <div><dt>{t('All', '全部')}</dt><dd>{data.sessions.total}</dd></div><div><dt>{t('Managed', '托管')}</dt><dd>{data.sessions.managed}</dd></div><div><dt>{t('Terminal', '终端')}</dt><dd>{data.sessions.terminal}</dd></div>
             <div><dt>{t('Running', '执行中')}</dt><dd>{data.sessions.running}<small>{t(` · processes ${data.activeRuns}`, ` · 进程 ${data.activeRuns}`)}</small></dd></div><div><dt>{t('Waiting for answer', '等待回答')}</dt><dd>{data.sessions.waiting}</dd></div><div><dt>{t('Pending approvals', '待审批')}</dt><dd className={data.pendingRequests ? 'warn' : ''}>{data.pendingRequests}</dd></div>
           </dl></div>
           <div className="status-block"><h3>{t('Totals', '累计')}</h3><dl>
@@ -121,7 +121,7 @@ export function StatusPanel({ api, close, select }: { api: Api; close: () => voi
           <thead><tr>{header('title', L.title)}{header('mode', L.mode)}{header('status', L.status)}{header('turns', L.turns)}{header('tokens', 'Tokens')}{header('costUSD', L.cost)}{header('durationMs', L.time)}{header('lastActivityAt', L.last)}</tr></thead>
           <tbody>{rows.length === 0 ? <tr><td colSpan={8} className="muted">{t('No sessions yet', '暂无会话')}</td></tr> : rows.map(x => <tr key={x.id} tabIndex={0} title={x.cwd} onClick={() => select(x.id)} onKeyDown={event => { if (event.key === 'Enter') select(x.id); }}>
             <td data-label={L.title}><strong>{x.title || t('Untitled session', '未命名会话')}</strong></td>
-            <td data-label={L.mode}>{x.mode === 'channel' ? t('Shared', '共享') : x.mode === 'terminal' ? t('Terminal', '终端') : t('Managed', '托管')}</td>
+            <td data-label={L.mode}>{x.mode === 'terminal' ? t('Terminal', '终端') : t('Managed', '托管')}</td>
             <td data-label={L.status}><span className={`dot ${x.status}`} />{statusText[x.status] || x.status}</td>
             <td data-label={L.turns}>{x.turns}</td>
             <td data-label="Tokens">{x.costKnown ? number(tokens(x)) : '—'}</td>
@@ -130,7 +130,7 @@ export function StatusPanel({ api, close, select }: { api: Api; close: () => voi
             <td data-label={L.last} title={x.lastActivityAt}>{ago(x.lastActivityAt)}</td>
           </tr>)}</tbody>
         </table></div>
-        <small className="status-note">{t('Cost and tokens come from the Claude result events of managed sessions; shared terminal sessions have no usage data yet and show "—".', '费用与 tokens 来自托管会话的 Claude 结果事件；共享终端会话暂无用量数据，显示为「—」。')}</small>
+        <small className="status-note">{t('Cost and tokens come from the Claude result events of managed sessions; terminal sessions have no usage data yet and show "—".', '费用与 tokens 来自托管会话的 Claude 结果事件；终端会话暂无用量数据，显示为「—」。')}</small>
         <details className="status-log" open={logOpen} onToggle={event => setLogOpen(event.currentTarget.open)}>
           <summary>{t('Log', '日志')} <small>{data.logFile || t('No log file configured', '未配置日志文件')}{t(` · last ${data.logTail.length} lines`, ` · 最近 ${data.logTail.length} 行`)}</small></summary>
           <pre ref={log}>{data.logTail.length ? data.logTail.join('\n') : t('No log entries', '暂无日志')}</pre>

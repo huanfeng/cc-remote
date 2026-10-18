@@ -279,7 +279,7 @@ export function requestCall(request: PendingRequest): ToolCall {
 }
 
 /**
- * Where shared-terminal questions ended ("web", "handoff", "terminal", "expired"), from the
+ * Where terminal session questions ended ("web", "handoff", "terminal", "expired"), from the
  * host's "interaction" events. Each outcome belongs to the latest matching call before it.
  */
 export function linkOutcomes(items: TranscriptItem[], events: TranscriptEvent[]): Map<number, string> {

@@ -20,7 +20,7 @@ type taskInfo struct {
 	SubagentType string `json:"subagentType,omitempty"`
 	TaskType     string `json:"taskType,omitempty"`
 	Background   bool   `json:"background"`
-	Status       string `json:"status"` // running, completed, failed, stopped, interrupted
+	Status       string `json:"status"` // running, idle (a teammate), completed, failed, stopped, interrupted
 	Progress     string `json:"progress,omitempty"`
 	LastTool     string `json:"lastTool,omitempty"`
 	Summary      string `json:"summary,omitempty"`
@@ -29,6 +29,7 @@ type taskInfo struct {
 	DurationMs   int64  `json:"durationMs,omitempty"`
 	StartedAt    string `json:"startedAt"`
 	EndedAt      string `json:"endedAt,omitempty"`
+	lastAt       string // when its latest event was recorded
 }
 
 type taskEvent struct {
@@ -76,14 +77,30 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		t := byID[v.TaskID]
+		if t == nil && v.ToolUseID != "" {
+			// A notification may name the task differently from its start
+			// (a teammate starts by name); the Agent call ties them.
+			for _, other := range order {
+				if other.ToolUseID == v.ToolUseID {
+					t = other
+					break
+				}
+			}
+		}
+		if t == nil && e.Text == "task_updated" {
+			continue // an update of a task started before the loaded transcript
+		}
 		if t == nil {
 			t = &taskInfo{ID: v.TaskID, Status: "running", StartedAt: e.CreatedAt}
 			byID[v.TaskID] = t
 			order = append(order, t)
 		}
-		if v.ToolUseID != "" {
+		if t.ToolUseID == "" {
+			// The first call is the one that started it; a resumed agent's
+			// later notification names the SendMessage call instead.
 			t.ToolUseID = v.ToolUseID
 		}
+		t.lastAt = e.CreatedAt
 		if v.Usage != nil {
 			t.Tokens, t.ToolUses, t.DurationMs = v.Usage.TotalTokens, v.Usage.ToolUses, v.Usage.DurationMs
 		}
@@ -114,16 +131,27 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	}
 	// A task still "running" that the session's current Claude process does
 	// not track (the process that started it exited) will never report again.
+	// A terminal session's tasks live as long as the Claude Code that started
+	// them; its idle teammates are done once that is gone.
 	s.mu.Lock()
 	var proc claudeProcess
 	if rt := s.procs[id]; rt != nil {
 		proc = rt.proc
 	}
+	var terminalStart time.Time
+	if ts := s.terminals[id]; ts != nil {
+		terminalStart = ts.started
+	}
 	s.mu.Unlock()
 	out := make([]taskInfo, 0, len(order))
 	for _, t := range order {
-		if t.Status == "running" && (proc == nil || !proc.HasTask(t.ID)) {
+		last, _ := time.Parse(time.RFC3339Nano, t.lastAt)
+		switch {
+		case !terminalStart.IsZero() && !last.Before(terminalStart):
+		case t.Status == "running" && (proc == nil || !proc.HasTask(t.ID)):
 			t.Status = "interrupted"
+		case t.Status == "idle":
+			t.Status = "completed"
 		}
 		if t.Status != "running" {
 			t.Progress = ""

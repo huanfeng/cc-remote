@@ -24,7 +24,37 @@ type hookResult struct {
 	body answer
 }
 
-// askFromHook starts the long poll a shared terminal's PermissionRequest hook makes.
+// connectTerminal records a terminal session bound to Claude session claudeID
+// with the connection a running terminal registers, without starting Claude Code.
+func connectTerminal(t *testing.T, s *Server, st *store.Store, claudeID, cwd string) (store.Session, *channelConnection) {
+	t.Helper()
+	x, err := st.Create("Terminal", cwd, claudeID, false)
+	if err == nil {
+		err = st.SetMode(x.ID, "terminal")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &channelConnection{sessionID: x.ID, seen: time.Now(), keyPrefix: claudeID + ":"}
+	s.mu.Lock()
+	s.channels[claudeID] = c
+	s.mu.Unlock()
+	return x, c
+}
+
+// syncConnection applies the transcript as the terminal session's sync loop does.
+func syncConnection(t *testing.T, s *Server, claudeID string) {
+	t.Helper()
+	n, events, err := claude.NativeHistory(s.cfg.ClaudeConfigDir, claudeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applyTranscriptLocked(s.channels[claudeID], n, events)
+}
+
+// askFromHook starts the long poll a terminal session's PermissionRequest hook makes.
 func askFromHook(t *testing.T, ctx context.Context, ts *httptest.Server, claudeID, kind, tool string, input any) chan hookResult {
 	t.Helper()
 	done := make(chan hookResult, 1)
@@ -80,9 +110,9 @@ func outcomes(t *testing.T, st *store.Store, session string) []string {
 }
 
 func TestSharedQuestionAnsweredFromWeb(t *testing.T) {
-	_, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
-	x, _ := registerChannel(t, ts, id, t.TempDir())
+	x, _ := connectTerminal(t, s, st, id, t.TempDir())
 	done := askFromHook(t, context.Background(), ts, id, "question", "AskUserQuestion", sharedQuestion)
 	p := waitPending(t, st, x.ID, 1)[0]
 	if p.Kind != "question" || p.ToolName != "AskUserQuestion" || !bytes.Contains(p.Input, []byte("Pick a color")) {
@@ -107,9 +137,9 @@ func TestSharedQuestionAnsweredFromWeb(t *testing.T) {
 }
 
 func TestSharedPlanApproveRejectAndHandoff(t *testing.T) {
-	_, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
-	x, _ := registerChannel(t, ts, id, t.TempDir())
+	x, _ := connectTerminal(t, s, st, id, t.TempDir())
 	plan := map[string]any{"plan": "1. write hello.txt", "planFilePath": "p.md"}
 
 	done := askFromHook(t, context.Background(), ts, id, "plan", "ExitPlanMode", plan)
@@ -151,7 +181,7 @@ func TestSharedQuestionWithdrawnByTerminal(t *testing.T) {
 	id := store.ID()
 	cwd := t.TempDir()
 	// Hook gave up (terminal answered): its request context ends.
-	x, key := registerChannel(t, ts, id, cwd)
+	x, conn := connectTerminal(t, s, st, id, cwd)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := askFromHook(t, ctx, ts, id, "question", "AskUserQuestion", sharedQuestion)
 	waitPending(t, st, x.ID, 1)
@@ -173,19 +203,15 @@ func TestSharedQuestionWithdrawnByTerminal(t *testing.T) {
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	_, _ = f.Write(append(line, '\n'))
 	f.Close()
-	if c, _ := channelReq(t, ts, "POST", "/api/channels/"+id+"/heartbeat", key, map[string]any{}); c != 200 {
-		t.Fatal("heartbeat failed")
-	}
+	syncConnection(t, s, id)
 	if r := hookAnswer(t, done); r.body.Decision != "terminal" {
 		t.Fatalf("backstop answered %+v", r)
 	}
 
-	// Disconnect releases a waiting hook too.
+	// Claude Code exiting releases a waiting hook too.
 	done = askFromHook(t, context.Background(), ts, id, "plan", "ExitPlanMode", map[string]any{"plan": "p"})
 	waitPending(t, st, x.ID, 1)
-	if c, _ := channelReq(t, ts, "POST", "/api/channels/"+id+"/disconnect", key, map[string]any{}); c != 200 {
-		t.Fatal("disconnect failed")
-	}
+	s.terminalExited(&terminalSession{id: x.ID, claudeID: id, conn: conn, closing: true, dir: t.TempDir()})
 	if r := hookAnswer(t, done); r.body.Decision != "terminal" {
 		t.Fatalf("disconnect answered %+v", r)
 	}
@@ -195,13 +221,13 @@ func TestSharedQuestionWithdrawnByTerminal(t *testing.T) {
 }
 
 func TestSharedQuestionEndpointGuards(t *testing.T) {
-	s, ts, _ := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
 	body := map[string]any{"kind": "question", "toolName": "AskUserQuestion", "input": sharedQuestion}
 	if c, _ := request(t, ts, "POST", "/api/channels/"+id+"/interactions", body, testToken); c != 409 {
 		t.Fatalf("offline terminal accepted %d", c)
 	}
-	registerChannel(t, ts, id, t.TempDir())
+	connectTerminal(t, s, st, id, t.TempDir())
 	if c, _ := request(t, ts, "POST", "/api/channels/"+id+"/interactions", body, ""); c != 401 {
 		t.Fatal("unauthenticated hook accepted")
 	}
@@ -256,9 +282,9 @@ func TestSharedQuestionTimeoutExpires(t *testing.T) {
 	old := sharedQuestionTimeout
 	sharedQuestionTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { sharedQuestionTimeout = old })
-	_, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
-	x, _ := registerChannel(t, ts, id, t.TempDir())
+	x, _ := connectTerminal(t, s, st, id, t.TempDir())
 	if r := hookAnswer(t, askFromHook(t, context.Background(), ts, id, "question", "AskUserQuestion", sharedQuestion)); r.body.Decision != "terminal" {
 		t.Fatalf("timeout answered %+v", r)
 	}
@@ -274,7 +300,7 @@ func TestSharedAnswerResolvedWhileTimerFires(t *testing.T) {
 	t.Cleanup(func() { sharedQuestionTimeout = old })
 	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
-	x, _ := registerChannel(t, ts, id, t.TempDir())
+	x, _ := connectTerminal(t, s, st, id, t.TempDir())
 	done := askFromHook(t, context.Background(), ts, id, "question", "AskUserQuestion", sharedQuestion)
 	p := waitPending(t, st, x.ID, 1)[0]
 	// Hold the lock past the deadline so the handler waits for it after its timer fired,
@@ -292,9 +318,9 @@ func TestSharedAnswerResolvedWhileTimerFires(t *testing.T) {
 }
 
 func TestSharedAnswerChecks(t *testing.T) {
-	_, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
-	x, _ := registerChannel(t, ts, id, t.TempDir())
+	x, _ := connectTerminal(t, s, st, id, t.TempDir())
 	done := askFromHook(t, context.Background(), ts, id, "question", "AskUserQuestion", sharedQuestion)
 	p := waitPending(t, st, x.ID, 1)[0]
 	if c, _ := request(t, ts, "POST", "/api/requests/"+p.ID, map[string]any{"decision": "allow", "answers": map[string]string{"Pick a color": strings.Repeat("a", 64<<10+1)}}, testToken); c != 400 {
@@ -309,50 +335,11 @@ func TestSharedAnswerChecks(t *testing.T) {
 	}
 }
 
-func TestSharedQuestionSurvivesBridgeReregister(t *testing.T) {
-	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
-	id := store.ID()
-	cwd := t.TempDir()
-	x, _ := registerChannel(t, ts, id, cwd)
-	done := askFromHook(t, context.Background(), ts, id, "question", "AskUserQuestion", sharedQuestion)
-	p := waitPending(t, st, x.ID, 1)[0]
-	// A hook that already gave up still expires with the old connection.
-	ctx, cancel := context.WithCancel(context.Background())
-	gone := askFromHook(t, ctx, ts, id, "plan", "ExitPlanMode", map[string]any{"plan": "p"})
-	waitPending(t, st, x.ID, 2)
-	s.mu.Lock()
-	s.channels[id].seen = time.Now().Add(-time.Hour) // missed heartbeats
-	s.mu.Unlock()
-	cancel()
-	<-gone
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		s.mu.Lock()
-		n := len(s.requests)
-		s.mu.Unlock()
-		if n == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("canceled hook still pending")
-		}
-	}
-	registerChannel(t, ts, id, cwd)
-	if got := waitPending(t, st, x.ID, 1); got[0].ID != p.ID {
-		t.Fatalf("pending %+v", got)
-	}
-	if c, b := request(t, ts, "POST", "/api/requests/"+p.ID, map[string]any{"decision": "allow", "answers": map[string]string{"Pick a color": "Blue"}}, testToken); c != 200 {
-		t.Fatalf("answer after re-register %d %s", c, b)
-	}
-	if r := hookAnswer(t, done); r.body.Decision != "allow" || r.body.Answers["Pick a color"] != "Blue" {
-		t.Fatalf("hook got %+v", r)
-	}
-}
-
 func TestSharedWebAnswerOverriddenByTerminal(t *testing.T) {
 	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
 	id := store.ID()
 	cwd := t.TempDir()
-	x, _ := registerChannel(t, ts, id, cwd)
+	x, _ := connectTerminal(t, s, st, id, cwd)
 	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "shared-test")
 	_ = os.MkdirAll(dir, 0700)
 	path := filepath.Join(dir, id+".jsonl")

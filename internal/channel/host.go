@@ -2,11 +2,15 @@ package channel
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"cc-remote/internal/i18n"
@@ -75,7 +79,50 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 }
 
 // EnsureHost makes sure a host for dataDir answers at host, starting one in
-// the background when none runs (as ccr does for shared sessions).
+// the background when none runs (as ccr does before attaching).
 func EnsureHost(dataDir, host string) error {
 	return ensureHost(dataDir, defaultHost(host), "claude", "")
+}
+
+func defaultHost(host string) string {
+	host = strings.TrimRight(strings.TrimSpace(host), "/")
+	if host == "" {
+		return "http://127.0.0.1:8787"
+	}
+	return host
+}
+
+func tokenFrom(dataDir, token string) (string, error) {
+	if token == "" {
+		token = os.Getenv("CC_REMOTE_TOKEN")
+	}
+	token = strings.TrimSpace(token)
+	if token != "" {
+		return token, nil
+	}
+	b, err := os.ReadFile(filepath.Join(dataDir, "access-token"))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+type hostError int
+
+func (e hostError) Error() string { return fmt.Sprintf("host returned HTTP %d", int(e)) }
+func validateHost(host string) error {
+	u, err := url.Parse(host)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" {
+		return errors.New("channel host must be a loopback HTTP(S) origin")
+	}
+	ip := net.ParseIP(u.Hostname())
+	if u.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return errors.New("channel host must use localhost or a loopback IP")
+	}
+	return nil
+}
+func localClient() *http.Client {
+	return &http.Client{Timeout: 35 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return errors.New("channel HTTP redirects are not allowed")
+	}}
 }

@@ -20,7 +20,7 @@ type webCommand struct {
 }
 
 func reservedCommand(name string) bool {
-	for _, command := range commandList(i18n.EN, false) {
+	for _, command := range commandList(i18n.EN) {
 		if command.Name == name {
 			return true
 		}
@@ -29,20 +29,20 @@ func reservedCommand(name string) bool {
 }
 
 // commandList is built per request so the descriptions follow the page's language.
-func commandList(l i18n.Lang, channel bool) []webCommand {
+func commandList(l i18n.Lang) []webCommand {
 	return []webCommand{
 		{"help", l.T("Show the commands the web supports", "显示网页支持的命令"), false},
 		{"status", l.T("Show the current session's status", "查看当前会话状态"), false},
-		{"model", l.T("List available models; /model opus sets the current managed session, /model --default opus sets the CC Remote default; inherit restores the default", "列出可用模型；/model opus 设置当前托管会话，/model --default opus 设置 CC Remote 默认；inherit 恢复默认"), channel},
-		{"effort", l.T("Show the reasoning effort; /effort high sets the current managed session, /effort --default high sets the default", "查看推理强度；/effort high 设置当前托管会话，/effort --default high 设置默认"), channel},
-		{"permission-mode", l.T("Set the current managed session's permission mode, e.g. /permission-mode bypassPermissions; inherit restores the default", "设置当前托管会话权限模式，例如 /permission-mode bypassPermissions；inherit 恢复默认"), channel},
+		{"model", l.T("List available models; /model opus sets the current managed session, /model --default opus sets the CC Remote default; inherit restores the default", "列出可用模型；/model opus 设置当前托管会话，/model --default opus 设置 CC Remote 默认；inherit 恢复默认"), false},
+		{"effort", l.T("Show the reasoning effort; /effort high sets the current managed session, /effort --default high sets the default", "查看推理强度；/effort high 设置当前托管会话，/effort --default high 设置默认"), false},
+		{"permission-mode", l.T("Set the current managed session's permission mode, e.g. /permission-mode bypassPermissions; inherit restores the default", "设置当前托管会话权限模式，例如 /permission-mode bypassPermissions；inherit 恢复默认"), false},
 		{"config", l.T("Open the settings panel", "打开设置面板"), false},
 		{"permissions", l.T("Open the settings panel (permission mode and other defaults)", "打开设置面板（权限模式等默认值）"), false},
-		{"clear", l.T("Reset the managed session's context and keep the web history; shared sessions must run it in the terminal", "重置托管会话上下文，保留网页历史；共享会话需在终端执行"), channel},
-		{"new", l.T("Same as /clear", "同 /clear"), channel},
-		{"reset", l.T("Same as /clear", "同 /clear"), channel},
-		{"stop", l.T("Stop the current managed turn; shared sessions must run it in the terminal", "停止当前托管轮次；共享会话需在终端执行"), channel},
-		{"compact", l.T("Compact the context, optionally with what to keep, e.g. /compact keep the API design; shared sessions must run it in the terminal", "压缩上下文，可附加保留重点，例如 /compact 保留接口设计；共享会话需在终端执行"), channel},
+		{"clear", l.T("Reset the managed session's context and keep the web history", "重置托管会话上下文，保留网页历史"), false},
+		{"new", l.T("Same as /clear", "同 /clear"), false},
+		{"reset", l.T("Same as /clear", "同 /clear"), false},
+		{"stop", l.T("Stop the current managed turn", "停止当前托管轮次"), false},
+		{"compact", l.T("Compact the context, optionally with what to keep, e.g. /compact keep the API design", "压缩上下文，可附加保留重点，例如 /compact 保留接口设计"), false},
 		{"resume", l.T("Switch native sessions; run it in the terminal or pick another web tab", "切换原生会话，请在终端执行或选择其它网页标签"), true},
 	}
 }
@@ -71,7 +71,7 @@ func (s *Server) claudeCommands(id string) (names []string, known bool) {
 // natively in print mode. Before Claude has ever run nothing is known, so the
 // command is passed through and Claude answers it.
 func (s *Server) nativeCommand(x store.Session, name string) bool {
-	if x.Mode == "channel" || reservedCommand(name) || !skillName.MatchString(name) {
+	if reservedCommand(name) || !skillName.MatchString(name) {
 		return false
 	}
 	names, known := s.claudeCommands(x.ID)
@@ -105,9 +105,9 @@ func (s *Server) commandMenu(l i18n.Lang, x store.Session) []webCommand {
 	if x.Mode == "terminal" {
 		return append(terminalCommands(l), s.skillCommands(l, x.Cwd)...)
 	}
-	menu := commandList(l, x.Mode == "channel")
+	menu := commandList(l)
 	names, known := s.claudeCommands(x.ID)
-	if x.Mode == "channel" || !known {
+	if !known {
 		return append(menu, s.skillCommands(l, x.Cwd)...)
 	}
 	skills := s.discoveredSkills(x.Cwd)
@@ -175,16 +175,16 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{}
 	switch name {
 	case "help":
-		result["commands"] = commandList(l, x.Mode == "channel")
+		result["commands"] = commandList(l)
 		if x.Mode == "terminal" {
 			result["commands"] = terminalCommands(l)
 			result["message"] = l.T("In a terminal session, every command except /help, /status, /config and /stop is typed into Claude Code's terminal as is (including plugin commands and skills).", "终端会话里，除 /help、/status、/config、/stop 外，所有命令都原样输入 Claude Code 的终端执行（包括插件命令和技能）。")
 			break
 		}
-		result["message"] = l.T("The web supports /status, /model, /effort, /permission-mode, /config, /permissions, /clear (/new, /reset), /compact and /stop; in managed sessions, other commands Claude Code reports (such as /context, /usage, /init, plugin commands and skills) go to Claude as is. /model and /effort apply to the current managed session by default (from the next turn); add --default to change the CC Remote default, and the argument inherit restores the default (default is Claude Code's model alias and is passed through). These settings are passed to Claude as launch flags and do not change ~/.claude/settings.json. Shared sessions run native commands in the terminal.", "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear（/new、/reset）、/compact、/stop；托管会话中 Claude Code 报告的其它命令（如 /context、/usage、/init 及插件命令和技能）原样交给 Claude 执行。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。共享会话的原生命令需在终端执行。")
+		result["message"] = l.T("The web supports /status, /model, /effort, /permission-mode, /config, /permissions, /clear (/new, /reset), /compact and /stop; in managed sessions, other commands Claude Code reports (such as /context, /usage, /init, plugin commands and skills) go to Claude as is. /model and /effort apply to the current managed session by default (from the next turn); add --default to change the CC Remote default, and the argument inherit restores the default (default is Claude Code's model alias and is passed through). These settings are passed to Claude as launch flags and do not change ~/.claude/settings.json.", "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear（/new、/reset）、/compact、/stop；托管会话中 Claude Code 报告的其它命令（如 /context、/usage、/init 及插件命令和技能）原样交给 Claude 执行。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。")
 	case "status":
 		s.mu.Lock()
-		s.decorateChannel(&x)
+		s.decorate(&x)
 		s.mu.Unlock()
 		result["session"] = x
 		result["message"] = x.Title + " · " + x.Mode + " · " + x.Status
@@ -201,10 +201,6 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		}
 		result["message"] = message
 	case "stop":
-		if x.Mode == "channel" {
-			fail(w, 409, l.T("In a shared terminal, press Esc to stop generating; Channels has no stop control", "共享终端请按 Esc 停止生成；Channels 没有停止控制接口"))
-			return
-		}
 		s.stop(w, r)
 		return
 	case "clear", "new", "reset":
@@ -213,11 +209,6 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			s.mu.Unlock()
 			fail(w, 404, l.T("Session not found", "会话不存在"))
-			return
-		}
-		if x.Mode == "channel" {
-			s.mu.Unlock()
-			fail(w, 409, l.F("Run /%s in the native terminal; the old web binding disconnects, then connect the target session", "请在原生终端执行 /%s；旧网页绑定将断开，再连接目标会话", name))
 			return
 		}
 		if _, active := s.runs[id]; active {
@@ -250,35 +241,19 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, l.T("/resume switches sessions in the terminal; on the web, switch from the session list or \"Terminal history\"", "/resume 用于在终端切换会话；网页请从会话列表或「终端历史」切换"))
 		return
 	default:
-		if x.Mode != "channel" {
-			if !s.nativeCommand(x, name) {
-				fail(w, 400, l.F("Claude Code did not report a /%s command; it may only work in the interactive terminal. Type /help for the web's commands.", "Claude Code 没有报告 /%s 命令，它可能只能在终端交互界面使用。输入 /help 查看网页命令。", name))
-				return
-			}
-			respond(w, 200, map[string]any{"sendMessage": true})
+		if !s.nativeCommand(x, name) {
+			fail(w, 400, l.F("Claude Code did not report a /%s command; it may only work in the interactive terminal. Type /help for the web's commands.", "Claude Code 没有报告 /%s 命令，它可能只能在终端交互界面使用。输入 /help 查看网页命令。", name))
 			return
 		}
-		if _, found, skillErr := s.skillPrompt(l, x.Cwd, name, args); found {
-			if skillErr != nil {
-				fail(w, 400, skillErr.Error())
-				return
-			}
-			respond(w, 200, map[string]any{"sendMessage": true})
-			return
-		}
-		fail(w, 409, l.F("A shared session is held by the terminal process; run the native command /%s in the terminal. Type /help for the web's commands.", "共享会话由终端进程持有，原生命令 /%s 请在终端执行。输入 /help 查看网页命令。", name))
+		respond(w, 200, map[string]any{"sendMessage": true})
 		return
 	}
 	respond(w, 200, result)
 }
 
 // compactBlocked explains why /compact cannot run as a managed turn, or returns
-// code 0. Claude Code accepts /compact in print mode on a resumed session; a
-// shared terminal owns its process, so the command has to be typed there.
+// code 0. Claude Code accepts /compact in print mode on a resumed session.
 func compactBlocked(l i18n.Lang, x store.Session) (string, int) {
-	if x.Mode == "channel" {
-		return l.T("A shared session is held by the terminal process; run /compact in the native terminal", "共享会话由终端进程持有，请在原生终端执行 /compact"), 409
-	}
 	if !x.Resume {
 		return l.T("The session has no context to compact yet", "会话还没有可压缩的上下文"), 400
 	}
@@ -330,9 +305,6 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 			return map[string]string{"model": p.Model, "effort": p.Effort, "permission-mode": p.PermissionMode}[name]
 		}
 		lines := []string{l.F("Current session %s: %s", "当前会话%s：%s", label, displayDefault(l, pick(effective))), l.F("CC Remote default: %s", "CC Remote 默认：%s", displayDefault(l, pick(current)))}
-		if x.Mode == "channel" {
-			lines = append(lines, l.F("The shared terminal is held by the terminal process; run /%s in the terminal to switch.", "共享终端由终端进程持有，请在终端执行 /%s 切换。", strings.TrimSuffix(name, "-mode")))
-		}
 		switch name {
 		case "model":
 			data["models"] = *models
@@ -370,10 +342,7 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 			return i18n.Text(l, err), nil, code
 		}
 		data["preferences"] = saved
-		return l.F("Saved the CC Remote default %s: %s. Managed sessions use it from the next turn; newly started shared terminals use this default; Claude's configuration is not changed.", "已保存 CC Remote 默认%s：%s。托管会话下一轮生效；新启动的共享终端使用该默认值，不修改 Claude 配置。", label, displayDefault(l, value)), data, 200
-	}
-	if x.Mode == "channel" {
-		return channelOverrideMessage(l), nil, 409
+		return l.F("Saved the CC Remote default %s: %s. Managed sessions use it from the next turn, terminal sessions the next time their Claude Code starts; Claude's configuration is not changed.", "已保存 CC Remote 默认%s：%s。托管会话下一轮生效，终端会话在下次启动 Claude Code 时生效；不修改 Claude 配置。", label, displayDefault(l, value)), data, 200
 	}
 	fresh, err := s.store.Get(x.ID)
 	if err != nil {

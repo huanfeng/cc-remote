@@ -18,7 +18,7 @@ type Props = {
   onAnswer?: (answers: Record<string, string>) => void;
   /** ExitPlanMode: when given and unanswered, approve with a permission mode or keep planning with feedback. */
   onDecide?: (decision: PlanDecision) => void;
-  /** Shared terminal: withdraw the web prompt and answer in the native terminal. */
+  /** Terminal session: withdraw the web prompt and answer in the native terminal. */
   onHandoff?: () => void;
   /** Where a recorded answer was given, when known. */
   answeredBy?: 'terminal' | 'web';

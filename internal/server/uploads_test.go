@@ -18,7 +18,6 @@ import (
 
 	"cc-remote/internal/claude"
 	"cc-remote/internal/i18n"
-	"cc-remote/internal/store"
 )
 
 func uploadImage(t *testing.T, ts *httptest.Server, sessionID, token string, data []byte) (int, []byte) {
@@ -122,29 +121,6 @@ func TestImageUploadsAreAuthenticatedValidatedAndSessionScoped(t *testing.T) {
 	reopened := New(st, Config{UploadDir: s.cfg.UploadDir})
 	if _, path, err := reopened.loadAttachment(i18n.EN, a.ID, item.ID); err != nil || path != filepath.Clean(imagePath) {
 		t.Fatalf("not persistent: %s %v", path, err)
-	}
-}
-
-func TestChannelImageMessageUsesExistingConnection(t *testing.T) {
-	s, ts, _ := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error {
-		t.Error("spawned managed Claude for channel image")
-		return nil
-	})
-	s.cfg.UploadDir = t.TempDir()
-	id := store.ID()
-	a, key := registerChannel(t, ts, id, t.TempDir())
-	c, b := uploadImage(t, ts, a.ID, testToken, tinyPNG(t))
-	if c != 201 {
-		t.Fatalf("upload: %d %s", c, b)
-	}
-	var item attachment
-	_ = json.Unmarshal(b, &item)
-	if c, b = request(t, ts, "POST", "/api/sessions/"+a.ID+"/messages", map[string]any{"text": "看这张截图", "attachmentIds": []string{item.ID}}, testToken); c != 202 {
-		t.Fatalf("send: %d %s", c, b)
-	}
-	c, b = channelReq(t, ts, "GET", "/api/channels/"+id+"/commands?after=0", key, nil)
-	if c != 200 || !bytes.Contains(b, []byte(item.ID)) || !bytes.Contains(b, []byte("Read tool")) {
-		t.Fatalf("missing image command: %d %s", c, b)
 	}
 }
 

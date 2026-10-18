@@ -32,9 +32,9 @@ export function SessionStatus({ session, defaults, label, anchor, close, quick, 
     <dl>
       {row(t('Status', '状态'), <><span className={`dot ${session.status || 'idle'}`} />{label}</>)}
       {live?.activity && row(t('Activity', '当前活动'), live.activity)}
-      {row(t('Model', '模型'), model, session.mode !== 'channel' && switcher('model'))}
-      {row(t('Effort', '推理强度'), effort, session.mode !== 'channel' && switcher('effort'))}
-      {session.mode !== 'channel' && row(t('Permission mode', '权限模式'), <span className={perm === 'bypassPermissions' ? 'danger' : ''}>{inherited(session.permissionMode, defaults?.permissionMode)}</span>)}
+      {row(t('Model', '模型'), model, switcher('model'))}
+      {row(t('Effort', '推理强度'), effort, switcher('effort'))}
+      {row(t('Permission mode', '权限模式'), <span className={perm === 'bypassPermissions' ? 'danger' : ''}>{inherited(session.permissionMode, defaults?.permissionMode)}</span>)}
       {live && pct !== undefined && row(t('Context', '上下文'), <span className="session-status-context"><span className="session-status-meter" aria-hidden="true"><i className={pct >= 80 ? 'danger' : pct >= 60 ? 'warn' : ''} style={{ width: `${pct}%` }} /></span>{`${pct}% · ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)}`}</span>)}
       {live && live.durationMs > 0 && row(t('Duration', '会话时长'), duration(live.durationMs / 1000))}
       {live && live.costUSD > 0 && row(t('Cost', '费用'), <span title={t('Estimated at API prices', '按 API 价格估算')}>${live.costUSD.toFixed(2)}</span>)}

@@ -214,28 +214,24 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	for _, x := range stats {
 		byID[x.SessionID] = x
 	}
-	counts := map[string]int{"total": len(sessions), "managed": 0, "channel": 0, "running": 0, "waiting": 0, "idle": 0, "online": 0}
+	counts := map[string]int{"total": len(sessions), "managed": 0, "terminal": 0, "running": 0, "waiting": 0, "idle": 0}
 	rows := make([]sessionStatus, 0, len(sessions))
 	totals := store.SessionStats{}
 	s.mu.Lock()
-	pendingRequests, activeRuns := len(s.requests)+len(s.channelRequests), len(s.runs)
+	pendingRequests, activeRuns := len(s.requests), len(s.runs)
 	for i := range sessions {
-		s.decorateChannel(&sessions[i])
+		s.decorate(&sessions[i])
 	}
 	s.mu.Unlock()
 	for _, x := range sessions {
-		if x.Mode == "channel" {
-			counts["channel"]++
-			if x.Online {
-				counts["online"]++
-			}
+		if x.Mode == "terminal" {
+			counts["terminal"]++
 		} else {
 			counts["managed"]++
 		}
 		switch x.Status {
 		case "running", "waiting":
 			counts[x.Status]++
-		case "offline":
 		default:
 			counts["idle"]++
 		}

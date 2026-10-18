@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -63,35 +62,6 @@ func TestDeleteManagedSessionStopsOnlyWhenAsked(t *testing.T) {
 	s.mu.Unlock()
 	if running {
 		t.Fatal("run survived delete")
-	}
-}
-
-func TestDeleteChannelSessionRequiresOfflineTerminal(t *testing.T) {
-	_, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
-	id := store.ID()
-	a, key := registerChannel(t, ts, id, t.TempDir())
-	if c, b := request(t, ts, "DELETE", "/api/sessions/"+a.ID+"?stop=1", nil, testToken); c != 409 {
-		t.Fatalf("deleted online channel: %d %s", c, b)
-	}
-	if c, b := channelReq(t, ts, "POST", "/api/channels/"+id+"/disconnect", key, nil); c != 200 {
-		t.Fatalf("disconnect %d %s", c, b)
-	}
-	if c, b := request(t, ts, "DELETE", "/api/sessions/"+a.ID, nil, testToken); c != 200 {
-		t.Fatalf("delete offline channel: %d %s", c, b)
-	}
-	if _, err := st.FindClaude(id); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("channel session survived: %v", err)
-	}
-	// Reconnecting the same native session starts a fresh record.
-	b, _ := registerChannel(t, ts, id, a.Cwd)
-	if b.ID == a.ID {
-		t.Fatal("reused deleted record")
-	}
-	var list []store.Session
-	_, raw := request(t, ts, "GET", "/api/sessions", nil, testToken)
-	_ = json.Unmarshal(raw, &list)
-	if len(list) != 1 || list[0].ID != b.ID {
-		t.Fatalf("list %+v", list)
 	}
 }
 

@@ -68,7 +68,7 @@ func TestPreferencesAPIConflictAndDangerousConfirm(t *testing.T) {
 
 func TestSessionOverridesResolveIntoRunOptions(t *testing.T) {
 	runs := make(chan claude.Options, 4)
-	s, ts, st := setup(t, func(_ context.Context, o claude.Options, _ func(claude.Event) error) error { runs <- o; return nil })
+	s, ts, _ := setup(t, func(_ context.Context, o claude.Options, _ func(claude.Event) error) error { runs <- o; return nil })
 	s.cfg.DataDir = t.TempDir()
 	code, b := request(t, ts, "GET", "/api/preferences", nil, testToken)
 	var p preferencesBody
@@ -109,10 +109,6 @@ func TestSessionOverridesResolveIntoRunOptions(t *testing.T) {
 	}
 	if code, _ = request(t, ts, "PATCH", "/api/sessions/"+x.ID, map[string]string{"effort": "huge"}, testToken); code != 400 {
 		t.Fatalf("invalid effort %d", code)
-	}
-	_ = st.SetMode(x.ID, "channel")
-	if code, b = request(t, ts, "PATCH", "/api/sessions/"+x.ID, map[string]string{"model": "haiku"}, testToken); code != 409 || !strings.Contains(string(b), "/model") {
-		t.Fatalf("channel patch %d %s", code, b)
 	}
 }
 
@@ -174,10 +170,6 @@ func TestModelAndPermissionCommandsUseSessionAndPreferences(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.cfg.ClaudeConfigDir, "settings.json")); !os.IsNotExist(err) {
 		t.Fatal("commands wrote Claude settings.json")
-	}
-	_ = st.SetMode(x.ID, "channel")
-	if code, _ = request(t, ts, "POST", path, map[string]string{"command": "/model haiku"}, testToken); code != 409 {
-		t.Fatalf("channel model %d", code)
 	}
 }
 

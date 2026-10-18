@@ -51,7 +51,13 @@ func TestNativeHistoryCompactAndNotifications(t *testing.T) {
 {"type":"attachment","attachment":{"type":"queued_command","prompt":"typed mid-turn","commandMode":"prompt","origin":{"kind":"human"}}}
 {"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification> x","commandMode":"prompt","origin":{"kind":"task-notification"}}}
 `)
-	_, events, err := NativeHistory(dir, testID)
+	_, all, err := NativeHistory(dir, testID)
+	var events []Event // task notifications become task events (tasks_test.go)
+	for _, e := range all {
+		if e.Kind != "status" {
+			events = append(events, e)
+		}
+	}
 	if err != nil || len(events) != 3 || events[0].Text != "typed" || events[1].Kind != "compact" || events[2].Kind != "user" || events[2].Text != "typed mid-turn" {
 		t.Fatalf("%+v %v", events, err)
 	}
