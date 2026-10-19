@@ -72,9 +72,16 @@ func fakeTerminal() {
 			resp.Body.Close()
 		}
 	}
+	// Claude Code records a long paste wrapped in tags (CC_REMOTE_FAKE_WRAP_PASTE=1).
+	wrap := func(text string) string {
+		if os.Getenv("CC_REMOTE_FAKE_WRAP_PASTE") != "1" {
+			return text
+		}
+		return "\n\n<pasted_content id=\"3dad\">\n" + text + "\n</pasted_content id=\"3dad\">\n"
+	}
 	turn := func(text string) {
 		f, _ := os.OpenFile(filepath.Join(dir, id+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		user, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"content": text}})
+		user, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"content": wrap(text)}})
 		reply, _ := json.Marshal(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "echo: " + text}}}})
 		f.Write(append(append(user, '\n'), append(reply, '\n')...))
 		f.Close()
@@ -127,7 +134,7 @@ func fakeTerminal() {
 					continue // an empty box submits nothing
 				}
 				box("")
-				hook("UserPromptSubmit", map[string]string{"prompt": text})
+				hook("UserPromptSubmit", map[string]string{"prompt": wrap(text)})
 				if text == "/clear" {
 					id = "00000000-0000-4000-8000-00000000c1ea"
 					hook("SessionStart", map[string]string{"source": "clear"})
@@ -461,6 +468,26 @@ func TestTerminalGivesUpOnUnsubmittedFirstMessage(t *testing.T) {
 	if queued != 0 {
 		t.Fatalf("message still queued: %d", queued)
 	}
+}
+
+// A long paste comes back from Claude Code wrapped in <pasted_content> tags:
+// the web shows the text as sent, and the queue empties (a message that does
+// not match must not hold up the ones after it).
+func TestTerminalWrappedPasteLeavesQueue(t *testing.T) {
+	t.Setenv("CC_REMOTE_FAKE_WRAP_PASTE", "1")
+	s, base, st, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	for _, text := range []string{"first line\nsecond line", "and another"} {
+		call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": text})
+	}
+	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool {
+		return strings.Join(eventTexts(st, x.ID), "|") == "user:first line\nsecond line|assistant:echo: first line\nsecond line|user:and another|assistant:echo: and another"
+	})
+	awaitLong(t, func() string { s.mu.Lock(); defer s.mu.Unlock(); return fmt.Sprint(len(s.terminals[x.ID].queued)) }, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.terminals[x.ID].queued) == 0
+	})
 }
 
 // The status line reports to the host and keeps running the user's own one;

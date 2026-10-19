@@ -487,18 +487,15 @@ func (s *Server) syncTerminal(ts *terminalSession) {
 	if ts.scan < 0 { // switched transcripts (/resume): only new entries count
 		ts.scan = len(users)
 	}
-	for len(ts.queued) > 0 {
-		found := -1
-		for i := ts.scan; i < len(users); i++ {
-			if users[i] == normalizePrompt(ts.queued[0].text) {
-				found = i
+	// Messages are pasted in order: once one shows, those before it went in
+	// too, even if their text does not match (it must not hold up the rest).
+	for i := ts.scan; i < len(users) && len(ts.queued) > 0; i++ {
+		for j, q := range ts.queued {
+			if users[i] == normalizePrompt(q.text) {
+				ts.queued, ts.scan = ts.queued[j+1:], i+1
 				break
 			}
 		}
-		if found < 0 {
-			break
-		}
-		ts.queued, ts.scan = ts.queued[1:], found+1
 	}
 }
 
@@ -544,8 +541,10 @@ func (ts *terminalSession) queuedLocked(prompt string) bool {
 	return false
 }
 
+// normalizePrompt is a prompt for matching: a long paste comes back from
+// Claude Code wrapped in <pasted_content> tags.
 func normalizePrompt(s string) string {
-	return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
+	return strings.TrimSpace(claude.UnwrapPastes(strings.ReplaceAll(s, "\r\n", "\n")))
 }
 
 func (s *Server) terminalExited(ts *terminalSession) {

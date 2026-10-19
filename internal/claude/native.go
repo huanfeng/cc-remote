@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -462,7 +463,7 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 	// records it as a queued_command attachment, never as a user turn.
 	if v.Type == "attachment" && v.Attachment.Type == "queued_command" && v.Attachment.CommandMode == "prompt" && (v.Attachment.Origin.Kind == "" || v.Attachment.Origin.Kind == "human") {
 		if text := strings.TrimSpace(v.Attachment.Prompt); text != "" && !syntheticText(text) {
-			return []Event{{Kind: "user", Text: v.Attachment.Prompt}}
+			return []Event{{Kind: "user", Text: UnwrapPastes(v.Attachment.Prompt)}}
 		}
 		return nil
 	}
@@ -472,6 +473,7 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 	var out []Event
 	for _, e := range contentEvents(v.Message.Content, v.Type) {
 		if e.Kind == "user" {
+			e.Text = UnwrapPastes(e.Text)
 			if events, ok := noticeEvents(e.Text); ok {
 				out = append(out, events...)
 				continue
@@ -493,6 +495,26 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 		}
 	}
 	return out
+}
+
+// pastedContent is how Claude Code records pasted text in a prompt, on lines
+// of their own: <pasted_content id="3dad">, the text, </pasted_content id="3dad">.
+var pastedContent = regexp.MustCompile(`(?s)<pasted_content id="([^"]*)">\n?(.*?)\n?</pasted_content id="([^"]*)">`)
+
+// UnwrapPastes is a prompt as its user wrote it: pasted text without the tags
+// Claude Code wraps it in.
+func UnwrapPastes(text string) string {
+	if !strings.Contains(text, "<pasted_content id=") {
+		return text
+	}
+	out := pastedContent.ReplaceAllStringFunc(text, func(m string) string {
+		g := pastedContent.FindStringSubmatch(m)
+		if g[1] != g[3] {
+			return m
+		}
+		return g[2]
+	})
+	return strings.TrimSpace(out)
 }
 
 func syntheticText(text string) bool {
