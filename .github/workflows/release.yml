@@ -214,3 +214,13 @@ jobs:
             # shellcheck disable=SC2086
             gh release create "$TAG" $flags out/*
           fi
+
+  # The standalone frontend on GitHub Pages follows the stable releases.
+  pages:
+    needs: [meta, release]
+    if: needs.meta.outputs.prerelease == 'false'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

@@ -2,9 +2,17 @@
 // that keeps a list of hosts and talks to one at a time. Each host must allow
 // the page's origin (cc-remote --allow-origin). The host-served page is the
 // same app with STANDALONE false: one host, relative URLs, plain storage keys.
+import { t } from './i18n.ts'; // with extension: node tests import this file directly
+
 export const STANDALONE = import.meta.env?.MODE === 'standalone';
 
-export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string };
+/** How a host's address is found: typed in, the target an entry URL redirects to, or
+ * the plain-text answer of an entry URL (a tunnel whose public port changes). */
+export type HostVia = 'direct' | 'redirect' | 'text';
+
+/** url is the address the page talks to; an indirect host also keeps the entry it
+ * was found through, asked again when the address stops answering. */
+export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; entry?: string; via?: Exclude<HostVia, 'direct'> };
 type HostList = { current: string; hosts: HostEntry[] };
 
 const KEY = 'cc-hosts:v1';
@@ -20,6 +28,29 @@ export function normalizeHostUrl(text: string): string {
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
     return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`;
   } catch { return ''; }
+}
+
+const isLocal = (url: URL) => { const host = url.hostname.replace(/^\[|\]$/g, ''); return host === 'localhost' || host === '::1' || /^127\./.test(host); };
+
+/** Finds the host address behind an entry URL. The entry must answer this page with
+ * CORS (Access-Control-Allow-Origin), or the browser hides the answer; for a redirect
+ * every hop must, the host included (it does for its --allow-origin pages). A redirect
+ * gives the target's origin; a text entry answers with the address itself. */
+export async function resolveEntry(entry: string, via: Exclude<HostVia, 'direct'>, fetcher: typeof fetch = fetch): Promise<string> {
+  const response = await fetcher(entry, { cache: 'no-store', credentials: 'omit', redirect: 'follow', signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+  if (!response) throw new Error(t(`Cannot read ${entry}. It must be reachable and allow this page (Access-Control-Allow-Origin: ${location.origin} or *)${via === 'redirect' ? ', and so must the host it redirects to' : ''}.`, `无法读取 ${entry}。它必须可以访问，并允许本页面读取（响应头 Access-Control-Allow-Origin: ${location.origin} 或 *）${via === 'redirect' ? '；跳转到的宿主也必须允许本页面' : ''}。`));
+  let url = '';
+  if (via === 'redirect') {
+    if (!response.redirected) throw new Error(t(`${entry} did not redirect`, `${entry} 没有发生跳转`));
+    try { url = new URL(response.url).origin; } catch {}
+  } else {
+    if (!response.ok) throw new Error(t(`${entry} answered with an error (${response.status})`, `${entry} 返回错误（${response.status}）`));
+    const text = (await response.text()).trim().split(/\s+/)[0] || '';
+    if (/^https?:\/\//i.test(text)) url = normalizeHostUrl(text);
+  }
+  if (!url) throw new Error(t(`${entry} gave no host address`, `${entry} 没有给出宿主地址`));
+  if (location.protocol === 'https:' && url.startsWith('http:') && !isLocal(new URL(url))) throw new Error(t(`${entry} leads to ${url}: a page served over HTTPS cannot reach a plain http:// host. Serve the host over HTTPS (a domain name, a certificate and the changing port are fine).`, `${entry} 指向 ${url}：HTTPS 页面无法访问 http:// 的宿主。请让宿主通过 HTTPS 提供（域名 + 证书 + 变化的端口即可）。`));
+  return url;
 }
 
 export function loadHosts(): HostList {
@@ -51,10 +82,10 @@ export const apiUrl = (path: string) => apiBase + path;
 /** A storage key of the current host: hosts never see each other's tabs, drafts or tokens. */
 export const hostKey = (key: string) => currentHost ? `${key}@${currentHost.id}` : key;
 
-/** Adds or updates a host (matched by address) and makes it current. */
+/** Adds or updates a host (matched by address or entry) and makes it current. */
 export function rememberHost(entry: Omit<HostEntry, 'id'> & { id?: string }): HostEntry {
   const list = loadHosts();
-  const old = list.hosts.find(x => x.id === entry.id || x.url === entry.url);
+  const old = list.hosts.find(x => x.id === entry.id || x.url === entry.url || (entry.entry && x.entry === entry.entry));
   const host: HostEntry = { ...old, ...entry, id: old?.id || entry.id || Math.random().toString(36).slice(2, 10) };
   list.hosts = old ? list.hosts.map(x => x.id === old.id ? host : x) : [...list.hosts, host];
   list.current = host.id;
@@ -68,6 +99,36 @@ export function updateCurrentHost(change: Partial<Omit<HostEntry, 'id' | 'url'>>
   const list = loadHosts();
   list.hosts = list.hosts.map(x => x.id === currentHost.id ? { ...x, ...change } : x);
   saveHosts(list);
+}
+
+/** Whether a host may move from one address to another without asking: only its port
+ * may change (a tunnel's), never its scheme or name. Whoever controls the entry picks
+ * where the token goes; a new name is confirmed by adding the host again. */
+export function samePlace(from: string, to: string): boolean {
+  try { const a = new URL(from), b = new URL(to); return a.protocol === b.protocol && a.hostname === b.hostname; } catch { return false; }
+}
+
+/** After the current host stopped answering: asks its entry for the address again (a
+ * tunnel's port changed) and, when it moved, reopens the page there. Resolves true when
+ * it did, a message when the entry led elsewhere, false otherwise; at most once a
+ * minute, across the reloads, so a bad entry cannot loop. */
+let relocating: Promise<boolean | string> | undefined;
+export function relocateHost(): Promise<boolean | string> {
+  const host = currentHost;
+  if (!host?.entry || !host.via) return Promise.resolve(false);
+  if (relocating) return relocating;
+  const key = `cc-relocated@${host.id}`;
+  try { if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 60_000) return Promise.resolve(false); sessionStorage.setItem(key, String(Date.now())); } catch {}
+  relocating = resolveEntry(host.entry, host.via).then(url => {
+    if (url === host.url) return false;
+    if (!samePlace(host.url, url)) return t(`${host.entry} now leads to ${url}, not ${host.url}. Only a new port is followed by itself; add the host again to trust the new address.`, `${host.entry} 现在指向 ${url}，而不是 ${host.url}。只有端口变化会自动跟随；如信任新地址，请重新添加该宿主。`);
+    const list = loadHosts();
+    list.hosts = list.hosts.map(x => x.id === host.id ? { ...x, url } : x);
+    saveHosts(list);
+    reopen();
+    return true;
+  }).catch(() => false).finally(() => { relocating = undefined; });
+  return relocating;
 }
 
 /** Reloads without the session route: it belongs to the old host. replaceState fires no

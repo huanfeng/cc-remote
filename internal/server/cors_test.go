@@ -64,3 +64,33 @@ func TestStandaloneFrontendCORS(t *testing.T) {
 		t.Fatalf("other origin request: %d %v", resp.StatusCode, resp.Header)
 	}
 }
+
+// The host's own page is readable by an allowed frontend, which follows an
+// entry URL redirecting here to learn this host's address. After a redirect
+// from another site the browser sends Origin: null; the API never allows it.
+func TestStandaloneFrontendReadsPage(t *testing.T) {
+	s, ts, _ := setup(t, nil)
+	get := func(path, origin string) string {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("Access-Control-Allow-Origin")
+	}
+	if got := get("/", "null"); got != "" {
+		t.Fatalf("no standalone frontend allowed, Origin: null got %q", got)
+	}
+	s.cfg.AllowOrigins = []string{"https://ccr.example.com"}
+	for origin, want := range map[string]string{"https://ccr.example.com": "https://ccr.example.com", "null": "null", "https://evil.example": ""} {
+		if got := get("/", origin); got != want {
+			t.Fatalf("page, %s: Access-Control-Allow-Origin = %q, want %q", origin, got, want)
+		}
+	}
+	if got := get("/api/info", "null"); got != "" {
+		t.Fatalf("API allowed Origin: null: %q", got)
+	}
+}

@@ -13,7 +13,7 @@
 | `--log-file` | 空（仅 stderr） | 同时写入日志文件，10 MiB 轮转并保留一个 `.1` 备份；Go 运行时崩溃信息也写入该文件 |
 | `--allow-insecure-remote` | 关 | 允许 `all:PORT` / `0.0.0.0` / `::` 这类绑定所有网卡的地址 |
 | `--lang` | `auto` | 提示信息和 Web 界面的默认语言：`auto`（跟随系统）、`zh` 或 `en`，见[界面语言](#界面语言) |
-| `--allow-origin` | 空 | 允许访问此宿主的[独立网页前端](#独立网页前端)来源，如 `https://ccr.example.com`；可重复或逗号分隔 |
+| `--allow-origin` | 空 | 允许访问此宿主的[独立网页前端](standalone.md)来源，如 `https://ccr.example.com`；可重复或逗号分隔 |
 
 其它子命令：`service`、`alias`、`update`、`version`、`attach`、`ccr`，`cc-remote help` 和 `cc-remote service --help` 查看用法。
 
@@ -106,24 +106,14 @@ CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 
 ## 独立网页前端
 
-每台宿主都自带网页。部署了多台宿主时，也可以用一个单独部署的静态前端连接它们：侧栏宿主名称下的「N 个宿主」可切换、添加或移除宿主，并显示各宿主是否在线、有几个会话在执行或等待操作。
+部署了多台宿主时，可以用一个单独部署的静态前端连接、切换它们。可以直接使用公共实例 <https://huanfeng.github.io/cc-remote/>，也可以部署到 Vercel、Cloudflare Pages 或任意静态网站。前端和宿主都必须通过 HTTPS 访问，并且每台宿主都要允许前端的来源：
 
-1. 部署前端：从 Release 下载 `cc-remote_<版本>_web.zip`，解压到任意静态网站（Nginx、Caddy、Cloudflare Pages、GitHub Pages 等），子路径也可以。也可以在源码中运行 `pnpm run build:standalone`（产物在 `web/dist-standalone`）。
-2. 允许该前端访问每台宿主。来源只写协议、域名和端口，不带路径：
+```sh
+cc-remote --allow-origin https://ccr.example.com              # 前台运行
+cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com   # 后台服务，空闲时自动重启生效
+```
 
-   ```sh
-   cc-remote --allow-origin https://ccr.example.com              # 前台运行
-   cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com   # 后台服务，空闲时自动重启生效
-   ```
-
-3. 打开前端，填入宿主地址（如 `https://w1.example.com:58985`）和该宿主的访问令牌。
-
-注意：
-
-- 前端通过 HTTPS 提供时，浏览器不允许它访问 `http://` 的宿主（`localhost` / `127.0.0.1` 除外），宿主需要放在 HTTPS 反向代理后面。宿主在局域网地址、前端在公网时，宿主会回应 Chrome 的私有网络访问预检；较新的浏览器还可能弹出「访问本地网络」的授权提示，允许即可。
-- 静态站请只通过 HTTPS 提供，并加上响应头 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`（页面自带的 CSP 无法设置 `frame-ancestors`）。页面通过明文 HTTP 打开时会显示警告：它的存储里保存着所有宿主的令牌。
-- 宿主列表和各宿主的令牌保存在这个前端所在浏览器的本地存储中；「移除」会一并删除该宿主的令牌、草稿和标签页记录。各宿主的会话、草稿互不混用。
-- 未列入 `--allow-origin` 的网站即使拿到令牌也无法在浏览器里调用 API（跨站请求返回 403，预检不放行）。宿主自带网页不受此设置影响。
+部署步骤、HTTPS 要求，以及内网穿透（302 跳转、端口会变化的文本地址）的用法见 [standalone.md](standalone.md)。
 
 ## 后台服务
 

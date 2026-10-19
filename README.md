@@ -27,7 +27,7 @@ CC Remote 是一个运行在你电脑上的小型宿主程序（单个可执行�
 - **后台服务、开机自启**：一条命令注册为当前用户的系统服务（Windows 计划任务 / systemd / launchd），附带 `ccr` 快捷命令。
 - **状态与用量统计**：服务状态面板显示运行情况、费用、tokens、近 14 天趋势和日志。
 - **为手机设计**：响应式布局、抽屉式会话列表，可安装为 PWA。
-- **多台宿主**：每台宿主自带网页；也可以单独部署一个静态网页前端，在其中添加、切换多台宿主（见[独立网页前端](docs/configuration.md#独立网页前端)）。
+- **多台宿主**：每台宿主自带网页；也可以用一个独立网页前端添加、切换多台宿主——直接用公共实例 <https://huanfeng.github.io/cc-remote/>，或部署到 Vercel、Cloudflare Pages；支持内网穿透的跳转链接和端口会变化的地址（见[独立网页前端](docs/standalone.md)）。
 - **刷新不丢状态**：当前会话、未发送的草稿和附件、未提交的回答在刷新后自动恢复。
 
 ## 快速开始
@@ -158,6 +158,7 @@ cc-remote service config --listen 127.0.0.1:8787,lan:8787
 | --- | --- |
 | [docs/usage.md](docs/usage.md) | 详细使用说明 |
 | [docs/configuration.md](docs/configuration.md) | 命令行参数、数据目录、环境变量、监听地址、服务环境、权限与模型偏好 |
+| [docs/standalone.md](docs/standalone.md) | 独立网页前端：部署（GitHub Pages / Vercel / Cloudflare）、HTTPS、内网穿透入口 |
 | [docs/security.md](docs/security.md) | 安全模型与建议 |
 | [docs/architecture.md](docs/architecture.md) | 工作原理与已知限制 |
 | [docs/release.md](docs/release.md) | 安装脚本参数、更新、卸载、发版与故障排查 |

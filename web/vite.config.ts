@@ -10,6 +10,11 @@ const STANDALONE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 
 const standaloneCsp = (): Plugin => ({
   name: 'standalone-csp',
   transformIndexHtml: html => html.replace('<meta charset="UTF-8"/>', `<meta charset="UTF-8"/><meta http-equiv="Content-Security-Policy" content="${STANDALONE_CSP}"/>`),
+  // The response headers a page cannot set itself, for static hosts that read a
+  // _headers file (Cloudflare Pages, Netlify); web/vercel.json has the same for Vercel.
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: '_headers', source: "/*\n  Content-Security-Policy: frame-ancestors 'none'\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n" });
+  },
 });
 
 // `vite build --mode standalone` builds the standalone frontend: a static site

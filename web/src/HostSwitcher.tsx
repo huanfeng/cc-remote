@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { CloseIcon, PlusIcon } from './icons';
-import { currentHost, loadHosts, normalizeHostUrl, rememberHost, removeHost, reopen, switchHost, type HostEntry } from './hosts';
+import { currentHost, loadHosts, normalizeHostUrl, rememberHost, removeHost, reopen, resolveEntry, switchHost, type HostEntry, type HostVia } from './hosts';
 import { lang, t } from './i18n';
 
 type Ping = { online: boolean; running?: number; waiting?: number };
@@ -24,9 +24,14 @@ export function connectError(status?: number): string {
   return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page: --allow-origin ${location.origin}`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面：--allow-origin ${location.origin}`);
 }
 
-/** Adds a host (or signs in to the current one again) and opens it. */
-export function HostLogin({ initialUrl = '', error: shown = '', onCancel }: { initialUrl?: string; error?: string; onCancel?: () => void }) {
+const VIA_LABEL = { direct: () => t('Direct', '直连'), redirect: () => t('Redirect', '302 跳转'), text: () => t('Address URL', '文本地址') };
+
+/** Adds a host (or signs in to the current one again) and opens it. Besides its address,
+ * a host can be given as an entry that leads to it: a URL redirecting there, or one
+ * answering with the address as plain text (a tunnel whose port changes). */
+export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown = '', onCancel }: { initialUrl?: string; initialVia?: HostVia; error?: string; onCancel?: () => void }) {
   const [url, setUrl] = useState(initialUrl);
+  const [via, setVia] = useState<HostVia>(initialVia);
   const [token, setToken] = useState('');
   const [error, setError] = useState(shown);
   useEffect(() => setError(shown), [shown]); // the page reports a failed reconnect after mounting this
@@ -34,26 +39,37 @@ export function HostLogin({ initialUrl = '', error: shown = '', onCancel }: { in
   const others = loadHosts().hosts.filter(x => x.id !== currentHost?.id);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const base = normalizeHostUrl(url);
-    if (!base) { setError(t('Enter the host address, such as https://ccr.example.com', '请输入宿主地址，例如 https://ccr.example.com')); return; }
+    const entered = normalizeHostUrl(url);
+    if (!entered) { setError(via === 'direct' ? t('Enter the host address, such as https://ccr.example.com', '请输入宿主地址，例如 https://ccr.example.com') : t('Enter the entry URL, such as https://example.com/ccr', '请输入入口地址，例如 https://example.com/ccr')); return; }
+    // The entry keeps its query (a token for the address service, say); a bare one gets https.
+    const entry = /^[a-z][a-z0-9+.-]*:\/\//i.test(url.trim()) ? url.trim() : `${location.protocol === 'http:' ? 'http' : 'https'}://${url.trim()}`;
     setBusy(true); setError('');
     try {
+      let base = entered;
+      if (via !== 'direct') {
+        try { base = await resolveEntry(entry, via); } catch (err) { setError((err as Error).message); return; }
+      }
       const response = await fetch(`${base}/api/info`, { headers: { Authorization: `Bearer ${token.trim()}`, 'X-CC-Lang': lang }, cache: 'no-store' }).catch(() => undefined);
-      if (!response?.ok) { setError(connectError(response?.status)); return; }
+      if (!response?.ok) { setError((via !== 'direct' ? t(`Found ${base}. `, `解析到 ${base}。`) : '') + connectError(response?.status)); return; }
       const info: { name?: string; color?: string } = await response.json();
-      rememberHost({ url: base, token: token.trim(), name: info.name, color: info.color });
+      rememberHost({ url: base, token: token.trim(), name: info.name, color: info.color, entry: via === 'direct' ? undefined : entry, via: via === 'direct' ? undefined : via });
       reopen();
     } finally { setBusy(false); }
   }
+  const hint = via === 'redirect' ? t('A URL that redirects (302) to the host, such as the jump link of a tunnel. It and the host must allow this page (CORS).', '一个会 302 跳转到宿主的地址，例如内网穿透的跳转链接。它和宿主都必须允许本页面读取（CORS）。')
+    : via === 'text' ? t('A URL that answers with the host address as plain text, such as https://home.example.com:45678. It must allow this page (CORS). When the host stops answering, the address is fetched again.', '一个以纯文本返回宿主地址（如 https://home.example.com:45678）的 URL，必须允许本页面读取（CORS）。宿主连不上时会重新获取地址。')
+    : '';
   return <form className="login-card host-login" onSubmit={submit}>
     {onCancel ? <h2>{t('Add host', '添加宿主')}</h2> : <><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1></>}
     <p>{t('Connect to a cc-remote host. This page keeps a list of hosts and their tokens on this device.', '连接一个 cc-remote 宿主。此页面在本设备上保存宿主列表和令牌。')}</p>
-    <label>{t('Host address', '宿主地址')}<input value={url} onChange={event => setUrl(event.target.value)} placeholder="https://ccr.example.com" autoComplete="url" inputMode="url" required /></label>
+    <div className="host-via options" role="radiogroup" aria-label={t('How to reach the host', '连接方式')}>{(['direct', 'redirect', 'text'] as const).map(v => <button type="button" key={v} role="radio" aria-checked={via === v} className={via === v ? 'chosen' : ''} onClick={() => setVia(v)}>{VIA_LABEL[v]()}</button>)}</div>
+    <label>{via === 'direct' ? t('Host address', '宿主地址') : via === 'redirect' ? t('Redirect URL', '跳转地址') : t('Address URL', '地址获取 URL')}<input value={url} onChange={event => setUrl(event.target.value)} placeholder={via === 'direct' ? 'https://ccr.example.com' : via === 'redirect' ? 'https://example.com/ccr' : 'https://example.com/ccr.txt'} autoComplete="url" inputMode="url" required /></label>
+    {hint && <small className="host-via-hint">{hint}</small>}
     <label>{t('Host access token', '宿主访问令牌')}<input type="password" value={token} onChange={event => setToken(event.target.value)} placeholder={t('The access token of that host', '该宿主的访问令牌')} autoComplete="current-password" required /></label>
     {error && <div className="error" role="alert">{error}</div>}
     <button className="primary" disabled={busy}>{busy ? t('Connecting…', '连接中…') : t('Connect to host', '连接宿主')} <span>→</span></button>
     {onCancel && <button type="button" className="secondary host-login-cancel" onClick={onCancel}>{t('Cancel', '取消')}</button>}
-    {!onCancel && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><span className="host-swatch" style={{ background: x.color || '#293c2e' }} />{x.name || x.url}<small>{x.url}</small></button>)}</div>}
+    {!onCancel && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><span className="host-swatch" style={{ background: x.color || '#293c2e' }} />{x.name || x.url}<small>{x.entry || x.url}</small></button>)}</div>}
     <small>{t(`Each host must allow this page: cc-remote --allow-origin ${location.origin}`, `每个宿主需允许本页面：cc-remote --allow-origin ${location.origin}`)}</small>
   </form>;
 }
@@ -81,7 +97,7 @@ export function HostSwitcher() {
       {hosts.map(host => { const p = pings[host.id]; return <div key={host.id} className={`host-row${host.id === currentHost?.id ? ' current' : ''}`}>
         <button type="button" role="menuitem" onClick={() => host.id === currentHost?.id ? setOpen(false) : switchHost(host.id)}>
           <span className="host-swatch" style={{ background: host.color || '#293c2e' }} />
-          <span className="host-text"><strong>{host.name || host.url}</strong><small>{host.url}</small></span>
+          <span className="host-text"><strong>{host.name || host.url}</strong><small title={host.entry ? `${host.entry} → ${host.url}` : undefined}>{host.url}{host.via && ` · ${VIA_LABEL[host.via]()}`}</small></span>
           <span className="host-state">{!p ? '…' : !p.online ? t('Offline', '离线') : p.waiting ? t(`${p.waiting} waiting`, `${p.waiting} 待操作`) : p.running ? t(`${p.running} running`, `${p.running} 执行中`) : <span className="dot idle" />}</span>
         </button>
         <button type="button" className="icon-button" aria-label={t(`Remove ${host.name || host.url}`, `移除 ${host.name || host.url}`)} title={t('Remove from this page', '从此页面移除')} onClick={() => forget(host)}><CloseIcon size={12} /></button>

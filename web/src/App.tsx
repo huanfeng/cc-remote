@@ -4,7 +4,7 @@ import { ClaudeSettings } from './ClaudeSettings';
 import { StatusPanel } from './StatusPanel';
 import { AttachButton, AttachmentList, uploadFiles, type Attachment } from './Attachments';
 import { SessionStatus } from './SessionStatus';
-import { STANDALONE, apiBase, apiUrl, clearToken, currentHost, hostKey, loadToken, saveToken } from './hosts';
+import { STANDALONE, apiBase, apiUrl, clearToken, currentHost, hostKey, loadToken, relocateHost, saveToken } from './hosts';
 import { HostLogin, HostSwitcher, connectError } from './HostSwitcher';
 import { QuickSwitch, type QuickKind, type QuickTarget } from './QuickSwitch';
 import { ComposerInput } from './ComposerInput';
@@ -193,7 +193,13 @@ export default function App() {
   const api = useCallback(async <T,>(path: string, options?: RequestInit): Promise<T> => {
     const cacheable = (options?.method || 'GET').toUpperCase() === 'GET' && !/[?&](after|before)=/.test(path);
     const cached = cacheable ? etags.current.get(path) : undefined;
-    const response = await fetch(apiUrl(path), { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-CC-Lang': lang, ...(cached ? { 'If-None-Match': cached.tag } : {}), ...options?.headers }, cache: 'no-store' }).catch(err => { throw STANDALONE && !options?.signal?.aborted ? new Error(connectError()) : err; });
+    const response = await fetch(apiUrl(path), { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-CC-Lang': lang, ...(cached ? { 'If-None-Match': cached.tag } : {}), ...options?.headers }, cache: 'no-store' }).catch(async err => {
+      if (!STANDALONE || options?.signal?.aborted) throw err;
+      // A host found through an entry may have moved (a tunnel's port changed): ask again; the page reopens there.
+      const moved = await relocateHost();
+      if (moved === true) await new Promise(() => {});
+      throw new Error(typeof moved === 'string' ? moved : connectError());
+    });
     if (response.status === 304 && cached) return cached.data as T;
     if (!response.ok) {
       let message = t(`Request failed (${response.status})`, `请求失败 (${response.status})`);
@@ -216,12 +222,20 @@ export default function App() {
     if (listView.current === native) setSessions(result);
     setTabs(old => old.map(tab => tab.native === native ? { ...tab, session: result.find(item => item.id === tab.id) || tab.session } : tab));
   }, [api, native]);
+  // A standalone page keeps trying a host it cannot reach (it may be restarting, or its
+  // tunnel moving); a refused token is not retried.
+  const [connectTry, setConnectTry] = useState(0);
   useEffect(() => {
     if (!token) return;
     let active = true;
-    api<Info>('/api/info').then(data => { if (active) { setInfo(data); setConnected(true); setCwd(data.cwd); setError(''); saveToken(token); } }).catch(err => { if (active) setError(err.message); });
-    return () => { active = false; };
-  }, [api, token]);
+    let timer = 0;
+    api<Info>('/api/info').then(data => { if (active) { setInfo(data); setConnected(true); setCwd(data.cwd); setError(''); saveToken(token); } }).catch(err => {
+      if (!active) return;
+      setError(err.message);
+      if (STANDALONE && !(err as { status?: number }).status) timer = window.setTimeout(() => setConnectTry(n => n + 1), 10_000);
+    });
+    return () => { active = false; clearTimeout(timer); };
+  }, [api, token, connectTry]);
   useEffect(() => {
     if (!connected) return;
     let active = true;
@@ -734,7 +748,7 @@ export default function App() {
       await list();
     });
   }
-  if (!connected && STANDALONE) return <main className="login"><HostLogin initialUrl={currentHost?.url} error={error} /></main>;
+  if (!connected && STANDALONE) return <main className="login"><HostLogin initialUrl={currentHost?.entry || currentHost?.url} initialVia={currentHost?.via} error={error} /></main>;
   if (!connected) return <main className="login"><form className="login-card" onSubmit={event => { event.preventDefault(); if (token === credential) api<Info>('/api/info').then(data => { setInfo(data); setConnected(true); setError(''); saveToken(token); }).catch(err => setError(err.message)); else { setError(''); setToken(credential.trim()); } }}><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1><span className="login-host"><span className="login-host-dot" />{host.name}</span><p>{t('Continue your Claude Code work from your phone.', '从手机继续你的 Claude Code 工作。')}</p><label>{t('Host access token', '宿主访问令牌')}<input type="password" value={credential} onChange={event => setCredential(event.target.value)} placeholder={t('Enter the token configured when starting the host', '输入启动宿主时配置的令牌')} autoComplete="current-password" required /></label>{error && <div className="error" role="alert">{error}</div>}<button className="primary">{t('Connect to host', '连接宿主')} <span>→</span></button><small>{t('Connects to this address · the token is saved on this device and cleared when you sign out', '连接至当前地址 · 令牌保存在此设备，退出登录时清除')}</small></form></main>;
   // Paths in the session's messages open in a file viewer (not for native history: no session on the host).
   return <FileProvider sessionId={current && !native ? current.id : ''} token={token}><div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--sidebar-width': `${sidebar.width}px` } as CSSProperties}>

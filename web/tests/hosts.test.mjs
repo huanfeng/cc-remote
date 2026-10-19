@@ -18,3 +18,38 @@ test('host address: a bare host gets the page scheme; others are refused', () =>
   assert.equal(normalizeHostUrl('ftp://x.example'), '');
   assert.equal(normalizeHostUrl(''), '');
 });
+
+const { resolveEntry } = await import('../src/hosts.ts');
+const answer = (fields) => async () => ({ ok: true, status: 200, redirected: false, url: '', text: async () => '', ...fields });
+const rejects = (promise, pattern) => assert.rejects(promise, pattern);
+
+test('entry: a redirect gives the origin of where it led', async () => {
+  globalThis.location = { protocol: 'https:', origin: 'https://ccr.example.com' };
+  assert.equal(await resolveEntry('https://jump.example/ccr', 'redirect', answer({ redirected: true, url: 'https://home.example.com:45678/ccr?x=1' })), 'https://home.example.com:45678');
+  await rejects(resolveEntry('https://jump.example/ccr', 'redirect', answer({ url: 'https://jump.example/ccr' })), /did not redirect/);
+});
+
+test('entry: a text entry answers with the address; anything else is refused', async () => {
+  globalThis.location = { protocol: 'https:', origin: 'https://ccr.example.com' };
+  assert.equal(await resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => '  https://home.example.com:45678/\n# updated 12:00\n' })), 'https://home.example.com:45678');
+  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => '<html>' })), /gave no host address/);
+  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', answer({ ok: false, status: 404 })), /error \(404\)/);
+  // No CORS, or not reachable: the browser rejects the fetch.
+  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', async () => { throw new TypeError('Failed to fetch'); }), /Access-Control-Allow-Origin: https:\/\/ccr\.example\.com/);
+});
+
+test('entry: an https page refuses a plain http host, except on this machine', async () => {
+  globalThis.location = { protocol: 'https:', origin: 'https://ccr.example.com' };
+  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => 'http://1.2.3.4:45678' })), /cannot reach a plain http/);
+  assert.equal(await resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => 'http://127.0.0.1:8787' })), 'http://127.0.0.1:8787');
+  globalThis.location = { protocol: 'http:', origin: 'http://192.168.1.2:5173' };
+  assert.equal(await resolveEntry('http://raw.example/ccr.txt', 'text', answer({ text: async () => 'http://1.2.3.4:45678' })), 'http://1.2.3.4:45678');
+});
+
+test('entry: a host moves by itself only to a new port', async () => {
+  const { samePlace } = await import('../src/hosts.ts');
+  assert.equal(samePlace('https://home.example.com:45678', 'https://home.example.com:51234'), true);
+  assert.equal(samePlace('https://home.example.com:45678', 'https://evil.example:45678'), false);
+  assert.equal(samePlace('https://home.example.com:45678', 'http://home.example.com:45678'), false);
+  assert.equal(samePlace('https://home.example.com', 'not a url'), false);
+});

@@ -39,7 +39,7 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 | `cc-remote_<版本>_windows_amd64.zip` / `_windows_arm64.zip` | `cc-remote.exe`、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_linux_{amd64,arm64}.tar.gz` | `cc-remote`（可执行）、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_darwin_{amd64,arm64}.tar.gz` | 同上 |
-| `cc-remote_<版本>_web.zip` | 独立网页前端（静态文件），见[配置 · 独立网页前端](configuration.md#独立网页前端)；`cc-remote update` 不会选它 |
+| `cc-remote_<版本>_web.zip` | 独立网页前端（静态文件），见[独立网页前端](standalone.md)；正式版同时发布到 GitHub Pages（`.github/workflows/pages.yml`）；`cc-remote update` 不会选它 |
 | `checksums.txt` | 所有归档的 sha256（`sha256sum` 格式） |
 | `install.ps1` / `install.sh` | 安装脚本副本；`releases/latest/download/install.*` 即指向最新正式版中的这两个文件 |
 
