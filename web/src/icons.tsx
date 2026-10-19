@@ -27,3 +27,5 @@ export const QuestionIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy=
 /** Two stacked chevrons: expand / collapse every tool group. */
 export const ExpandAllIcon = ({ size }: P) => <Svg size={size}><path d="M4.5 3.5 8 6.5l3.5-3M4.5 9.5 8 12.5l3.5-3" /></Svg>;
 export const CollapseAllIcon = ({ size }: P) => <Svg size={size}><path d="M4.5 6.5 8 3.5l3.5 3M4.5 12.5 8 9.5l3.5 3" /></Svg>;
+export const BackIcon = ({ size }: P) => <Svg size={size}><path d="M10 3.5L5.5 8l4.5 4.5" /></Svg>;
+export const DownloadIcon = ({ size }: P) => <Svg size={size}><path d="M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10" /></Svg>;

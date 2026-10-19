@@ -54,6 +54,7 @@ location / {
 
 - 上传的附件下载需要令牌；非图片一律以 `Content-Disposition: attachment` 返回并带 `X-Content-Type-Options: nosniff`，HTML / XML / SVG / 脚本类以 `application/octet-stream` 返回。
 - 状态面板中的日志尾部会隐去访问令牌和 Bearer 凭证。
+- 网页查看文件（`GET /api/sessions/{id}/file`）需要令牌，只开放会话工作目录、会话中出现过的目录和出现过的文件所在目录（根目录、一级目录和用户主目录除外），符号链接和 Windows 目录联接按打开后的实际路径判断，网络共享（UNC）路径一律不打开（会话工作目录本身所在的共享除外），单个文件最多 20 MiB。持有令牌本来就能让 Claude 读取任意文件，这个范围是为了让查看器只触及会话相关的文件，不是额外的安全边界。返回的类型只有图片、PDF 或 `application/octet-stream`，不会作为 HTML / SVG 在页面中执行。
 - 服务环境变量保存在 `service.json`（0600）中；通过 `--env` 传入的密钥是明文保存的。默认只自动捕获代理变量，不会捕获任何密钥。
 - 「写入 Claude 用户配置」只改写 `model`、`effortLevel`、`permissions.defaultMode` 三项，写入前备份。
 

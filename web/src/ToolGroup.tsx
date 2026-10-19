@@ -1,6 +1,7 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
 import { AgentIcon, CheckIcon, ChevronDownIcon, CloseIcon, FileIcon, GlobeIcon, ListIcon, SearchIcon, TerminalIcon, WrenchIcon } from './icons';
 import { argSummary, formatDuration, groupStats, summaryLabel, type CallStatus, type ToolCall } from './toolGroups';
+import { useFiles } from './fileContext';
 import { t } from './i18n';
 import './tools.css';
 
@@ -48,8 +49,11 @@ type LoadFull = (call: ToolCall) => void;
 function ToolDetail({ call, onLoadFull }: { call: ToolCall; onLoadFull?: LoadFull }) {
   const input = inputText(call.input);
   const cut = String(call.truncated || '');
+  const files = useFiles();
+  const arg = argSummary(call.name, call.input);
   useEffect(() => { if (cut) onLoadFull?.(call); }, [cut]);
   return <div className="tool-detail">
+    {files && arg.dir !== undefined && arg.title && <button type="button" className="tool-open-file" title={arg.title} onClick={() => files.open({ path: arg.title! })}><FileIcon size={13} />{t('Open file', '打开文件')}<span>{arg.title}</span></button>}
     {cut && <p className="tool-detail-note">{t('Long content, loading all of it…', '内容较长，正在加载完整内容…')} <button type="button" className="tool-more" onClick={() => onLoadFull?.(call)}>{t('Retry', '重试')}</button></p>}
     {input && <><div className="tool-detail-label">{t('Input', '输入')}</div><LongPre text={input} /></>}
     <div className="tool-detail-label">{call.status === 'error' ? t('Result (failed)', '结果（失败）') : t('Result', '结果')}</div>

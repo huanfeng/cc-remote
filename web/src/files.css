@@ -1,0 +1,53 @@
+/* Host files opened from a session: links in messages, the viewer, highlighted code. */
+.file-link{color:var(--md-link,#527347);text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+.file-link:hover{text-decoration-style:solid}
+.file-link code{color:inherit}
+.file-image{display:inline-block;max-width:100%}
+.file-image img{max-width:100%;max-height:420px;border-radius:6px;border:1px solid var(--line)}
+.file-image-missing{font-size:12px;color:var(--muted)}
+
+.modal-backdrop.file-backdrop{padding:24px}
+.file-viewer{width:min(1100px,100%);height:min(88dvh,100%);display:flex;flex-direction:column;background:#fcfbf6;border:1px solid #f0f1e8;border-radius:16px;box-shadow:0 25px 90px #10231133;overflow:hidden}
+.file-viewer-bar{display:flex;align-items:center;gap:6px;padding:10px 10px 10px 16px;border-bottom:1px solid var(--line);flex-shrink:0}
+.file-viewer-bar .icon{min-width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center}
+.file-viewer-title{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.file-viewer-title strong{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-viewer-path{background:transparent;color:var(--muted);font-size:11px;text-align:left;padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace}
+.file-viewer-path:hover{color:#3b4c37}
+.file-toggle{background:#e8e9e1;color:inherit;font-size:12px;padding:6px 11px;border-radius:8px}
+.file-toggle.active{background:#dcebc9}
+.file-viewer-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+.file-note{padding:24px;font-size:13px;color:var(--muted)}
+.file-viewer-body>.error{margin:20px}
+.file-doc{padding:26px max(26px,calc((100% - 820px)/2)) 40px;font-size:14px;line-height:1.85}
+.file-doc .md h1{font-size:24px;line-height:1.35;border-bottom:1px solid var(--line);padding-bottom:.3em}
+.file-doc .md h2{font-size:20px;line-height:1.4;border-bottom:1px solid var(--line);padding-bottom:.25em}
+.file-doc .md h3{font-size:17px}
+.file-image-view{min-height:100%;display:flex;align-items:center;justify-content:center;padding:20px;background:repeating-conic-gradient(#eeefe8 0 25%,#fcfbf6 0 50%) 0 0/20px 20px}
+.file-image-view img{max-width:100%;max-height:100%;object-fit:contain}
+
+.code-view{--code-line:1.6em;display:flex;min-width:max-content;font-family:ui-monospace,'Cascadia Mono','Sarasa Mono SC','SFMono-Regular',Consolas,monospace;font-size:12.5px;line-height:var(--code-line)}
+.code-view pre{margin:0;padding:12px 0;font:inherit;line-height:inherit;white-space:pre}
+.code-gutter{position:sticky;left:0;z-index:1;padding:12px 12px 12px 16px!important;text-align:right;color:#a3a99d;background:#f4f4ee;border-right:1px solid var(--line);user-select:none}
+.code-main{position:relative;flex:1}
+.code-text{padding:12px 20px!important}
+.code-mark{position:absolute;left:0;right:0;height:var(--code-line);margin-top:12px;background:#f2e7b8;pointer-events:none}
+.code-text code{position:relative;font:inherit;background:transparent;padding:0}
+
+/* highlight.js token colours, matched to the page's green palette. */
+.hljs-comment,.hljs-quote{color:#8b9384;font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-meta .hljs-keyword,.hljs-doctag{color:#8a4f7d}
+.hljs-string,.hljs-regexp,.hljs-addition,.hljs-meta .hljs-string{color:#4f7a3a}
+.hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet{color:#a5622a}
+.hljs-title,.hljs-title.function_,.hljs-section{color:#2f6487}
+.hljs-type,.hljs-title.class_,.hljs-built_in{color:#2c7a72}
+.hljs-attr,.hljs-attribute,.hljs-variable,.hljs-template-variable,.hljs-property{color:#7a5c1f}
+.hljs-tag,.hljs-name,.hljs-selector-id,.hljs-selector-class{color:#3d6b52}
+.hljs-meta{color:#7d7f73}
+.hljs-deletion{color:#a04f43;background:#f7e6e1}
+.hljs-addition{background:#e7f1dc}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:600}
+.hljs-section{font-weight:600}
+
+@media(max-width:760px){.modal-backdrop.file-backdrop{padding:0}.file-viewer{height:100dvh;border-radius:0;border:0}.file-doc{padding:18px 16px 32px;font-size:13px}.code-view{font-size:11.5px}}

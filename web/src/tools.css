@@ -123,3 +123,6 @@ li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
 .queued-actions{display:flex;align-items:center;gap:12px;justify-content:flex-end;margin:-14px 0 22px;flex-wrap:wrap}
 .queued-actions button{font-size:12px;padding:7px 14px}
 .queued-actions small{font-size:10px;color:var(--muted);flex:1 1 220px;text-align:right}
+.tool-open-file{display:flex;align-items:center;gap:6px;max-width:100%;margin:2px 0 8px;padding:6px 10px;border-radius:8px;background:#eef1e5;color:#4e6243;font-size:12px;text-align:left}
+.tool-open-file:hover{background:#e3ead6}
+.tool-open-file span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-family:ui-monospace,Consolas,monospace;font-size:11px}

@@ -25,6 +25,7 @@ CC Remote is a small host program (a single executable) that runs on your comput
 - **Answer approvals, questions and plans from the web**: tool permissions, AskUserQuestion choices and plan approvals show up as cards; in terminal sessions, whichever side answers first wins.
 - **Per-session model and permission mode**: every permission mode (including `bypassPermissions`, behind a confirmation) and reasoning effort, without touching your `~/.claude/settings.json`.
 - **Attachments**: paste, drop or pick files to send to Claude, with thumbnails for images.
+- **View files on the host**: file paths in messages and tool cards open in a viewer: Markdown rendered (relative links and images work), code highlighted with line numbers, images previewed.
 - **Background service with auto start**: one command registers a per-user service (Windows Task Scheduler / systemd / launchd) and adds the `ccr` shortcut.
 - **Status and usage**: a status panel with uptime, cost, tokens, a 14-day chart and the log tail.
 - **Built for phones**: responsive layout, drawer session list, installable as a PWA.

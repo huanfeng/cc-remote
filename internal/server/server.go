@@ -88,6 +88,7 @@ type Server struct {
 	cfg            Config
 	mu             sync.Mutex
 	reloadMu       sync.Mutex // one reload at a time, so listen ends up current
+	files          fileRoots
 	runs           map[string]*execution
 	procs          map[string]*sessionRuntime
 	terminals      map[string]*terminalSession // running terminal sessions by session ID
@@ -150,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
+	mux.HandleFunc("GET /api/sessions/{id}/file", s.file)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
@@ -760,6 +762,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, s.lang(r).T("Could not delete the session", "无法删除会话"))
 		return
 	}
+	s.files.forget(id)
 	s.mu.Lock()
 	rt := s.detachLocked(id) // an idle Claude process may still hold the session
 	s.mu.Unlock()
