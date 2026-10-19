@@ -607,13 +607,20 @@ const hostWait = 3 * time.Minute
 // an update), it waits for the host and attaches again: the host resumes the
 // session, so the terminal carries on instead of exiting.
 func (c *client) attach(x remoteSession) error {
+	var deadline time.Time // set while waiting for a restarting host
 	for {
 		err := c.attachOnce(x)
+		// A host that just came back may still be resuming its sessions (and
+		// starting Claude Code): its stream can fail for a moment. Try again.
+		if !deadline.IsZero() && retryableDial(err) && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		if !errors.Is(err, errHostRestart) {
 			return err
 		}
 		fmt.Print(i18n.T("\r\nThe host is restarting (an update?); attaching again when it is back… (Ctrl+C to quit)\r\n", "\r\n宿主正在重启（可能在更新），恢复后自动重新接入…（Ctrl+C 退出）\r\n"))
-		deadline := time.Now().Add(hostWait)
+		deadline = time.Now().Add(hostWait)
 		for c.do(http.MethodGet, "/api/info", nil, nil) != nil {
 			if time.Now().After(deadline) {
 				return i18n.Errorf("the host did not come back within %v; run ccr again once it runs", "宿主 %v 内没有恢复；宿主运行后再执行 ccr", hostWait)
@@ -623,24 +630,70 @@ func (c *client) attach(x remoteSession) error {
 	}
 }
 
-func (c *client) attachOnce(x remoteSession) error {
+// dialError is a stream the host refused (status, with its reason) or that
+// could not be opened at all (status 0).
+type dialError struct {
+	status int
+	reason string
+	err    error
+}
+
+func (e *dialError) Error() string {
+	if e.reason != "" {
+		return i18n.F("cannot attach to the session (%d): %s", "无法接入会话（%d）：%s", e.status, e.reason)
+	}
+	return i18n.F("cannot attach to the session: %v", "无法接入会话：%v", e.err)
+}
+
+func (e *dialError) Unwrap() error { return e.err }
+
+// retryableDial reports whether a refused stream may work in a moment: the
+// host failed (5xx) or did not answer, rather than refusing the session.
+func retryableDial(err error) bool {
+	var d *dialError
+	return errors.As(err, &d) && (d.status == 0 || d.status >= 500)
+}
+
+// dialStream opens the session's terminal stream.
+func (c *client) dialStream(ctx context.Context, id string) (*websocket.Conn, error) {
 	u, err := url.Parse(c.host)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	u.Scheme = map[string]string{"https": "wss"}[u.Scheme]
 	if u.Scheme == "" {
 		u.Scheme = "ws"
 	}
-	u.Path = "/api/terminals/" + x.ID + "/stream"
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
+	u.Path = "/api/terminals/" + id + "/stream"
+	conn, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: &http.Transport{Proxy: nil}},
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + c.token}},
 	})
+	if err == nil {
+		return conn, nil
+	}
+	d := &dialError{err: err}
+	if resp != nil {
+		d.status = resp.StatusCode
+		if resp.Body != nil {
+			var body struct {
+				Error string `json:"error"`
+			}
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			if json.Unmarshal(raw, &body) == nil {
+				d.reason = body.Error
+			}
+		}
+	}
+	return nil, d
+}
+
+func (c *client) attachOnce(x remoteSession) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conn, err := c.dialStream(ctx, x.ID)
 	if err != nil {
-		return i18n.Errorf("cannot attach to the session: %w", "无法接入会话：%w", err)
+		return err
 	}
 	conn.SetReadLimit(4 << 20)
 	defer conn.CloseNow()
