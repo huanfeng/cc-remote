@@ -17,18 +17,37 @@ const NO_BASES: string[] = [];
 
 type Loaded = FetchedFile & { text?: string; url?: string; binary?: boolean };
 
-async function fetchFile(sessionId: string, token: string, ref: FileRequest, signal?: AbortSignal): Promise<FetchedFile> {
+function fileQuery(ref: FileRequest) {
   const query = new URLSearchParams({ path: ref.path });
   for (const base of ref.bases || []) query.append('base', base);
-  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/file?${query}`), { headers: { Authorization: `Bearer ${token}`, 'X-CC-Lang': lang }, cache: 'no-store', signal });
-  if (!response.ok) {
-    let message = t(`Cannot open the file (${response.status})`, `无法打开文件 (${response.status})`);
-    try { message = (await response.json()).error || message; } catch {}
-    throw new Error(message);
-  }
+  return query;
+}
+
+/** A failed file request; tooLarge: over the viewer's limit, though it can be downloaded. */
+async function fileError(response: Response) {
+  let message = t(`Cannot open the file (${response.status})`, `无法打开文件 (${response.status})`);
+  try { message = (await response.json()).error || message; } catch {}
+  return Object.assign(new Error(message), { tooLarge: response.status === 413 });
+}
+
+async function fetchFile(sessionId: string, token: string, ref: FileRequest, signal?: AbortSignal): Promise<FetchedFile> {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/file?${fileQuery(ref)}`), { headers: { Authorization: `Bearer ${token}`, 'X-CC-Lang': lang }, cache: 'no-store', signal });
+  if (!response.ok) throw await fileError(response);
   let path = ref.path;
   try { path = decodeURIComponent(response.headers.get('X-CC-Path') || '') || path; } catch {}
   return { blob: await response.blob(), path };
+}
+
+async function fileLink(sessionId: string, token: string, ref: FileRequest): Promise<string> {
+  const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/file/link?${fileQuery(ref)}`), { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-CC-Lang': lang }, cache: 'no-store' });
+  if (!response.ok) throw await fileError(response);
+  return apiUrl((await response.json()).url);
+}
+
+/** Lets the browser save a URL as a download (the host sends it as an attachment). */
+function saveFrom(url: string, name: string) {
+  const link = document.createElement('a'); link.href = url; link.download = name; link.rel = 'noopener';
+  document.body.append(link); link.click(); link.remove();
 }
 
 /** Makes the host files a session names openable in a viewer (sessionId empty: none). */
@@ -38,6 +57,7 @@ export function FileProvider({ sessionId, token, children }: { sessionId: string
   const access = useMemo<FileAccess | null>(() => sessionId ? {
     open: ref => setStack(old => [...old, ref]),
     fetch: (ref, signal) => fetchFile(sessionId, token, ref, signal),
+    link: ref => fileLink(sessionId, token, ref),
   } : null, [sessionId, token]);
   const close = useCallback(() => setStack([]), []);
   const back = useCallback(() => setStack(old => old.slice(0, -1)), []);
@@ -50,6 +70,9 @@ export function FileProvider({ sessionId, token, children }: { sessionId: string
 function FileViewer({ request, access, canGoBack, back, close }: { request: FileRequest; access: FileAccess; canGoBack: boolean; back: () => void; close: () => void }) {
   const [file, setFile] = useState<Loaded>();
   const [error, setError] = useState('');
+  // Over the viewer's limit: not shown, but downloadable through a link.
+  const [tooLarge, setTooLarge] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [source, setSource] = useState(false);
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -69,7 +92,7 @@ function FileViewer({ request, access, canGoBack, back, close }: { request: File
       // A NUL byte early on marks a binary file; it is offered as a download instead.
       if (bytes.subarray(0, 8000).includes(0)) { setFile({ ...loaded, binary: true }); return; }
       setFile({ ...loaded, text: new TextDecoder().decode(bytes) });
-    }).catch(err => { if (err.name !== 'AbortError') setError((err as Error).message); });
+    }).catch(err => { if (err.name === 'AbortError') return; if (err.tooLarge) setTooLarge(true); else setError((err as Error).message); });
     return () => { controller.abort(); if (url) releaseImageURL(url); };
   }, [request, access]);
   useEffect(() => {
@@ -80,20 +103,26 @@ function FileViewer({ request, access, canGoBack, back, close }: { request: File
 
   const path = file?.path || request.path;
   const kind = fileKind(path);
-  const download = () => {
-    if (!file) return;
-    const url = URL.createObjectURL(file.blob);
-    const link = document.createElement('a'); link.href = url; link.download = basename(path); document.body.append(link); link.click(); link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  const download = async () => {
+    if (file) {
+      const url = URL.createObjectURL(file.blob);
+      saveFrom(url, basename(path));
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      return;
+    }
+    if (!tooLarge || saving) return;
+    setSaving(true);
+    try { saveFrom(await access.link(request), basename(path)); } catch (err) { setError((err as Error).message); } finally { setSaving(false); }
   };
   const copyPath = async () => { try { await copyText(path); setCopied(true); window.setTimeout(() => setCopied(false), 1600); } catch {} };
   const large = !!file?.text && file.blob.size > MAX_RENDER_BYTES;
 
   let body: ReactNode;
   if (error) body = <div className="error" role="alert">{error}</div>;
+  else if (tooLarge) body = <p className="file-note">{t('This file is too large to preview (over 20 MiB). ', '此文件超过 20 MiB，无法预览。')}<button type="button" className="tool-more" disabled={saving} onClick={() => void download()}>{saving ? t('Preparing…', '准备中…') : t('Download it', '下载')}</button></p>;
   else if (!file) body = <p className="file-note">{t('Loading…', '加载中…')}</p>;
   else if (file.url) body = <div className="file-image-view"><img src={file.url} alt={basename(path)} /></div>;
-  else if (file.binary) body = <p className="file-note">{t('This file cannot be previewed. ', '此文件无法预览。')}<button type="button" className="tool-more" onClick={download}>{t('Download it', '下载')}</button></p>;
+  else if (file.binary) body = <p className="file-note">{t('This file cannot be previewed. ', '此文件无法预览。')}<button type="button" className="tool-more" onClick={() => void download()}>{t('Download it', '下载')}</button></p>;
   else if (kind === 'markdown' && !source && !large) body = <div className="file-doc"><BasesContext.Provider value={request.bases || NO_BASES}><Markdown text={file.text!} dir={dirname(path)} /></BasesContext.Provider></div>;
   else body = <CodeView code={file.text!} lang={large ? '' : kind === 'markdown' ? 'markdown' : languageOf(path)} line={request.line} />;
 
@@ -103,7 +132,7 @@ function FileViewer({ request, access, canGoBack, back, close }: { request: File
         {canGoBack && <button type="button" className="icon" title={t('Back', '返回')} aria-label={t('Back', '返回')} onClick={back}><BackIcon size={16} /></button>}
         <div className="file-viewer-title"><strong>{basename(path)}{request.line ? `:${request.line}` : ''}</strong><button type="button" className="file-viewer-path" title={t('Copy path', '复制路径')} onClick={() => void copyPath()}>{copied ? t('Path copied', '路径已复制') : path}</button></div>
         {kind === 'markdown' && file?.text !== undefined && !large && <button type="button" className={`file-toggle${source ? ' active' : ''}`} aria-pressed={source} onClick={() => setSource(!source)}>{source ? t('Rendered', '渲染') : t('Source', '源码')}</button>}
-        <button type="button" className="icon" title={t('Download', '下载')} aria-label={t('Download', '下载')} disabled={!file} onClick={download}><DownloadIcon size={16} /></button>
+        <button type="button" className="icon" title={t('Download', '下载')} aria-label={t('Download', '下载')} disabled={!file && !tooLarge} onClick={() => void download()}><DownloadIcon size={16} /></button>
         <button type="button" className="icon" title={t('Close', '关闭')} aria-label={t('Close file viewer', '关闭文件查看')} onClick={close}><CloseIcon size={18} /></button>
       </div>
       <div className="file-viewer-body">{body}</div>

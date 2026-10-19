@@ -298,45 +298,62 @@ func viewType(name string) string {
 	return "application/octet-stream"
 }
 
-// file is GET /api/sessions/{id}/file?path=…&base=…: a file the session
-// named, for the web viewer. Only files under the session's directories (see
-// fileRoots) open.
-func (s *Server) file(w http.ResponseWriter, r *http.Request) {
-	l := s.lang(r)
+// requestedFile opens the file a request names (?path=…&base=…) for session
+// {id}, or answers why it cannot.
+func (s *Server) requestedFile(w http.ResponseWriter, r *http.Request) (*os.File, string, os.FileInfo, bool) {
 	sess, err := s.store.Get(r.PathValue("id"))
 	if err != nil {
-		fail(w, 404, l.T("Session not found", "会话不存在"))
-		return
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
+		return nil, "", nil, false
 	}
 	name := r.URL.Query().Get("path")
 	if name == "" || strings.ContainsRune(name, 0) {
-		fail(w, 400, l.T("No file path given", "未指定文件路径"))
-		return
+		fail(w, 400, s.lang(r).T("No file path given", "未指定文件路径"))
+		return nil, "", nil, false
 	}
 	bases := r.URL.Query()["base"]
 	if len(bases) > 16 {
 		bases = bases[:16]
 	}
+	return s.sessionFile(w, r, sess, name, bases)
+}
+
+// sessionFile opens a file of the session (see fileRoots), or answers why not.
+func (s *Server) sessionFile(w http.ResponseWriter, r *http.Request, sess store.Session, name string, bases []string) (*os.File, string, os.FileInfo, bool) {
+	l := s.lang(r)
 	roots, err := s.rootsFor(sess)
 	if err != nil {
 		fail(w, 500, err.Error())
-		return
+		return nil, "", nil, false
 	}
 	f, path, err := openFile(name, bases, sess.Cwd, roots)
 	if errors.Is(err, errOutsideRoots) {
 		fail(w, 403, l.T("Only files in the session's working directory, or in directories named in the session, can be opened", "只能打开会话工作目录、或会话中出现过的目录里的文件"))
-		return
+		return nil, "", nil, false
 	}
 	if err != nil {
 		fail(w, 404, l.T("File not found", "文件不存在"))
+		return nil, "", nil, false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		fail(w, 500, err.Error())
+		return nil, "", nil, false
+	}
+	return f, path, info, true
+}
+
+// file is GET /api/sessions/{id}/file?path=…&base=…: a file the session
+// named, for the web viewer. Only files under the session's directories (see
+// fileRoots) open.
+func (s *Server) file(w http.ResponseWriter, r *http.Request) {
+	f, path, info, ok := s.requestedFile(w, r)
+	if !ok {
 		return
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		fail(w, 500, err.Error())
-		return
-	}
+	l := s.lang(r)
 	if info.Size() > maxViewBytes {
 		fail(w, 413, l.T("The file is larger than 20 MiB", "文件超过 20 MiB"))
 		return

@@ -1,7 +1,7 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
 import { AgentIcon, CheckIcon, ChevronDownIcon, CloseIcon, FileIcon, GlobeIcon, ListIcon, SearchIcon, TerminalIcon, WrenchIcon } from './icons';
 import { argSummary, formatDuration, groupStats, summaryLabel, type CallStatus, type ToolCall } from './toolGroups';
-import { useFiles } from './fileContext';
+import { PathText, useFiles } from './fileContext';
 import { t } from './i18n';
 import './tools.css';
 
@@ -14,7 +14,7 @@ export function LongPre({ text, className = '' }: { text: string; className?: st
   const long = lines.length > MAX_LINES || text.length > MAX_CHARS;
   const shown = full || !long ? text : lines.slice(0, MAX_LINES).join('\n').slice(0, MAX_CHARS);
   return <div className={`tool-pre${className ? ' ' + className : ''}`}>
-    <pre>{shown}{!full && long ? '\n…' : ''}</pre>
+    <pre><PathText text={shown} />{!full && long ? '\n…' : ''}</pre>
     {long && <button type="button" className="tool-more" onClick={() => setFull(!full)}>{full ? t('Show less', '收起') : t(`Show all (${lines.length} lines)`, `显示全部（共 ${lines.length} 行）`)}</button>}
   </div>;
 }

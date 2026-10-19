@@ -1,9 +1,9 @@
-import { memo, useContext, useMemo, useState, type ReactNode } from 'react';
+import { memo, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { copyText } from './clipboard';
-import { BasesContext, FileImage, FileLink } from './fileContext';
+import { BasesContext, FileImage, FileLink, PathText, useLinkedPaths } from './fileContext';
 import { absoluteDirs, FILE_SCHEME, headingSlug, parseFileHref, relativeTarget, remarkFilePaths } from './filePaths';
 import { useHighlight } from './highlight';
 import { t } from './i18n';
@@ -27,9 +27,12 @@ function language(code: Hast | undefined): string {
   return typeof name === 'string' ? name.slice('language-'.length) : '';
 }
 
-function CodeBlock({ code, lang, children }: { code: string; lang: string; children: ReactNode }) {
+// File paths in code open the viewer too: in the highlighted markup, or in the plain text before it.
+function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const html = useHighlight(code.replace(/\n$/, ''), lang.toLowerCase());
+  const highlighted = useRef<HTMLElement>(null);
+  useLinkedPaths(highlighted, html);
   const copy = async () => {
     try { await copyText(code.replace(/\n$/, '')); setState('copied'); }
     catch { setState('failed'); }
@@ -37,7 +40,7 @@ function CodeBlock({ code, lang, children }: { code: string; lang: string; child
   };
   return <div className="md-code">
     <div className="md-code-bar"><span>{lang}</span><button type="button" onClick={() => void copy()}>{state === 'copied' ? t('Copied', '已复制') : state === 'failed' ? t('Copy failed', '复制失败') : t('Copy', '复制')}</button></div>
-    <pre>{html !== undefined ? <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} /> : children}</pre>
+    <pre>{html !== undefined ? <code ref={highlighted} className="hljs" dangerouslySetInnerHTML={{ __html: html }} /> : <code><PathText text={code} /></code>}</pre>
   </div>;
 }
 
@@ -60,13 +63,13 @@ function Link({ href, children, ...props }: { href?: string; children?: ReactNod
 }
 
 const components: Components = {
-  pre({ node, children }) {
+  pre({ node }) {
     const code = (node as Hast | undefined)?.children?.find(child => child.tagName === 'code');
     const lang = language(code);
     if (lang === INSIGHT_LANG) {
       return <aside className="md-insight"><div className="md-insight-title">★ Insight</div><div className="md-insight-body"><Body source={textOf(code)} /></div></aside>;
     }
-    return <CodeBlock code={textOf(code)} lang={lang}>{children}</CodeBlock>;
+    return <CodeBlock code={textOf(code)} lang={lang} />;
   },
   table({ node, children, ...props }) {
     return <div className="md-table"><table {...props}>{children}</table></div>;

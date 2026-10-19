@@ -87,7 +87,8 @@ type Server struct {
 	store          *store.Store
 	cfg            Config
 	mu             sync.Mutex
-	reloadMu       sync.Mutex // one reload at a time, so listen ends up current
+	downloads      downloadTickets // links the browser downloads files with (downloads.go)
+	reloadMu       sync.Mutex      // one reload at a time, so listen ends up current
 	files          fileRoots
 	runs           map[string]*execution
 	procs          map[string]*sessionRuntime
@@ -152,6 +153,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
 	mux.HandleFunc("GET /api/sessions/{id}/file", s.file)
+	mux.HandleFunc("POST /api/sessions/{id}/file/link", s.fileLink)
+	mux.HandleFunc("GET /api/download/{ticket}", s.download)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
@@ -174,7 +177,8 @@ func (s *Server) Handler() http.Handler {
 			if s.cors(w, r) {
 				return
 			}
-			if r.URL.Path != "/api/bridge/request" && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
+			// A download's ticket is its credential: the browser saves it without the token.
+			if r.URL.Path != "/api/bridge/request" && !strings.HasPrefix(r.URL.Path, "/api/download/") && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
 				fail(w, 401, s.lang(r).T("Invalid access token", "访问凭证无效"))
 				return
 			}
