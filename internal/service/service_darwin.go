@@ -50,6 +50,13 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	return nil
 }
 
+// updateDefinition rewrites the plist without reloading it: a reload would
+// stop the running host. The host reads its settings from service.json on
+// every start, so the loaded definition only matters for the executable.
+func updateDefinition(cfg *Config) error {
+	return writeFileAtomic(plistPath(), []byte(renderPlist(cfg)), 0600)
+}
+
 func unregister(dryRun bool, out io.Writer) error {
 	path := plistPath()
 	if dryRun {

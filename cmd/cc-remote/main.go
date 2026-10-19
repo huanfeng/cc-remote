@@ -263,6 +263,15 @@ func runHost(argv []string) error {
 	}
 	fs, opts := hostFlags()
 	_ = fs.Parse(argv)
+	// Under a service manager service.json is the source of truth, so a
+	// restart applies "service config" changes without re-registering.
+	var started *service.Config
+	var startedErr error
+	if *opts.serviceManager != "" {
+		if started, startedErr = service.LoadConfig(*opts.dataDir); started != nil {
+			applyServiceConfig(opts, started)
+		}
+	}
 	if *opts.lang != "" {
 		l, ok := i18n.Parse(*opts.lang)
 		if !ok {
@@ -297,6 +306,11 @@ func runHost(argv []string) error {
 			log.Printf("crash output: %v", err)
 		}
 		*opts.logFile = path
+	}
+	if startedErr != nil {
+		log.Printf("read service.json: %v; using the command line settings", startedErr)
+	} else if started != nil && len(started.Env) > 0 {
+		log.Printf("service environment: %s", service.EnvSummary(started.Env))
 	}
 	// Read by the status endpoint; set explicitly so a host spawned from a
 	// managed host's children does not inherit the marker.
@@ -402,22 +416,19 @@ func runHost(argv []string) error {
 		return err
 	}
 	defer st.Close()
-	var listeners []net.Listener
-	defer func() {
-		for _, l := range listeners {
-			l.Close()
-		}
-	}()
+	public := &http.Server{ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	errs := make(chan error, 1)
+	ls := newListenerSet(public, errs)
+	defer ls.closeAll()
 	for _, addr := range addrs {
-		l, e := net.Listen("tcp", addr)
+		l, e := listenOn(addr)
 		if e != nil {
-			e = i18n.Errorf("listen on %s: %w", "监听 %s 失败：%w", addr, e)
 			if addrInUse(e) {
 				return conflict(e)
 			}
 			return e
 		}
-		listeners = append(listeners, l)
+		ls.add(addr, l)
 	}
 	// The public bind may be a LAN-only IP. A separate loopback listener keeps
 	// process-local hooks available without exposing run credentials remotely.
@@ -428,22 +439,23 @@ func runHost(argv []string) error {
 	defer bridgeListener.Close()
 	channelURL := "http://" + bridgeListener.Addr().String()
 	wildcardPort := 0
-	bound := make([]string, 0, len(listeners))
-	loopback := false
-	for _, l := range listeners {
-		bound = append(bound, l.Addr().String())
+	bound := ls.bound()
+	loopback, wildcard := false, ""
+	for i, l := range ls.listeners() {
 		addr, ok := l.Addr().(*net.TCPAddr)
 		if !ok {
 			continue
 		}
 		if addr.IP.IsLoopback() && !loopback {
 			channelURL, loopback = "http://"+addr.String(), true
+			ls.keep = addrs[i]
 		} else if addr.IP.IsUnspecified() && wildcardPort == 0 {
-			wildcardPort = addr.Port
+			wildcardPort, wildcard = addr.Port, addrs[i]
 		}
 	}
 	if !loopback && wildcardPort != 0 {
 		channelURL = fmt.Sprintf("http://127.0.0.1:%d", wildcardPort)
+		ls.keep = wildcard
 	}
 	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\"'\"'") + "'" }
 	prefix := ""
@@ -458,17 +470,22 @@ func runHost(argv []string) error {
 	// ExitRestart and the manager starts it again (with an updated binary).
 	var restartRequested atomic.Bool
 	var restart func()
+	var reload func() (server.ReloadResult, error)
 	if *opts.serviceManager != "" {
 		restart = func() { restartRequested.Store(true); stop() }
+		reload = func() (server.ReloadResult, error) { return reloadSettings(absData, started, i18n.Current(), ls) }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart})
-	public := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart, Reload: reload})
+	public.Handler = app.Handler()
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
-	errs := make(chan error, len(listeners)+1)
-	for _, l := range listeners {
-		go func(l net.Listener) { errs <- public.Serve(l) }(l)
-	}
-	go func() { errs <- bridge.Serve(bridgeListener) }()
+	ls.serve()
+	go func() {
+		err := bridge.Serve(bridgeListener)
+		select {
+		case errs <- err:
+		default:
+		}
+	}()
 	for _, addr := range bound {
 		log.Printf("CC Remote listening at http://%s", addr)
 	}

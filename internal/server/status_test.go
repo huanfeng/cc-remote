@@ -15,7 +15,7 @@ func TestStatusShapeAndAuth(t *testing.T) {
 	s, ts, st := setup(t, nil)
 	dir := t.TempDir()
 	s.cfg.DataDir, s.cfg.Version, s.cfg.StartedAt = dir, "1.2.3", time.Now().Add(-time.Minute)
-	s.cfg.Listen = "127.0.0.1:8787, 192.168.1.20:8787"
+	s.listen = "127.0.0.1:8787, 192.168.1.20:8787"
 	s.cfg.ClaudeExecutable = "cc-remote-missing-claude-binary"
 	s.cfg.LogFile = filepath.Join(dir, "host.log")
 	if err := os.WriteFile(s.cfg.LogFile, []byte("start\nAuthorization: Bearer abc.def\ntoken "+testToken+"\nlast\n"), 0600); err != nil {

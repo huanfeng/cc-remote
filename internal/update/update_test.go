@@ -435,3 +435,24 @@ func TestReplaceExecutableWithLockedOld(t *testing.T) {
 		t.Fatalf("expected one .old-<time>, got %v", aside)
 	}
 }
+
+// The new binary gets the restart flags its release understands.
+func TestInstallFlags(t *testing.T) {
+	for _, c := range []struct {
+		tag   string
+		force bool
+		want  string
+	}{
+		{"v0.4.0", false, ""},
+		{"v0.9.0", false, "--when-idle"},
+		{"v0.10.0", false, "--when-idle"},
+		{"v0.9.0", true, ""},
+		{"v0.10.0-rc.1", true, "--force"},
+		{"v1.2.0", true, "--force"},
+		{"dev", true, "--force"},
+	} {
+		if got := strings.Join(installFlags(c.tag, c.force), " "); got != c.want {
+			t.Errorf("installFlags(%q, %v) = %q, want %q", c.tag, c.force, got, c.want)
+		}
+	}
+}

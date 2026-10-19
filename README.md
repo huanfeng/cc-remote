@@ -147,9 +147,9 @@ cc-remote service config --listen 127.0.0.1:8787,lan:8787
 | `cc-remote service status` | 查看运行状态 |
 | `cc-remote service logs -f` | 查看 / 跟踪日志 |
 | `cc-remote service restart` | 重启（另有 `start` / `stop`） |
-| `cc-remote service config` | 查看或修改监听地址、环境变量等 |
+| `cc-remote service config` | 查看或修改监听地址、环境变量等（监听地址无需重启；其它设置等会话空闲后自动重启，`--force` 立即重启） |
 | `cc-remote service uninstall` | 卸载服务（保留数据） |
-| `cc-remote update` | 更新到最新版（`--check` 只检查） |
+| `cc-remote update` | 更新到最新版，会话空闲后自动重启（`--check` 只检查，`--force` 立即重启） |
 
 ## 配置与文档
 

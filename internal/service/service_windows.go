@@ -137,6 +137,11 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	return nil
 }
 
+// updateDefinition leaves the scheduled task alone: re-creating it could stop
+// the running host, and the host reads its settings from service.json on
+// every start.
+func updateDefinition(*Config) error { return nil }
+
 func unregister(dryRun bool, out io.Writer) error {
 	if dryRun {
 		fmt.Fprintf(out, "[dry-run] schtasks /Delete /TN %q /F\n", TaskName)
@@ -256,6 +261,26 @@ func (p logAppender) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// supervisedEnv is the service environment for the next host start. The
+// scheduled task does not load the user's shell profile, so proxy settings
+// and --env values come from <data-dir>\service.json, read on every start so
+// "service config" changes apply when the host restarts itself.
+func supervisedEnv(dataDir, logPath string) map[string]string {
+	if dataDir == "" {
+		return nil
+	}
+	cfg, err := LoadConfig(dataDir)
+	if err != nil {
+		logLine(logPath, "read %s: %v; starting the host without the service environment", filepath.Join(dataDir, configName), err)
+		return nil
+	}
+	if cfg == nil || len(cfg.Env) == 0 {
+		return nil
+	}
+	logLine(logPath, "service environment: %s", EnvSummary(cfg.Env))
+	return cfg.Env
+}
+
 // Supervise runs the console host hidden and restarts it after a failed exit.
 // A clean exit (code 0, e.g. /api/admin/shutdown) ends the task.
 func Supervise(args []string) error {
@@ -275,18 +300,6 @@ func Supervise(args []string) error {
 			}
 		}
 	}
-	// The scheduled task does not load the user's shell profile, so proxy
-	// settings and --env values come from <data-dir>\service.json (the same
-	// file "service config" edits; the task's command line carries no values).
-	var env map[string]string
-	if dataDir != "" {
-		if cfg, e := LoadConfig(dataDir); e != nil {
-			logLine(logPath, "read %s: %v; starting the host without the service environment", filepath.Join(dataDir, configName), e)
-		} else if cfg != nil && len(cfg.Env) > 0 {
-			env = cfg.Env
-			logLine(logPath, "service environment: %s", envSummary(env))
-		}
-	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return err
@@ -301,7 +314,7 @@ func Supervise(args []string) error {
 	for {
 		cmd := exec.Command(exe, args...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
-		if len(env) > 0 {
+		if env := supervisedEnv(dataDir, logPath); len(env) > 0 {
 			cmd.Env = mergeEnviron(os.Environ(), env, true)
 		}
 		// Startup failures and Go runtime crashes printed before the host opens

@@ -10,10 +10,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -52,7 +54,7 @@ const serviceUsageZH = `用法：cc-remote service <命令> [参数]
 
 命令：
   install    复制可执行文件，注册并启动后台服务
-  config     查看或修改 listen/claude/env 等设置，并重启服务
+  config     查看或修改 listen/claude/env 等设置，并应用到运行中的宿主
   uninstall  停止并注销服务（--purge-binary 同时删除复制的可执行文件）
   start      启动服务并等待它响应
   stop       正常停止服务（失败时交给服务管理器）
@@ -69,7 +71,7 @@ const serviceUsageEN = `usage: cc-remote service <command> [flags]
 
 commands:
   install    copy the executable, register and start the background service
-  config     show or change listen/claude/env settings and restart the service
+  config     show or change listen/claude/env settings and apply them to the running host
   uninstall  stop and unregister the service (--purge-binary removes the copy)
   start      start the service and wait until it answers
   stop       stop the service gracefully (falls back to the service manager)
@@ -253,6 +255,17 @@ func applyLanguage(cfg *Config, set map[string]bool, value string) error {
 	return nil
 }
 
+// noteAutoLanguage records what "auto" stands for (see Config.AutoLanguage):
+// the current language when first saved or when --lang is given, so a
+// one-off CC_REMOTE_LANG on another change does not switch the service.
+func noteAutoLanguage(cfg *Config, explicit bool) {
+	if cfg.Language != "" {
+		cfg.AutoLanguage = ""
+	} else if explicit || cfg.AutoLanguage == "" {
+		cfg.AutoLanguage = string(i18n.Current())
+	}
+}
+
 // applySettings updates cfg from explicitly set flags and fills missing defaults.
 func applySettings(cfg *Config, set map[string]bool, listenVals []string, claudeBin, configDir string, allowInsecure bool, out io.Writer) error {
 	if set["allow-insecure-remote"] {
@@ -344,7 +357,8 @@ func installCmd(args []string, version string) error {
 	lang := fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language, default), zh or en", "提示信息和 Web 界面的语言：auto（跟随系统，默认）、zh 或 en"))
 	idF := addIdentityFlags(fs)
 	noStart := fs.Bool("no-start", false, i18n.T("register without starting", "只注册，不启动"))
-	whenIdle := fs.Bool("when-idle", false, i18n.T("replace the executable without stopping a running host; it restarts itself once no session is busy", "替换可执行文件但不停止运行中的宿主；等没有忙碌的会话时它会自行重启"))
+	force := fs.Bool("force", false, i18n.T("stop a running host right away, even with busy sessions (default: it keeps running and restarts itself once no session is busy)", "立即停止运行中的宿主，即使有忙碌的会话（默认：宿主继续运行，等没有忙碌的会话时自行重启）"))
+	_ = fs.Bool("when-idle", false, i18n.T("the default now; accepted for older scripts", "现已是默认行为；为兼容旧脚本保留"))
 	withAlias := fs.Bool("alias", false, i18n.T("also install the ccr alias", "同时安装 ccr 别名"))
 	dryRun := fs.Bool("dry-run", false, dryRunHelp())
 	envF := addEnvFlags(fs, i18n.T("capture HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY from the current environment (default when the installation has no environment configured yet)", "从当前环境捕获 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY（安装尚未配置环境变量时默认捕获）"))
@@ -387,6 +401,7 @@ func installCmd(args []string, version string) error {
 	if err = applyEnv(cfg, capture, os.Environ(), envF.vals, foldEnvCase(), out); err != nil {
 		return err
 	}
+	noteAutoLanguage(cfg, set["lang"])
 	if cfg.Exe, err = InstalledExe(); err != nil {
 		return err
 	}
@@ -397,17 +412,28 @@ func installCmd(args []string, version string) error {
 	if err != nil {
 		return err
 	}
-	// --when-idle leaves a running service alone: the executable is swapped
-	// (a running one is moved aside) and the host restarts itself when idle.
-	hostURL, _ := findHost(cfg)
-	deferred := *whenIdle && existing != nil && hostURL != "" && !*dryRun
+	// A running service is left alone unless --force: the executable is
+	// swapped (a running one is moved aside) and the host restarts itself
+	// when idle. The running host listens where the old settings say.
+	prev := cfg
+	if existing != nil {
+		c := *existing
+		c.DataDir = absData
+		prev = &c
+	}
+	hostURL, _ := findHost(prev)
+	deferred := !*force && existing != nil && hostURL != "" && !*dryRun
 	if *dryRun {
 		fmt.Fprintln(out, dryRunNoChanges())
-		fmt.Fprint(out, i18n.F("[dry-run] stop any host answering at %s\n", "[dry-run] 停止在 %s 响应的宿主\n", strings.Join(listen.ProbeURLs(cfg.Listen), ", ")))
+		if !*force && existing != nil && hostURL != "" {
+			fmt.Fprint(out, i18n.F("[dry-run] leave the host at %s running and ask it to restart once idle\n", "[dry-run] 不停止 %s 上的宿主，请求它空闲后重启\n", hostURL))
+		} else {
+			fmt.Fprint(out, i18n.F("[dry-run] stop any host answering at %s\n", "[dry-run] 停止在 %s 响应的宿主\n", strings.Join(listen.ProbeURLs(prev.Listen), ", ")))
+		}
 	} else if deferred {
-		fmt.Fprint(out, i18n.F("Host running at %s; installing without stopping it (--when-idle)\n", "宿主正在 %s 运行；安装时不停止它（--when-idle）\n", hostURL))
+		fmt.Fprint(out, i18n.F("Host running at %s; installing without stopping it (to restart now: --force)\n", "宿主正在 %s 运行；安装时不停止它（立即重启：--force）\n", hostURL))
 	} else if existing != nil || hostAnswering(cfg) {
-		if err = stop(cfg, out); err != nil {
+		if err = stop(prev, out); err != nil {
 			return err
 		}
 	}
@@ -423,25 +449,34 @@ func installCmd(args []string, version string) error {
 		fmt.Fprint(out, wrote(filepath.Join(absData, configName)))
 	}
 	if deferred {
-		// Re-registering could restart the service; its definition reads
-		// the settings from service.json, written above.
+		// Re-registering could restart the service; the host reads its
+		// settings from service.json, written above, when it starts again.
+		if err = updateDefinition(cfg); err != nil {
+			fmt.Fprint(out, warning(err))
+		}
 		if *withAlias || aliasInstalled() {
 			if err = installAlias(aliasOptions{}, out); err != nil {
 				return err
 			}
 		}
 		busy, supported, err := requestRestart(hostURL, readToken(cfg.DataDir))
+		if err == nil && !supported {
+			err = errNoSelfRestart
+		}
 		switch {
+		case errors.Is(err, errNotService), errors.Is(err, errNoSelfRestart):
+			// A host started by hand, or one too old to restart itself,
+			// holds the address: replace it as before.
+			fmt.Fprintln(out, replacingHost(err))
+			if err = stop(prev, out); err != nil {
+				return err
+			}
 		case err != nil:
 			return i18n.Errorf("new version installed, but asking the host to restart failed: %w (run: cc-remote service restart)", "新版本已安装，但请求宿主重启失败：%w（请运行：cc-remote service restart）", err)
-		case !supported:
-			fmt.Fprintln(out, i18n.T("New version installed. The running host is too old to restart itself; run cc-remote service restart when it is idle.", "新版本已安装。运行中的宿主版本较旧，不能自动重启；空闲时运行 cc-remote service restart 生效。"))
-		case len(busy) == 0:
-			fmt.Fprintln(out, i18n.T("New version installed; no session is busy, the host is restarting.", "新版本已安装，没有忙碌的会话，宿主正在重启。"))
 		default:
-			fmt.Fprint(out, i18n.F("New version installed. The host restarts by itself once these sessions are idle: %s\n", "新版本已安装。宿主会在这些会话空闲后自动重启：%s\n", strings.Join(busy, i18n.T(", ", "、"))))
+			printRestart(out, busy, i18n.T("New version installed", "新版本已安装"))
+			return nil
 		}
-		return nil
 	}
 	if err = register(cfg, *dryRun, out); err != nil {
 		return err
@@ -511,7 +546,8 @@ func configCmd(args []string) error {
 	allowInsecure := fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (=false to revoke)", "允许 all:/0.0.0.0/:: 监听地址（=false 撤销）"))
 	lang := fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language), zh or en", "提示信息和 Web 界面的语言：auto（跟随系统）、zh 或 en"))
 	idF := addIdentityFlags(fs)
-	noRestart := fs.Bool("no-restart", false, i18n.T("save without restarting the service", "只保存，不重启服务"))
+	noRestart := fs.Bool("no-restart", false, i18n.T("save only; a running host applies the settings when it next restarts", "只保存；运行中的宿主下次重启时生效"))
+	force := fs.Bool("force", false, i18n.T("restart the host right away, even with busy sessions (default: listen addresses apply without a restart, other settings once no session is busy)", "立即重启宿主，即使有忙碌的会话（默认：监听地址无需重启即生效，其它设置等没有忙碌的会话时重启生效）"))
 	dryRun := fs.Bool("dry-run", false, dryRunHelp())
 	envF := addEnvFlags(fs, i18n.T("capture HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY from the current environment", "从当前环境捕获 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY"))
 	if err := fs.Parse(args); err != nil {
@@ -523,6 +559,12 @@ func configCmd(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The running host listens where the old settings say; they are saved
+	// again if it cannot apply the new ones.
+	prev := *cfg
+	prev.Listen = slices.Clone(cfg.Listen)
+	prev.Env = maps.Clone(cfg.Env)
+	prev.EnvRemoved = slices.Clone(cfg.EnvRemoved)
 	out := os.Stdout
 	envChange := set["env"] || set["capture-env"] || set["no-capture-env"]
 	// The host reads its name and colour on every page load: no restart.
@@ -551,28 +593,143 @@ func configCmd(args []string) error {
 			return err
 		}
 	}
+	noteAutoLanguage(cfg, set["lang"])
 	if *dryRun {
 		fmt.Fprintln(out, dryRunNoChanges())
 		fmt.Fprint(out, i18n.F("[dry-run] write service.json:\n%s\n", "[dry-run] 写入 service.json：\n%s\n", redactedJSON(cfg)))
-	} else if err = SaveConfig(cfg); err != nil {
+		printExposure(cfg, out)
+		switch {
+		case *noRestart:
+		case *force:
+			if err = register(cfg, true, out); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, i18n.T("[dry-run] restart the service", "[dry-run] 重启服务"))
+		default:
+			fmt.Fprintln(out, i18n.T("[dry-run] apply the settings to the running host; restart it once idle if needed", "[dry-run] 把设置应用到运行中的宿主；需要时等空闲后重启"))
+		}
+		return nil
+	}
+	if err = SaveConfig(cfg); err != nil {
 		return err
 	}
-	if err = register(cfg, *dryRun, out); err != nil {
-		return err
+	hostURL, _ := findHost(&prev)
+	restartNow := func() error {
+		if err := register(cfg, false, out); err != nil {
+			return err
+		}
+		printExposure(cfg, out)
+		if *noRestart {
+			fmt.Fprintln(out, i18n.T("Saved; restart with: cc-remote service restart", "已保存；用此命令重启生效：cc-remote service restart"))
+			return nil
+		}
+		if hostURL != "" {
+			if err := stop(&prev, out); err != nil {
+				return err
+			}
+		}
+		return start(cfg, out)
+	}
+	if *force || hostURL == "" {
+		return restartNow()
+	}
+	// Re-registering could stop the running host; it reads service.json
+	// when it starts again.
+	if err = updateDefinition(cfg); err != nil {
+		fmt.Fprint(out, warning(err))
 	}
 	printExposure(cfg, out)
-	if *dryRun {
-		fmt.Fprintln(out, i18n.T("[dry-run] restart the service", "[dry-run] 重启服务"))
-		return nil
-	}
 	if *noRestart {
-		fmt.Fprintln(out, i18n.T("Saved; restart with: cc-remote service restart", "已保存；用此命令重启生效：cc-remote service restart"))
+		fmt.Fprintln(out, i18n.T("Saved; the running host applies it when it next restarts (now: cc-remote service config --force).", "已保存；运行中的宿主下次重启时生效（立即生效：cc-remote service config --force）。"))
 		return nil
 	}
-	if err = stop(cfg, out); err != nil {
+	err = applyToHost(hostURL, cfg, out)
+	var failed reloadFailed
+	switch {
+	case errors.Is(err, errNotService), errors.Is(err, errNoSelfRestart):
+		// A host started by hand, or one too old to restart itself, holds
+		// the address: replace it as before.
+		fmt.Fprintln(out, replacingHost(err))
+		return restartNow()
+	case errors.As(err, &failed):
+		// Kept, the new settings would fail on the next start instead.
+		if serr := SaveConfig(&prev); serr != nil {
+			return i18n.Errorf("the running host could not apply the settings: %w; restoring the previous ones failed too: %v", "运行中的宿主无法应用新设置：%w；恢复原来的设置也失败了：%v", failed.error, serr)
+		}
+		if derr := updateDefinition(&prev); derr != nil {
+			fmt.Fprint(out, warning(derr))
+		}
+		return i18n.Errorf("the running host could not apply the settings: %w; the previous settings are kept", "运行中的宿主无法应用新设置：%w；已恢复原来的设置", failed.error)
+	}
+	return err
+}
+
+// errNoSelfRestart is a running host too old to restart itself (before v0.5).
+var errNoSelfRestart = errors.New("the running host cannot restart itself")
+
+// reloadFailed is a host that could not apply saved settings (a new listen
+// address is in use, say); nothing changed on it.
+type reloadFailed struct{ error }
+
+// replacingHost explains why a running host is stopped after all.
+func replacingHost(err error) string {
+	if errors.Is(err, errNoSelfRestart) {
+		return i18n.T("The running host is too old to restart itself; stopping it and starting the service.", "运行中的宿主版本较旧，不能自动重启；停止它并启动服务。")
+	}
+	return i18n.T("The host answering here was not started by the service; stopping it and starting the service.", "此地址上运行的宿主不是由服务启动的；停止它并启动服务。")
+}
+
+// applyToHost has the running host take the saved settings: what it can
+// right away, the rest by restarting itself once no session is busy.
+func applyToHost(hostURL string, cfg *Config, out io.Writer) error {
+	token := readToken(cfg.DataDir)
+	bound, restart, supported, err := requestReload(hostURL, token)
+	if errors.Is(err, errNotService) {
 		return err
 	}
-	return start(cfg, out)
+	if err != nil {
+		return reloadFailed{err}
+	}
+	if supported && len(restart) == 0 {
+		fmt.Fprint(out, i18n.F("Applied without a restart; listening at %s\n", "已生效，无需重启；正在监听 %s\n", strings.Join(bound, ", ")))
+		return nil
+	}
+	if supported {
+		names := make([]string, len(restart))
+		for i, name := range restart {
+			names[i] = name
+			if name != "service.json" {
+				names[i] = "--" + name
+			}
+		}
+		fmt.Fprint(out, i18n.F("Listening at %s; %s take effect after a restart.\n", "正在监听 %s；%s 需要重启后生效。\n", strings.Join(bound, ", "), strings.Join(names, i18n.T(", ", "、"))))
+		// The address found before may have been dropped by the reload.
+		if u, _ := findHost(cfg); u != "" {
+			hostURL = u
+		}
+	}
+	busy, supported, err := requestRestart(hostURL, token)
+	if errors.Is(err, errNotService) {
+		return err
+	}
+	if err != nil {
+		return i18n.Errorf("settings saved, but asking the host to restart failed: %w (run: cc-remote service restart)", "设置已保存，但请求宿主重启失败：%w（请运行：cc-remote service restart）", err)
+	}
+	if !supported {
+		return errNoSelfRestart
+	}
+	printRestart(out, busy, i18n.T("Settings saved", "设置已保存"))
+	return nil
+}
+
+// printRestart reports a requested restart after done ("New version installed").
+func printRestart(out io.Writer, busy []string, done string) {
+	switch {
+	case len(busy) == 0:
+		fmt.Fprint(out, i18n.F("%s; no session is busy, the host is restarting (terminal sessions come back by themselves).\n", "%s；没有忙碌的会话，宿主正在重启（终端会话会自动恢复）。\n", done))
+	default:
+		fmt.Fprint(out, i18n.F("%s. The host restarts by itself once these sessions are idle: %s (to restart now: --force)\n", "%s。宿主会在这些会话空闲后自动重启：%s（立即重启：--force）\n", done, strings.Join(busy, i18n.T(", ", "、"))))
+	}
 }
 
 // field prints "Label:   value" with the value in column 16; East Asian
@@ -608,7 +765,7 @@ func printConfig(cfg *Config, out io.Writer) {
 		field(out, "Language", "语言", cfg.Language)
 	}
 	if len(cfg.Env) > 0 {
-		field(out, "Env", "环境变量", envSummary(cfg.Env))
+		field(out, "Env", "环境变量", EnvSummary(cfg.Env))
 	}
 	field(out, "Executable", "可执行文件", cfg.Exe)
 	field(out, "Log file", "日志文件", cfg.LogFile)

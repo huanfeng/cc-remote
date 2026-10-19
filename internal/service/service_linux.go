@@ -53,6 +53,16 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 	return nil
 }
 
+// updateDefinition rewrites the unit for the next start without touching the
+// running host (daemon-reload does not restart it).
+func updateDefinition(cfg *Config) error {
+	if err := writeFileAtomic(unitPath(), []byte(renderUnit(cfg)), 0600); err != nil {
+		return err
+	}
+	_, err := runQuiet("systemctl", "--user", "daemon-reload")
+	return err
+}
+
 func unregister(dryRun bool, out io.Writer) error {
 	path := unitPath()
 	if dryRun {

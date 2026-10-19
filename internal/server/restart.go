@@ -113,3 +113,40 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 }
+
+// ReloadResult is the outcome of a settings reload: the addresses bound now,
+// and the settings (by flag name) that only a restart applies.
+type ReloadResult struct {
+	Listen  []string `json:"listen"`
+	Restart []string `json:"restart,omitempty"`
+}
+
+// reload is POST /api/admin/reload: "service config" saved new settings and
+// the host applies what it can without interrupting any session.
+func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
+	l := s.lang(r)
+	if !localAdmin(w, r, l, l.T("reload the host settings", "重新加载宿主设置")) {
+		return
+	}
+	if s.cfg.Reload == nil {
+		fail(w, 501, l.T("This host is not running as a service and cannot reload its settings", "当前宿主不是作为服务运行，无法重新加载设置"))
+		return
+	}
+	s.reloadMu.Lock()
+	res, err := s.cfg.Reload()
+	if len(res.Listen) > 0 {
+		s.mu.Lock()
+		s.listen = strings.Join(res.Listen, ",")
+		s.mu.Unlock()
+	}
+	s.reloadMu.Unlock()
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	log.Printf("Settings reloaded; listening at %s", strings.Join(res.Listen, ", "))
+	if len(res.Restart) > 0 {
+		log.Printf("Changed settings that need a restart: %s", strings.Join(res.Restart, ", "))
+	}
+	respond(w, 200, res)
+}

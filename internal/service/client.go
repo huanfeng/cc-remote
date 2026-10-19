@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -12,6 +13,10 @@ import (
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
 )
+
+// errNotService is the answer of a host that runs without a service manager
+// (started by hand), which can neither reload nor restart itself.
+var errNotService = errors.New("the host is not running as a service")
 
 func readToken(dataDir string) string {
 	if t := strings.TrimSpace(os.Getenv("CC_REMOTE_TOKEN")); t != "" {
@@ -114,7 +119,10 @@ func requestRestart(url, token string) (busy []string, supported bool, err error
 		return nil, false, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotImplemented {
+	if resp.StatusCode == http.StatusNotImplemented {
+		return nil, true, errNotService
+	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return nil, false, nil
 	}
 	if resp.StatusCode/100 != 2 {
@@ -126,6 +134,41 @@ func requestRestart(url, token string) (busy []string, supported bool, err error
 	}
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
 	return out.Busy, true, nil
+}
+
+// requestReload asks the running host to apply the saved service.json. It
+// returns the addresses bound now and the settings that need a restart, or
+// supported=false for a host too old to reload.
+func requestReload(url, token string) (bound, restart []string, supported bool, err error) {
+	resp, err := request("POST", url+"/api/admin/reload", token, 10*time.Second)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotImplemented {
+		return nil, nil, true, errNotService
+	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil, nil, false, nil
+	}
+	if resp.StatusCode/100 != 2 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if json.Unmarshal(b, &e) != nil || e.Error == "" {
+			e.Error = resp.Status + " " + strings.TrimSpace(string(b))
+		}
+		return nil, nil, true, errors.New(e.Error)
+	}
+	var out struct {
+		Listen  []string `json:"listen"`
+		Restart []string `json:"restart"`
+	}
+	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return nil, nil, true, err
+	}
+	return out.Listen, out.Restart, true, nil
 }
 
 // fetchStatus reads /api/status, falling back to /api/info on older hosts.

@@ -265,7 +265,10 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		dbBytes = fileSize(db) + fileSize(db+"-wal") + fileSize(db+"-shm")
 	}
 	logFile := s.logPath()
-	addrs, ls := listeners(s.cfg.Listen)
+	s.mu.Lock()
+	bound := s.listen
+	s.mu.Unlock()
+	addrs, ls := listeners(bound)
 	manager := os.Getenv("CC_REMOTE_SERVICE_MANAGER")
 	uptime := int64(0)
 	startedAt := ""
@@ -275,7 +278,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, 200, map[string]any{
 		"version": s.cfg.Version, "pid": os.Getpid(), "startedAt": startedAt, "uptimeSeconds": uptime,
-		"listen": s.cfg.Listen, "listenAddresses": addrs, "listeners": ls,
+		"listen": bound, "listenAddresses": addrs, "listeners": ls,
 		"dataDir": s.cfg.DataDir, "claudeConfigDir": s.cfg.ClaudeConfigDir, "logFile": logFile,
 		"goVersion": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
 		"claude":          s.claudeVersion(),

@@ -51,6 +51,10 @@ type Config struct {
 	// Restart asks the host process to exit so its service manager starts it
 	// again (an installed update takes effect); nil when not run as a service.
 	Restart func()
+	// Reload applies the service settings it can while running (listen
+	// addresses) and names the ones that need a restart; nil when not run as
+	// a service.
+	Reload func() (ReloadResult, error)
 }
 
 // execution is a busy period of a managed session (see runtime.go).
@@ -83,6 +87,7 @@ type Server struct {
 	store          *store.Store
 	cfg            Config
 	mu             sync.Mutex
+	reloadMu       sync.Mutex // one reload at a time, so listen ends up current
 	runs           map[string]*execution
 	procs          map[string]*sessionRuntime
 	terminals      map[string]*terminalSession // running terminal sessions by session ID
@@ -93,8 +98,9 @@ type Server struct {
 	idleTimeout    time.Duration // guarded by mu
 	requests       map[string]*pending
 	closing        bool
-	restartPending bool // a restart waits for busy sessions (update installed)
-	closedOnce     bool // Close saved the running terminal sessions
+	restartPending bool   // a restart waits for busy sessions (update installed)
+	listen         string // bound addresses, guarded by mu; changed by a reload
+	closedOnce     bool   // Close saved the running terminal sessions
 	channels       map[string]*channelConnection
 	modelCache     modelsCache
 	statusCache    statusCache
@@ -108,7 +114,7 @@ func New(st *store.Store, cfg Config) *Server {
 	if start == nil {
 		start = defaultProcessStarter(cfg)
 	}
-	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
+	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
 	return s
 }
@@ -124,6 +130,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
 	mux.HandleFunc("POST /api/admin/shutdown", s.shutdown)
 	mux.HandleFunc("POST /api/admin/restart", s.restart)
+	mux.HandleFunc("POST /api/admin/reload", s.reload)
 	mux.HandleFunc("GET /api/claude/settings", s.settings)
 	mux.HandleFunc("PUT /api/claude/settings", s.settings)
 	mux.HandleFunc("GET /api/preferences", s.preferences)

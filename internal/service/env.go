@@ -112,7 +112,8 @@ func envDisplay(key, value string) string {
 	return key + "=" + value
 }
 
-func envSummary(env map[string]string) string {
+// EnvSummary lists the service environment with secret values masked.
+func EnvSummary(env map[string]string) string {
 	parts := make([]string, 0, len(env))
 	for _, k := range sortedKeys(env) {
 		parts = append(parts, envDisplay(k, env[k]))
@@ -140,24 +141,38 @@ func applyEnv(cfg *Config, capture bool, environ, envVals []string, foldCase boo
 		got := captureProxyEnv(environ, foldCase)
 		for _, k := range sortedKeys(got) {
 			setEnv(cfg.Env, k, got[k], foldCase)
+			cfg.EnvRemoved = withoutKey(cfg.EnvRemoved, k, foldCase)
 		}
 		if len(got) == 0 {
 			fmt.Fprintln(out, i18n.T("No proxy variables (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY) found in the current environment", "当前环境中没有代理变量（HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY）"))
 		} else {
-			fmt.Fprint(out, i18n.F("Captured service environment: %s\n", "已捕获服务环境变量：%s\n", envSummary(got)))
+			fmt.Fprint(out, i18n.F("Captured service environment: %s\n", "已捕获服务环境变量：%s\n", EnvSummary(got)))
 		}
 	}
 	for _, p := range parsed {
 		if p.v == "" {
 			if deleteEnv(cfg.Env, p.k, foldCase) {
 				fmt.Fprint(out, i18n.F("Removed service environment: %s\n", "已删除服务环境变量：%s\n", p.k))
+				cfg.EnvRemoved = append(withoutKey(cfg.EnvRemoved, p.k, foldCase), p.k)
 			}
 			continue
 		}
 		setEnv(cfg.Env, p.k, p.v, foldCase)
+		cfg.EnvRemoved = withoutKey(cfg.EnvRemoved, p.k, foldCase)
 		fmt.Fprint(out, i18n.F("Set service environment: %s\n", "已设置服务环境变量：%s\n", envDisplay(p.k, p.v)))
 	}
 	return nil
+}
+
+// withoutKey drops key from keys.
+func withoutKey(keys []string, key string, foldCase bool) []string {
+	var out []string
+	for _, k := range keys {
+		if !envKeyEqual(k, key, foldCase) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // mergeEnviron returns base with overrides applied (replacing any existing

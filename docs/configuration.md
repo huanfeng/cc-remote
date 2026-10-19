@@ -83,13 +83,13 @@ cc-remote --listen 127.0.0.1:8787,lan:8787
 命令行输出（`cc-remote`、`ccr`、`service`、`update` 等）和 Web 界面的默认语言支持简体中文和英文：
 
 - 宿主：`--lang auto|zh|en`。`auto`（默认）跟随系统语言：Windows 取用户界面语言，Linux / macOS 依次取 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`；中文环境为中文，其它为英文。
-- 后台服务：`service install --lang zh` 或 `service config --lang en` 保存到 `service.json` 的 `language` 字段（`auto` 清除该字段），服务启动宿主时以 `--lang` 传入。重装 / `update` 未传 `--lang` 时沿用原设置。`auto` 在安装、`service config`、`update` 时按当前终端的语言确定（launchd / systemd 启动的宿主拿不到你的 `LANG`），之后改了系统语言，再执行一次 `service config --lang auto` 即可。
+- 后台服务：`service install --lang zh` 或 `service config --lang en` 保存到 `service.json` 的 `language` 字段（`auto` 清除该字段），宿主每次启动时读取。重装 / `update` 未传 `--lang` 时沿用原设置。`auto` 在安装、`service config`、`update` 时按当前终端的语言确定（launchd / systemd 启动的宿主拿不到你的 `LANG`），之后改了系统语言，再执行一次 `service config --lang auto` 即可。
 - 手动运行的命令和手动启动的宿主（未传 `--lang`）：依次取环境变量 `CC_REMOTE_LANG`、已安装服务的 `language`、系统语言。
 - Web 界面：默认使用宿主的语言，每个浏览器可以在网页设置中单独选择语言。
 - 宿主日志（`host.log`）、Claude Code 看到的钩子 / MCP 文本不翻译，保持英文。
 
 ```sh
-cc-remote service config --lang zh      # 改为中文并重启服务
+cc-remote service config --lang zh      # 改为中文（宿主空闲时自动重启生效）
 cc-remote service config --lang auto    # 恢复跟随系统
 CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 ```
@@ -113,7 +113,7 @@ CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 
    ```sh
    cc-remote --allow-origin https://ccr.example.com              # 前台运行
-   cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com   # 后台服务，自动重启
+   cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com   # 后台服务，空闲时自动重启生效
    ```
 
 3. 打开前端，填入宿主地址（如 `https://w1.example.com:58985`）和该宿主的访问令牌。
@@ -135,20 +135,20 @@ CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 | Linux | systemd 用户单元 `~/.config/systemd/user/cc-remote.service` | `${XDG_DATA_HOME:-~/.local/share}/cc-remote/bin/cc-remote` |
 | macOS | LaunchAgent `~/Library/LaunchAgents/com.cc-remote.host.plist` | `~/Library/Application Support/cc-remote/bin/cc-remote` |
 
-安装时复制当前可执行文件；更新只需用新版本再执行一次 `service install`（自动停止、复制、重新注册、启动），`cc-remote update` 和安装脚本也是这样做的。
+安装时复制当前可执行文件；更新只需用新版本再执行一次 `service install`（复制、更新服务定义，宿主空闲时自动重启到新版本），`cc-remote update` 和安装脚本也是这样做的。
 
 ```sh
 cc-remote service install                                   # 默认 127.0.0.1:8787，并启动
 cc-remote service install --listen 127.0.0.1:8787 --listen lan:8787 --alias
 cc-remote service config                                    # 查看当前配置
-cc-remote service config --listen 127.0.0.1:8787,lan:8787   # 修改监听地址并重启服务
+cc-remote service config --listen 127.0.0.1:8787,lan:8787   # 修改监听地址（无需重启）
 cc-remote service status                                    # --json 输出 JSON；未运行时退出码 3
 cc-remote service logs -n 200 -f
 cc-remote service stop | start | restart
 cc-remote service uninstall                                 # 保留数据目录；--purge-binary 同时删除副本
 ```
 
-- `install` 参数：`--listen`（可重复）、`--data-dir`、`--claude`（安装时解析为绝对路径）、`--claude-config-dir`、`--allow-insecure-remote`、`--lang`、`--env` / `--capture-env` / `--no-capture-env`、`--no-start`、`--alias`、`--dry-run`（只打印将执行的操作、任务 XML / unit / plist；环境变量值打码）。
+- `install` 参数：`--listen`（可重复）、`--data-dir`、`--claude`（安装时解析为绝对路径）、`--claude-config-dir`、`--allow-insecure-remote`、`--lang`、`--env` / `--capture-env` / `--no-capture-env`、`--no-start`、`--alias`、`--force`（立即重启运行中的宿主）、`--dry-run`（只打印将执行的操作、任务 XML / unit / plist；环境变量值打码）。
 - 重复安装（包括 `update` 和安装脚本）未传 `--data-dir` 时，沿用安装目录中 `service.json` 副本记录的数据目录、监听地址、Claude 路径、Claude 配置目录、界面语言和服务环境变量；显式传入的参数覆盖原值。
 - 配置保存在 `<数据目录>/service.json`，安装目录保留一份副本，`config`/`start`/`stop`/`status`/`logs`/`uninstall` 据此找到非默认数据目录。
 - `stop` 先请求宿主优雅退出（不会被服务管理器重新拉起），15 秒未退出再强制结束。宿主异常退出时自动重启。
@@ -157,6 +157,20 @@ cc-remote service uninstall                                 # 保留数据目录
 - Linux / macOS 安装时把当前 `PATH` 写入服务环境，以便找到 `claude` / `node`。Linux 需要开机即启动（无需登录）时执行 `loginctl enable-linger $USER`。
 - 日志：`<数据目录>/host.log`；Windows 监督进程把宿主 stderr 也追加到其中；macOS 的 `<数据目录>/launchd.log` 只接收宿主打开 `host.log` 之前的输出。
 - `uninstall --purge-binary` 删除副本目录，并从用户 PATH 中移除该目录。
+
+### 修改设置与重启
+
+原则是尽量不打断正在进行的工作：
+
+- `service config`：先保存到 `service.json`，再让运行中的宿主重新加载。监听地址（`--listen`、`--allow-insecure-remote`）立即生效，不重启；`--claude`、`--claude-config-dir`、`--lang`、`--env` 需要重启，宿主会等到没有会话在执行、等待回答或运行后台任务时自动重启，并列出正在忙碌的会话。主机名称与颜色本来就不需要重启。
+- `service install`（以及 `update`、安装脚本）：宿主在运行时不停止它，只替换程序，等空闲后自动重启到新版本。
+- 加 `--force`：立即重启，不等会话空闲（`service config --force`、`service install --force`、`update --force`）。`--no-restart` 只保存，宿主下次重启时生效。
+- `service restart` 始终立即重启。
+- 宿主不在运行时，各命令按原样注册并启动服务。
+
+监听地址热更新时，新地址绑定失败（例如端口被占用）则报错并恢复原来的 `service.json`，本次的其它修改也不保存，其它地址不受影响（只有与新地址同端口、且一方是 `0.0.0.0` / `::` 的旧地址会先关闭，失败后重新绑定）。移除的地址约 1 秒后断开经它建立的连接。`ccr` 和本机钩子使用的回环地址（通常是第一个回环地址）不能在运行时移除，修改它会改为空闲重启。
+
+重启由宿主以退出码 76 退出、服务管理器重新拉起完成。宿主每次启动都从 `service.json` 读取监听地址、Claude 路径、语言和环境变量（`auto` 语言按保存设置时终端的语言确定，记在 `autoLanguage`），因此 Windows 计划任务和 macOS LaunchAgent 在修改设置时不需要重新注册（重新注册会立即停止宿主；macOS 只重写 plist，不重新加载）；Linux 的 unit 文件随之更新并 `daemon-reload`，不影响运行中的宿主。宿主不是由服务启动的，或版本早于 v0.5、不能自动重启时，仍按原来的方式停止它并启动服务。重启前正在运行的终端会话记在 `restore.json`，重启后自动恢复，接入中的 `ccr` 会自动重新接入。
 
 ### 服务环境变量与代理
 
@@ -171,7 +185,7 @@ cc-remote service config --capture-env      # 在已设好代理的终端里重�
 cc-remote service config --env HTTPS_PROXY= # 删除
 ```
 
-变量保存在 `service.json`（权限 0600）的 `env` 中，通过 `--env` 传入的密钥也以明文保存。Windows 监督进程启动时把它们合并进宿主及其启动的 `claude` 的环境；Linux 写入 unit 的 `Environment=`，macOS 写入 plist 的 `EnvironmentVariables`。`service status` / `config` 的 `Env:` 行显示代理变量的值（URL 中的密码隐去），其它变量显示 `****`。修改后服务自动重启。
+变量保存在 `service.json`（权限 0600）的 `env` 中，通过 `--env` 传入的密钥也以明文保存。Windows 监督进程每次启动宿主时读取它们，Linux / macOS 写入 unit 的 `Environment=` / plist 的 `EnvironmentVariables`；宿主启动时还会再从 `service.json` 设置一次，并清除用 `--env KEY=` 删除过的变量（记在 `envRemoved`），所以无需重新注册服务也能生效。删除过的变量即使由系统或用户环境提供也会被清除，直到再次用 `--env` 设置它。`service status` / `config` 的 `Env:` 行显示代理变量的值（URL 中的密码隐去），其它变量显示 `****`。修改后宿主空闲时自动重启生效。
 
 ### ccr 别名
 

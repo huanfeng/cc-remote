@@ -2,8 +2,9 @@
 # cc-remote installer / updater for Linux and macOS.
 #
 # Re-running the script updates an existing installation in place: the new
-# binary's "service install" stops the service, copies itself to the stable
-# location and starts it again.
+# binary's "service install" copies itself to the stable location; a running
+# service restarts itself once no session is busy (pass --force to restart it
+# right away).
 #
 # Public releases download anonymously. For a private fork (CC_REMOTE_REPO),
 # credentials are used when available:

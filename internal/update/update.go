@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"cc-remote/internal/i18n"
@@ -24,7 +25,7 @@ const checksumsName = "checksums.txt"
 
 type updater struct {
 	repo, current string
-	whenIdle      bool // service install --when-idle
+	force         bool // service install --force: restart the running host now
 	goos, goarch  string
 	src           source
 	out           io.Writer
@@ -42,12 +43,13 @@ func Run(current string, args []string) error {
 	check := fs.Bool("check", false, i18n.T("only report whether a newer release exists", "只检查是否有更新的版本"))
 	version := fs.String("version", "", i18n.T("install this release tag instead of the latest (e.g. v0.2.0)", "安装指定版本标签而不是最新版（例如 v0.2.0）"))
 	yes := fs.Bool("yes", false, i18n.T("install even when not newer (dev builds, reinstall, downgrade)", "即使不是更新的版本也安装（开发版、重装、降级）"))
-	whenIdle := fs.Bool("when-idle", false, i18n.T("install without stopping the running service; it restarts itself once no session is busy", "安装时不停止运行中的服务；等没有忙碌的会话时它会自行重启"))
+	force := fs.Bool("force", false, i18n.T("restart the running service right away, even with busy sessions (default: it restarts itself once no session is busy)", "立即重启运行中的服务，即使有忙碌的会话（默认：等没有忙碌的会话时自行重启）"))
+	_ = fs.Bool("when-idle", false, i18n.T("the default now; accepted for older scripts", "现已是默认行为；为兼容旧脚本保留"))
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return i18n.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes] [--when-idle]", "用法：cc-remote update [--check] [--version vX.Y.Z] [--yes] [--when-idle]")
+		return i18n.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes] [--force]", "用法：cc-remote update [--check] [--version vX.Y.Z] [--yes] [--force]")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -65,7 +67,7 @@ func Run(current string, args []string) error {
 		repo = DefaultRepo
 	}
 	u := &updater{
-		repo: repo, current: current, whenIdle: *whenIdle,
+		repo: repo, current: current, force: *force,
 		goos: runtime.GOOS, goarch: runtime.GOARCH,
 		src: pickSource(repo), out: os.Stdout,
 		exePath: exe, installedPath: installed,
@@ -200,10 +202,7 @@ func (u *updater) serviceInstalled() bool {
 func (u *updater) apply(bin, tag string) error {
 	if u.serviceInstalled() {
 		fmt.Fprint(u.out, i18n.F("service installation found at %s; running \"service install\" from %s\n", "在 %s 发现服务安装；运行 %s 的 \"service install\"\n", u.installedPath, tag))
-		args := []string{"service", "install"}
-		if u.whenIdle {
-			args = append(args, "--when-idle")
-		}
+		args := append([]string{"service", "install"}, installFlags(tag, u.force)...)
 		if err := u.runCmd(bin, args...); err != nil {
 			return i18n.Errorf("service install with the new binary failed: %w", "用新版本执行 service install 失败：%w", err)
 		}
@@ -214,6 +213,25 @@ func (u *updater) apply(bin, tag string) error {
 		return err
 	}
 	fmt.Fprint(u.out, i18n.F("updated %s to %s\n", "已把 %s 更新到 %s\n", u.exePath, tag))
+	return nil
+}
+
+// installFlags asks the new binary's "service install" to keep a running
+// host until it is idle, or with force to restart it now, in the flags that
+// release understands: --when-idle since v0.5.0 (the default since v0.10.0,
+// which added --force); earlier releases always restart.
+func installFlags(tag string, force bool) []string {
+	since := func(min string) bool {
+		base, _, _ := strings.Cut(tag, "-")
+		cmp, ok := compareVersions(base, min)
+		return !ok || cmp >= 0
+	}
+	switch {
+	case force && since("v0.10.0"):
+		return []string{"--force"}
+	case !force && since("v0.5.0"):
+		return []string{"--when-idle"}
+	}
 	return nil
 }
 

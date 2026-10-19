@@ -145,9 +145,9 @@ Network setup beyond the first two steps is outside what this project supports; 
 | `cc-remote service status` | Show whether it is running |
 | `cc-remote service logs -f` | Print / follow the log |
 | `cc-remote service restart` | Restart (also `start` / `stop`) |
-| `cc-remote service config` | Show or change listen addresses, environment, … |
+| `cc-remote service config` | Show or change listen addresses, environment, … (listen addresses apply without a restart; other settings restart the host once sessions are idle, `--force` restarts now) |
 | `cc-remote service uninstall` | Remove the service (data is kept) |
-| `cc-remote update` | Update to the latest release (`--check` to only check) |
+| `cc-remote update` | Update to the latest release; the host restarts once sessions are idle (`--check` to only check, `--force` to restart now) |
 
 ## Configuration and docs
 

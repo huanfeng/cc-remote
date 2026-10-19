@@ -28,12 +28,18 @@ type Config struct {
 	// install, plus --env). It stays non-nil once configured so a reinstall
 	// keeps it instead of capturing again (hence no omitempty: "{}" means
 	// configured but empty); values may be secrets (the file is 0600).
-	Env         map[string]string `json:"env"`
-	DataDir     string            `json:"dataDir"`
-	Exe         string            `json:"exe"`
-	LogFile     string            `json:"logFile"`
-	InstalledAt time.Time         `json:"installedAt"`
-	Version     string            `json:"version"`
+	Env map[string]string `json:"env"`
+	// EnvRemoved names variables removed with --env KEY=; the host unsets
+	// them, since an older service definition may still pass them on.
+	EnvRemoved []string `json:"envRemoved,omitempty"`
+	// AutoLanguage is the language "auto" stood for when the settings were
+	// last saved (a service manager starts the host without the user's LANG).
+	AutoLanguage string    `json:"autoLanguage,omitempty"`
+	DataDir      string    `json:"dataDir"`
+	Exe          string    `json:"exe"`
+	LogFile      string    `json:"logFile"`
+	InstalledAt  time.Time `json:"installedAt"`
+	Version      string    `json:"version"`
 }
 
 const configName = "service.json"
