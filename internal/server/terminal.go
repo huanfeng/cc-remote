@@ -32,8 +32,11 @@ const (
 	terminalCloseWait = 5 * time.Second
 )
 
-// firstPromptWait is how long the first message may take to be submitted.
-var firstPromptWait = 15 * time.Second
+// firstPromptWait is how long the first message may take to be submitted,
+// each of firstPromptTries times.
+var firstPromptWait = 12 * time.Second
+
+const firstPromptTries = 3
 
 type terminalSession struct {
 	id, claudeID string
@@ -340,8 +343,10 @@ func (s *Server) awaitNoDialog(ts *terminalSession) bool {
 
 // confirmFirstPrompt checks that the first message after Claude Code started
 // was submitted (input typed while it starts can be dropped): without a
-// UserPromptSubmit it presses Enter if the text sits in the input box, or
-// pastes it again.
+// UserPromptSubmit, the transcript showing it or Claude working, it presses
+// Enter if the text sits in the input box, or pastes it again when the box is
+// empty or holds part of it. After firstPromptTries the message leaves the
+// queue and the web is told, rather than showing it queued forever.
 func (s *Server) confirmFirstPrompt(ts *terminalSession, text string, before int) {
 	submitted := func(wait time.Duration) bool {
 		for end := time.Now().Add(wait); time.Now().Before(end); time.Sleep(200 * time.Millisecond) {
@@ -349,28 +354,61 @@ func (s *Server) confirmFirstPrompt(ts *terminalSession, text string, before int
 				return true
 			}
 			s.mu.Lock()
-			n := ts.prompts
+			n, waiting := ts.prompts, ts.queuedLocked(text)
 			s.mu.Unlock()
-			if n > before {
+			if n > before || !waiting || ts.runner.Activity() != "" {
 				return true
 			}
 		}
 		return false
 	}
-	if !submitted(firstPromptWait) {
-		if ts.runner.Shows(text) {
-			log.Printf("terminal %s: first message not submitted; pressing Enter", ts.id)
-			_ = ts.runner.Submit()
-		} else {
-			log.Printf("terminal %s: first message lost while Claude Code started; sending again", ts.id)
-			_ = ts.runner.Paste(text)
+	for try := 1; !submitted(firstPromptWait); try++ {
+		box, shown := ts.runner.Input()
+		if try == firstPromptTries {
+			s.firstPromptFailed(ts, text, box)
+			return
 		}
-		submitted(firstPromptWait)
+		switch {
+		case ts.runner.Shows(text):
+			log.Printf("terminal %s: first message not submitted (try %d); pressing Enter", ts.id, try)
+			_ = ts.runner.Submit()
+		case shown && (box == "" || strings.Contains(flatText(text), flatText(box))):
+			log.Printf("terminal %s: first message lost while Claude Code started (try %d); sending again", ts.id, try)
+			if box != "" {
+				_ = ts.runner.ClearInput(strings.Count(box, "\n") + 1)
+				time.Sleep(200 * time.Millisecond)
+			}
+			_ = ts.runner.Paste(text)
+		default: // a dialog, or someone typing in a terminal: leave it alone
+			log.Printf("terminal %s: first message not submitted (try %d); the input box is not free", ts.id, try)
+		}
 	}
 	s.mu.Lock()
 	ts.confirmed = true
 	s.mu.Unlock()
 }
+
+// firstPromptFailed gives up on a first message that never got submitted: it
+// is cleared from the input box (so it cannot run later unnoticed), leaves the
+// queue, and the web shows it in an error to send again. The screen goes to
+// the log to tell why.
+func (s *Server) firstPromptFailed(ts *terminalSession, text, box string) {
+	log.Printf("terminal %s: first message was not submitted; giving up. Screen:\n%s", ts.id, ts.runner.Screen())
+	if box != "" && (ts.runner.Shows(text) || strings.Contains(flatText(text), flatText(box))) {
+		_ = ts.runner.ClearInput(strings.Count(box, "\n") + 1)
+	}
+	s.mu.Lock()
+	message, ok := ts.popQueuedLocked(text)
+	s.mu.Unlock()
+	if !ok {
+		return // taken back meanwhile, or matched in the transcript after all
+	}
+	quoted := "> " + strings.ReplaceAll(strings.TrimSpace(message.Text), "\n", "\n> ")
+	_, _ = s.store.Append(ts.id, "error", i18n.T("This message did not reach Claude Code. Attach a terminal (ccr) to see what it shows, or send it again:", "这条消息没有送达 Claude Code。可以接入终端（ccr）查看它当前的状态，或重新发送：")+"\n\n"+quoted, nil)
+}
+
+// flatText is text without whitespace, for comparing it with the screen.
+func flatText(s string) string { return strings.Join(strings.Fields(s), "") }
 
 // terminalLoop keeps the connection alive and the transcript in sync until
 // Claude Code exits.
@@ -484,14 +522,26 @@ func isDone(c <-chan struct{}) bool {
 }
 
 // popQueuedLocked drops the queued web message Claude Code just submitted.
-func (ts *terminalSession) popQueuedLocked(prompt string) {
+func (ts *terminalSession) popQueuedLocked(prompt string) (store.QueuedMessage, bool) {
 	want := normalizePrompt(prompt)
 	for i, q := range ts.queued {
 		if normalizePrompt(q.text) == want {
 			ts.queued = append(ts.queued[:i:i], ts.queued[i+1:]...)
-			return
+			return q.message, true
 		}
 	}
+	return store.QueuedMessage{}, false
+}
+
+// queuedLocked reports whether a web message still waits to be submitted.
+func (ts *terminalSession) queuedLocked(prompt string) bool {
+	want := normalizePrompt(prompt)
+	for _, q := range ts.queued {
+		if normalizePrompt(q.text) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizePrompt(s string) string {

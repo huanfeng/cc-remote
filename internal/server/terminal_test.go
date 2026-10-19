@@ -79,13 +79,19 @@ func fakeTerminal() {
 		f.Write(append(append(user, '\n'), append(reply, '\n')...))
 		f.Close()
 	}
-	os.Stdout.WriteString("fake claude ready\r\n")
+	// The input box as Claude Code draws it: a "❯" row between two rules.
+	rule := strings.Repeat("─", 40)
+	box := func(text string) {
+		os.Stdout.WriteString("\x1b[3;1H\x1b[K❯ " + strings.ReplaceAll(text, "\n", " "))
+	}
+	os.Stdout.WriteString("\x1b[H\x1b[2Jfake claude ready\r\n" + rule + "\r\n❯ \r\n" + rule + "\r\n")
 	hook("SessionStart", map[string]string{"source": "startup"}) // as Claude Code does on start
 	buf := make([]byte, 8192)
 	var pending []byte
 	var pasted string
 	ctrlC := 0
 	dropped := false
+	ignored := false
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
@@ -101,14 +107,26 @@ func fakeTerminal() {
 				}
 				pasted = string(pending[6:end])
 				pending = pending[end+6:]
-			case pending[0] == '\r':
-				pending = pending[1:]
-				text := pasted
-				pasted = ""
 				if os.Getenv("CC_REMOTE_FAKE_DROP_FIRST") == "1" && !dropped {
 					dropped = true // input typed while Claude Code starts is lost
+					pasted = ""
 					continue
 				}
+				box(pasted)
+			case pending[0] == '\r':
+				pending = pending[1:]
+				// The text stays in the box: the first Enter, or every one, is not taken.
+				if pasted != "" && (os.Getenv("CC_REMOTE_FAKE_DEAF") == "1" || os.Getenv("CC_REMOTE_FAKE_IGNORE_ENTER") == "1" && !ignored) {
+					ignored = true
+					logKey("ENTER-IGNORED")
+					continue
+				}
+				text := pasted
+				pasted = ""
+				if text == "" {
+					continue // an empty box submits nothing
+				}
+				box("")
 				hook("UserPromptSubmit", map[string]string{"prompt": text})
 				if text == "/clear" {
 					id = "00000000-0000-4000-8000-00000000c1ea"
@@ -126,10 +144,17 @@ func fakeTerminal() {
 				if ctrlC++; ctrlC >= 2 {
 					return
 				}
+			case pending[0] == 0x15: // Ctrl+U clears the box
+				pending = pending[1:]
+				if pasted != "" {
+					logKey("CLEAR")
+				}
+				pasted = ""
+				box("")
 			case pending[0] == 0x1b:
 				goto more
 			default:
-				os.Stdout.WriteString(fmt.Sprintf("KEY %c\r\n", pending[0]))
+				os.Stdout.WriteString(fmt.Sprintf("\x1b[6;1HKEY %c\r\n", pending[0]))
 				pending = pending[1:]
 			}
 		}
@@ -385,6 +410,57 @@ func TestTerminalResendsLostFirstMessage(t *testing.T) {
 	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool {
 		return strings.Join(eventTexts(st, x.ID), "|") == "user:are you there|assistant:echo: are you there"
 	})
+}
+
+// A first message left in the input box (its Enter not taken) is submitted.
+func TestTerminalSubmitsFirstMessageLeftInBox(t *testing.T) {
+	old := firstPromptWait
+	firstPromptWait = 2 * time.Second
+	t.Cleanup(func() { firstPromptWait = old })
+	t.Setenv("CC_REMOTE_FAKE_IGNORE_ENTER", "1")
+	_, base, st, keys := setupTerminal(t)
+	x := createTerminal(t, base)
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "are you there"})
+	awaitLong(t, func() string { return fmt.Sprintf("%q keys=%q", eventTexts(st, x.ID), keys("")) }, func() bool {
+		return strings.Join(eventTexts(st, x.ID), "|") == "user:are you there|assistant:echo: are you there"
+	})
+	if k := keys(""); strings.Count(k, "ENTER-IGNORED") != 1 || strings.Contains(k, "CLEAR") {
+		t.Fatalf("keys = %q", k)
+	}
+}
+
+// A first message that never gets submitted leaves the queue and the input
+// box, and the web shows it in an error instead of queued forever.
+func TestTerminalGivesUpOnUnsubmittedFirstMessage(t *testing.T) {
+	old := firstPromptWait
+	firstPromptWait = time.Second
+	t.Cleanup(func() { firstPromptWait = old })
+	t.Setenv("CC_REMOTE_FAKE_DEAF", "1")
+	s, base, st, keys := setupTerminal(t)
+	x := createTerminal(t, base)
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "are you there\nhello"})
+	errorText := func() string {
+		events, _ := st.Events(x.ID, 0)
+		for _, e := range events {
+			if e.Kind == "error" {
+				return e.Text
+			}
+		}
+		return ""
+	}
+	awaitLong(t, func() string { return fmt.Sprintf("events=%q keys=%q", eventTexts(st, x.ID), keys("")) }, func() bool { return errorText() != "" })
+	if text := errorText(); !strings.Contains(text, "> are you there\n> hello") {
+		t.Fatalf("error = %q", text)
+	}
+	if k := keys(""); !strings.Contains(k, "CLEAR") {
+		t.Fatalf("input box not cleared: %q", k)
+	}
+	s.mu.Lock()
+	queued := len(s.terminals[x.ID].queued)
+	s.mu.Unlock()
+	if queued != 0 {
+		t.Fatalf("message still queued: %d", queued)
+	}
 }
 
 // The status line reports to the host and keeps running the user's own one;

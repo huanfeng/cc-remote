@@ -6,6 +6,7 @@
 package terminal
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -170,8 +171,9 @@ func (r *Runner) Pid() int {
 	return r.cmd.Process.Pid
 }
 
-// watchReady closes ready once the TUI drew its first screen and went quiet
-// (input typed before that is lost while Claude Code starts).
+// watchReady closes ready once the TUI drew its input box and went quiet
+// (input typed before that is lost while Claude Code starts). Without a box
+// it can recognize, it waits up to startWait.
 func (r *Runner) watchReady() {
 	t := time.NewTicker(100 * time.Millisecond)
 	defer t.Stop()
@@ -181,8 +183,10 @@ func (r *Runner) watchReady() {
 			return
 		case <-t.C:
 			r.mu.Lock()
-			started := !r.awaitStart || r.started || time.Since(r.launched) > startWait
-			up := started && r.outSeen && time.Since(r.lastOut) >= readyQuiet && (!r.trustDone || r.trustSettled)
+			late := time.Since(r.launched) > startWait
+			started := !r.awaitStart || r.started || late
+			_, box := r.scr.input()
+			up := started && (box || late) && r.outSeen && time.Since(r.lastOut) >= readyQuiet && (!r.trustDone || r.trustSettled)
 			r.mu.Unlock()
 			if up {
 				close(r.ready)
@@ -202,18 +206,46 @@ func (r *Runner) MarkStarted() {
 	r.mu.Unlock()
 }
 
-// Shows reports whether recent output contains text (whitespace ignored),
-// e.g. a message still sitting in the input box; long pastes show as
-// "[Pasted text ...]".
+// Shows reports whether the input box holds text (whitespace ignored), i.e.
+// a message sitting there unsubmitted; long pastes show as "[Pasted text ...]".
+// Output elsewhere does not count: the terminal echoes keys typed while
+// Claude Code starts, though they never reach the box.
 func (r *Runner) Shows(text string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	screen := flat(string(r.recent))
+	box, ok := r.Input()
+	if !ok {
+		return false
+	}
+	box = flat(box)
 	want := []rune(flat(text))
 	if len(want) > 24 {
 		want = want[:24]
 	}
-	return (len(want) > 0 && strings.Contains(screen, string(want))) || strings.Contains(screen, "pastedtext")
+	return (len(want) > 0 && strings.Contains(box, string(want))) || strings.Contains(box, "pastedtext")
+}
+
+// Input is the text typed in the input box, and whether the box is on the
+// screen (a dialog replaces it).
+func (r *Runner) Input() (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.scr.input()
+}
+
+// Screen is the screen text without trailing blank rows, for diagnostics.
+func (r *Runner) Screen() string {
+	r.mu.Lock()
+	lines := r.scr.lines()
+	r.mu.Unlock()
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ClearInput empties the input box (Ctrl+U deletes a line; an empty box
+// ignores it), e.g. a message given up on, so it cannot be submitted later.
+func (r *Runner) ClearInput(lines int) error {
+	return r.write(bytes.Repeat([]byte{0x15}, 2*lines+4))
 }
 
 // Submit presses Enter.

@@ -65,3 +65,30 @@ func TestScreenSuggestion(t *testing.T) {
 		t.Fatalf("38;2;2;2;2 parsed as faint: %q", got)
 	}
 }
+
+// The input box is a "❯" row between two rules; a dialog option or a past
+// prompt is not, and faint text in the box is not typed.
+func TestScreenInput(t *testing.T) {
+	rule := strings.Repeat("─", 30)
+	s := newScreen(40, 10)
+	// While Claude Code starts the terminal echoes keys: no box yet.
+	s.write([]byte("hello"))
+	if _, ok := s.input(); ok {
+		t.Fatalf("echo taken for the box:\n%s", strings.Join(s.lines(), "\n"))
+	}
+	s.write([]byte("\x1b[H\x1b[2J\x1b[2;1H❯ \x1b[38;2;255;255;255mlook at calc.py\x1b[m")) // a past prompt
+	s.write([]byte("\x1b[5;1H" + rule + "\x1b[6;1H❯ \x1b[2mTry \"fix lint errors\"\x1b[22m\x1b[7;1H" + rule))
+	if text, ok := s.input(); !ok || text != "" {
+		t.Fatalf("empty box = %q %v\n%s", text, ok, strings.Join(s.lines(), "\n"))
+	}
+	// Typed text wraps to the next row; the bottom rule moves down.
+	s.write([]byte("\x1b[6;3H\x1b[Krun the\x1b[7;1H\x1b[K  tests\x1b[8;1H" + rule))
+	if text, ok := s.input(); !ok || flat(text) != "runthetests" {
+		t.Fatalf("typed = %q %v\n%s", text, ok, strings.Join(s.lines(), "\n"))
+	}
+	// A dialog replaces the box: its selected option has no rule above.
+	s.write([]byte("\x1b[H\x1b[2J\x1b[2;1H" + rule + "\x1b[3;1H Switch model?\x1b[5;1H❯ 1. Yes\x1b[6;1H  2. No"))
+	if text, ok := s.input(); ok {
+		t.Fatalf("dialog taken for the box: %q", text)
+	}
+}

@@ -407,6 +407,63 @@ func (s *screen) suggestion() string {
 	return ""
 }
 
+// input is the text typed in Claude Code's input box, and whether the box is
+// on the screen: a "❯" row (and the rows its text wraps to) between two
+// horizontal rules. A dialog's "❯ option" and a past prompt have no rules
+// around them. Faint text (a suggestion, the placeholder) is not typed text.
+// Keys sent before the box is drawn can be lost, even when the terminal
+// echoes them while Claude Code starts.
+func (s *screen) input() (string, bool) {
+	for y := s.rows - 2; y > 0; y-- {
+		row := s.cells[y]
+		x := 0
+		for x < len(row) && row[x].r == ' ' {
+			x++
+		}
+		if x >= len(row) || row[x].r != '❯' {
+			continue
+		}
+		if !s.rule(y - 1) {
+			return "", false
+		}
+		var b strings.Builder
+		for line := y; line < s.rows; line++ {
+			if line > y && s.rule(line) {
+				return strings.TrimSpace(strings.ReplaceAll(b.String(), " ", " ")), true
+			}
+			start := 0
+			if line == y {
+				start = x + 1
+			}
+			if line > y {
+				b.WriteByte('\n')
+			}
+			for _, c := range s.cells[line][start:] {
+				if c.r != 0 && !c.dim {
+					b.WriteRune(c.r)
+				}
+			}
+		}
+		return "", false
+	}
+	return "", false
+}
+
+// rule reports whether row y is a horizontal rule, as around the input box.
+func (s *screen) rule(y int) bool {
+	n := 0
+	for _, c := range s.cells[y] {
+		switch c.r {
+		case '─':
+			n++
+		case ' ', 0:
+		default:
+			return false
+		}
+	}
+	return n >= 10
+}
+
 // activityLine matches Claude Code's spinner line while it works, such as
 // "✽ Composing… (8m 33s · ↓ 26.2k tokens · esc to interrupt)".
 var activityLine = regexp.MustCompile(`^\s*\S\s+(\p{Lu}[\p{L}'-]*(?: [\p{L}'-]+)*…)\s*(?:\((.*)\))?\s*$`)
