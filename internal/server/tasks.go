@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"slices"
 	"time"
+
+	"cc-remote/internal/store"
 )
 
 // Subagents and other background tasks report through Claude's system
@@ -61,10 +63,46 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
-	events, err := s.store.TaskEvents(id)
+	out, err := s.sessionTasks(id)
 	if err != nil {
 		fail(w, 500, s.lang(r).T("Could not read tasks", "无法读取任务"))
 		return
+	}
+	respond(w, 200, out)
+}
+
+// fillActiveTasks counts the running background tasks of the sessions whose
+// Claude still runs: a task outlives the turn that started it, so a session
+// can look finished while its subagents work on. Takes s.mu.
+func (s *Server) fillActiveTasks(xs []store.Session) {
+	s.mu.Lock()
+	live := make([]bool, len(xs))
+	for i, x := range xs {
+		rt := s.procs[x.ID]
+		live[i] = s.terminals[x.ID] != nil || rt != nil && rt.proc != nil
+	}
+	s.mu.Unlock()
+	for i := range xs {
+		if !live[i] {
+			continue
+		}
+		tasks, err := s.sessionTasks(xs[i].ID)
+		if err != nil {
+			continue
+		}
+		for _, t := range tasks {
+			if t.Status == "running" {
+				xs[i].ActiveTasks++
+			}
+		}
+	}
+}
+
+// sessionTasks folds a session's task events into its tasks. Takes s.mu.
+func (s *Server) sessionTasks(id string) ([]taskInfo, error) {
+	events, err := s.store.TaskEvents(id)
+	if err != nil {
+		return nil, err
 	}
 	byID := map[string]*taskInfo{}
 	var order []*taskInfo
@@ -158,5 +196,5 @@ func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, *t)
 	}
-	respond(w, 200, out)
+	return out, nil
 }

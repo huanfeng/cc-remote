@@ -37,6 +37,10 @@ type Session struct {
 	Attached int `json:"attached,omitempty"`
 	// Live is a terminal session's status line data (filled in by the server).
 	Live *LiveStatus `json:"live,omitempty"`
+	// ActiveTasks counts background tasks (subagents, background commands)
+	// still running, also after the turn that started them ended (filled in
+	// by the server).
+	ActiveTasks int `json:"activeTasks,omitempty"`
 }
 
 // LiveStatus is what Claude Code reports to its status line, and the spinner

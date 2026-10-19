@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,4 +95,56 @@ func TestTerminalTranscriptTasks(t *testing.T) {
 	s.mu.Lock()
 	delete(s.terminals, x.ID)
 	s.mu.Unlock()
+}
+
+// The session list counts the background tasks still running, so a session
+// whose turn ended does not look finished while its subagents work on; a
+// session without a running Claude has none.
+func TestSessionListCountsActiveTasks(t *testing.T) {
+	s, base, st, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	idle := createTerminal(t, base)
+	s.mu.Lock()
+	y, _ := s.store.Get(x.ID)
+	_, err := s.terminalLocked(y)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(id, subtype, payload string) {
+		t.Helper()
+		if _, err := st.Append(id, "status", subtype, json.RawMessage(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(x.ID, "task_started", `{"subtype":"task_started","task_id":"a1","tool_use_id":"toolu_1","description":"Review","is_backgrounded":true,"task_type":"local_agent"}`)
+	add(x.ID, "task_started", `{"subtype":"task_started","task_id":"a2","tool_use_id":"toolu_2","description":"Test","is_backgrounded":true,"task_type":"local_agent"}`)
+	add(idle.ID, "task_started", `{"subtype":"task_started","task_id":"b1","tool_use_id":"toolu_3","description":"Orphan","is_backgrounded":true,"task_type":"local_agent"}`)
+	_ = st.SetStatus(x.ID, "completed")
+	active := func() map[string]int {
+		_, b := call(t, base, "GET", "/api/sessions", nil)
+		var list []struct {
+			ID          string `json:"id"`
+			ActiveTasks int    `json:"activeTasks"`
+		}
+		if err := json.Unmarshal(b, &list); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int{}
+		for _, item := range list {
+			out[item.ID] = item.ActiveTasks
+		}
+		return out
+	}
+	if got := active(); got[x.ID] != 2 || got[idle.ID] != 0 {
+		t.Fatalf("active tasks %v", got)
+	}
+	add(x.ID, "task_notification", `{"subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_1","status":"completed","summary":"done"}`)
+	if got := active(); got[x.ID] != 1 {
+		t.Fatalf("after one finished %v", got)
+	}
+	_, b := call(t, base, "GET", "/api/sessions/"+x.ID, nil)
+	if !strings.Contains(string(b), `"activeTasks":1`) {
+		t.Fatalf("session: %s", b)
+	}
 }

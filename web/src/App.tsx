@@ -25,7 +25,7 @@ import { applyIdentity, initialIdentity, onIdentity } from './hostIdentity';
 import { TopbarMenu, type TopbarAction } from './TopbarMenu';
 import { matchProjects, projectKey, recentProjects, type RecentProject } from './recentProjects';
 
-type Session = { id: string; title: string; cwd: string; truncated?: boolean; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus };
+type Session = { id: string; title: string; cwd: string; truncated?: boolean; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus; activeTasks?: number };
 type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 type Request = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
 type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; attachCommand?: string; language?: string; name?: string; color?: string };
@@ -36,7 +36,13 @@ const transcriptPath = (tab: { id: string; native: boolean }) => `/api/${tab.nat
 const tabKey = (id: string, native: boolean) => `${native ? 'native' : 'session'}:${id}`;
 const STATUS_LABELS: Record<string, string> = { running: t('Running', '执行中'), waiting: t('Waiting for answer', '等待回答'), idle: t('Ready', '就绪'), completed: t('Completed', '已完成'), interrupted: t('Stopped', '已停止'), failed: t('Failed', '执行失败'), stopped: t('Stopped', '已停止'), error: t('Failed', '执行失败') };
 const statusLabel = (status?: string) => STATUS_LABELS[status || ''] || status || t('History', '历史');
-const sessionLabel = (session?: Session) => ['running', 'waiting'].includes(session?.status || '') ? statusLabel(session?.status) : session?.mode === 'terminal' && !session.online ? t('Not running', '未运行') : statusLabel(session?.status || 'idle');
+const baseLabel = (session?: Session) => ['running', 'waiting'].includes(session?.status || '') ? statusLabel(session?.status) : session?.mode === 'terminal' && !session.online ? t('Not running', '未运行') : statusLabel(session?.status || 'idle');
+// Subagents and background commands outlive the turn that started them: a finished turn is not a finished session.
+const sessionLabel = (session?: Session) => {
+  const n = session?.activeTasks || 0;
+  if (!n) return baseLabel(session);
+  return ['running', 'waiting'].includes(session?.status || '') ? `${baseLabel(session)} · ${t(`${n} in background`, `后台 ${n}`)}` : t(`${n} running in background`, `后台 ${n} 个运行中`);
+};
 const modeLabel = (mode?: string) => mode === 'terminal' ? t('Terminal', '终端') : t('Managed', '托管');
 const COPY_FAILED = t('The browser did not allow automatic copying. Click the command box above, select all and copy; on a phone, long-press to copy.', '浏览器未允许自动复制，请点击上方命令框，全选后复制；手机可长按复制。');
 
@@ -505,7 +511,7 @@ export default function App() {
   function sidebarState(item: Session) {
     const cached = tabs.find(tab => tab.key === tabKey(item.id, native));
     const waiting = !!cached?.requests.length;
-    return { cached, status: waiting ? 'waiting' : item.status || 'idle', label: waiting ? t('Needs action', '等待操作') : native ? t('Read-only history', '只读历史') : sessionLabel(item) };
+    return { cached, status: waiting ? 'waiting' : item.activeTasks && !['running', 'waiting'].includes(item.status || '') ? 'running' : item.status || 'idle', label: waiting ? t('Needs action', '等待操作') : native ? t('Read-only history', '只读历史') : sessionLabel(item) };
   }
   const running = current?.status === 'running' || current?.status === 'waiting';
   // Terminal sessions: the host holds Claude Code; a local terminal attaches to it.

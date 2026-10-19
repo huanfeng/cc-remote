@@ -302,6 +302,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		s.decorate(&x[i])
 	}
 	s.mu.Unlock()
+	s.fillActiveTasks(x)
 	respond(w, 200, x)
 }
 func validateCwd(l i18n.Lang, cwd string) (string, error) {
@@ -520,7 +521,9 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.decorate(&x)
 	s.mu.Unlock()
-	respond(w, 200, map[string]any{"session": x, "events": events, "hasMore": older})
+	one := []store.Session{x}
+	s.fillActiveTasks(one)
+	respond(w, 200, map[string]any{"session": one[0], "events": events, "hasMore": older})
 }
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
