@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-remote/internal/i18n"
@@ -221,14 +222,24 @@ var maxNativeHistory int64 = 64 * 1024 * 1024 // a variable for tests
 
 // historyCache keeps parsed transcripts of recently opened sessions. A
 // transcript only grows, so a changed file is parsed from where the last read
-// stopped; one that shrank (rewritten) is parsed again from the start.
+// stopped; one that shrank (rewritten) is parsed again from the start. It holds
+// at most historyCacheSize sessions and about historyCacheBytes of events (the
+// session just read stays however large), and forgets one unread for
+// historyIdle: a page showing a session reads it every few seconds.
 var historyCache struct {
 	sync.Mutex
 	entries map[string]*historyEntry // by path
 	order   []string                 // least recently used first
+	janitor sync.Once
 }
 
 const historyCacheSize = 8
+
+// Variables for tests.
+var (
+	historyCacheBytes int64 = 64 << 20
+	historyIdle             = 10 * time.Minute
+)
 
 type historyEntry struct {
 	mu      sync.Mutex
@@ -237,6 +248,13 @@ type historyEntry struct {
 	offset  int64 // bytes consumed: complete lines only
 	session NativeSession
 	events  []Event
+	weight  atomic.Int64 // about the bytes events hold; read without mu by the cache
+	used    time.Time    // guarded by historyCache
+}
+
+// eventWeight is about the memory one event holds.
+func eventWeight(ev Event) int64 {
+	return int64(len(ev.Kind)+len(ev.Text)+len(ev.Payload)+len(ev.Parent)) + 64
 }
 
 func NativeHistory(configDir, id string) (NativeSession, []Event, error) {
@@ -250,7 +268,9 @@ func NativeHistory(configDir, id string) (NativeSession, []Event, error) {
 	e := cachedHistory(path)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if err := e.refresh(path, id); err != nil {
+	err = e.refresh(path, id)
+	trimHistory(path) // its new size may push older sessions out
+	if err != nil {
 		return NativeSession{}, nil, err
 	}
 	// The full slice expression makes a caller's append copy instead of
@@ -307,11 +327,39 @@ func cachedHistory(path string) *historyEntry {
 		e = &historyEntry{}
 		historyCache.entries[path] = e
 	}
-	for len(historyCache.order) > historyCacheSize {
-		delete(historyCache.entries, historyCache.order[0])
-		historyCache.order = historyCache.order[1:]
-	}
+	e.used = time.Now()
+	historyCache.janitor.Do(func() {
+		go func() {
+			for range time.Tick(time.Minute) {
+				trimHistory("")
+			}
+		}()
+	})
 	return e
+}
+
+// trimHistory forgets the least recently read sessions while the cache holds
+// too many, too much, or ones unread for historyIdle; never keep (just read).
+func trimHistory(keep string) {
+	historyCache.Lock()
+	defer historyCache.Unlock()
+	var total int64
+	for _, e := range historyCache.entries {
+		total += e.weight.Load()
+	}
+	now := time.Now()
+	kept := historyCache.order[:0]
+	for i, path := range historyCache.order {
+		e := historyCache.entries[path]
+		over := len(historyCache.order)-i > historyCacheSize || total > historyCacheBytes
+		if path != keep && (over || now.Sub(e.used) > historyIdle) {
+			total -= e.weight.Load()
+			delete(historyCache.entries, path)
+			continue
+		}
+		kept = append(kept, path)
+	}
+	historyCache.order = kept
 }
 
 func (e *historyEntry) refresh(path, id string) error {
@@ -329,6 +377,7 @@ func (e *historyEntry) refresh(path, id string) error {
 	}
 	if info.Size() < e.offset || e.offset == 0 {
 		e.offset, e.events = 0, nil
+		e.weight.Store(0)
 		e.session = NativeSession{ID: id, Title: "Claude session"}
 		// A huge transcript is read from a line start in its last
 		// maxNativeHistory bytes: the recent part is what is wanted.
@@ -360,11 +409,15 @@ func (e *historyEntry) refresh(path, id string) error {
 		return 0, nil, nil // a partial last line waits for the next read
 	})
 	for scanner.Scan() {
-		e.events = append(e.events, transcriptEvents(scanner.Bytes(), &e.session)...)
+		for _, ev := range transcriptEvents(scanner.Bytes(), &e.session) {
+			e.events = append(e.events, ev)
+			e.weight.Add(eventWeight(ev))
+		}
 	}
 	e.offset = consumed
 	if err := scanner.Err(); err != nil {
 		e.offset, e.events = 0, nil
+		e.weight.Store(0)
 		return err
 	}
 	e.size, e.mod = info.Size(), info.ModTime()

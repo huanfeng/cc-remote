@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeNative(t *testing.T, dir, project, content string) {
@@ -63,5 +64,55 @@ func TestNativeHistoryCompactAndNotifications(t *testing.T) {
 	}
 	if p := string(events[1].Payload); !strings.Contains(p, `"pre_tokens":48026`) || !strings.Contains(p, `"trigger":"manual"`) {
 		t.Fatal(p)
+	}
+}
+
+// The cache drops the least recently read sessions past its byte budget, keeping
+// the one just read, and drops ones unread for historyIdle.
+func TestNativeHistoryCacheBudget(t *testing.T) {
+	oldBytes, oldIdle := historyCacheBytes, historyIdle
+	t.Cleanup(func() { historyCacheBytes, historyIdle = oldBytes, oldIdle })
+	dir := t.TempDir()
+	ids := []string{"11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"}
+	p := filepath.Join(dir, "projects", "-tmp-cache")
+	if err := os.MkdirAll(p, 0700); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"type":"user","message":{"content":"` + strings.Repeat("x", 1000) + `"}}` + "\n"
+	for _, id := range ids {
+		if err := os.WriteFile(filepath.Join(p, id+".jsonl"), []byte(strings.Repeat(line, 10)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cached := func() (paths []string) {
+		historyCache.Lock()
+		defer historyCache.Unlock()
+		for _, path := range historyCache.order {
+			paths = append(paths, strings.TrimSuffix(filepath.Base(path), ".jsonl")[:1])
+		}
+		return
+	}
+	trimHistory("")
+	historyIdle = time.Hour
+	historyCacheBytes = 25_000 // two sessions of about 11 KB
+	for _, id := range ids {
+		if _, _, err := NativeHistory(dir, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(cached(), ""); got != "23" {
+		t.Fatalf("over budget: cached %q", got)
+	}
+	historyCacheBytes = 1 // only the session just read stays
+	if _, _, err := NativeHistory(dir, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(cached(), ""); got != "1" {
+		t.Fatalf("one huge session: cached %q", got)
+	}
+	historyIdle = 0
+	trimHistory("")
+	if got := cached(); len(got) != 0 {
+		t.Fatalf("idle: cached %q", got)
 	}
 }
