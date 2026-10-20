@@ -11,9 +11,11 @@ export const STANDALONE = import.meta.env?.MODE === 'standalone';
 export type HostVia = 'direct' | 'text';
 
 /** url is the address the page talks to; an indirect host also keeps the entry it
- * was found through, asked again when the address stops answering. name and color are
- * the host's own (it reports them); alias and tint are this page's, shown over them. */
-export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; alias?: string; tint?: string; entry?: string; via?: Exclude<HostVia, 'direct'> };
+ * was found through, asked again when the address stops answering. lan is a second
+ * address on the home network (an https name pointing at a private address), used
+ * while it answers. name and color are the host's own (it reports them); alias and tint
+ * are this page's, shown over them. */
+export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; alias?: string; tint?: string; entry?: string; via?: Exclude<HostVia, 'direct'>; lan?: string };
 
 /** The colours a host can be given (internal/identity Palette): dark tones that keep the
  * light logo glyph readable. */
@@ -48,6 +50,10 @@ export function normalizeHostUrl(text: string): string {
 
 const isLocal = (url: URL) => { const host = url.hostname.replace(/^\[|\]$/g, ''); return host === 'localhost' || host === '::1' || /^127\./.test(host); };
 
+/** Whether this page may not call address url: an https page cannot reach a plain
+ * http host, except on this machine. */
+export const blockedHttp = (url: string) => location.protocol === 'https:' && url.startsWith('http:') && !isLocal(new URL(url));
+
 /** Finds the host address behind an entry URL: the first word of its plain-text answer.
  * The entry must answer this page with CORS (Access-Control-Allow-Origin), or the
  * browser hides the answer. */
@@ -58,7 +64,7 @@ export async function resolveEntry(entry: string, fetcher: typeof fetch = fetch)
   const text = (await response.text()).trim().split(/\s+/)[0] || '';
   const url = /^https?:\/\//i.test(text) ? normalizeHostUrl(text) : '';
   if (!url) throw new Error(t(`${entry} gave no host address`, `${entry} 没有给出宿主地址`));
-  if (location.protocol === 'https:' && url.startsWith('http:') && !isLocal(new URL(url))) throw new Error(t(`${entry} leads to ${url}: a page served over HTTPS cannot reach a plain http:// host. Serve the host over HTTPS (a domain name, a certificate and the changing port are fine).`, `${entry} 指向 ${url}：HTTPS 页面无法访问 http:// 的宿主。请让宿主通过 HTTPS 提供（域名 + 证书 + 变化的端口即可）。`));
+  if (blockedHttp(url)) throw new Error(t(`${entry} leads to ${url}: a page served over HTTPS cannot reach a plain http:// host. Serve the host over HTTPS (a domain name, a certificate and the changing port are fine).`, `${entry} 指向 ${url}：HTTPS 页面无法访问 http:// 的宿主。请让宿主通过 HTTPS 提供（域名 + 证书 + 变化的端口即可）。`));
   return url;
 }
 
@@ -104,8 +110,15 @@ export const currentHost: HostEntry | undefined = STANDALONE ? (() => {
 // The address names the host the page opened, so a reload stays on it.
 if (STANDALONE && typeof history !== 'undefined' && hostURL(currentHost?.id) !== location.pathname + location.search) history.replaceState(history.state, '', hostURL(currentHost?.id) + location.hash);
 
+/** Whether this page talks to the current host at its home-network address: the last
+ * page did and found it answering (remembered per host, as the network is the device's). */
+const LAN_KEY = 'cc-lan@', LAN_LEFT_KEY = 'cc-lan-left@';
+const store = (key: string, value?: string) => { try { if (value === undefined) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch {} };
+const stored = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+export const onLan = !!currentHost?.lan && stored(LAN_KEY + currentHost.id) === '1';
+
 /** Prefix of every API path: the current host's address, or nothing on the host's own page. */
-export const apiBase = currentHost?.url || '';
+export const apiBase = (onLan ? currentHost?.lan : currentHost?.url) || '';
 export const apiUrl = (path: string) => apiBase + path;
 
 /** A storage key of the current host: hosts never see each other's tabs, drafts or tokens. */
@@ -131,6 +144,7 @@ export function findHost(url: string, entry?: string, except?: string): HostEntr
  * reopens the page on its new address: the API base is fixed for a page's lifetime. */
 export function updateHost(id: string, change: Partial<Omit<HostEntry, 'id'>>) {
   const list = loadHosts();
+  if ('lan' in change && change.lan !== list.hosts.find(x => x.id === id)?.lan) store(LAN_KEY + id); // a new one is checked first
   list.hosts = list.hosts.map(x => x.id === id ? { ...x, ...change } : x);
   saveHosts(list);
   if (id === currentHost?.id) reopen();
@@ -151,18 +165,61 @@ export function samePlace(from: string, to: string): boolean {
   try { const a = new URL(from), b = new URL(to); return a.protocol === b.protocol && a.hostname === b.hostname; } catch { return false; }
 }
 
-/** After the current host stopped answering: asks its entry for the address again (a
- * tunnel's port changed) and, when it moved, reopens the page there. Resolves true when
- * it did, a message when the entry led elsewhere, false otherwise; at most once a
- * minute, across the reloads, so a bad entry cannot loop. */
+/** Whether host answers at its home-network address with its token. Only https names
+ * are saved there, so the token reaches no other machine: one that merely has the same
+ * private address (on another network) fails the TLS handshake first. */
+export async function lanAnswers(host: HostEntry, fetcher: typeof fetch = fetch, timeout = 1500): Promise<boolean> {
+  if (!host.lan) return false;
+  const response = await fetcher(`${host.lan}/api/info`, { headers: { Authorization: `Bearer ${host.token}` }, cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(timeout) }).catch(() => undefined);
+  return !!response?.ok;
+}
+
+/** lanAnswers, except for a minute after the page left that address, so a flaky one
+ * cannot bounce the page back and forth. */
+const backHome = (host: HostEntry) => Date.now() - Number(stored(LAN_LEFT_KEY + host.id)) < 60_000 ? Promise.resolve(false) : lanAnswers(host);
+
+/** Moves the current host to its home-network address, or off it, by reopening the page. */
+function moveToLan(on: boolean) {
+  if (!currentHost) return;
+  store(LAN_KEY + currentHost.id, on ? '1' : undefined);
+  store(LAN_LEFT_KEY + currentHost.id, on ? undefined : String(Date.now()));
+  reopen();
+}
+
+/** While on the outside address: checks the home-network one when the page opens, comes
+ * back into view, the network changes, and every two minutes; moves there when it answers. */
+if (STANDALONE && currentHost?.lan && !onLan) {
+  const host = currentHost;
+  let checked = 0;
+  const check = () => {
+    if (document.visibilityState !== 'visible' || Date.now() - checked < 10_000) return;
+    checked = Date.now();
+    void backHome(host).then(yes => { if (yes) moveToLan(true); });
+  };
+  check();
+  window.setInterval(check, 120_000);
+  window.addEventListener('online', check);
+  document.addEventListener('visibilitychange', check);
+  (navigator as Navigator & { connection?: EventTarget }).connection?.addEventListener('change', check);
+}
+
+/** After the current host stopped answering: leaves the home-network address for the
+ * outside one; on the outside one, moves home when that answers, else asks the entry
+ * for the address again (a tunnel's port changed) and, when it moved, reopens the page
+ * there. Resolves true when it moved, a message when the entry led elsewhere, false
+ * otherwise; at most once a minute, across the reloads, so a bad entry cannot loop. */
 let relocating: Promise<boolean | string> | undefined;
 export function relocateHost(): Promise<boolean | string> {
   const host = currentHost;
-  if (!host?.entry || !host.via) return Promise.resolve(false);
+  if (!host) return Promise.resolve(false);
+  if (onLan) { moveToLan(false); return Promise.resolve(true); }
   if (relocating) return relocating;
+  if (!host.entry || !host.via) return relocating = backHome(host).then(yes => { if (yes) moveToLan(true); return yes; }).finally(() => { relocating = undefined; });
   const key = `cc-relocated@${host.id}`;
   try { if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 60_000) return Promise.resolve(false); sessionStorage.setItem(key, String(Date.now())); } catch {}
-  relocating = resolveEntry(host.entry).then(url => {
+  relocating = backHome(host).then(async yes => {
+    if (yes) { moveToLan(true); return true; }
+    const url = await resolveEntry(host.entry!);
     if (url === host.url) return false;
     if (!samePlace(host.url, url)) return t(`${host.entry} now leads to ${url}, not ${host.url}. Only a new port is followed by itself; add the host again to trust the new address.`, `${host.entry} 现在指向 ${url}，而不是 ${host.url}。只有端口变化会自动跟随；如信任新地址，请重新添加该宿主。`);
     const list = loadHosts();

@@ -75,6 +75,31 @@ test('hosts: one added through a 302 entry stays at the address it was found at'
   assert.deepEqual(JSON.parse(JSON.stringify(loadHosts().hosts)), [{ id: 'a', url: 'https://home.example.com:45678', token: 'ta' }]);
 });
 
+test('home network: checked with the token, refused on no answer or an error', async () => {
+  const { lanAnswers, blockedHttp } = await import('../src/hosts.ts');
+  const host = { id: 'a', url: 'https://home.example.com:45678', token: 'ta', lan: 'https://lan.example.com' };
+  let asked;
+  assert.equal(await lanAnswers(host, async (url, init) => { asked = [url, init.headers.Authorization]; return { ok: true }; }), true);
+  assert.deepEqual(asked, ['https://lan.example.com/api/info', 'Bearer ta']);
+  assert.equal(await lanAnswers(host, async () => ({ ok: false, status: 401 })), false);
+  assert.equal(await lanAnswers(host, async () => { throw new TypeError('Failed to fetch'); }), false);
+  assert.equal(await lanAnswers({ ...host, lan: undefined }, async () => ({ ok: true })), false);
+  globalThis.location = { protocol: 'https:' };
+  assert.equal(blockedHttp('http://192.168.1.5:8787'), true);
+  assert.equal(blockedHttp('http://127.0.0.1:8787'), false);
+  assert.equal(blockedHttp('https://lan.example.com'), false);
+});
+
+test('home network: a new address is checked again before it is used', async () => {
+  const { updateHost } = await import('../src/hosts.ts');
+  localStorage.setItem('cc-hosts:v1', JSON.stringify({ current: 'a', hosts: [{ id: 'a', url: 'https://ccr.example.com', token: 'ta', lan: 'https://lan.example.com' }] }));
+  localStorage.setItem('cc-lan@a', '1');
+  updateHost('a', { alias: 'Home' });
+  assert.equal(localStorage.getItem('cc-lan@a'), '1');
+  updateHost('a', { lan: 'https://nas.example.com' });
+  assert.equal(localStorage.getItem('cc-lan@a'), null);
+});
+
 test('colour: random picks a free palette colour other than the current one', async () => {
   const { PALETTE, randomColor } = await import('../src/hosts.ts');
   const taken = PALETTE.slice(0, 8);

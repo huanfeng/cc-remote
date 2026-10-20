@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { copyText } from './clipboard';
 import { CloseIcon, EditIcon, PlusIcon } from './icons';
-import { PALETTE, currentHost, findHost, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, resolveEntry, shownColor, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
+import { PALETTE, apiBase, blockedHttp, currentHost, findHost, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onLan, resolveEntry, shownColor, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
 import { lang, t } from './i18n';
 
 type Ping = { online: boolean; running?: number; waiting?: number };
@@ -10,7 +10,7 @@ type Ping = { online: boolean; running?: number; waiting?: number };
 /** Checks a host with its saved token: reachable, and how many sessions run or wait. */
 async function ping(host: HostEntry, signal: AbortSignal): Promise<Ping> {
   try {
-    const response = await fetch(`${host.url}/api/sessions`, { headers: { Authorization: `Bearer ${host.token}`, 'X-CC-Lang': lang }, cache: 'no-store', signal });
+    const response = await fetch(`${host.id === currentHost?.id ? apiBase : host.url}/api/sessions`, { headers: { Authorization: `Bearer ${host.token}`, 'X-CC-Lang': lang }, cache: 'no-store', signal });
     if (!response.ok) return { online: response.status !== 401 && response.status < 500 };
     const items: { status?: string }[] = await response.json();
     return { online: true, running: items.filter(x => x.status === 'running').length, waiting: items.filter(x => x.status === 'waiting').length };
@@ -36,10 +36,11 @@ const VIA_LABEL = { direct: () => t('Direct', '直连'), text: () => t('Address 
  * are saved without reaching the host). Besides its address, a host can be given
  * as an entry that answers with the address as plain text (a tunnel whose port
  * changes). */
-export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown = '', editing, onCancel }: { initialUrl?: string; initialVia?: HostVia; error?: string; editing?: HostEntry; onCancel?: () => void }) {
+export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan = '', error: shown = '', editing, onCancel }: { initialUrl?: string; initialVia?: HostVia; initialLan?: string; error?: string; editing?: HostEntry; onCancel?: () => void }) {
   const [url, setUrl] = useState(editing ? editing.entry || editing.url : initialUrl);
   const [via, setVia] = useState<HostVia>(editing ? editing.via || 'direct' : initialVia);
   const [token, setToken] = useState('');
+  const [lan, setLan] = useState(editing ? editing.lan || '' : initialLan);
   const [alias, setAlias] = useState(editing?.alias || '');
   const [tint, setTint] = useState(editing?.tint || '');
   const [error, setError] = useState(shown);
@@ -52,8 +53,12 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown
     if (!entered) { setError(via === 'direct' ? t('Enter the host address, such as https://ccr.example.com', '请输入宿主地址，例如 https://ccr.example.com') : t('Enter the entry URL, such as https://example.com/ccr', '请输入入口地址，例如 https://example.com/ccr')); return; }
     // The entry keeps its query (a token for the address service, say); a bare one gets https.
     const entry = /^[a-z][a-z0-9+.-]*:\/\//i.test(url.trim()) ? url.trim() : `${location.protocol === 'http:' ? 'http' : 'https'}://${url.trim()}`;
-    const look = { alias: alias.trim() || undefined, tint: tint || undefined };
-    // Only the name or colour changed: nothing to check on the host, which may be offline.
+    const lanUrl = lan.trim() ? normalizeHostUrl(lan) : '';
+    if (lan.trim() && !lanUrl) { setError(t('Enter the home-network address, such as https://lan.example.com', '请输入内网地址，例如 https://lan.example.com')); return; }
+    if (lanUrl && blockedHttp(lanUrl)) { setError(t('The home-network address must be https://: this page is served over HTTPS and cannot reach a plain http:// address. Point a domain name at the private address and get it a certificate.', '内网地址必须是 https://：本页面通过 HTTPS 提供，无法访问 http:// 的地址。可以让一个域名指向内网 IP，并为它申请证书。')); return; }
+    // Checked when it is used: away from home it cannot answer now.
+    const look = { alias: alias.trim() || undefined, tint: tint || undefined, lan: lanUrl || undefined };
+    // Only the name, colour or home-network address changed: nothing to check on the host, which may be offline.
     if (editing && !token.trim() && (via === 'direct' ? !editing.via && entered === editing.url : via === editing.via && entry === editing.entry)) {
       updateHost(editing.id, look); // reopens the page when it is the current host
       onCancel?.();
@@ -77,18 +82,20 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown
         onCancel?.();
         return;
       }
-      reopen(rememberHost(record).id);
+      reopen(rememberHost({ ...record, lan: look.lan }).id);
     } finally { setBusy(false); }
   }
   const hint = via === 'text' ? t('A URL that answers with the host address as plain text, such as https://home.example.com:45678. It must allow this page (CORS). When the host stops answering, the address is fetched again.', '一个以纯文本返回宿主地址（如 https://home.example.com:45678）的 URL，必须允许本页面读取（CORS）。宿主连不上时会重新获取地址。')
     : '';
   return <form className="login-card host-login" onSubmit={submit}>
     {editing ? <h2>{t(`Edit ${shownName(editing)}`, `编辑 ${shownName(editing)}`)}</h2> : onCancel ? <h2>{t('Add host', '添加宿主')}</h2> : <><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1></>}
-    <p>{editing ? t('The new address is checked before it is saved. The name and colour are the host\'s own: change them in its settings.', '保存前会用新的设置连接一次。名称和颜色是宿主自己的设置，请在宿主的设置中修改。') : t('Connect to a cc-remote host. This page keeps a list of hosts and their tokens on this device.', '连接一个 cc-remote 宿主。此页面在本设备上保存宿主列表和令牌。')}</p>
+    <p>{editing ? t('A new address or token is checked before it is saved.', '修改地址或令牌时，保存前会用新的设置连接一次。') : t('Connect to a cc-remote host. This page keeps a list of hosts and their tokens on this device.', '连接一个 cc-remote 宿主。此页面在本设备上保存宿主列表和令牌。')}</p>
     <div className="host-via options" role="radiogroup" aria-label={t('How to reach the host', '连接方式')}>{(['direct', 'text'] as const).map(v => <button type="button" key={v} role="radio" aria-checked={via === v} className={via === v ? 'chosen' : ''} onClick={() => setVia(v)}>{VIA_LABEL[v]()}</button>)}</div>
     <label>{via === 'direct' ? t('Host address', '宿主地址') : t('Address URL', '地址获取 URL')}<input value={url} onChange={event => setUrl(event.target.value)} placeholder={via === 'direct' ? 'https://ccr.example.com' : 'https://example.com/ccr.txt'} autoComplete="url" inputMode="url" required /></label>
     {hint && <small className="host-via-hint">{hint}</small>}
     <label>{t('Host access token', '宿主访问令牌')}<input type="password" value={token} onChange={event => setToken(event.target.value)} placeholder={editing ? t('Leave empty to keep the current token', '留空则保留原令牌') : t('The access token of that host', '该宿主的访问令牌')} autoComplete={editing ? 'new-password' : 'current-password'} required={!editing} /></label>
+    <label>{t('Home-network address (optional)', '内网地址（可选）')}<input value={lan} onChange={event => setLan(event.target.value)} placeholder="https://lan.example.com" autoComplete="off" inputMode="url" /></label>
+    <small className="host-via-hint">{t('An https name pointing at this host on your home network. While it answers, this page uses it; away from home it goes back to the address above by itself.', '指向内网中这台宿主的 https 域名。能连上时优先使用它，离开内网后自动切回上面的地址。')}</small>
     {editing && <>
       <label>{t('Name on this page', '在此页面显示的名称')}<input value={alias} maxLength={40} onChange={event => setAlias(event.target.value)} placeholder={editing.name || t('The host\'s own name', '宿主自己的名称')} /></label>
       <div className="host-colors" role="radiogroup" aria-label={t('Color on this page', '在此页面显示的颜色')}>
@@ -146,7 +153,7 @@ export function HostSwitcher({ name }: { name: string }) {
       {hosts.map(host => { const p = pings[host.id]; return <div key={host.id} className={`host-row${host.id === currentHost?.id ? ' current' : ''}`}>
         <a role="menuitem" href={hostLink(host.id)} onClick={event => pick(event.nativeEvent, host)}>
           <span className="host-swatch" style={{ background: shownColor(host) }} />
-          <span className="host-text"><strong>{shownName(host)}</strong><small title={host.entry ? `${host.entry} → ${host.url}` : undefined}>{host.url}{host.via && ` · ${VIA_LABEL[host.via]()}`}</small></span>
+          <span className="host-text"><strong>{shownName(host)}</strong><small title={[host.entry ? `${host.entry} → ${host.url}` : '', host.lan ? t(`Home network: ${host.lan}`, `内网：${host.lan}`) : ''].filter(Boolean).join('\n') || undefined}>{host.id === currentHost?.id && onLan ? `${host.lan} · ${t('Home network', '内网')}` : <>{host.url}{host.via && ` · ${VIA_LABEL[host.via]()}`}</>}</small></span>
           <span className="host-state">{!p ? '…' : !p.online ? t('Offline', '离线') : p.waiting ? t(`${p.waiting} waiting`, `${p.waiting} 待操作`) : p.running ? t(`${p.running} running`, `${p.running} 执行中`) : <span className="dot idle" />}</span>
         </a>
         <button type="button" className="icon-button" aria-label={t(`Edit ${shownName(host)}`, `编辑 ${shownName(host)}`)} title={t('Edit name, color, address or token', '编辑名称、颜色、地址或令牌')} onClick={() => { setOpen(false); setEditing(host); }}><EditIcon size={15} /></button>
