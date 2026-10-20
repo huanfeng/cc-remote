@@ -56,6 +56,18 @@ func (d *downloadTickets) add(t downloadTicket) string {
 	return id
 }
 
+// take is get for a ticket good only once.
+func (d *downloadTickets) take(id string) (downloadTicket, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t, ok := d.m[id]
+	delete(d.m, id)
+	if !ok || time.Now().After(t.expires) {
+		return downloadTicket{}, false
+	}
+	return t, true
+}
+
 func (d *downloadTickets) get(id string) (downloadTicket, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

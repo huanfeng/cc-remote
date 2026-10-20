@@ -437,7 +437,7 @@ const webViewWindow = 20 * time.Second
 // attached or the web shows the session, out when nobody does.
 func (s *Server) updateFocus(ts *terminalSession) {
 	s.mu.Lock()
-	watched := ts.runner.Attached() > 0 || time.Since(ts.viewedAt) < webViewWindow
+	watched := ts.runner.Viewers() > 0 || time.Since(ts.viewedAt) < webViewWindow
 	change := watched == ts.away
 	ts.away = !watched
 	s.mu.Unlock()
@@ -712,7 +712,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.SetStatus(id, "running")
 		}
 	case "Stop":
-		if ts.runner.Attached() > 0 {
+		if ts.runner.Viewers() > 0 {
 			go func() { // clears what a terminal drew differently from ConPTY
 				time.Sleep(500 * time.Millisecond)
 				ts.runner.Redraw()
@@ -798,9 +798,44 @@ func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]string{"status": "ok"})
 }
 
+// streamTicketTTL is how long the web has to open the stream it asked a ticket for.
+const streamTicketTTL = 30 * time.Second
+
+// streamTicket reports whether r opens a terminal stream with a ticket, which
+// terminalStream checks in place of the token.
+func streamTicket(r *http.Request) bool {
+	id, ok := strings.CutPrefix(r.URL.Path, "/api/terminals/")
+	id, ok2 := strings.CutSuffix(id, "/stream")
+	return ok && ok2 && id != "" && !strings.Contains(id, "/") && r.URL.Query().Get("ticket") != ""
+}
+
+// terminalTicket is POST /api/terminals/{id}/ticket: a ticket the web opens the
+// session's terminal stream with, once, as /api/terminals/{id}/stream?ticket=….
+func (s *Server) terminalTicket(w http.ResponseWriter, r *http.Request) {
+	x, err := s.store.Get(r.PathValue("id"))
+	if err != nil || x.Mode != "terminal" {
+		fail(w, 404, s.lang(r).T("Terminal session not found", "终端会话不存在"))
+		return
+	}
+	ticket := s.streamTickets.add(downloadTicket{session: x.ID, expires: time.Now().Add(streamTicketTTL)})
+	respond(w, 200, map[string]string{"ticket": ticket})
+}
+
 // terminalStream connects a terminal front end: binary frames carry keystrokes
 // and screen output; a text frame {"type":"resize","cols":..,"rows":..} sets the size.
+// A web front end (opened with a ticket) also gets {"type":"size","cols":..,"rows":..}
+// whenever the size changes, and is not counted as an attached terminal. It may
+// still resize: it does so only while its user takes over the terminal.
 func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
+	web := false
+	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+		t, ok := s.streamTickets.take(ticket)
+		if !ok || t.session != r.PathValue("id") {
+			fail(w, 401, s.lang(r).T("The terminal link has expired; open the terminal again", "终端链接已过期，请重新打开终端"))
+			return
+		}
+		web = true
+	}
 	x, err := s.store.Get(r.PathValue("id"))
 	if err != nil || x.Mode != "terminal" {
 		fail(w, 404, s.lang(r).T("Terminal session not found", "终端会话不存在"))
@@ -813,14 +848,20 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, s.lang(r).T("Could not start Claude Code: ", "无法启动 Claude Code：")+err.Error())
 		return
 	}
-	c, err := websocket.Accept(w, r, nil)
+	// The handler's middleware already checked the Origin, allowing a reverse
+	// proxy's public host and --allow-origin sites, which the library's own check refuses.
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	c.SetReadLimit(1 << 20)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	sub := ts.runner.Subscribe()
+	subscribe := ts.runner.Subscribe
+	if web {
+		subscribe = ts.runner.SubscribeWeb
+	}
+	sub := subscribe()
 	defer ts.runner.Unsubscribe(sub)
 	sized := make(chan struct{}, 1)
 	go func() {
@@ -885,6 +926,11 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := c.Write(ctx, websocket.MessageBinary, chunk); err != nil {
+				return
+			}
+		case size := <-sub.Size: // nil, never ready, for a terminal
+			b, _ := json.Marshal(map[string]any{"type": "size", "cols": size[0], "rows": size[1]})
+			if err := c.Write(ctx, websocket.MessageText, b); err != nil {
 				return
 			}
 		case <-ctx.Done():

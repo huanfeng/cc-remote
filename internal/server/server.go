@@ -89,6 +89,7 @@ type Server struct {
 	cfg            Config
 	mu             sync.Mutex
 	downloads      downloadTickets          // links the browser downloads files with (downloads.go)
+	streamTickets  downloadTickets          // the web's terminal streams, once each (terminal.go)
 	origins        atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
 	reloadMu       sync.Mutex               // one reload at a time, so listen ends up current
 	files          fileRoots
@@ -151,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/terminals/{id}/hook", s.terminalHook)
 	mux.HandleFunc("POST /api/terminals/{id}/status", s.terminalStatus)
 	mux.HandleFunc("GET /api/terminals/{id}/stream", s.terminalStream)
+	mux.HandleFunc("POST /api/terminals/{id}/ticket", s.terminalTicket)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
@@ -180,7 +182,8 @@ func (s *Server) Handler() http.Handler {
 				return
 			}
 			// A download's ticket is its credential: the browser saves it without the token.
-			if r.URL.Path != "/api/bridge/request" && !strings.HasPrefix(r.URL.Path, "/api/download/") && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
+			// So is a web terminal stream's: a browser WebSocket cannot send the header.
+			if r.URL.Path != "/api/bridge/request" && !strings.HasPrefix(r.URL.Path, "/api/download/") && !streamTicket(r) && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
 				fail(w, 401, s.lang(r).T("Invalid access token", "访问凭证无效"))
 				return
 			}

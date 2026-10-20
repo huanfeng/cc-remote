@@ -57,6 +57,7 @@ location / {
 - 上传的附件下载需要令牌；非图片一律以 `Content-Disposition: attachment` 返回并带 `X-Content-Type-Options: nosniff`，HTML / XML / SVG / 脚本类以 `application/octet-stream` 返回。
 - 状态面板中的日志尾部会隐去访问令牌和 Bearer 凭证。
 - 网页查看文件（`GET /api/sessions/{id}/file`）需要令牌，只开放会话工作目录、会话中出现过的目录和出现过的文件所在目录（根目录、一级目录和用户主目录除外），符号链接和 Windows 目录联接按打开后的实际路径判断，网络共享（UNC）路径一律不打开（会话工作目录本身所在的共享除外），预览的单个文件最多 20 MiB。下载更大的文件时，网页先用令牌申请一个下载链接（`POST /api/sessions/{id}/file/link`），得到 `/api/download/<票据>`：票据是 48 位十六进制随机数，5 分钟内有效，只对应这一个文件，每次请求都按上述范围重新检查路径；下载请求本身不带令牌（浏览器原生下载无法带 `Authorization` 头），以 `application/octet-stream` + `attachment` 返回。持有令牌本来就能让 Claude 读取任意文件，这个范围是为了让查看器只触及会话相关的文件，不是额外的安全边界。返回的类型只有图片、PDF 或 `application/octet-stream`，不会作为 HTML / SVG 在页面中执行。
+- 网页终端视图连接终端会话的 PTY 流（`/api/terminals/{id}/stream`，WebSocket）。浏览器的 WebSocket 无法带 `Authorization` 头，网页先用令牌申请票据（`POST /api/terminals/{id}/ticket`），再以 `?ticket=<票据>` 连接：票据是 48 位十六进制随机数，只对应这一个会话，30 秒内有效且只能用一次，令牌本身不进入 URL。WebSocket 握手与其它 API 一样检查 `Origin`（同源、经反向代理的 `X-Forwarded-Host`，或 `--allow-origin` 允许的网页前端）。`ccr` 仍用令牌头连接。
 - 服务环境变量保存在 `service.json`（0600）中；通过 `--env` 传入的密钥是明文保存的。默认只自动捕获代理变量，不会捕获任何密钥。
 - 「写入 Claude 用户配置」只改写 `model`、`effortLevel`、`permissions.defaultMode` 三项，写入前备份。
 

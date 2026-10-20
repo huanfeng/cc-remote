@@ -71,8 +71,20 @@ type Runner struct {
 
 // Sub is a front end's view of the output.
 type Sub struct {
-	C       chan []byte
+	C chan []byte
+	// Size has the terminal's size as it changes, for a web front end, which
+	// follows the size instead of setting it; nil for a terminal.
+	Size    chan [2]int
 	dropped bool
+}
+
+// sendSize leaves only the latest size queued.
+func (sub *Sub) sendSize(cols, rows int) {
+	select {
+	case <-sub.Size:
+	default:
+	}
+	sub.Size <- [2]int{cols, rows}
 }
 
 const (
@@ -402,10 +414,17 @@ func (r *Runner) write(b []byte) error {
 	return err
 }
 
-// Subscribe attaches a front end. The caller reads sub.C until it is closed
-// and calls Unsubscribe when it leaves.
-func (r *Runner) Subscribe() *Sub {
-	sub := &Sub{C: make(chan []byte, subBuffer)}
+// Subscribe attaches a terminal front end. The caller reads sub.C until it is
+// closed and calls Unsubscribe when it leaves.
+func (r *Runner) Subscribe() *Sub { return r.subscribe(&Sub{C: make(chan []byte, subBuffer)}) }
+
+// SubscribeWeb attaches a web front end: it is not counted by Attached, and
+// sub.Size starts with the current size.
+func (r *Runner) SubscribeWeb() *Sub {
+	return r.subscribe(&Sub{C: make(chan []byte, subBuffer), Size: make(chan [2]int, 1)})
+}
+
+func (r *Runner) subscribe(sub *Sub) *Sub {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.exited {
@@ -415,6 +434,9 @@ func (r *Runner) Subscribe() *Sub {
 	// The front end's terminal first enters the modes Claude Code turned on.
 	if replay := r.modes.replay(); len(replay) > 0 {
 		sub.C <- replay
+	}
+	if sub.Size != nil {
+		sub.sendSize(r.cols, r.rows)
 	}
 	r.subs[sub] = true
 	return sub
@@ -430,8 +452,21 @@ func (r *Runner) Unsubscribe(sub *Sub) {
 	}
 }
 
-// Attached is the number of terminal front ends.
+// Attached is the number of terminal front ends, web ones not counted.
 func (r *Runner) Attached() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for sub := range r.subs {
+		if sub.Size == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// Viewers is the number of front ends, terminal and web.
+func (r *Runner) Viewers() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.subs)
@@ -455,6 +490,11 @@ func (r *Runner) Resize(cols, rows int) error {
 	r.cols, r.rows = cols, rows
 	if !same {
 		r.scr.resize(cols, rows)
+		for sub := range r.subs {
+			if sub.Size != nil {
+				sub.sendSize(cols, rows)
+			}
+		}
 	}
 	r.mu.Unlock()
 	if same {

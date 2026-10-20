@@ -609,3 +609,78 @@ func TestTerminalSessionsRestoredAfterRestart(t *testing.T) {
 		t.Fatalf("saved %q %v", ids, err)
 	}
 }
+
+// The web opens a terminal stream with a ticket good once: it hears the size
+// and is not counted as an attached terminal.
+func TestTerminalStreamWebTicket(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	code, b := call(t, base, "POST", "/api/terminals/"+x.ID+"/ticket", nil)
+	if code != 200 {
+		t.Fatalf("ticket: %d %s", code, b)
+	}
+	var v struct{ Ticket string }
+	if err := json.Unmarshal(b, &v); err != nil || v.Ticket == "" {
+		t.Fatalf("ticket %s: %v", b, err)
+	}
+	ws := "ws" + strings.TrimPrefix(base, "http") + "/api/terminals/" + x.ID + "/stream?ticket=" + v.Ticket
+	conn, _, err := websocket.Dial(ctx, ws, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	for {
+		typ, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		if typ == websocket.MessageText {
+			if !strings.Contains(string(data), `"type":"size"`) {
+				t.Fatalf("text frame %s", data)
+			}
+			break
+		}
+	}
+	s.mu.Lock()
+	ts := s.terminals[x.ID]
+	s.mu.Unlock()
+	if n := ts.runner.Attached(); n != 0 {
+		t.Fatalf("web counted as %d attached terminal(s)", n)
+	}
+	if _, _, err := websocket.Dial(ctx, ws, nil); err == nil {
+		t.Fatal("a ticket opened a second stream")
+	}
+	other := createTerminal(t, base)
+	_, b = call(t, base, "POST", "/api/terminals/"+x.ID+"/ticket", nil)
+	_ = json.Unmarshal(b, &v)
+	if _, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(base, "http")+"/api/terminals/"+other.ID+"/stream?ticket="+v.Ticket, nil); err == nil {
+		t.Fatal("a ticket opened another session's stream")
+	}
+}
+
+// A web stream is held to the same Origin rules as the rest of the API: a
+// reverse proxy's public host passes, a foreign site does not.
+func TestTerminalStreamWebOrigin(t *testing.T) {
+	_, base, _, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	dial := func(header http.Header) error {
+		_, b := call(t, base, "POST", "/api/terminals/"+x.ID+"/ticket", nil)
+		var v struct{ Ticket string }
+		_ = json.Unmarshal(b, &v)
+		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(base, "http")+"/api/terminals/"+x.ID+"/stream?ticket="+v.Ticket, &websocket.DialOptions{HTTPHeader: header})
+		if err == nil {
+			conn.Close(websocket.StatusNormalClosure, "")
+		}
+		return err
+	}
+	if err := dial(http.Header{"Origin": {"https://evil.example"}}); err == nil {
+		t.Fatal("a foreign site opened the stream")
+	}
+	if err := dial(http.Header{"Origin": {"https://cc.example"}, "X-Forwarded-Host": {"cc.example"}}); err != nil {
+		t.Fatalf("behind a proxy: %v", err)
+	}
+}

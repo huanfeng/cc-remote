@@ -203,3 +203,33 @@ func TestPasteRightAfterStartWaitsForReady(t *testing.T) {
 		t.Fatalf("pasted before the trust dialog was answered: %q", seen.String())
 	}
 }
+
+// A web front end follows the size instead of counting as an attached terminal.
+func TestRunnerWebFrontEndFollowsSize(t *testing.T) {
+	r := start(t)
+	web := r.SubscribeWeb()
+	defer r.Unsubscribe(web)
+	if got := <-web.Size; got != [2]int{100, 30} {
+		t.Fatalf("initial size %v", got)
+	}
+	term := r.Subscribe()
+	defer r.Unsubscribe(term)
+	if r.Attached() != 1 || r.Viewers() != 2 {
+		t.Fatalf("attached %d, viewers %d", r.Attached(), r.Viewers())
+	}
+	if err := r.Resize(90, 25); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Resize(80, 24) // only the latest is kept
+	select {
+	case got := <-web.Size:
+		if got != [2]int{80, 24} {
+			t.Fatalf("size %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no size after a resize")
+	}
+	if term.Size != nil {
+		t.Fatal("a terminal front end gets size notices")
+	}
+}
