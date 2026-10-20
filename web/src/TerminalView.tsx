@@ -120,13 +120,17 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
       if (disposed || g !== gen || document.hidden) return;
       const url = new URL(apiUrl(`/api/terminals/${encodeURIComponent(id)}/stream?ticket=${ticket}`), location.href);
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(url);
+      let socket: WebSocket;
+      try { socket = new WebSocket(url); }
+      catch (err) { setReason((err as Error).message); setState('failed'); return; } // a blocked address (http from an https page)
       socket.binaryType = 'arraybuffer';
+      let opened = false;
       ws = socket;
       sent = '';
       firstSize = true; // the size the PTY had before this view connected
       socket.onopen = () => {
         if (ws !== socket) return;
+        opened = true;
         attempt = 0;
         setReason('');
         setState('open');
@@ -152,6 +156,8 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
         if (disposed || ws !== socket) return;
         ws = undefined;
         if (event.code === STATUS_EXITED) { exited = true; setState('exited'); setReason(event.reason); return; }
+        // Refused before it opened: the ticket was fine, so something between this page and the host turned the WebSocket down.
+        setReason(opened ? event.reason || t(`Connection lost (${event.code})`, `连接已断开（${event.code}）`) : t(`The WebSocket to ${url.host} did not open (${event.code}); a reverse proxy or tunnel in between may not forward WebSocket`, `到 ${url.host} 的 WebSocket 没能建立（${event.code}），中间的反向代理或隧道可能没有转发 WebSocket`));
         if (document.hidden) { setState('paused'); return; }
         retry();
       };
@@ -243,11 +249,12 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
     setDraft('');
   };
 
-  const label = { loading: t('Loading the terminal…', '正在加载终端…'), connecting: t('Connecting…', '连接中…'), open: t('Connected', '已连接'), exited: reason || t('Claude Code exited', 'Claude Code 已退出'), paused: t('Paused in the background', '后台已暂停'), failed: reason || t('Could not connect', '无法连接') }[state];
+  const failure = state === 'connecting' && reason;
+  const label = { loading: t('Loading the terminal…', '正在加载终端…'), connecting: t('Connecting…', '连接中…'), open: t('Connected', '已连接'), exited: reason || t('Claude Code exited', 'Claude Code 已退出'), paused: t('Paused in the background', '后台已暂停'), failed: t('Could not connect', '无法连接') }[state];
   return <div className="term-view">
     <div className="term-bar">
       <span className={`dot ${state === 'open' ? 'idle' : state === 'exited' || state === 'failed' ? 'error' : 'running'}`} />
-      <span className="term-state" title={state === 'connecting' && reason ? reason : undefined}>{label}</span>
+      <span className="term-state">{label}</span>
       {size && <span className="term-size" title={control ? t('This view sets the terminal size', '终端尺寸由此处决定') : t('Showing the size another front end set', '显示的是其它端设定的尺寸')}>{size[0]}×{size[1]}{control ? '' : t(' · following', ' · 跟随')}</span>}
       <span className="term-bar-actions">
         {touch && !fitDevice && <><button type="button" aria-label={t('Smaller', '缩小')} title={t('Smaller', '缩小')} onClick={() => setZoom(old => Math.max(0.5, Math.round((old - 0.25) * 100) / 100))}>A−</button><button type="button" aria-label={t('Larger', '放大')} title={t('Larger', '放大')} onClick={() => setZoom(old => Math.min(3, Math.round((old + 0.25) * 100) / 100))}>A+</button></>}
@@ -256,6 +263,7 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
         {state === 'exited' ? <button type="button" onClick={() => engine.current?.reconnect()}>{t('Start again', '重新启动')}</button> : state === 'failed' ? <button type="button" onClick={() => engine.current?.reconnect()}>{t('Connect again', '重新连接')}</button> : <button type="button" title={t('Paint the whole screen again', '整屏重画')} disabled={state !== 'open'} onClick={() => engine.current?.redraw()}>{t('Redraw', '重绘')}</button>}
       </span>
     </div>
+    {(failure || state === 'failed') && reason && <div className="term-notice" role="status">{reason}</div>}
     <div className="term-box" ref={box}><div className="term-screen" ref={screen} /></div>
     {touch && <>
       <div className="term-keys" role="toolbar" aria-label={t('Terminal keys', '终端按键')}>{KEYS.map(key => <button type="button" key={key.label} title={key.title} disabled={state !== 'open'} onPointerDown={event => event.preventDefault() /* keep the keyboard up */} onClick={() => press(key.data)}>{key.label}</button>)}</div>

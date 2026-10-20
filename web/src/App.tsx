@@ -156,6 +156,8 @@ export default function App() {
   const [drawer, setDrawer] = useState(false);
   const [create, setCreate] = useState(false);
   const [title, setTitle] = useState('');
+  // Terminal sessions the user switched to the terminal view, remembered per host.
+  const [termViews, setTermViews] = useState<string[]>(() => { try { const ids = JSON.parse(localStorage.getItem(hostKey('cc-term-view')) || '[]'); return Array.isArray(ids) ? ids : []; } catch { return []; } });
   const [newMode, setNewMode] = useState<'managed' | 'terminal'>(() => { try { return localStorage.getItem('cc-new-mode') === 'managed' ? 'managed' : 'terminal'; } catch { return 'terminal'; } });
   const [trustFolder, setTrustFolder] = useState(false);
   const [cwd, setCwd] = useState('');
@@ -436,7 +438,7 @@ export default function App() {
     if (!element || !activeTab) return;
     nearBottom.current = activeTab.nearBottom;
     element.scrollTop = activeTab.nearBottom ? element.scrollHeight : activeTab.scrollTop;
-  }, [activeKey, loading]);
+  }, [activeKey, loading, termViews]); // back from the terminal view, the conversation is a new element
   // Older pages: a marker above the transcript loads the previous page when it nears the
   // viewport; the reading position is kept by shifting scrollTop by the added height.
   const olderMarker = useRef<HTMLDivElement>(null);
@@ -505,7 +507,7 @@ export default function App() {
     const observer = new ResizeObserver(() => { if (nearBottom.current) element.scrollTop = element.scrollHeight; });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [selected]);
+  }, [selected, termViews]);
   const current = sessions.find(item => item.id === selected) || session;
   const [listLimit, setListLimit] = useState(LIST_RENDER);
   useEffect(() => { setListLimit(LIST_RENDER); }, [search, native]);
@@ -520,8 +522,6 @@ export default function App() {
   const running = current?.status === 'running' || current?.status === 'waiting';
   // Terminal sessions: the host holds Claude Code; a local terminal attaches to it.
   const attaching = !native && current?.mode === 'terminal';
-  // Terminal sessions the user switched to the terminal view, remembered per host.
-  const [termViews, setTermViews] = useState<string[]>(() => { try { const ids = JSON.parse(localStorage.getItem(hostKey('cc-term-view')) || '[]'); return Array.isArray(ids) ? ids : []; } catch { return []; } });
   const showTerm = attaching && termViews.includes(current!.id);
   const setTermView = (on: boolean) => { if (!current) return; const next = [...termViews.filter(id => id !== current.id), ...(on ? [current.id] : [])].slice(-100); setTermViews(next); try { localStorage.setItem(hostKey('cc-term-view'), JSON.stringify(next)); } catch { /* private window */ } };
   const attachCommand = attaching && info?.attachCommand ? `${info.attachCommand} ${current!.id.slice(0, 8)}` : '';

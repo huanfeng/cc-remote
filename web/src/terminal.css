@@ -20,3 +20,4 @@
 .term-input textarea{flex:1;min-height:40px;max-height:120px;resize:none;font-size:16px;line-height:1.4;padding:9px 10px;border-radius:9px}
 .term-input .primary{padding:10px 14px;font-size:13px}
 @media(max-width:760px){.view-switch span{display:none}.view-switch button{padding:6px 7px}}
+.term-notice{padding:7px 12px;font-size:12px;line-height:1.6;color:#f0d9a8;background:#3a3423;border-bottom:1px solid #2e372f;overflow-wrap:anywhere}
