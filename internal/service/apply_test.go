@@ -151,7 +151,7 @@ func TestNoteAutoLanguage(t *testing.T) {
 func TestConfigAllowOrigin(t *testing.T) {
 	i18n.Set(i18n.EN)
 	t.Setenv("CC_REMOTE_TOKEN", "")
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateInstallRoot(t) // SaveConfig mirrors service.json into InstallRoot
 	reloads, restarts := 0, 0
 	cfg := fakeHost(t, func(w http.ResponseWriter) {
 		reloads++
