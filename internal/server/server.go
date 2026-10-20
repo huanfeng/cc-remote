@@ -313,6 +313,16 @@ func validateCwd(l i18n.Lang, cwd string) (string, error) {
 	}
 	return p, nil
 }
+
+// folderTitle is the name of an absolute folder, or "" for a root such as / or D:\.
+func folderTitle(dir string) string {
+	name := filepath.Base(dir)
+	if name == "." || name == string(filepath.Separator) || name == filepath.VolumeName(dir) {
+		return ""
+	}
+	return name
+}
+
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Title string `json:"title"`
@@ -338,9 +348,6 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.ClaudeArgs, req.overrideRequest)
 		return
 	}
-	if req.Title == "" {
-		req.Title = s.lang(r).T("New session", "新会话")
-	}
 	if len(req.Title) > 300 {
 		fail(w, 400, s.lang(r).T("Session name is too long", "会话名称过长"))
 		return
@@ -349,6 +356,13 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		fail(w, 400, e.Error())
 		return
+	}
+	// Unnamed, a session is named after its folder until Claude Code names it.
+	if req.Title == "" {
+		req.Title = folderTitle(cwd)
+	}
+	if req.Title == "" {
+		req.Title = s.lang(r).T("New session", "新会话")
 	}
 	var overrides store.Session
 	if e = req.apply(s.lang(r), &overrides); e != nil {

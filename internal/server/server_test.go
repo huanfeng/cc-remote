@@ -378,3 +378,22 @@ func TestErrorsFollowPageLanguage(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateNamesSessionAfterFolder(t *testing.T) {
+	_, ts, _ := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	dir := filepath.Join(t.TempDir(), "my-app")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, b := request(t, ts, "POST", "/api/sessions", map[string]string{"title": "  ", "cwd": dir}, testToken)
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, b)
+	}
+	var s store.Session
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Title != "my-app" {
+		t.Fatalf("title %q, want the folder name", s.Title)
+	}
+}
