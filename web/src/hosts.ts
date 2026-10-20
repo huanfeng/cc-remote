@@ -206,17 +206,21 @@ if (STANDALONE && currentHost?.lan && !onLan) {
   (navigator as Navigator & { connection?: EventTarget }).connection?.addEventListener('change', check);
 }
 
-/** After the current host stopped answering: leaves the home-network address for the
- * outside one; on the outside one, moves home when that answers, else asks the entry
+/** After the current host stopped answering: leaves the home-network address, when it no
+ * longer answers either, for the outside one; on the outside one, moves home when that answers, else asks the entry
  * for the address again (a tunnel's port changed) and, when it moved, reopens the page
  * there. Resolves true when it moved, a message when the entry led elsewhere, false
  * otherwise; at most once a minute, across the reloads, so a bad entry cannot loop. */
 let relocating: Promise<boolean | string> | undefined;
+// Requests the browser cuts off as the page reloads or leaves fail like an unreachable host.
+let leaving = false;
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { leaving = true; });
 export function relocateHost(): Promise<boolean | string> {
   const host = currentHost;
-  if (!host) return Promise.resolve(false);
-  if (onLan) { moveToLan(false); return Promise.resolve(true); }
+  if (!host || leaving) return Promise.resolve(false);
   if (relocating) return relocating;
+  // One failed request is not the network changing: the home address is checked first.
+  if (onLan) return relocating = lanAnswers(host).then(yes => { if (yes || leaving) return false; moveToLan(false); return true; }).finally(() => { relocating = undefined; });
   if (!host.entry || !host.via) return relocating = backHome(host).then(yes => { if (yes) moveToLan(true); return yes; }).finally(() => { relocating = undefined; });
   const key = `cc-relocated@${host.id}`;
   try { if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 60_000) return Promise.resolve(false); sessionStorage.setItem(key, String(Date.now())); } catch {}
@@ -238,6 +242,7 @@ export function relocateHost(): Promise<boolean | string> {
  * the old host. replaceState fires no hashchange, so the old host's page does not record
  * an empty selection on its way out. */
 export function reopen(id = currentHost?.id) {
+  leaving = true;
   history.replaceState(null, '', hostURL(id));
   location.reload();
 }
@@ -261,6 +266,16 @@ export function removeHost(id: string) {
     try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.endsWith(`@${id}`)) storage.removeItem(key); } catch {}
   }
   if (currentHost?.id === id) reopen(current || undefined);
+}
+
+/** Forgets every host and everything this page stored (tokens, drafts, tabs, its own
+ * settings), and opens the page empty: leaving no trace on a shared device. */
+export function forgetAllHosts() {
+  for (const name of ['localStorage', 'sessionStorage'] as const) {
+    try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith('cc-')) storage.removeItem(key); } catch {}
+  }
+  history.replaceState(null, '', location.pathname);
+  location.reload();
 }
 
 /** The access token: the current host's record here, the browser's storage on a host's own page. */

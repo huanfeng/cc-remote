@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { copyText } from './clipboard';
-import { CloseIcon, EditIcon, PlusIcon } from './icons';
-import { PALETTE, apiBase, blockedHttp, currentHost, findHost, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onLan, resolveEntry, shownColor, shownIcon, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
+import { CloseIcon, EditIcon, LogoutIcon, PlusIcon } from './icons';
+import { PALETTE, apiBase, blockedHttp, currentHost, findHost, forgetAllHosts, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onLan, resolveEntry, shownColor, shownIcon, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
 import { lang, t } from './i18n';
 import { iconURL } from './hostIcon';
 import { ColorChoices, IconChoices } from './HostLook';
@@ -141,6 +141,7 @@ export function HostSwitcher({ name }: { name: string }) {
     return () => { controller.abort(); document.removeEventListener('mousedown', away); document.removeEventListener('touchstart', away); document.removeEventListener('keydown', key); };
   }, [open]);
   const forget = (host: HostEntry) => { if (window.confirm(t(`Remove ${shownName(host)} from this page? Its token and drafts saved here are deleted.`, `从此页面移除 ${shownName(host)}？此处保存的令牌和草稿会一并删除。`))) { removeHost(host.id); setOpen(false); } };
+  const forgetAll = () => { if (window.confirm(t(`Sign out of all ${hosts.length} hosts and clear this page? Every host, token, draft and tab saved here is deleted; adding a host again needs its token.`, `退出全部 ${hosts.length} 个宿主并清除此页面的数据？此处保存的所有宿主、令牌、草稿和标签页记录都会删除，无法恢复；再次添加宿主需要重新输入令牌。`))) forgetAllHosts(); };
   // A plain click switches this tab; a modified one (or a long press) opens a tab of its own.
   const pick = (event: MouseEvent, host: HostEntry) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -160,6 +161,7 @@ export function HostSwitcher({ name }: { name: string }) {
         <button type="button" className="icon-button" aria-label={t(`Remove ${shownName(host)}`, `移除 ${shownName(host)}`)} title={t('Remove from this page', '从此页面移除')} onClick={() => forget(host)}><CloseIcon size={15} /></button>
       </div>; })}
       <button type="button" role="menuitem" className="host-add" onClick={() => { setOpen(false); setAdding(true); }}><PlusIcon size={14} />{t('Add host', '添加宿主')}</button>
+      <button type="button" role="menuitem" className="host-add host-clear" onClick={forgetAll}><LogoutIcon size={14} />{t('Sign out of all hosts and clear…', '退出并清除所有宿主…')}</button>
     </div>}
     {/* On the body: the phone sidebar's transform would otherwise hold the fixed backdrop. */}
     {adding && createPortal(<div className="modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setAdding(false); }}><HostLogin onCancel={() => setAdding(false)} /></div>, document.body)}
