@@ -5,24 +5,6 @@ import (
 	"testing"
 )
 
-func TestNormalizeOrigin(t *testing.T) {
-	for in, want := range map[string]string{
-		"https://CCR.example.com/": "https://ccr.example.com",
-		"http://127.0.0.1:5173":    "http://127.0.0.1:5173",
-		"https://ccr.example:443":  "https://ccr.example",
-		"http://ccr.example:80":    "http://ccr.example",
-		"http://ccr.example:443":   "http://ccr.example:443",
-		"ccr.example.com":          "",
-		"https://x.example/app":    "",
-		"ftp://x.example":          "",
-		"https://u@x.example":      "",
-	} {
-		if got := NormalizeOrigin(in); got != want {
-			t.Errorf("NormalizeOrigin(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // TestStandaloneFrontendCORS covers a web frontend served from another site:
 // only an allowed origin gets its preflight answered and its replies readable.
 func TestStandaloneFrontendCORS(t *testing.T) {

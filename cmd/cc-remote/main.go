@@ -333,13 +333,9 @@ func runHost(argv []string) error {
 	if added != "" {
 		log.Printf("No loopback listen address configured; also listening on %s for local tools", added)
 	}
-	var origins []string
-	for _, x := range listen.Split(append(stringList{os.Getenv("CC_REMOTE_ALLOW_ORIGINS")}, opts.allowOrigin...)) {
-		o := server.NormalizeOrigin(x)
-		if o == "" {
-			return i18n.Errorf("invalid --allow-origin %q: expected scheme://host[:port], such as https://ccr.example.com", "无效的 --allow-origin %q：应为 scheme://host[:port]，例如 https://ccr.example.com", x)
-		}
-		origins = append(origins, o)
+	origins, err := listen.Origins(append([]string{os.Getenv("CC_REMOTE_ALLOW_ORIGINS")}, opts.allowOrigin...))
+	if err != nil {
+		return err
 	}
 	absData, err := filepath.Abs(*opts.dataDir)
 	if err != nil {

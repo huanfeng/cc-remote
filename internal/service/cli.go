@@ -541,6 +541,8 @@ func configCmd(args []string) error {
 	fs := flag.NewFlagSet("service config", flag.ContinueOnError)
 	var listenVals multiFlag
 	fs.Var(&listenVals, "listen", i18n.T("listen address, repeatable or comma separated", "监听地址，可重复或用逗号分隔"))
+	var originVals multiFlag
+	fs.Var(&originVals, "allow-origin", i18n.T("standalone web frontend allowed to use the host, such as https://huanfeng.github.io; repeatable or comma separated, replaces the list (empty to clear); applies without a restart", "允许使用此宿主的独立网页前端，例如 https://huanfeng.github.io；可重复或用逗号分隔，整体替换（留空表示清除）；无需重启即生效"))
 	dataDir := fs.String("data-dir", "", dataDirHelp())
 	claudeBin := fs.String("claude", "claude", i18n.T("Claude Code executable", "Claude Code 可执行文件"))
 	configDir := fs.String("claude-config-dir", "", i18n.T("Claude config directory (empty to clear)", "Claude 配置目录（留空表示清除）"))
@@ -573,7 +575,7 @@ func configCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !set["listen"] && !set["claude"] && !set["claude-config-dir"] && !set["allow-insecure-remote"] && !set["lang"] && !envChange {
+	if !set["listen"] && !set["allow-origin"] && !set["claude"] && !set["claude-config-dir"] && !set["allow-insecure-remote"] && !set["lang"] && !envChange {
 		if !changed {
 			printConfig(cfg, out)
 		}
@@ -581,6 +583,16 @@ func configCmd(args []string) error {
 	}
 	if err = applySettings(cfg, set, listenVals, *claudeBin, *configDir, *allowInsecure, out); err != nil {
 		return err
+	}
+	if set["allow-origin"] {
+		origins, err := listen.Origins(originVals)
+		if err != nil {
+			return err
+		}
+		cfg.AllowOrigins = nil
+		if len(origins) > 0 {
+			cfg.AllowOrigins = origins
+		}
 	}
 	if err = applyLanguage(cfg, set, *lang); err != nil {
 		return err
@@ -764,6 +776,9 @@ func printConfig(cfg *Config, out io.Writer) {
 	}
 	if cfg.Language != "" {
 		field(out, "Language", "语言", cfg.Language)
+	}
+	if len(cfg.AllowOrigins) > 0 {
+		field(out, "Web frontends", "网页前端", strings.Join(cfg.AllowOrigins, ", "))
 	}
 	if len(cfg.Env) > 0 {
 		field(out, "Env", "环境变量", EnvSummary(cfg.Env))

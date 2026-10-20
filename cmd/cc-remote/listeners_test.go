@@ -2,16 +2,19 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"testing"
 	"time"
 
+	"cc-remote/internal/i18n"
 	"cc-remote/internal/service"
 )
 
@@ -142,8 +145,8 @@ func TestApplyServiceConfig(t *testing.T) {
 	t.Setenv("CC_REMOTE_TEST_PROXY", "")
 	t.Setenv("CC_REMOTE_TEST_GONE", "old")
 	t.Setenv("CC_REMOTE_SERVICE_MANAGER", "schtasks")
-	applyServiceConfig(o, &service.Config{Listen: []string{"lan:9000"}, Claude: "/opt/claude", AutoLanguage: "zh", EnvRemoved: []string{"CC_REMOTE_TEST_GONE"}, Env: map[string]string{"CC_REMOTE_TEST_PROXY": "http://p:1", "CC_REMOTE_SERVICE_MANAGER": "x"}})
-	if !slices.Equal(o.listen, stringList{"lan:9000"}) || *o.claudeBin != "/opt/claude" || *o.lang != "zh" || *o.configDir != "" {
+	applyServiceConfig(o, &service.Config{Listen: []string{"lan:9000"}, Claude: "/opt/claude", AutoLanguage: "zh", AllowOrigins: []string{"https://huanfeng.github.io"}, EnvRemoved: []string{"CC_REMOTE_TEST_GONE"}, Env: map[string]string{"CC_REMOTE_TEST_PROXY": "http://p:1", "CC_REMOTE_SERVICE_MANAGER": "x"}})
+	if !slices.Equal(o.listen, stringList{"lan:9000"}) || *o.claudeBin != "/opt/claude" || *o.lang != "zh" || *o.configDir != "" || !slices.Equal(o.allowOrigin, stringList{"https://huanfeng.github.io"}) {
 		t.Fatalf("options: %v %q %q %q", o.listen, *o.claudeBin, *o.lang, *o.configDir)
 	}
 	if _, gone := os.LookupEnv("CC_REMOTE_TEST_GONE"); gone || os.Getenv("CC_REMOTE_TEST_PROXY") != "http://p:1" || os.Getenv("CC_REMOTE_SERVICE_MANAGER") != "schtasks" {
@@ -164,5 +167,39 @@ func TestConflicts(t *testing.T) {
 		if got := conflicts(c.a, c.b); got != c.want {
 			t.Errorf("conflicts(%s, %s) = %v", c.a, c.b, got)
 		}
+	}
+}
+
+// A reload hands the server the web frontends of service.json, with those of
+// CC_REMOTE_ALLOW_ORIGINS, normalized; a bad one fails the reload.
+func TestReloadSettingsAllowOrigins(t *testing.T) {
+	srv := &http.Server{Handler: http.NotFoundHandler()}
+	t.Cleanup(func() { srv.Close() })
+	ls := newListenerSet(srv, make(chan error, 1))
+	addr := freeAddr(t)
+	l, err := listenOn(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ls.add(addr, l)
+	ls.keep = addr
+	ls.serve()
+	dir := t.TempDir()
+	write := func(origins ...string) {
+		b, _ := json.Marshal(service.Config{Listen: []string{addr}, Claude: "claude", AllowOrigins: origins, Env: map[string]string{}})
+		if err := os.WriteFile(filepath.Join(dir, "service.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("CC_REMOTE_ALLOW_ORIGINS", "https://env.example")
+	write("https://HUANFENG.github.io/")
+	started := &service.Config{Listen: []string{addr}, Claude: "claude", Env: map[string]string{}}
+	res, err := reloadSettings(dir, started, i18n.EN, ls)
+	if err != nil || len(res.Restart) != 0 || !slices.Equal(res.AllowOrigins, []string{"https://env.example", "https://huanfeng.github.io"}) {
+		t.Fatalf("reload: %+v %v", res, err)
+	}
+	write("https://huanfeng.github.io/cc-remote")
+	if _, err = reloadSettings(dir, started, i18n.EN, ls); err == nil {
+		t.Fatal("an origin with a path was accepted")
 	}
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { copyText } from './clipboard';
 import { CloseIcon, EditIcon, PlusIcon } from './icons';
 import { currentHost, findHost, loadHosts, normalizeHostUrl, rememberHost, removeHost, reopen, resolveEntry, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
 import { lang, t } from './i18n';
@@ -16,12 +17,16 @@ async function ping(host: HostEntry, signal: AbortSignal): Promise<Ping> {
   } catch { return { online: false }; }
 }
 
+/** What a host runs to let this page in: it applies at once (cc-remote --allow-origin
+ * does the same for a host started by hand). */
+export const allowCommand = () => `cc-remote service config --allow-origin ${location.origin}`;
+
 /** Why a host could not be reached from this page, in words the user can act on. A host
  * that does not allow this page fails the preflight: that looks like no answer at all. */
 export function connectError(status?: number): string {
   if (status === 401) return t('The access token is not valid for this host', '访问令牌与这个宿主不符');
   if (status) return t(`The host answered with an error (${status})`, `宿主返回错误（${status}）`);
-  return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page: --allow-origin ${location.origin}`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面：--allow-origin ${location.origin}`);
+  return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page (on the host: ${allowCommand()})`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面（在宿主上运行：${allowCommand()}）`);
 }
 
 const VIA_LABEL = { direct: () => t('Direct', '直连'), redirect: () => t('Redirect', '302 跳转'), text: () => t('Address URL', '文本地址') };
@@ -80,8 +85,17 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown
     <button className="primary" disabled={busy}>{busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')} <span>→</span></button>
     {onCancel && <button type="button" className="secondary host-login-cancel" onClick={onCancel}>{t('Cancel', '取消')}</button>}
     {!onCancel && !editing && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><span className="host-swatch" style={{ background: x.color || '#293c2e' }} />{x.name || x.url}<small>{x.entry || x.url}</small></button>)}</div>}
-    {!editing && <small>{t(`Each host must allow this page: cc-remote --allow-origin ${location.origin}`, `每个宿主需允许本页面：cc-remote --allow-origin ${location.origin}`)}</small>}
+    {!editing && <AllowHint />}
   </form>;
+}
+
+/** How to let this page into a host: the command, copied on click. */
+function AllowHint() {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => { try { await copyText(allowCommand()); setCopied(true); window.setTimeout(() => setCopied(false), 1600); } catch {} };
+  return <small className="allow-hint">{t('Each host must allow this page. On the host, run (applies at once):', '每个宿主需允许本页面，在宿主上运行（立即生效）：')}
+    <button type="button" className="allow-command" title={t('Copy', '复制')} onClick={() => void copy()}><code>{allowCommand()}</code><span>{copied ? t('Copied', '已复制') : t('Copy', '复制')}</span></button>
+    {t('It replaces the frontends the host allows: list them all, separated by commas. A host started by hand takes --allow-origin instead.', '它会替换宿主允许的前端列表，有多个时用逗号一起列出。手动前台运行的宿主改用 --allow-origin 启动参数。')}</small>;
 }
 
 /** The host list under the sidebar's host name: switch, add, edit or forget hosts. */

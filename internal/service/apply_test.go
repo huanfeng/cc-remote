@@ -145,3 +145,43 @@ func TestNoteAutoLanguage(t *testing.T) {
 		t.Fatalf("explicit language keeps auto %q", cfg.AutoLanguage)
 	}
 }
+
+// service config --allow-origin saves the normalized frontends and has the
+// running host apply them, with no restart; an empty value clears them.
+func TestConfigAllowOrigin(t *testing.T) {
+	i18n.Set(i18n.EN)
+	t.Setenv("CC_REMOTE_TOKEN", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	reloads, restarts := 0, 0
+	cfg := fakeHost(t, func(w http.ResponseWriter) {
+		reloads++
+		w.Write([]byte(`{"listen":["127.0.0.1:8787"],"allowOrigins":["https://huanfeng.github.io"]}`))
+	}, &restarts)
+	cfg.Claude, cfg.Env = "claude", map[string]string{}
+	cfg.Exe = filepath.Join(t.TempDir(), "bin", "cc-remote")
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved := func() []string {
+		c, err := LoadConfig(cfg.DataDir)
+		if err != nil || c == nil {
+			t.Fatalf("load: %v", err)
+		}
+		return c.AllowOrigins
+	}
+	if err := configCmd([]string{"--data-dir", cfg.DataDir, "--allow-origin", "https://HUANFENG.github.io/"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := saved(); !reflect.DeepEqual(got, []string{"https://huanfeng.github.io"}) || reloads != 1 || restarts != 0 {
+		t.Fatalf("saved %v, reloads %d, restarts %d", got, reloads, restarts)
+	}
+	if err := configCmd([]string{"--data-dir", cfg.DataDir, "--allow-origin", "https://x.example/app"}); err == nil {
+		t.Fatal("an origin with a path was accepted")
+	}
+	if err := configCmd([]string{"--data-dir", cfg.DataDir, "--allow-origin", ""}); err != nil {
+		t.Fatal(err)
+	}
+	if got := saved(); got != nil || reloads != 2 {
+		t.Fatalf("cleared: %v, reloads %d", got, reloads)
+	}
+}

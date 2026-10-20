@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cc-remote/internal/claude"
@@ -87,8 +88,9 @@ type Server struct {
 	store          *store.Store
 	cfg            Config
 	mu             sync.Mutex
-	downloads      downloadTickets // links the browser downloads files with (downloads.go)
-	reloadMu       sync.Mutex      // one reload at a time, so listen ends up current
+	downloads      downloadTickets          // links the browser downloads files with (downloads.go)
+	origins        atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
+	reloadMu       sync.Mutex               // one reload at a time, so listen ends up current
 	files          fileRoots
 	runs           map[string]*execution
 	procs          map[string]*sessionRuntime
@@ -186,7 +188,7 @@ func (s *Server) Handler() http.Handler {
 				fail(w, 403, s.lang(r).T("Cross-site requests are not allowed", "不允许跨站访问"))
 				return
 			}
-		} else if len(s.cfg.AllowOrigins) > 0 && r.Header.Get("Origin") == "null" {
+		} else if len(s.allowOrigins()) > 0 && r.Header.Get("Origin") == "null" {
 			// A standalone frontend follows an entry URL that redirects here to
 			// learn this host's address (web/src/hosts.ts). After a redirect from
 			// another site the browser sends Origin: null; the page is public.

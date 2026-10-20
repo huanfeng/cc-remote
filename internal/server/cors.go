@@ -2,32 +2,31 @@ package server
 
 import (
 	"net/http"
-	"net/url"
 	"slices"
-	"strings"
+
+	"cc-remote/internal/listen"
 )
 
-// NormalizeOrigin turns "https://Example.com/" into "https://example.com", the
-// form a browser sends in Origin; "" when s is not an http(s) origin.
-func NormalizeOrigin(s string) string {
-	u, err := url.Parse(strings.TrimSpace(s))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || strings.Trim(u.Path, "/") != "" || u.RawQuery != "" || u.Fragment != "" {
-		return ""
+// allowOrigins are the standalone web frontends this host lets in: the ones
+// it started with, until a reload of the service settings replaces them.
+func (s *Server) allowOrigins() []string {
+	if p := s.origins.Load(); p != nil {
+		return *p
 	}
-	host := strings.ToLower(u.Host)
-	// Browsers leave a default port out of Origin.
-	if port := u.Port(); (u.Scheme == "https" && port == "443") || (u.Scheme == "http" && port == "80") {
-		host = strings.TrimSuffix(host, ":"+port)
-	}
-	return u.Scheme + "://" + host
+	return s.cfg.AllowOrigins
+}
+
+// SetAllowOrigins replaces the allowed standalone web frontends (normalized).
+func (s *Server) SetAllowOrigins(origins []string) {
+	s.origins.Store(&origins)
 }
 
 // allowedOrigin reports whether origin is a standalone web frontend this host
-// lets in (Config.AllowOrigins): the page lives elsewhere and calls the API
-// with the token like the host's own page does.
+// lets in (allowOrigins): the page lives elsewhere and calls the API with the
+// token like the host's own page does.
 func (s *Server) allowedOrigin(origin string) bool {
-	origin = NormalizeOrigin(origin)
-	return origin != "" && slices.Contains(s.cfg.AllowOrigins, origin)
+	origin = listen.NormalizeOrigin(origin)
+	return origin != "" && slices.Contains(s.allowOrigins(), origin)
 }
 
 // cors answers an allowed origin's preflight and marks its API replies as

@@ -24,6 +24,9 @@ type Config struct {
 	Language string `json:"language,omitempty"`
 	// AllowInsecureRemote permits all:/0.0.0.0/:: binds (--allow-insecure-remote).
 	AllowInsecureRemote bool `json:"allowInsecureRemote,omitempty"`
+	// AllowOrigins are standalone web frontends allowed to use the host
+	// (--allow-origin, normalized), besides CC_REMOTE_ALLOW_ORIGINS.
+	AllowOrigins []string `json:"allowOrigins,omitempty"`
 	// Env is added to the host's environment (proxy variables captured at
 	// install, plus --env). It stays non-nil once configured so a reinstall
 	// keeps it instead of capturing again (hence no omitempty: "{}" means

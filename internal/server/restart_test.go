@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -66,5 +67,39 @@ func TestReloadAppliesListen(t *testing.T) {
 	s.cfg.Reload = func() (ReloadResult, error) { return ReloadResult{}, errors.New("listen on x: in use") }
 	if code, b = request(t, ts, "POST", "/api/admin/reload", nil, testToken); code != 400 || !strings.Contains(string(b), "in use") {
 		t.Fatalf("failed reload: %d %s", code, b)
+	}
+}
+
+// A reload replaces the allowed web frontends at once; one that names none
+// (nil) keeps them.
+func TestReloadAppliesAllowOrigins(t *testing.T) {
+	s, ts, _ := setup(t, noRun)
+	s.cfg.AllowOrigins = []string{"https://old.example"}
+	preflight := func(origin string) string {
+		req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/info", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.Header.Get("Access-Control-Allow-Origin")
+	}
+	if preflight("https://old.example") == "" || preflight("https://huanfeng.github.io") != "" {
+		t.Fatal("before the reload")
+	}
+	s.cfg.Reload = func() (ReloadResult, error) {
+		return ReloadResult{Listen: []string{"127.0.0.1:8787"}, AllowOrigins: []string{"https://huanfeng.github.io"}}, nil
+	}
+	if code, b := request(t, ts, "POST", "/api/admin/reload", nil, testToken); code != 200 {
+		t.Fatalf("reload: %d %s", code, b)
+	}
+	if preflight("https://huanfeng.github.io") != "https://huanfeng.github.io" || preflight("https://old.example") != "" {
+		t.Fatal("after the reload")
+	}
+	s.cfg.Reload = func() (ReloadResult, error) { return ReloadResult{Listen: []string{"127.0.0.1:8787"}}, nil }
+	if code, _ := request(t, ts, "POST", "/api/admin/reload", nil, testToken); code != 200 || preflight("https://huanfeng.github.io") == "" {
+		t.Fatal("a reload without origins dropped them")
 	}
 }

@@ -24,6 +24,7 @@ func applyServiceConfig(o *hostOptions, c *service.Config) {
 	}
 	*o.configDir = c.ClaudeConfigDir
 	*o.allowInsecureRemote = c.AllowInsecureRemote
+	o.allowOrigin = stringList(c.AllowOrigins)
 	// Empty is "auto": what it stood for when saved, else the registered --lang.
 	if lang := effectiveLanguage(c); lang != "" {
 		*o.lang = lang
@@ -50,6 +51,12 @@ func reloadSettings(dataDir string, started *service.Config, lang i18n.Lang, ls 
 		return server.ReloadResult{}, errors.New(i18n.T("service.json not found in the data directory", "数据目录中找不到 service.json"))
 	}
 	restart := restartSettings(started, c, lang)
+	// Web frontends apply at once, like listen addresses; CC_REMOTE_ALLOW_ORIGINS
+	// is the environment the host started with (env changes need a restart).
+	origins, err := listen.Origins(append([]string{os.Getenv("CC_REMOTE_ALLOW_ORIGINS")}, c.AllowOrigins...))
+	if err != nil {
+		return server.ReloadResult{}, err
+	}
 	specs := listen.Split(c.Listen)
 	if len(specs) == 0 {
 		specs = []string{"127.0.0.1:8787"}
@@ -63,7 +70,7 @@ func reloadSettings(dataDir string, started *service.Config, lang i18n.Lang, ls 
 	}
 	bound, err := ls.apply(addrs)
 	if errors.Is(err, errListenRestart) {
-		return server.ReloadResult{Listen: ls.bound(), Restart: append(restart, "listen")}, nil
+		return server.ReloadResult{Listen: ls.bound(), Restart: append(restart, "listen"), AllowOrigins: origins}, nil
 	}
 	if err != nil {
 		return server.ReloadResult{Listen: ls.bound()}, err
@@ -72,7 +79,7 @@ func reloadSettings(dataDir string, started *service.Config, lang i18n.Lang, ls 
 		log.Printf("No loopback listen address configured; also listening on %s for local tools", added)
 	}
 	warnExposure(bound)
-	return server.ReloadResult{Listen: bound, Restart: restart}, nil
+	return server.ReloadResult{Listen: bound, Restart: restart, AllowOrigins: origins}, nil
 }
 
 // effectiveLanguage is the language the saved settings ask for, or empty.

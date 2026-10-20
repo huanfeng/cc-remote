@@ -119,6 +119,8 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 type ReloadResult struct {
 	Listen  []string `json:"listen"`
 	Restart []string `json:"restart,omitempty"`
+	// AllowOrigins replaces the allowed standalone web frontends (nil: keep).
+	AllowOrigins []string `json:"allowOrigins"`
 }
 
 // reload is POST /api/admin/reload: "service config" saved new settings and
@@ -138,6 +140,14 @@ func (s *Server) reload(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.listen = strings.Join(res.Listen, ",")
 		s.mu.Unlock()
+	}
+	if err == nil && res.AllowOrigins != nil && !slices.Equal(res.AllowOrigins, s.allowOrigins()) {
+		s.SetAllowOrigins(res.AllowOrigins)
+		allowed := strings.Join(res.AllowOrigins, ", ")
+		if allowed == "" {
+			allowed = "none"
+		}
+		log.Printf("Allowed web frontends: %s", allowed)
 	}
 	s.reloadMu.Unlock()
 	if err != nil {

@@ -24,7 +24,7 @@
 每次发布正式版时，CI 会自动把前端发布到 <https://huanfeng.github.io/cc-remote/>。宿主上允许这个来源即可使用：
 
 ```sh
-cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://huanfeng.github.io
+cc-remote service config --allow-origin https://huanfeng.github.io
 ```
 
 需要了解的两点：
@@ -38,7 +38,7 @@ cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://huanfeng.github.i
 
 1. 在 Vercel 导入这个仓库（或你的 fork），**Root Directory** 选 `web`。
 2. 其它设置保持默认即可：`web/vercel.json` 已经写好安装命令、构建命令（`pnpm run build:standalone`）、输出目录（`dist-standalone`）和安全响应头。
-3. 部署完成后，把得到的地址（如 `https://ccr-yourname.vercel.app`，或绑定的自定义域名）加入各宿主的 `--allow-origin`。
+3. 部署完成后，把得到的地址（如 `https://ccr-yourname.vercel.app`，或绑定的自定义域名）加入各宿主允许的来源（见[允许前端访问宿主](#允许前端访问宿主)）。
 
 `vercel.json` 用 `corepack pnpm` 安装 `web/package.json` 里 `packageManager` 指定的 pnpm 版本，Node 版本请保持 22（项目设置 → Build and Deployment → Node.js Version）。
 
@@ -79,11 +79,14 @@ CC Remote 本身只提供 HTTP，不处理证书。内网穿透出来的地址�
 来源只写协议、域名和端口，不带路径（GitHub Pages 的子路径 `/cc-remote/` 不要写）：
 
 ```sh
-cc-remote --allow-origin https://ccr.example.com              # 前台运行
-cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com   # 后台服务，空闲时自动重启生效
+cc-remote service config --allow-origin https://ccr.example.com   # 后台服务：保存到 service.json，立即生效，无需重启
+cc-remote --allow-origin https://ccr.example.com                  # 前台运行的宿主：启动参数
 ```
 
-多个来源用逗号分隔。未列入的网站即使拿到令牌也无法在浏览器里调用 API（跨站请求返回 403，预检不放行）。宿主自带的网页不受此设置影响。
+- `service config --allow-origin` **整体替换**允许的列表：有多个前端时用逗号一起列出（`--allow-origin https://a.example,https://b.example`），`--allow-origin ""` 清空。不带参数运行 `cc-remote service config` 可查看当前列表。
+- 前端的登录页会显示这条命令（带本页的来源），点击即可复制。
+- 环境变量 `CC_REMOTE_ALLOW_ORIGINS`（逗号分隔）仍然有效，与上面的设置合并；用 `service config --env` 修改它需要重启宿主才生效。
+- 未列入的网站即使拿到令牌也无法在浏览器里调用 API（跨站请求返回 403，预检不放行）。宿主自带的网页不受此设置影响。
 
 ## 添加宿主
 
@@ -102,7 +105,7 @@ cc-remote service config --env CC_REMOTE_ALLOW_ORIGINS=https://ccr.example.com  
 前端请求入口地址，跟随跳转，取最终地址的协议、域名和端口作为宿主地址（路径会被忽略）。要求：
 
 - **跳转服务**必须带 CORS 响应头 `Access-Control-Allow-Origin`（值为前端来源，或 `*`）。否则浏览器会把整个请求当作失败，前端连跳转去了哪里都看不到。
-- **宿主**需要 v0.12.0 或更新版本，并且配置了 `--allow-origin`。浏览器跟随跨站跳转时，到达宿主那一跳的 `Origin` 是 `null` 而不是前端来源；配置了 `--allow-origin` 的宿主会对网页（非 API）路径的这类请求回应 CORS 头，跳转的终点因此可读。
+- **宿主**需要 v0.12.0 或更新版本，并且允许了前端的来源。浏览器跟随跨站跳转时，到达宿主那一跳的 `Origin` 是 `null` 而不是前端来源；允许了前端来源的宿主会对网页（非 API）路径的这类请求回应 CORS 头，跳转的终点因此可读。
 
 ### 文本地址
 
