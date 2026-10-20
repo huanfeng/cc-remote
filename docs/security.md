@@ -23,15 +23,30 @@ CC Remote 让网页驱动本机的 Claude Code。任何持有访问令牌的人�
 
 ## 反向代理
 
-API 会拒绝 `Origin` 与访问主机不一致的请求（提示「不允许跨站访问」）。代理需要把浏览器访问的主机名传给宿主：保留原始 `Host`，或通过 `X-Forwarded-Host` 传递（0.2.3 起支持）。Caddy、Traefik 默认就满足；nginx 默认会把 `Host` 改成上游地址，需要显式设置：
+API 会拒绝 `Origin` 与访问主机不一致的请求（提示「不允许跨站访问」）。代理需要把浏览器访问的主机名传给宿主：保留原始 `Host`，或通过 `X-Forwarded-Host` 传递（0.2.3 起支持）。
+
+代理还要转发 WebSocket：网页终端视图和 `ccr` 都经 `/api/terminals/{id}/stream` 的 WebSocket 连接，代理不转发时终端视图一直停在「连接中」，并提示「WebSocket 没能建立」。
+
+Caddy、Traefik 默认两者都满足；nginx 默认会把 `Host` 改成上游地址，也不转发 WebSocket 的 `Upgrade` 头，需要显式设置：
 
 ```nginx
+map $http_upgrade $connection_upgrade {         # 放在 http 块
+    default upgrade;
+    ''      close;
+}
+
 location / {
     proxy_pass http://127.0.0.1:8787;
     proxy_set_header Host $host;                # 或 X-Forwarded-Host $host;
+    proxy_http_version 1.1;                     # WebSocket（终端视图、ccr）
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 1d;                      # 终端空闲时连接不被代理断开
     client_max_body_size 25m;                   # 附件上传上限为 20 MB
 }
 ```
+
+其它反向代理或穿透工具（Lucky、frp、宝塔等）请确认已开启 WebSocket 支持。
 
 经代理访问时，代理本身就是公网入口：请在代理层加一道认证（Basic Auth、SSO 等），不要只依赖访问令牌。
 
