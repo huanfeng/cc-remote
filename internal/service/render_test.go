@@ -213,3 +213,27 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 func (s *syncBuffer) String() string { s.lock(); defer func() { <-s.mu }(); return s.b.String() }
+
+// A reinstall reads the installed service's PATH back, whatever characters it
+// holds, and keeps its directories after the new ones: an update from a shell
+// with a shorter PATH must not lose where node lives.
+func TestInstalledPathKept(t *testing.T) {
+	old := `/home/me/.nvm/versions/node/v24/bin:/opt/50%off "x"/bin:/usr/bin`
+	env := map[string]string{"PATH": old, "HTTPS_PROXY": "http://p:1"}
+	if got := UnitEnv(SystemdUnit("/bin/cc-remote", []string{"--listen", "x"}, env), "PATH"); got != old {
+		t.Fatalf("unit PATH = %q", got)
+	}
+	if got := PlistEnv(LaunchdPlist("/bin/cc-remote", nil, map[string]string{"PATH": old + ":/a&b<c>"}, "/tmp/l", "/home/me"), "PATH"); got != old+":/a&b<c>" {
+		t.Fatalf("plist PATH = %q", got)
+	}
+	if UnitEnv("[Service]\nExecStart=/bin/x\n", "PATH") != "" || PlistEnv("<plist/>", "PATH") != "" {
+		t.Fatal("no PATH: want empty")
+	}
+	got := UnionPath("/home/me/.local/bin:/usr/bin", "/home/me/.nvm/bin:/usr/bin::/home/linuxbrew/bin", ":")
+	if want := "/home/me/.local/bin:/usr/bin:/home/me/.nvm/bin:/home/linuxbrew/bin"; got != want {
+		t.Fatalf("UnionPath = %q, want %q", got, want)
+	}
+	if got := UnionPath("/usr/bin", "", ":"); got != "/usr/bin" {
+		t.Fatalf("nothing installed: %q", got)
+	}
+}

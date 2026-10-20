@@ -447,6 +447,7 @@ func installCmd(args []string, version string) error {
 			return err
 		}
 		fmt.Fprint(out, wrote(filepath.Join(absData, configName)))
+		pathHint(cfg, out)
 	}
 	if deferred {
 		// Re-registering could restart the service; the host reads its

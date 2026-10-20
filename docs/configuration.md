@@ -144,7 +144,7 @@ cc-remote service uninstall                                 # 保留数据目录
 - `stop` 先请求宿主优雅退出（不会被服务管理器重新拉起），15 秒未退出再强制结束。宿主异常退出时自动重启。
 - 数据目录锁或端口被其它进程（通常是另一个 cc-remote）占用时，宿主以退出码 75 退出；Windows 监督进程连续 3 次遇到后停止重试并在 `host.log` 中说明原因。
 - `all:` / `0.0.0.0` / `::` 需要 `--allow-insecure-remote`（保存在 `service.json`，可用 `service config --allow-insecure-remote=false` 撤销）。旧版本按 `0.0.0.0` 安装的服务在重装时保留原地址并自动记录该选项，同时打印警告。Windows 还会打印可选的防火墙放行命令（不会自动执行）。
-- Linux / macOS 安装时把当前 `PATH` 写入服务环境，以便找到 `claude` / `node`。Linux 需要开机即启动（无需登录）时执行 `loginctl enable-linger $USER`。
+- Linux / macOS 安装时把当前 `PATH` 写入服务环境，以便找到 `claude` / `node`（Claude Code 插件的 hook、MCP 服务常用 node 运行）。重新安装和 `cc-remote update` 会保留已安装服务 `PATH` 里的目录，从 `PATH` 较短的 shell（例如不加载登录配置的 ssh 命令）更新也不会丢掉 nvm 等目录；服务的 `PATH` 里找不到 `node` 时安装会给出警告，这时请在能找到 node 的登录 shell 中重新运行 `cc-remote service install`，或用 `cc-remote service config --env PATH=…` 指定。Linux 需要开机即启动（无需登录）时执行 `loginctl enable-linger $USER`。
 - 日志：`<数据目录>/host.log`；Windows 监督进程把宿主 stderr 也追加到其中；macOS 的 `<数据目录>/launchd.log` 只接收宿主打开 `host.log` 之前的输出。
 - `uninstall --purge-binary` 删除副本目录，并从用户 PATH 中移除该目录。
 

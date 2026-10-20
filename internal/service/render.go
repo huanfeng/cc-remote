@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/xml"
 	"errors"
+	"html"
 	"sort"
 	"strings"
 	"unicode/utf16"
@@ -165,6 +166,48 @@ func SystemdUnit(exe string, args []string, env map[string]string) string {
 	b.WriteString("ExecStart=" + strings.Join(words, " ") + "\n")
 	b.WriteString("Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n")
 	return b.String()
+}
+
+// UnitEnv is variable name in a unit's Environment= lines, as SystemdUnit
+// writes them, or "".
+func UnitEnv(unit, name string) string {
+	unquote := strings.NewReplacer(`\\`, `\`, `\"`, `"`, "%%", "%", `\n`, "\n")
+	for line := range strings.SplitSeq(unit, "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "Environment=")
+		if !ok {
+			continue
+		}
+		v = unquote.Replace(strings.TrimSuffix(strings.TrimPrefix(v, `"`), `"`))
+		if rest, ok := strings.CutPrefix(v, name+"="); ok {
+			return rest
+		}
+	}
+	return ""
+}
+
+// PlistEnv is variable name in a LaunchAgent's EnvironmentVariables, as
+// LaunchdPlist writes them, or "".
+func PlistEnv(plist, name string) string {
+	key := "<key>" + xmlText(name) + "</key>"
+	_, rest, ok := strings.Cut(plist, key)
+	if !ok {
+		return ""
+	}
+	start, end := strings.Index(rest, "<string>"), strings.Index(rest, "</string>")
+	if start < 0 || end < start {
+		return ""
+	}
+	return html.UnescapeString(rest[start+len("<string>") : end])
+}
+
+// UnionPath is current followed by the entries of previous it lacks.
+func UnionPath(current, previous, sep string) string {
+	for dir := range strings.SplitSeq(previous, sep) {
+		if dir != "" {
+			current, _ = MergePath(current, dir, sep)
+		}
+	}
+	return current
 }
 
 // LaunchdLabel is the macOS LaunchAgent label.

@@ -21,6 +21,15 @@ func plistPath() string {
 
 func domain() string { return "gui/" + strconv.Itoa(os.Getuid()) }
 
+// installedPath is the PATH of the installed LaunchAgent, or "".
+func installedPath() string {
+	b, err := os.ReadFile(plistPath())
+	if err != nil {
+		return ""
+	}
+	return PlistEnv(string(b), "PATH")
+}
+
 func renderPlist(cfg *Config) string {
 	// Under a service manager the host writes only to host.log (no stderr
 	// copy) and routes Go crash output there via debug.SetCrashOutput, so

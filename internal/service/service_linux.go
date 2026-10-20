@@ -25,6 +25,15 @@ func unitPath() string {
 	return filepath.Join(dir, "systemd", "user", unitName)
 }
 
+// installedPath is the PATH of the installed unit, or "".
+func installedPath() string {
+	b, err := os.ReadFile(unitPath())
+	if err != nil {
+		return ""
+	}
+	return UnitEnv(string(b), "PATH")
+}
+
 func renderUnit(cfg *Config) string {
 	unit := SystemdUnit(cfg.Exe, HostArgs(*cfg, managerName), serviceEnvFor(serviceEnv(managerName), cfg.Env))
 	return strings.Replace(unit, "Type=simple\n", "Type=simple\nWorkingDirectory="+SystemdPath(homeDir(cfg.DataDir))+"\n", 1)

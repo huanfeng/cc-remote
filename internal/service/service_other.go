@@ -22,6 +22,7 @@ func installBinaries(string, bool, io.Writer) error { return errUnsupported }
 func register(*Config, bool, io.Writer) error       { return errUnsupported }
 func unregister(bool, io.Writer) error              { return errUnsupported }
 func updateDefinition(*Config) error                { return errUnsupported }
+func pathHint(*Config, io.Writer)                   {}
 func schedulerStart() error                         { return errUnsupported }
 func schedulerStop() error                          { return errUnsupported }
 func schedulerState() schedState                    { return schedState{} }

@@ -142,6 +142,10 @@ func register(cfg *Config, dryRun bool, out io.Writer) error {
 // every start.
 func updateDefinition(*Config) error { return nil }
 
+// pathHint has nothing to check: the supervisor starts the host with the
+// user's own environment each time.
+func pathHint(*Config, io.Writer) {}
+
 func unregister(dryRun bool, out io.Writer) error {
 	if dryRun {
 		fmt.Fprintf(out, "[dry-run] schtasks /Delete /TN %q /F\n", TaskName)
