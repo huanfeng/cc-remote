@@ -23,7 +23,7 @@ func TestStatusShapeAndAuth(t *testing.T) {
 	}
 	t.Setenv("CC_REMOTE_SERVICE_MANAGER", "schtasks")
 	x := createSession(t, ts)
-	payload := json.RawMessage(`{"type":"result","total_cost_usd":0.5,"duration_ms":900,"usage":{"input_tokens":10,"output_tokens":5}}`)
+	payload := json.RawMessage(`{"type":"result","total_cost_usd":0.5,"duration_ms":900,"modelUsage":{"claude-sonnet-4-6":{"inputTokens":10,"outputTokens":5}}}`)
 	_, _ = st.Append(x.ID, "user", "hi", nil)
 	_, _ = st.Append(x.ID, "result", "done", payload)
 

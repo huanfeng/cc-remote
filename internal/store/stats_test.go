@@ -17,19 +17,26 @@ func TestSessionStats(t *testing.T) {
 	managed, _ := st.Create("managed", t.TempDir(), ID(), false)
 	term, _ := st.Create("terminal", t.TempDir(), ID(), true)
 	empty, _ := st.Create("empty", t.TempDir(), ID(), false)
-	result := func(cost float64, isError bool) json.RawMessage {
+	// Results carry running totals; n scales one turn's usage, split across two models.
+	result := func(cost float64, n int, isError bool) json.RawMessage {
+		usage := func(k int) map[string]int {
+			return map[string]int{"inputTokens": 50 * k, "outputTokens": 10 * k, "cacheReadInputTokens": 500 * k, "cacheCreationInputTokens": 25 * k}
+		}
 		b, _ := json.Marshal(map[string]any{"type": "result", "is_error": isError, "total_cost_usd": cost, "duration_ms": 1500, "num_turns": 3,
-			"usage": map[string]int{"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 50}})
+			"usage": map[string]int{"input_tokens": 100, "output_tokens": 20}, "modelUsage": map[string]any{"opus": usage(n), "haiku": usage(n)}})
 		return b
 	}
 	for _, ev := range []struct {
 		kind    string
 		payload json.RawMessage
 	}{
-		{"user", nil}, {"tool", json.RawMessage(`{"type":"tool_use","name":"Read"}`)}, {"tool_result", nil}, {"result", result(0.25, false)},
-		{"user", nil}, {"result", result(0.5, false)}, {"error", result(0.5, false)}, // permission denial repeats the result
-		{"user", nil}, {"error", result(0.125, true)},
+		{"user", nil}, {"tool", json.RawMessage(`{"type":"tool_use","name":"Read"}`)}, {"tool_result", nil}, {"result", result(0.25, 1, false)},
+		{"user", nil}, {"result", result(0.5, 2, false)}, {"error", result(0.5, 2, false)}, // permission denial repeats the result
+		{"user", nil}, {"error", result(0.625, 3, true)},
 		{"error", nil},
+		{"user", nil}, {"result", result(0, 0, true)}, // a crash result carries zeroed totals
+		{"user", nil}, {"result", result(0.75, 4, false)}, // resumed: continues the saved total
+		{"user", nil}, {"result", result(0.1, 1, false)}, // after /clear the total restarts
 	} {
 		if _, err := st.Append(managed.ID, ev.kind, "x", ev.payload); err != nil {
 			t.Fatal(err)
@@ -56,8 +63,9 @@ func TestSessionStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Turns != 3 || m.Results != 3 || !m.CostKnown || math.Abs(m.CostUSD-0.875) > 1e-9 || m.InputTokens != 300 || m.OutputTokens != 60 ||
-		m.CacheReadTokens != 3000 || m.CacheCreationTokens != 150 || m.DurationMs != 4500 || m.ToolCalls != 1 || m.Errors != 3 || m.LastActivityAt == "" {
+	// 0.75 through the resumed run, then 0.1 after /clear; tokens: 4 turns, then 1.
+	if m.Turns != 6 || m.Results != 6 || !m.CostKnown || math.Abs(m.CostUSD-0.85) > 1e-9 || m.InputTokens != 500 || m.OutputTokens != 100 ||
+		m.CacheReadTokens != 5000 || m.CacheCreationTokens != 250 || m.DurationMs != 9000 || m.ToolCalls != 1 || m.Errors != 3 || m.LastActivityAt == "" {
 		t.Fatalf("managed stats: %+v", m)
 	}
 	c, _ := st.SessionStatsFor(term.ID)
@@ -73,7 +81,7 @@ func TestSessionStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	today := daily[len(daily)-1]
-	if len(daily) != 14 || today.Date != time.Now().UTC().Format("2006-01-02") || today.Turns != 4 || math.Abs(today.CostUSD-0.875) > 1e-9 || today.Tokens != 360 || daily[0].Turns != 0 {
+	if len(daily) != 14 || today.Date != time.Now().UTC().Format("2006-01-02") || today.Turns != 7 || math.Abs(today.CostUSD-0.85) > 1e-9 || today.Tokens != 600 || daily[0].Turns != 0 {
 		t.Fatalf("daily: %+v", daily)
 	}
 }
