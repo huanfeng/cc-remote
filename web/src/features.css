@@ -23,11 +23,9 @@ select{font:inherit;color:inherit;background:#fff;border:1px solid #daddd2;borde
 .session-row:hover .session-more,.session-row.selected .session-more,.session-more:focus-visible,.session-more.active{opacity:1}.session-more:hover,.session-more.active{background:#dfe5d3;color:#344730}
 .session-row:has(.session-more) .session-item{padding-right:32px}
 @media(hover:none),(max-width:760px){.session-more{opacity:.8;width:32px;height:32px;top:4px;right:2px}.session-row:has(.session-more) .session-item{padding-right:36px}}
-.session-menu{position:fixed;z-index:60;min-width:250px;max-width:calc(100vw - 16px);display:flex;flex-direction:column}
-.session-menu button{display:flex;align-items:flex-start;gap:10px;background:none;color:inherit;padding:10px 12px;border-radius:7px;font-size:13px;text-align:left}
-.session-menu button>svg{flex-shrink:0;margin-top:2px;color:var(--muted)}
-.session-menu button>span{display:flex;flex-direction:column;gap:2px;min-width:0}
-.session-menu small{font-size:11px;color:var(--muted);line-height:1.4}
+.session-menu{position:fixed;z-index:60;min-width:150px;max-width:calc(100vw - 16px);display:flex;flex-direction:column}
+.session-menu button{display:flex;align-items:center;gap:9px;background:none;color:inherit;padding:8px 12px;border-radius:7px;font-size:13px;text-align:left;white-space:nowrap}
+.session-menu button>svg{flex-shrink:0;color:var(--muted)}
 .session-menu button:hover{background:#edf1e4}
 .session-menu button.danger,.session-menu button.danger>svg{color:#a3321f}.session-menu button.danger:hover{background:#f6e9e3}
 /* Session settings and delete confirmation dialogs. */
