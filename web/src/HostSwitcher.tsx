@@ -29,12 +29,12 @@ export function connectError(status?: number): string {
   return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page (on the host: ${allowCommand()})`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面（在宿主上运行：${allowCommand()}）`);
 }
 
-const VIA_LABEL = { direct: () => t('Direct', '直连'), redirect: () => t('Redirect', '302 跳转'), text: () => t('Address URL', '文本地址') };
+const VIA_LABEL = { direct: () => t('Direct', '直连'), text: () => t('Address URL', '文本地址') };
 
 /** Adds a host (or signs in to the current one again) and opens it, or edits a host
  * (editing: its token stays when left empty). Besides its address, a host can be given
- * as an entry that leads to it: a URL redirecting there, or one answering with the
- * address as plain text (a tunnel whose port changes). */
+ * as an entry that answers with the address as plain text (a tunnel whose port
+ * changes). */
 export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown = '', editing, onCancel }: { initialUrl?: string; initialVia?: HostVia; error?: string; editing?: HostEntry; onCancel?: () => void }) {
   const [url, setUrl] = useState(editing ? editing.entry || editing.url : initialUrl);
   const [via, setVia] = useState<HostVia>(editing ? editing.via || 'direct' : initialVia);
@@ -53,7 +53,7 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown
     try {
       let base = entered;
       if (via !== 'direct') {
-        try { base = await resolveEntry(entry, via); } catch (err) { setError((err as Error).message); return; }
+        try { base = await resolveEntry(entry); } catch (err) { setError((err as Error).message); return; }
       }
       const taken = editing && findHost(base, via === 'direct' ? undefined : entry, editing.id);
       if (taken) { setError(t(`${taken.name || taken.url} is already on this page with that address`, `${taken.name || taken.url} 已经使用这个地址`)); return; }
@@ -71,14 +71,13 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', error: shown
       reopen();
     } finally { setBusy(false); }
   }
-  const hint = via === 'redirect' ? t('A URL that redirects (302) to the host, such as the jump link of a tunnel. It and the host must allow this page (CORS).', '一个会 302 跳转到宿主的地址，例如内网穿透的跳转链接。它和宿主都必须允许本页面读取（CORS）。')
-    : via === 'text' ? t('A URL that answers with the host address as plain text, such as https://home.example.com:45678. It must allow this page (CORS). When the host stops answering, the address is fetched again.', '一个以纯文本返回宿主地址（如 https://home.example.com:45678）的 URL，必须允许本页面读取（CORS）。宿主连不上时会重新获取地址。')
+  const hint = via === 'text' ? t('A URL that answers with the host address as plain text, such as https://home.example.com:45678. It must allow this page (CORS). When the host stops answering, the address is fetched again.', '一个以纯文本返回宿主地址（如 https://home.example.com:45678）的 URL，必须允许本页面读取（CORS）。宿主连不上时会重新获取地址。')
     : '';
   return <form className="login-card host-login" onSubmit={submit}>
     {editing ? <h2>{t(`Edit ${editing.name || 'host'}`, `编辑 ${editing.name || '宿主'}`)}</h2> : onCancel ? <h2>{t('Add host', '添加宿主')}</h2> : <><div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1></>}
     <p>{editing ? t('The new address is checked before it is saved. The name and colour are the host\'s own: change them in its settings.', '保存前会用新的设置连接一次。名称和颜色是宿主自己的设置，请在宿主的设置中修改。') : t('Connect to a cc-remote host. This page keeps a list of hosts and their tokens on this device.', '连接一个 cc-remote 宿主。此页面在本设备上保存宿主列表和令牌。')}</p>
-    <div className="host-via options" role="radiogroup" aria-label={t('How to reach the host', '连接方式')}>{(['direct', 'redirect', 'text'] as const).map(v => <button type="button" key={v} role="radio" aria-checked={via === v} className={via === v ? 'chosen' : ''} onClick={() => setVia(v)}>{VIA_LABEL[v]()}</button>)}</div>
-    <label>{via === 'direct' ? t('Host address', '宿主地址') : via === 'redirect' ? t('Redirect URL', '跳转地址') : t('Address URL', '地址获取 URL')}<input value={url} onChange={event => setUrl(event.target.value)} placeholder={via === 'direct' ? 'https://ccr.example.com' : via === 'redirect' ? 'https://example.com/ccr' : 'https://example.com/ccr.txt'} autoComplete="url" inputMode="url" required /></label>
+    <div className="host-via options" role="radiogroup" aria-label={t('How to reach the host', '连接方式')}>{(['direct', 'text'] as const).map(v => <button type="button" key={v} role="radio" aria-checked={via === v} className={via === v ? 'chosen' : ''} onClick={() => setVia(v)}>{VIA_LABEL[v]()}</button>)}</div>
+    <label>{via === 'direct' ? t('Host address', '宿主地址') : t('Address URL', '地址获取 URL')}<input value={url} onChange={event => setUrl(event.target.value)} placeholder={via === 'direct' ? 'https://ccr.example.com' : 'https://example.com/ccr.txt'} autoComplete="url" inputMode="url" required /></label>
     {hint && <small className="host-via-hint">{hint}</small>}
     <label>{t('Host access token', '宿主访问令牌')}<input type="password" value={token} onChange={event => setToken(event.target.value)} placeholder={editing ? t('Leave empty to keep the current token', '留空则保留原令牌') : t('The access token of that host', '该宿主的访问令牌')} autoComplete={editing ? 'new-password' : 'current-password'} required={!editing} /></label>
     {error && <div className="error" role="alert">{error}</div>}

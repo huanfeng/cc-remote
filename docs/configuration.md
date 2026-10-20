@@ -113,7 +113,7 @@ cc-remote service config --allow-origin https://ccr.example.com   # 后台服务
 cc-remote --allow-origin https://ccr.example.com                  # 前台运行
 ```
 
-部署步骤、HTTPS 要求，以及内网穿透（302 跳转、端口会变化的文本地址）的用法见 [standalone.md](standalone.md)。
+部署步骤、HTTPS 要求，以及内网穿透（端口会变化的文本地址）的用法见 [standalone.md](standalone.md)。
 
 ## 后台服务
 

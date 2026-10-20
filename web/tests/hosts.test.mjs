@@ -20,30 +20,24 @@ test('host address: a bare host gets the page scheme; others are refused', () =>
 });
 
 const { resolveEntry } = await import('../src/hosts.ts');
-const answer = (fields) => async () => ({ ok: true, status: 200, redirected: false, url: '', text: async () => '', ...fields });
+const answer = (fields) => async () => ({ ok: true, status: 200, text: async () => '', ...fields });
 const rejects = (promise, pattern) => assert.rejects(promise, pattern);
-
-test('entry: a redirect gives the origin of where it led', async () => {
-  globalThis.location = { protocol: 'https:', origin: 'https://ccr.example.com' };
-  assert.equal(await resolveEntry('https://jump.example/ccr', 'redirect', answer({ redirected: true, url: 'https://home.example.com:45678/ccr?x=1' })), 'https://home.example.com:45678');
-  await rejects(resolveEntry('https://jump.example/ccr', 'redirect', answer({ url: 'https://jump.example/ccr' })), /did not redirect/);
-});
 
 test('entry: a text entry answers with the address; anything else is refused', async () => {
   globalThis.location = { protocol: 'https:', origin: 'https://ccr.example.com' };
-  assert.equal(await resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => '  https://home.example.com:45678/\n# updated 12:00\n' })), 'https://home.example.com:45678');
-  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => '<html>' })), /gave no host address/);
-  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', answer({ ok: false, status: 404 })), /error \(404\)/);
+  assert.equal(await resolveEntry('https://raw.example/ccr.txt', answer({ text: async () => '  https://home.example.com:45678/\n# updated 12:00\n' })), 'https://home.example.com:45678');
+  await rejects(resolveEntry('https://raw.example/ccr.txt', answer({ text: async () => '<html>' })), /gave no host address/);
+  await rejects(resolveEntry('https://raw.example/ccr.txt', answer({ ok: false, status: 404 })), /error \(404\)/);
   // No CORS, or not reachable: the browser rejects the fetch.
-  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', async () => { throw new TypeError('Failed to fetch'); }), /Access-Control-Allow-Origin: https:\/\/ccr\.example\.com/);
+  await rejects(resolveEntry('https://raw.example/ccr.txt', async () => { throw new TypeError('Failed to fetch'); }), /Access-Control-Allow-Origin: https:\/\/ccr\.example\.com/);
 });
 
 test('entry: an https page refuses a plain http host, except on this machine', async () => {
   globalThis.location = { protocol: 'https:', origin: 'https://ccr.example.com' };
-  await rejects(resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => 'http://1.2.3.4:45678' })), /cannot reach a plain http/);
-  assert.equal(await resolveEntry('https://raw.example/ccr.txt', 'text', answer({ text: async () => 'http://127.0.0.1:8787' })), 'http://127.0.0.1:8787');
+  await rejects(resolveEntry('https://raw.example/ccr.txt', answer({ text: async () => 'http://1.2.3.4:45678' })), /cannot reach a plain http/);
+  assert.equal(await resolveEntry('https://raw.example/ccr.txt', answer({ text: async () => 'http://127.0.0.1:8787' })), 'http://127.0.0.1:8787');
   globalThis.location = { protocol: 'http:', origin: 'http://192.168.1.2:5173' };
-  assert.equal(await resolveEntry('http://raw.example/ccr.txt', 'text', answer({ text: async () => 'http://1.2.3.4:45678' })), 'http://1.2.3.4:45678');
+  assert.equal(await resolveEntry('http://raw.example/ccr.txt', answer({ text: async () => 'http://1.2.3.4:45678' })), 'http://1.2.3.4:45678');
 });
 
 test('entry: a host moves by itself only to a new port', async () => {
@@ -71,4 +65,12 @@ test('hosts: editing changes one record; an address another host has is found', 
   assert.deepEqual(a, { id: 'a', url: 'https://home.example.com', token: 'ta' });
   assert.deepEqual(b, { id: 'b', url: 'https://ccr.example.com', token: 'tb' });
   assert.equal(loadHosts().current, 'a');
+});
+
+test('hosts: one added through a 302 entry stays at the address it was found at', async () => {
+  const { loadHosts } = await import('../src/hosts.ts');
+  localStorage.setItem('cc-hosts:v1', JSON.stringify({ current: 'a', hosts: [
+    { id: 'a', url: 'https://home.example.com:45678', token: 'ta', entry: 'https://jump.example/ccr', via: 'redirect' },
+  ] }));
+  assert.deepEqual(JSON.parse(JSON.stringify(loadHosts().hosts)), [{ id: 'a', url: 'https://home.example.com:45678', token: 'ta' }]);
 });

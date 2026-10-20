@@ -29,7 +29,7 @@ CC Remote is a small host program (a single executable) that runs on your comput
 - **Background service with auto start**: one command registers a per-user service (Windows Task Scheduler / systemd / launchd) and adds the `ccr` shortcut.
 - **Status and usage**: a status panel with uptime, cost, tokens, a 14-day chart and the log tail.
 - **Built for phones**: responsive layout, drawer session list, installable as a PWA.
-- **Several hosts**: every host serves its own web UI; you can also add and switch between hosts in one standalone web frontend — use the public instance at <https://huanfeng.github.io/cc-remote/> or deploy it to Vercel or Cloudflare Pages; tunnel jump links and addresses whose port changes are supported (see [the standalone web frontend](docs/standalone.md), in Chinese).
+- **Several hosts**: every host serves its own web UI; you can also add and switch between hosts in one standalone web frontend — use the public instance at <https://huanfeng.github.io/cc-remote/> or deploy it to Vercel or Cloudflare Pages; hosts behind a tunnel whose port changes are supported through an address URL (see [the standalone web frontend](docs/standalone.md), in Chinese).
 - **Survives a refresh**: the open session, unsent drafts and attachments, and half-filled answers come back after reloading.
 
 ## Quick start

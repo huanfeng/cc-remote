@@ -44,8 +44,7 @@ location / {
 - 代理层的认证（Basic Auth、SSO 等）与独立前端不兼容：跨站请求的 `Authorization` 头已用于访问令牌，浏览器也不会带上代理的 Cookie 或 Basic 凭据。需要这类认证时，独立前端访问的宿主请改用 VPN 等网络层限制。
 - 独立前端的页面自带 CSP（不加载外部脚本和图片，Markdown 里的远程图片不会被请求）。`frame-ancestors` 只能通过响应头设置，请在静态站上配置 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`，并只通过 HTTPS 提供（Vercel、Cloudflare Pages 的配置已包含，GitHub Pages 无法设置）。
 - 公共实例 `https://huanfeng.github.io` 与该账号其它仓库的 Pages 同源；介意的话请部署到自己的域名，见 [standalone.md](standalone.md#公共实例github-pages)。
-- 通过入口（302 跳转、文本地址）添加的宿主，令牌发往入口解析出的地址：能改动入口的人就能把令牌引向自己的服务器。自动切换只接受端口变化，主机名或协议变化需要重新添加宿主确认；入口请只用自己控制的服务，见 [standalone.md](standalone.md#安全入口决定令牌发往哪里)。
-- 允许了任何来源时，宿主对允许的来源和 `Origin: null`（浏览器跟随跨站跳转后发出的值）在网页（非 API）路径上也返回 CORS 头，让前端能跟随跳转得知宿主地址。网页本身是公开内容，不含令牌；API 从不接受 `Origin: null`。
+- 通过入口（文本地址）添加的宿主，令牌发往入口解析出的地址：能改动入口的人就能把令牌引向自己的服务器。自动切换只接受端口变化，主机名或协议变化需要重新添加宿主确认；入口请只用自己控制的服务，见 [standalone.md](standalone.md#安全入口决定令牌发往哪里)。
 
 ## 仅限本机的接口
 

@@ -188,15 +188,6 @@ func (s *Server) Handler() http.Handler {
 				fail(w, 403, s.lang(r).T("Cross-site requests are not allowed", "不允许跨站访问"))
 				return
 			}
-		} else if len(s.allowOrigins()) > 0 && r.Header.Get("Origin") == "null" {
-			// A standalone frontend follows an entry URL that redirects here to
-			// learn this host's address (web/src/hosts.ts). After a redirect from
-			// another site the browser sends Origin: null; the page is public.
-			w.Header().Set("Access-Control-Allow-Origin", "null")
-		} else if s.cors(w, r) {
-			// The page is public; an allowed frontend may read it too (an entry
-			// URL on its own site redirecting here).
-			return
 		}
 		served.ServeHTTP(w, r)
 	})

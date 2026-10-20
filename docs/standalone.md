@@ -95,17 +95,9 @@ cc-remote --allow-origin https://ccr.example.com                  # 前台运行
 | 连接方式 | 填写 | 适合 |
 | --- | --- | --- |
 | 直连 | 宿主地址，如 `https://ccr.example.com` | 地址固定 |
-| 302 跳转 | 一个会跳转到宿主的地址 | 内网穿透工具提供的跳转链接、短链接 |
 | 文本地址 | 一个以纯文本返回宿主地址的 URL | STUN 等端口会变化的穿透 |
 
-后两种方式下，前端保存的是**入口地址**，并记住解析出来的宿主地址。宿主连不上时，前端会从入口重新获取地址；地址变了就自动切换过去并重新连接（同一宿主最多每分钟重试一次）。
-
-### 302 跳转
-
-前端请求入口地址，跟随跳转，取最终地址的协议、域名和端口作为宿主地址（路径会被忽略）。要求：
-
-- **跳转服务**必须带 CORS 响应头 `Access-Control-Allow-Origin`（值为前端来源，或 `*`）。否则浏览器会把整个请求当作失败，前端连跳转去了哪里都看不到。
-- **宿主**需要 v0.12.0 或更新版本，并且允许了前端的来源。浏览器跟随跨站跳转时，到达宿主那一跳的 `Origin` 是 `null` 而不是前端来源；允许了前端来源的宿主会对网页（非 API）路径的这类请求回应 CORS 头，跳转的终点因此可读。
+使用文本地址时，前端保存的是**入口地址**，并记住解析出来的宿主地址。宿主连不上时，前端会从入口重新获取地址；地址变了就自动切换过去并重新连接（同一宿主最多每分钟重试一次）。
 
 ### 文本地址
 
@@ -132,13 +124,12 @@ https://home.example.com:45678
 
 ### 示例：Cloudflare Worker
 
-一个 Worker 同时提供文本地址（`GET /`）和跳转（`GET /go`），穿透工具在端口变化时用 `POST /` 更新。需要绑定一个 KV 命名空间 `ADDR`，并设置密钥 `UPDATE_TOKEN`：
+一个 Worker 提供文本地址（`GET /`），穿透工具在端口变化时用 `POST /` 更新。需要绑定一个 KV 命名空间 `ADDR`，并设置密钥 `UPDATE_TOKEN`：
 
 ```js
 export default {
   async fetch(request, env) {
     const cors = { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };
-    const url = new URL(request.url);
     if (request.method === 'POST') {
       // 例：curl -X POST -H "Authorization: Bearer $UPDATE_TOKEN" -d https://home.example.com:45678 https://addr.example.workers.dev/
       if (request.headers.get('Authorization') !== `Bearer ${env.UPDATE_TOKEN}`) return new Response('forbidden', { status: 403 });
@@ -149,13 +140,12 @@ export default {
     }
     const address = await env.ADDR.get('host');
     if (!address) return new Response('not set', { status: 404, headers: cors });
-    if (url.pathname === '/go') return new Response(null, { status: 302, headers: { ...cors, Location: address + '/' } });
     return new Response(address, { headers: { ...cors, 'Content-Type': 'text/plain; charset=utf-8' } });
   },
 };
 ```
 
-前端里选「文本地址」填 `https://addr.example.workers.dev/`，或选「302 跳转」填 `https://addr.example.workers.dev/go`。`Access-Control-Allow-Origin` 也可以写成你的前端来源，不用 `*`。
+前端里选「文本地址」填 `https://addr.example.workers.dev/`。`Access-Control-Allow-Origin` 也可以写成你的前端来源，不用 `*`。
 
 ## 编辑宿主
 

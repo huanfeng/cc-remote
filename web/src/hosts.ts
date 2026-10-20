@@ -6,9 +6,9 @@ import { t } from './i18n.ts'; // with extension: node tests import this file di
 
 export const STANDALONE = import.meta.env?.MODE === 'standalone';
 
-/** How a host's address is found: typed in, the target an entry URL redirects to, or
- * the plain-text answer of an entry URL (a tunnel whose public port changes). */
-export type HostVia = 'direct' | 'redirect' | 'text';
+/** How a host's address is found: typed in, or the plain-text answer of an entry URL
+ * (a tunnel whose public port changes). */
+export type HostVia = 'direct' | 'text';
 
 /** url is the address the page talks to; an indirect host also keeps the entry it
  * was found through, asked again when the address stops answering. */
@@ -32,22 +32,15 @@ export function normalizeHostUrl(text: string): string {
 
 const isLocal = (url: URL) => { const host = url.hostname.replace(/^\[|\]$/g, ''); return host === 'localhost' || host === '::1' || /^127\./.test(host); };
 
-/** Finds the host address behind an entry URL. The entry must answer this page with
- * CORS (Access-Control-Allow-Origin), or the browser hides the answer; for a redirect
- * every hop must, the host included (it does for its --allow-origin pages). A redirect
- * gives the target's origin; a text entry answers with the address itself. */
-export async function resolveEntry(entry: string, via: Exclude<HostVia, 'direct'>, fetcher: typeof fetch = fetch): Promise<string> {
-  const response = await fetcher(entry, { cache: 'no-store', credentials: 'omit', redirect: 'follow', signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
-  if (!response) throw new Error(t(`Cannot read ${entry}. It must be reachable and allow this page (Access-Control-Allow-Origin: ${location.origin} or *)${via === 'redirect' ? ', and so must the host it redirects to' : ''}.`, `无法读取 ${entry}。它必须可以访问，并允许本页面读取（响应头 Access-Control-Allow-Origin: ${location.origin} 或 *）${via === 'redirect' ? '；跳转到的宿主也必须允许本页面' : ''}。`));
-  let url = '';
-  if (via === 'redirect') {
-    if (!response.redirected) throw new Error(t(`${entry} did not redirect`, `${entry} 没有发生跳转`));
-    try { url = new URL(response.url).origin; } catch {}
-  } else {
-    if (!response.ok) throw new Error(t(`${entry} answered with an error (${response.status})`, `${entry} 返回错误（${response.status}）`));
-    const text = (await response.text()).trim().split(/\s+/)[0] || '';
-    if (/^https?:\/\//i.test(text)) url = normalizeHostUrl(text);
-  }
+/** Finds the host address behind an entry URL: the first word of its plain-text answer.
+ * The entry must answer this page with CORS (Access-Control-Allow-Origin), or the
+ * browser hides the answer. */
+export async function resolveEntry(entry: string, fetcher: typeof fetch = fetch): Promise<string> {
+  const response = await fetcher(entry, { cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+  if (!response) throw new Error(t(`Cannot read ${entry}. It must be reachable and allow this page (Access-Control-Allow-Origin: ${location.origin} or *).`, `无法读取 ${entry}。它必须可以访问，并允许本页面读取（响应头 Access-Control-Allow-Origin: ${location.origin} 或 *）。`));
+  if (!response.ok) throw new Error(t(`${entry} answered with an error (${response.status})`, `${entry} 返回错误（${response.status}）`));
+  const text = (await response.text()).trim().split(/\s+/)[0] || '';
+  const url = /^https?:\/\//i.test(text) ? normalizeHostUrl(text) : '';
   if (!url) throw new Error(t(`${entry} gave no host address`, `${entry} 没有给出宿主地址`));
   if (location.protocol === 'https:' && url.startsWith('http:') && !isLocal(new URL(url))) throw new Error(t(`${entry} leads to ${url}: a page served over HTTPS cannot reach a plain http:// host. Serve the host over HTTPS (a domain name, a certificate and the changing port are fine).`, `${entry} 指向 ${url}：HTTPS 页面无法访问 http:// 的宿主。请让宿主通过 HTTPS 提供（域名 + 证书 + 变化的端口即可）。`));
   return url;
@@ -56,7 +49,8 @@ export async function resolveEntry(entry: string, via: Exclude<HostVia, 'direct'
 export function loadHosts(): HostList {
   try {
     const data = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (data && Array.isArray(data.hosts)) return { current: String(data.current || ''), hosts: data.hosts.filter((x: HostEntry) => x && typeof x.id === 'string' && typeof x.url === 'string') };
+    // A host added through a 302 entry (no longer offered) stays at the address it was found at.
+    if (data && Array.isArray(data.hosts)) return { current: String(data.current || ''), hosts: data.hosts.filter((x: HostEntry) => x && typeof x.id === 'string' && typeof x.url === 'string').map((x: HostEntry) => x.via && x.via !== 'text' ? { ...x, entry: undefined, via: undefined } : x) };
   } catch {}
   return { current: '', hosts: [] };
 }
@@ -133,7 +127,7 @@ export function relocateHost(): Promise<boolean | string> {
   if (relocating) return relocating;
   const key = `cc-relocated@${host.id}`;
   try { if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 60_000) return Promise.resolve(false); sessionStorage.setItem(key, String(Date.now())); } catch {}
-  relocating = resolveEntry(host.entry, host.via).then(url => {
+  relocating = resolveEntry(host.entry).then(url => {
     if (url === host.url) return false;
     if (!samePlace(host.url, url)) return t(`${host.entry} now leads to ${url}, not ${host.url}. Only a new port is followed by itself; add the host again to trust the new address.`, `${host.entry} 现在指向 ${url}，而不是 ${host.url}。只有端口变化会自动跟随；如信任新地址，请重新添加该宿主。`);
     const list = loadHosts();
