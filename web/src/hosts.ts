@@ -11,8 +11,24 @@ export const STANDALONE = import.meta.env?.MODE === 'standalone';
 export type HostVia = 'direct' | 'text';
 
 /** url is the address the page talks to; an indirect host also keeps the entry it
- * was found through, asked again when the address stops answering. */
-export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; entry?: string; via?: Exclude<HostVia, 'direct'> };
+ * was found through, asked again when the address stops answering. name and color are
+ * the host's own (it reports them); alias and tint are this page's, shown over them. */
+export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; alias?: string; tint?: string; entry?: string; via?: Exclude<HostVia, 'direct'> };
+
+/** The colours a host can be given (internal/identity Palette): dark tones that keep the
+ * light logo glyph readable. */
+export const PALETTE = ['#293c2e', '#0f5e5c', '#1f4e8c', '#3b3f8f', '#5b3a87', '#8a2f62', '#9b2c2c', '#a4501c', '#7d6210', '#3d4650'];
+
+export const shownName = (host: HostEntry) => host.alias || host.name || host.url;
+export const shownColor = (host: HostEntry) => host.tint || host.color || PALETTE[0];
+
+/** A palette colour other than current, preferring one no other host shows. */
+export function randomColor(taken: string[], current = '', random = Math.random): string {
+  const others = PALETTE.filter(c => c !== current);
+  const free = others.filter(c => !taken.includes(c));
+  const pool = free.length ? free : others;
+  return pool[Math.floor(random() * pool.length)];
+}
 type HostList = { current: string; hosts: HostEntry[] };
 
 const KEY = 'cc-hosts:v1';
@@ -66,8 +82,27 @@ if (STANDALONE && typeof localStorage !== 'undefined') {
   }
 }
 
+/** The query parameter naming the host a tab works with, so each tab keeps its own
+ * across reloads; a tab opened without one gets the host chosen last. */
+const HOST_PARAM = 'host';
+const hostURL = (id: string | undefined) => {
+  const query = new URLSearchParams(location.search);
+  if (id) query.set(HOST_PARAM, id); else query.delete(HOST_PARAM);
+  const search = query.toString();
+  return location.pathname + (search ? `?${search}` : '');
+};
+
+/** The link that opens a host in a tab of its own. */
+export const hostLink = (id: string) => hostURL(id);
+
 /** The host this page works with; undefined until one is added. */
-export const currentHost: HostEntry | undefined = STANDALONE ? (() => { const list = loadHosts(); return list.hosts.find(x => x.id === list.current) || list.hosts[0]; })() : undefined;
+export const currentHost: HostEntry | undefined = STANDALONE ? (() => {
+  const list = loadHosts();
+  const named = new URLSearchParams(location.search).get(HOST_PARAM);
+  return list.hosts.find(x => x.id === named) || list.hosts.find(x => x.id === list.current) || list.hosts[0];
+})() : undefined;
+// The address names the host the page opened, so a reload stays on it.
+if (STANDALONE && typeof history !== 'undefined' && hostURL(currentHost?.id) !== location.pathname + location.search) history.replaceState(history.state, '', hostURL(currentHost?.id) + location.hash);
 
 /** Prefix of every API path: the current host's address, or nothing on the host's own page. */
 export const apiBase = currentHost?.url || '';
@@ -139,30 +174,33 @@ export function relocateHost(): Promise<boolean | string> {
   return relocating;
 }
 
-/** Reloads without the session route: it belongs to the old host. replaceState fires no
- * hashchange, so the old host's page does not record an empty selection on its way out. */
-export function reopen() {
-  history.replaceState(null, '', location.pathname + location.search);
+/** Reloads on host id (this one by default) without the session route: it belongs to
+ * the old host. replaceState fires no hashchange, so the old host's page does not record
+ * an empty selection on its way out. */
+export function reopen(id = currentHost?.id) {
+  history.replaceState(null, '', hostURL(id));
   location.reload();
 }
 
-/** Opens another host: the page reloads so nothing of the old host stays in memory. */
+/** Opens another host in this tab, and makes it the one new tabs open: the page reloads
+ * so nothing of the old host stays in memory. */
 export function switchHost(id: string) {
   const list = loadHosts();
   if (!list.hosts.some(x => x.id === id)) return;
   saveHosts({ ...list, current: id });
-  reopen();
+  reopen(id);
 }
 
 /** Forgets a host and everything this page stored for it. */
 export function removeHost(id: string) {
   const list = loadHosts();
   const hosts = list.hosts.filter(x => x.id !== id);
-  saveHosts({ hosts, current: list.current === id ? hosts[0]?.id || '' : list.current });
+  const current = list.current === id ? hosts[0]?.id || '' : list.current;
+  saveHosts({ hosts, current });
   for (const name of ['localStorage', 'sessionStorage'] as const) {
     try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.endsWith(`@${id}`)) storage.removeItem(key); } catch {}
   }
-  if (list.current === id) reopen();
+  if (currentHost?.id === id) reopen(current || undefined);
 }
 
 /** The access token: the current host's record here, the browser's storage on a host's own page. */

@@ -74,3 +74,11 @@ test('hosts: one added through a 302 entry stays at the address it was found at'
   ] }));
   assert.deepEqual(JSON.parse(JSON.stringify(loadHosts().hosts)), [{ id: 'a', url: 'https://home.example.com:45678', token: 'ta' }]);
 });
+
+test('colour: random picks a free palette colour other than the current one', async () => {
+  const { PALETTE, randomColor } = await import('../src/hosts.ts');
+  const taken = PALETTE.slice(0, 8);
+  for (const r of [0, 0.5, 0.99]) assert.equal(randomColor(taken, PALETTE[9], () => r), PALETTE[8]);
+  // Every colour taken: any but the current one.
+  for (let i = 0; i < 20; i++) assert.notEqual(randomColor(PALETTE, PALETTE[3]), PALETTE[3]);
+});

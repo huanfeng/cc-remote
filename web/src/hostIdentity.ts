@@ -10,17 +10,22 @@ const EVENT = 'cc-host-identity';
 const root = typeof document !== 'undefined' ? document.documentElement : undefined;
 
 // A standalone page starts from what it remembered of the current host.
-export const initialIdentity: HostIdentity = { name: currentHost?.name || root?.dataset.hostName || 'CC Remote', color: currentHost?.color || root?.dataset.hostColor || '#293c2e' };
+const own: HostIdentity = { name: currentHost?.name || root?.dataset.hostName || 'CC Remote', color: currentHost?.color || root?.dataset.hostColor || '#293c2e' };
+// The name and colour this page gave the host (its alias and tint) win over the host's.
+const shown = (id: HostIdentity): HostIdentity => ({ name: currentHost?.alias || id.name, color: currentHost?.tint || id.color });
+export const initialIdentity = shown(own);
 
-/** Shows the identity in the title, tab icon and --host-color, and tells listeners. */
-export function applyIdentity(id: HostIdentity) {
+/** Shows the host's identity (id: its own; the page's alias and tint win) in the title,
+ * tab icon and --host-color, and tells listeners what is shown. */
+export function applyIdentity(hostId: HostIdentity) {
   if (!root) return;
+  if (currentHost && (hostId.name !== currentHost.name || hostId.color !== currentHost.color)) updateCurrentHost({ name: hostId.name, color: hostId.color });
+  const id = shown(hostId);
   document.title = id.name === 'CC Remote' ? id.name : `${id.name} · CC Remote`;
   root.style.setProperty('--host-color', id.color);
   const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
   // The standalone page colours the icon itself: its CSP loads no image from a host.
   if (icon) icon.href = STANDALONE ? `data:image/svg+xml,${encodeURIComponent(iconSvg.replace('fill="#222c27"', `fill="${id.color}"`))}` : apiUrl(`/host-icon.svg?c=${id.color.replace('#', '')}`);
-  if (currentHost && (id.name !== currentHost.name || id.color !== currentHost.color)) updateCurrentHost({ name: id.name, color: id.color });
   window.dispatchEvent(new CustomEvent<HostIdentity>(EVENT, { detail: id }));
 }
 
@@ -31,4 +36,4 @@ export function onIdentity(listener: (id: HostIdentity) => void) {
   return () => window.removeEventListener(EVENT, handler);
 }
 
-applyIdentity(initialIdentity);
+applyIdentity(own);

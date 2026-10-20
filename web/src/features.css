@@ -152,26 +152,29 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .host-login-others button:hover{background:#e8eddc}
 .modal-backdrop>.host-login{max-height:90dvh;overflow:auto}
 .host-swatch{width:10px;height:10px;border-radius:3px;flex-shrink:0;display:inline-block}
-.host-switcher{position:relative;margin-top:3px}
-.host-switch{background:none;color:var(--muted);font-size:10px;padding:2px 0;border-radius:5px}
-.host-switch:hover{color:#273c2d}
-.host-menu{position:absolute;left:-42px;top:calc(100% + 6px);z-index:40;width:min(300px,calc(100vw - 24px));display:flex;flex-direction:column;gap:2px}
-.host-row{display:flex;align-items:center;gap:2px;border-radius:8px}
+.host-switcher{position:relative;min-width:0}
+.host-switch{display:inline-flex;align-items:center;gap:4px;max-width:100%;background:none;color:inherit;font:inherit;padding:1px 4px;border-radius:7px}
+.host-switch>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-switch:hover,.host-switch[aria-expanded="true"]{background:#e6eddc}
+.host-switch-caret{font-size:11px;color:var(--muted)}
+.host-menu{position:absolute;left:-42px;top:calc(100% + 8px);z-index:40;width:min(340px,calc(100vw - 24px));display:flex;flex-direction:column;gap:3px}
+.host-row{display:flex;align-items:center;gap:2px;border-radius:9px}
 .host-row.current{background:#edf1e4}
-.host-row>button:first-child{flex:1;min-width:0;display:flex;align-items:center;gap:9px;background:none;color:inherit;padding:8px 8px;text-align:left;border-radius:8px}
-.host-row>button:first-child:hover{background:#e6eddc}
-.host-text{flex:1;min-width:0;display:flex;flex-direction:column}
-.host-text strong{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.host-text small{font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.host-state{font-size:10.5px;color:var(--muted);white-space:nowrap}
-.host-row .icon-button{background:none;color:var(--muted);padding:6px;border-radius:6px;display:inline-grid;place-items:center}
+.host-row>a:first-child{flex:1;min-width:0;display:flex;align-items:center;gap:11px;color:inherit;text-decoration:none;padding:11px 10px;text-align:left;border-radius:9px}
+.host-row>a:first-child:hover{background:#e6eddc}
+.host-row .host-swatch{width:14px;height:14px;border-radius:4px}
+.host-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.host-text strong{font-size:14.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-text small{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.host-state{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.host-row .icon-button{background:none;color:var(--muted);padding:9px;border-radius:7px;display:inline-grid;place-items:center}
 .host-row .icon-button:hover{background:#e6eadc}
-.host-add{display:flex;align-items:center;gap:8px;background:none;color:#4e6243;padding:9px 8px;border-radius:8px;font-size:13px;border-top:1px solid var(--line)}
+.host-add{display:flex;align-items:center;gap:8px;background:none;color:#4e6243;padding:12px 10px;border-radius:9px;font-size:14px;border-top:1px solid var(--line)}
 .host-add:hover{background:#e6eddc}
 .host-login h2{font-size:20px;font-weight:500;margin:0 0 4px}
 .host-via{margin:0 0 18px;flex-wrap:nowrap}.options.host-via button{flex:1;text-align:center;padding:9px 6px}.host-via-hint{margin:8px 0 18px!important}
 .allow-hint .allow-command{display:flex;align-items:center;gap:8px;width:100%;margin:6px 0;padding:8px 10px;border-radius:8px;background:#eff0e9;color:inherit;text-align:left}.allow-command code{flex:1;min-width:0;font-size:11px;overflow-wrap:anywhere}.allow-command span{flex-shrink:0;font-size:11px;color:#527347}
-.host-menu small,.host-switch{letter-spacing:normal;font-weight:400}
+.host-menu small{letter-spacing:normal;font-weight:400}
 .teammate-message{margin:12px 0;border:1px solid #e0e5d6;border-left:3px solid var(--teammate);border-radius:0 10px 10px 0;background:#f6f7f0;font-size:12px}
 .teammate-message summary{display:flex;align-items:center;gap:8px;padding:11px 14px;cursor:pointer;color:#737c6a;list-style:none;min-width:0}
 .teammate-message summary::-webkit-details-marker{display:none}
