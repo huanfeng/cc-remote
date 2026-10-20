@@ -7,7 +7,8 @@ function Svg({ size = 16, children }: { size?: number; children: ReactNode }) {
 type P = { size?: number };
 
 export const CloseIcon = ({ size }: P) => <Svg size={size}><path d="M4 4l8 8M12 4l-8 8" /></Svg>;
-export const TrashIcon = ({ size }: P) => <Svg size={size}><path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5" /></Svg>;
+export const EditIcon = ({ size }: P) => <Svg size={size}><path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" /></Svg>;
+export const TrashIcon =({ size }: P) => <Svg size={size}><path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5" /></Svg>;
 export const GearIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy="8" r="5.5" strokeWidth="2" strokeLinecap="butt" strokeDasharray="2.16 2.16" /><circle cx="8" cy="8" r="4.1" /><circle cx="8" cy="8" r="1.6" /></Svg>;
 export const RefreshIcon = ({ size }: P) => <Svg size={size}><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" /></Svg>;
 export const MenuIcon = ({ size }: P) => <Svg size={size}><path d="M2.5 4h11M2.5 8h11M2.5 12h11" /></Svg>;

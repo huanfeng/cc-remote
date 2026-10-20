@@ -93,6 +93,20 @@ export function rememberHost(entry: Omit<HostEntry, 'id'> & { id?: string }): Ho
   return host;
 }
 
+/** The host already at this address or entry, other than host `except`. */
+export function findHost(url: string, entry?: string, except?: string): HostEntry | undefined {
+  return loadHosts().hosts.find(x => x.id !== except && (x.url === url || (!!entry && x.entry === entry)));
+}
+
+/** Changes a host's record (an undefined field is removed). Editing the current host
+ * reopens the page on its new address: the API base is fixed for a page's lifetime. */
+export function updateHost(id: string, change: Partial<Omit<HostEntry, 'id'>>) {
+  const list = loadHosts();
+  list.hosts = list.hosts.map(x => x.id === id ? { ...x, ...change } : x);
+  saveHosts(list);
+  if (id === currentHost?.id) reopen();
+}
+
 /** Updates the current host's record (its token after a sign-in, its name and colour). */
 export function updateCurrentHost(change: Partial<Omit<HostEntry, 'id' | 'url'>>) {
   if (!currentHost) return;

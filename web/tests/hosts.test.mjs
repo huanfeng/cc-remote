@@ -53,3 +53,22 @@ test('entry: a host moves by itself only to a new port', async () => {
   assert.equal(samePlace('https://home.example.com:45678', 'http://home.example.com:45678'), false);
   assert.equal(samePlace('https://home.example.com', 'not a url'), false);
 });
+
+test('hosts: editing changes one record; an address another host has is found', async () => {
+  const data = new Map();
+  globalThis.localStorage = { getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, String(v)), removeItem: k => data.delete(k) };
+  const { findHost, updateHost, loadHosts } = await import('../src/hosts.ts');
+  localStorage.setItem('cc-hosts:v1', JSON.stringify({ current: 'a', hosts: [
+    { id: 'a', url: 'https://home.example.com:45678', token: 'ta', entry: 'https://addr.example.dev/', via: 'text' },
+    { id: 'b', url: 'https://ccr.example.com', token: 'tb' },
+  ] }));
+  assert.equal(findHost('https://ccr.example.com', undefined, 'a')?.id, 'b');
+  assert.equal(findHost('https://ccr.example.com', undefined, 'b'), undefined);
+  assert.equal(findHost('https://other.example', 'https://addr.example.dev/', 'b')?.id, 'a');
+  // Made direct: the entry goes; the token and the other host stay.
+  updateHost('a', { url: 'https://home.example.com', entry: undefined, via: undefined });
+  const [a, b] = loadHosts().hosts;
+  assert.deepEqual(a, { id: 'a', url: 'https://home.example.com', token: 'ta' });
+  assert.deepEqual(b, { id: 'b', url: 'https://ccr.example.com', token: 'tb' });
+  assert.equal(loadHosts().current, 'a');
+});
