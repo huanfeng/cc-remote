@@ -1,7 +1,7 @@
-// Package identity is a host's name and colour, which tell several hosts
+// Package identity is a host's name, colour and icon, which tell several hosts
 // apart in the browser: the tab title and icon, the sidebar and the login page.
-// Both are stored in <data dir>/identity.json; empty fields take defaults (the
-// machine's host name, and a colour derived from the name).
+// They are stored in <data dir>/identity.json; empty fields take defaults (the
+// machine's host name, a colour derived from the name, and the CC Remote logo).
 package identity
 
 import (
@@ -21,7 +21,14 @@ import (
 type Identity struct {
 	Name  string `json:"name,omitempty"`
 	Color string `json:"color,omitempty"`
+	// Icon is the glyph on the colour: a preset's name (web/public/host-icons.json),
+	// or a few characters or an emoji drawn as text.
+	Icon string `json:"icon,omitempty"`
 }
+
+// MaxIconLength is the most characters (code points) an icon may have: a
+// short text, or an emoji built from several code points.
+const MaxIconLength = 8
 
 const fileName = "identity.json"
 
@@ -52,7 +59,7 @@ func Load(dataDir string) (Identity, error) {
 
 // Save validates and writes the identity (0600, replaced atomically).
 func Save(dataDir string, id Identity) error {
-	id.Name, id.Color = strings.TrimSpace(id.Name), strings.ToLower(strings.TrimSpace(id.Color))
+	id.Name, id.Color, id.Icon = strings.TrimSpace(id.Name), strings.ToLower(strings.TrimSpace(id.Color)), strings.TrimSpace(id.Icon)
 	if err := id.Validate(); err != nil {
 		return err
 	}
@@ -77,10 +84,14 @@ func Save(dataDir string, id Identity) error {
 }
 
 // Validate accepts a name of up to 40 characters without control characters,
-// and a palette colour or #rrggbb (or empty fields).
+// a palette colour or #rrggbb, and an icon of up to MaxIconLength characters
+// (or empty fields).
 func (id Identity) Validate() error {
 	if len([]rune(id.Name)) > 40 || strings.IndexFunc(id.Name, unicode.IsControl) >= 0 {
 		return i18n.NewError("the host name must be at most 40 characters", "主机名称最多 40 个字符")
+	}
+	if len([]rune(id.Icon)) > MaxIconLength || strings.IndexFunc(id.Icon, unicode.IsControl) >= 0 {
+		return i18n.NewError("the icon must be a preset name, or at most %d characters or an emoji", "图标只能是预设名称，或最多 %d 个字符或一个 emoji", MaxIconLength)
 	}
 	if id.Color != "" && hexOf(id.Color) == "" {
 		return i18n.NewError("the color must be one of %s or #rrggbb", "颜色只能是 %s 之一，或 #rrggbb", Keys())

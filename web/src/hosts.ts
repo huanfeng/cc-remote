@@ -13,16 +13,19 @@ export type HostVia = 'direct' | 'text';
 /** url is the address the page talks to; an indirect host also keeps the entry it
  * was found through, asked again when the address stops answering. lan is a second
  * address on the home network (an https name pointing at a private address), used
- * while it answers. name and color are the host's own (it reports them); alias and tint
- * are this page's, shown over them. */
-export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; alias?: string; tint?: string; entry?: string; via?: Exclude<HostVia, 'direct'>; lan?: string };
+ * while it answers. name, color and icon are the host's own (it reports them); alias,
+ * tint and emblem are this page's, shown over them. */
+export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; icon?: string; alias?: string; tint?: string; emblem?: string; entry?: string; via?: Exclude<HostVia, 'direct'>; lan?: string };
 
-/** The colours a host can be given (internal/identity Palette): dark tones that keep the
- * light logo glyph readable. */
-export const PALETTE = ['#293c2e', '#0f5e5c', '#1f4e8c', '#3b3f8f', '#5b3a87', '#8a2f62', '#9b2c2c', '#a4501c', '#7d6210', '#3d4650'];
+/** The colours offered for a host: internal/identity Palette first (a host's default
+ * colour is one of those), then more of the same kind: dark tones that keep the light
+ * glyph readable. Any #rrggbb can be picked as well. */
+export const PALETTE = ['#293c2e', '#0f5e5c', '#1f4e8c', '#3b3f8f', '#5b3a87', '#8a2f62', '#9b2c2c', '#a4501c', '#7d6210', '#3d4650',
+  '#3f6b2a', '#0b5563', '#2b5f80', '#1e2a5a', '#6b2d8a', '#6b2737', '#7a3b2e', '#5a4a1f', '#4a3f35', '#1f2933'];
 
 export const shownName = (host: HostEntry) => host.alias || host.name || host.url;
 export const shownColor = (host: HostEntry) => host.tint || host.color || PALETTE[0];
+export const shownIcon = (host: HostEntry) => host.emblem || host.icon || '';
 
 /** A palette colour other than current, preferring one no other host shows. */
 export function randomColor(taken: string[], current = '', random = Math.random): string {

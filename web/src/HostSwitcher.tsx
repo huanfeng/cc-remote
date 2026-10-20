@@ -2,8 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { copyText } from './clipboard';
 import { CloseIcon, EditIcon, PlusIcon } from './icons';
-import { PALETTE, apiBase, blockedHttp, currentHost, findHost, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onLan, resolveEntry, shownColor, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
+import { PALETTE, apiBase, blockedHttp, currentHost, findHost, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onLan, resolveEntry, shownColor, shownIcon, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
 import { lang, t } from './i18n';
+import { iconURL } from './hostIcon';
+import { ColorChoices, IconChoices } from './HostLook';
 
 type Ping = { online: boolean; running?: number; waiting?: number };
 
@@ -43,6 +45,7 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
   const [lan, setLan] = useState(editing ? editing.lan || '' : initialLan);
   const [alias, setAlias] = useState(editing?.alias || '');
   const [tint, setTint] = useState(editing?.tint || '');
+  const [emblem, setEmblem] = useState(editing?.emblem || '');
   const [error, setError] = useState(shown);
   useEffect(() => setError(shown), [shown]); // the page reports a failed reconnect after mounting this
   const [busy, setBusy] = useState(false);
@@ -57,8 +60,8 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
     if (lan.trim() && !lanUrl) { setError(t('Enter the home-network address, such as https://lan.example.com', '请输入内网地址，例如 https://lan.example.com')); return; }
     if (lanUrl && blockedHttp(lanUrl)) { setError(t('The home-network address must be https://: this page is served over HTTPS and cannot reach a plain http:// address. Point a domain name at the private address and get it a certificate.', '内网地址必须是 https://：本页面通过 HTTPS 提供，无法访问 http:// 的地址。可以让一个域名指向内网 IP，并为它申请证书。')); return; }
     // Checked when it is used: away from home it cannot answer now.
-    const look = { alias: alias.trim() || undefined, tint: tint || undefined, lan: lanUrl || undefined };
-    // Only the name, colour or home-network address changed: nothing to check on the host, which may be offline.
+    const look = { alias: alias.trim() || undefined, tint: tint || undefined, emblem: emblem || undefined, lan: lanUrl || undefined };
+    // Only the name, colour, icon or home-network address changed: nothing to check on the host, which may be offline.
     if (editing && !token.trim() && (via === 'direct' ? !editing.via && entered === editing.url : via === editing.via && entry === editing.entry)) {
       updateHost(editing.id, look); // reopens the page when it is the current host
       onCancel?.();
@@ -98,17 +101,14 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
     <small className="host-via-hint">{t('An https name pointing at this host on your home network. While it answers, this page uses it; away from home it goes back to the address above by itself.', '指向内网中这台宿主的 https 域名。能连上时优先使用它，离开内网后自动切回上面的地址。')}</small>
     {editing && <>
       <label>{t('Name on this page', '在此页面显示的名称')}<input value={alias} maxLength={40} onChange={event => setAlias(event.target.value)} placeholder={editing.name || t('The host\'s own name', '宿主自己的名称')} /></label>
-      <div className="host-colors" role="radiogroup" aria-label={t('Color on this page', '在此页面显示的颜色')}>
-        <button type="button" role="radio" aria-checked={!tint} className={`host-color auto${!tint ? ' chosen' : ''}`} style={{ background: editing.color || PALETTE[0] }} title={t('The host\'s own color', '宿主自己的颜色')} onClick={() => setTint('')}>{t('Host', '宿主')}</button>
-        {PALETTE.map(c => <button key={c} type="button" role="radio" aria-checked={tint === c} aria-label={c} title={c} className={`host-color${tint === c ? ' chosen' : ''}`} style={{ background: c }} onClick={() => setTint(c)} />)}
-        <button type="button" className="host-color auto random" title={t('A color no other host shows', '挑一个其他宿主没有用的颜色')} onClick={() => setTint(randomColor(loadHosts().hosts.filter(x => x.id !== editing.id).map(shownColor), tint || editing.color))}>{t('Random', '随机')}</button>
-      </div>
-      <small className="host-via-hint">{t('Saved on this device only, over the name and color set on the host; leave them empty or at Host for the host\'s own.', '只保存在此设备，覆盖宿主上设置的名称和颜色；名称留空、颜色选「宿主」则使用宿主自己的设置。')}</small>
+      <ColorChoices value={tint} onChange={setTint} auto={{ label: t('Host', '宿主'), title: t('The host\'s own color', '宿主自己的颜色'), color: editing.color || PALETTE[0] }} random={() => randomColor(loadHosts().hosts.filter(x => x.id !== editing.id).map(shownColor), tint || editing.color)} />
+      <IconChoices value={emblem} onChange={setEmblem} color={tint || editing.color || PALETTE[0]} auto={{ label: t('Host', '宿主'), title: t('The host\'s own icon', '宿主自己的图标'), color: tint || editing.color || PALETTE[0], icon: editing.icon }} withLogo />
+      <small className="host-via-hint">{t('Saved on this device only, over the name, color and icon set on the host; leave them empty or at Host for the host\'s own.', '只保存在此设备，覆盖宿主上设置的名称、颜色和图标；名称留空、颜色和图标选「宿主」则使用宿主自己的设置。')}</small>
     </>}
     {error && <div className="error" role="alert">{error}</div>}
     <button className="primary" disabled={busy}>{busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')} <span>→</span></button>
     {onCancel && <button type="button" className="secondary host-login-cancel" onClick={onCancel}>{t('Cancel', '取消')}</button>}
-    {!onCancel && !editing && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><span className="host-swatch" style={{ background: shownColor(x) }} />{shownName(x)}<small>{x.entry || x.url}</small></button>)}</div>}
+    {!onCancel && !editing && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{x.entry || x.url}</small></button>)}</div>}
     {!editing && <AllowHint />}
   </form>;
 }
@@ -152,11 +152,11 @@ export function HostSwitcher({ name }: { name: string }) {
     {open && <div className="host-menu popover-menu" role="menu">
       {hosts.map(host => { const p = pings[host.id]; return <div key={host.id} className={`host-row${host.id === currentHost?.id ? ' current' : ''}`}>
         <a role="menuitem" href={hostLink(host.id)} onClick={event => pick(event.nativeEvent, host)}>
-          <span className="host-swatch" style={{ background: shownColor(host) }} />
+          <img className="host-swatch" src={iconURL(shownColor(host), shownIcon(host))} alt="" />
           <span className="host-text"><strong>{shownName(host)}</strong><small title={[host.entry ? `${host.entry} → ${host.url}` : '', host.lan ? t(`Home network: ${host.lan}`, `内网：${host.lan}`) : ''].filter(Boolean).join('\n') || undefined}>{host.id === currentHost?.id && onLan ? `${host.lan} · ${t('Home network', '内网')}` : <>{host.url}{host.via && ` · ${VIA_LABEL[host.via]()}`}</>}</small></span>
           <span className="host-state">{!p ? '…' : !p.online ? t('Offline', '离线') : p.waiting ? t(`${p.waiting} waiting`, `${p.waiting} 待操作`) : p.running ? t(`${p.running} running`, `${p.running} 执行中`) : <span className="dot idle" />}</span>
         </a>
-        <button type="button" className="icon-button" aria-label={t(`Edit ${shownName(host)}`, `编辑 ${shownName(host)}`)} title={t('Edit name, color, address or token', '编辑名称、颜色、地址或令牌')} onClick={() => { setOpen(false); setEditing(host); }}><EditIcon size={15} /></button>
+        <button type="button" className="icon-button" aria-label={t(`Edit ${shownName(host)}`, `编辑 ${shownName(host)}`)} title={t('Edit name, color, icon, address or token', '编辑名称、颜色、图标、地址或令牌')} onClick={() => { setOpen(false); setEditing(host); }}><EditIcon size={15} /></button>
         <button type="button" className="icon-button" aria-label={t(`Remove ${shownName(host)}`, `移除 ${shownName(host)}`)} title={t('Remove from this page', '从此页面移除')} onClick={() => forget(host)}><CloseIcon size={15} /></button>
       </div>; })}
       <button type="button" role="menuitem" className="host-add" onClick={() => { setOpen(false); setAdding(true); }}><PlusIcon size={14} />{t('Add host', '添加宿主')}</button>

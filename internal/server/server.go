@@ -254,7 +254,8 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func (s *Server) info(w http.ResponseWriter, r *http.Request) {
-	name, hex := s.identity().Resolved()
+	id := s.identity()
+	name, hex := id.Resolved()
 	path, err := exec.LookPath(s.cfg.ClaudeExecutable)
 	version := ""
 	if err == nil {
@@ -265,7 +266,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon})
 }
 
 // language is the host's language (English when unset, as in tests).

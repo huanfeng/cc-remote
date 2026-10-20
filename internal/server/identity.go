@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"html"
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"cc-remote/internal/i18n"
@@ -74,10 +76,72 @@ func (s *Server) identityAPI(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, s.identityBody(s.identity()))
 }
 
-// identityAsset serves the files that carry the host's name and colour
+// hostIcon draws the host's icon: its glyph (a preset of host-icons.json, the
+// logo by default, or text) on its colour. web/src/hostIcon.ts draws the same.
+func (s *Server) hostIcon(hex, icon string) string {
+	var presets map[string]string
+	if b, err := fs.ReadFile(s.cfg.Assets, "host-icons.json"); err == nil {
+		_ = json.Unmarshal(b, &presets)
+	}
+	glyph, ok := presets[icon]
+	if icon == "" || ok {
+		if glyph == "" {
+			glyph = presets["code"]
+		}
+		if glyph == "" {
+			glyph = logoGlyph
+		}
+		glyph = `<g fill="none" stroke="` + glyphColor + `" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">` + glyph + `</g>`
+	} else {
+		glyph = fmt.Sprintf(`<text x="96" y="100" text-anchor="middle" dominant-baseline="central" font-family="system-ui,-apple-system,'Segoe UI',sans-serif" font-weight="700" font-size="%d" fill="%s">%s</text>`, iconFontSize(icon), glyphColor, html.EscapeString(icon))
+	}
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="44" fill="` + hex + `"/>` + glyph + `</svg>`
+}
+
+const (
+	glyphColor = "#d6ebbc"
+	logoGlyph  = `<path d="M76 60 40 96l36 36M116 60l36 36-36 36"/>`
+)
+
+// iconFontSize fits a text icon: the more characters, the smaller. Variation
+// selectors, skin tones and what a joiner adds to an emoji take no room of their own.
+func iconFontSize(text string) int {
+	n, joined := 0, false
+	for _, r := range text {
+		if r == 0x200d {
+			joined = true
+		} else if !joined && r != 0xfe0f && r != 0xfe0e && (r < 0x1f3fb || r > 0x1f3ff) {
+			n++
+		} else {
+			joined = false
+		}
+	}
+	switch {
+	case n <= 1:
+		return 112
+	case n == 2:
+		return 84
+	case n == 3:
+		return 64
+	}
+	return 50
+}
+
+// iconQuery is what /host-icon.svg is asked with: it changes with the colour
+// and icon, so a browser asks again after they change.
+func iconQuery(hex, icon string) string {
+	q := "c=" + strings.TrimPrefix(hex, "#")
+	if icon != "" {
+		q += "&i=" + url.QueryEscape(icon)
+	}
+	return q
+}
+
+// identityAsset serves the files that carry the host's name, colour and icon
 // before anyone signs in: the page, its icon and the app manifest.
 func (s *Server) identityAsset(w http.ResponseWriter, r *http.Request) bool {
-	name, hex := s.identity().Resolved()
+	id := s.identity()
+	name, hex := id.Resolved()
 	var body, kind string
 	switch r.URL.Path {
 	case "/", "/index.html":
@@ -87,17 +151,13 @@ func (s *Server) identityAsset(w http.ResponseWriter, r *http.Request) bool {
 		}
 		lang := map[i18n.Lang]string{i18n.ZH: "zh-CN", i18n.EN: "en"}[s.language()]
 		body = strings.NewReplacer(
-			`<html lang="zh-CN">`, `<html lang="`+lang+`" data-host-name="`+html.EscapeString(name)+`" data-host-color="`+hex+`">`,
+			`<html lang="zh-CN">`, `<html lang="`+lang+`" data-host-name="`+html.EscapeString(name)+`" data-host-color="`+hex+`" data-host-icon="`+html.EscapeString(id.Icon)+`">`,
 			`<title>CC Remote</title>`, `<title>`+html.EscapeString(name)+` · CC Remote</title>`,
-			`href="/icon.svg"`, `href="/host-icon.svg?c=`+strings.TrimPrefix(hex, "#")+`"`,
+			`href="/icon.svg"`, `href="/host-icon.svg?`+html.EscapeString(iconQuery(hex, id.Icon))+`"`,
 		).Replace(string(b))
 		kind = "text/html; charset=utf-8"
 	case "/host-icon.svg":
-		b, err := fs.ReadFile(s.cfg.Assets, "icon.svg")
-		if err != nil {
-			return false
-		}
-		body, kind = strings.Replace(string(b), `fill="#222c27"`, `fill="`+hex+`"`, 1), "image/svg+xml"
+		body, kind = s.hostIcon(hex, id.Icon), "image/svg+xml"
 	case "/manifest.webmanifest":
 		b, err := fs.ReadFile(s.cfg.Assets, "manifest.webmanifest")
 		if err != nil {
@@ -111,7 +171,7 @@ func (s *Server) identityAsset(w http.ResponseWriter, r *http.Request) bool {
 		m["lang"] = map[i18n.Lang]string{i18n.ZH: "zh-CN", i18n.EN: "en"}[s.language()]
 		if icons, ok := m["icons"].([]any); ok && len(icons) > 0 {
 			if icon, ok := icons[0].(map[string]any); ok {
-				icon["src"] = "/host-icon.svg?c=" + strings.TrimPrefix(hex, "#")
+				icon["src"] = "/host-icon.svg?" + iconQuery(hex, id.Icon)
 			}
 		}
 		out, _ := json.Marshal(m)

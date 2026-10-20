@@ -187,19 +187,20 @@ func resolveClaude(bin string, out io.Writer) string {
 	return path
 }
 
-// identityFlags are --name and --color: how the browser tells this host apart.
-type identityFlags struct{ name, color *string }
+// identityFlags are --name, --color and --icon: how the browser tells this host apart.
+type identityFlags struct{ name, color, icon *string }
 
 func addIdentityFlags(fs *flag.FlagSet) identityFlags {
 	return identityFlags{
 		name:  fs.String("name", "", i18n.T("host name shown in the browser tab, sidebar and login page (empty: the machine name)", "显示在浏览器标签页、侧栏和登录页的主机名称（留空：机器名）")),
 		color: fs.String("color", "", i18n.F("host color of the tab icon and logo: %s, #rrggbb, or auto", "标签页图标和标志的主机颜色：%s、#rrggbb 或 auto", identity.Keys())),
+		icon:  fs.String("icon", "", i18n.T("glyph of the tab icon and logo: a preset (server, laptop, desktop, home, cloud, terminal, database, flask, globe, package, shield, bolt, star, rocket, game), a few characters or an emoji, or auto (the logo)", "标签页图标和标志上的图案：预设（server、laptop、desktop、home、cloud、terminal、database、flask、globe、package、shield、bolt、star、rocket、game）、几个字符或一个 emoji，或 auto（默认标志）")),
 	}
 }
 
-// apply saves --name and --color in the data directory; it reports whether either was given.
+// apply saves --name, --color and --icon in the data directory; it reports whether any was given.
 func (f identityFlags) apply(dataDir string, set map[string]bool, dryRun bool, out io.Writer) (bool, error) {
-	if !set["name"] && !set["color"] {
+	if !set["name"] && !set["color"] && !set["icon"] {
 		return false, nil
 	}
 	id, err := identity.Load(dataDir)
@@ -215,18 +216,24 @@ func (f identityFlags) apply(dataDir string, set map[string]bool, dryRun bool, o
 			id.Color = ""
 		}
 	}
+	if set["icon"] {
+		id.Icon = strings.TrimSpace(*f.icon)
+		if strings.EqualFold(id.Icon, "auto") {
+			id.Icon = ""
+		}
+	}
 	if err = id.Validate(); err != nil {
 		return true, err
 	}
 	if dryRun {
-		fmt.Fprint(out, i18n.F("[dry-run] write identity.json: name %q, color %q\n", "[dry-run] 写入 identity.json：名称 %q，颜色 %q\n", id.Name, id.Color))
+		fmt.Fprint(out, i18n.F("[dry-run] write identity.json: name %q, color %q, icon %q\n", "[dry-run] 写入 identity.json：名称 %q，颜色 %q，图标 %q\n", id.Name, id.Color, id.Icon))
 		return true, nil
 	}
 	if err = identity.Save(dataDir, id); err != nil {
 		return true, err
 	}
 	name, hex := id.Resolved()
-	fmt.Fprint(out, i18n.F("Host name %s, color %s; open pages pick it up when reloaded (no restart needed).\n", "主机名称 %s，颜色 %s；已打开的页面刷新后生效（无需重启）。\n", name, hex))
+	fmt.Fprint(out, i18n.F("Host name %s, color %s, icon %s; open pages pick it up when reloaded (no restart needed).\n", "主机名称 %s，颜色 %s，图标 %s；已打开的页面刷新后生效（无需重启）。\n", name, hex, identityValue(id.Icon, "logo")))
 	return true, nil
 }
 
@@ -764,6 +771,7 @@ func printConfig(cfg *Config, out io.Writer) {
 		name, hex := id.Resolved()
 		field(out, "Host name", "主机名称", identityValue(id.Name, name))
 		field(out, "Host color", "主机颜色", identityValue(id.Color, hex))
+		field(out, "Host icon", "主机图标", identityValue(id.Icon, "logo"))
 	}
 	field(out, "Listen", "监听地址", strings.Join(cfg.Listen, ", "))
 	field(out, "Data dir", "数据目录", cfg.DataDir)
