@@ -801,6 +801,10 @@ func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
 // statusExited closes a web terminal stream when Claude Code exited.
 const statusExited websocket.StatusCode = 4001
 
+// streamPing keeps a quiet terminal stream alive through proxies that close
+// idle connections (nginx after 60 s by default); Server.streamPing overrides it.
+const streamPing = 30 * time.Second
+
 // streamTicketTTL is how long the web has to open the stream it asked a ticket for.
 const streamTicketTTL = 30 * time.Second
 
@@ -895,6 +899,29 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				case sized <- struct{}{}:
 				default:
 				}
+			}
+		}
+	}()
+	every := streamPing
+	if s.streamPing > 0 {
+		every = s.streamPing
+	}
+	go func() {
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				// Ping waits for the pong, which the reading goroutine above receives.
+				pctx, done := context.WithTimeout(ctx, every)
+				err := c.Ping(pctx)
+				done()
+				if err != nil {
+					cancel()
+					return
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()

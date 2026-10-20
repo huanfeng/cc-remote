@@ -90,6 +90,7 @@ type Server struct {
 	mu             sync.Mutex
 	downloads      downloadTickets          // links the browser downloads files with (downloads.go)
 	streamTickets  downloadTickets          // the web's terminal streams, once each (terminal.go)
+	streamPing     time.Duration            // tests: ping terminal streams this often instead
 	origins        atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
 	reloadMu       sync.Mutex               // one reload at a time, so listen ends up current
 	files          fileRoots

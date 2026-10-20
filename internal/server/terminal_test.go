@@ -716,3 +716,34 @@ func TestTerminalStreamWebExit(t *testing.T) {
 		t.Fatalf("closed with %v (%v), want %v", status, err, statusExited)
 	}
 }
+
+// A quiet stream is pinged and stays open while the front end answers.
+func TestTerminalStreamPing(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	s.streamPing = 100 * time.Millisecond
+	x := createTerminal(t, base)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(base, "http")+"/api/terminals/"+x.ID+"/stream", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + testToken}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	// Reading answers pings; read through several of them.
+	quiet, stop := context.WithTimeout(ctx, time.Second)
+	defer stop()
+	for {
+		if _, _, err := conn.Read(quiet); err != nil {
+			if quiet.Err() == nil {
+				t.Fatalf("stream ended: %v", err)
+			}
+			break
+		}
+	}
+	// The read timeout closed this side; a new front end still connects.
+	conn2, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(base, "http")+"/api/terminals/"+x.ID+"/stream", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + testToken}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn2.CloseNow()
+}
