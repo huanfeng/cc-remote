@@ -543,8 +543,11 @@ func (ts *terminalSession) queuedLocked(prompt string) bool {
 
 // normalizePrompt is a prompt for matching: a long paste comes back from
 // Claude Code wrapped in <pasted_content> tags.
+// normalizePrompt is a prompt as the transcript shows it: pasted text unwrapped
+// and the attachment list left out (it shows as attachments).
 func normalizePrompt(s string) string {
-	return strings.TrimSpace(claude.UnwrapPastes(strings.ReplaceAll(s, "\r\n", "\n")))
+	text, _ := claude.SplitAttachments(claude.UnwrapPastes(strings.ReplaceAll(s, "\r\n", "\n")))
+	return strings.TrimSpace(text)
 }
 
 func (s *Server) terminalExited(ts *terminalSession) {

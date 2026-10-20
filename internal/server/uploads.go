@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"cc-remote/internal/claude"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
@@ -261,6 +262,6 @@ func (s *Server) messageAttachments(l i18n.Lang, sessionID, text string, ids []s
 		lines = append(lines, string(line))
 	}
 	payload, _ := json.Marshal(map[string]any{"attachments": items})
-	prompt := text + "\n\nThe user attached files stored on this host. Use the Read tool to open each attachment before answering (Read supports text, PDF, images and Jupyter notebooks); for other binary formats, inspect them with suitable tools. Attachments (one JSON object per line; path is the absolute host path, name is the original file name):\n" + strings.Join(lines, "\n")
+	prompt := text + claude.AttachmentNote + strings.Join(lines, "\n")
 	return prompt, payload, nil
 }

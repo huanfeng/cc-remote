@@ -516,7 +516,8 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 	// records it as a queued_command attachment, never as a user turn.
 	if v.Type == "attachment" && v.Attachment.Type == "queued_command" && v.Attachment.CommandMode == "prompt" && (v.Attachment.Origin.Kind == "" || v.Attachment.Origin.Kind == "human") {
 		if text := strings.TrimSpace(v.Attachment.Prompt); text != "" && !syntheticText(text) {
-			return []Event{{Kind: "user", Text: UnwrapPastes(v.Attachment.Prompt)}}
+			text, payload := SplitAttachments(UnwrapPastes(v.Attachment.Prompt))
+			return []Event{{Kind: "user", Text: text, Payload: payload}}
 		}
 		return nil
 	}
@@ -530,6 +531,10 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 			if events, ok := noticeEvents(e.Text); ok {
 				out = append(out, events...)
 				continue
+			}
+			// A web message's files show as attachments, as when it was sent.
+			if text, payload := SplitAttachments(e.Text); payload != nil && len(e.Payload) == 0 {
+				e.Text, e.Payload = text, payload
 			}
 		}
 		if e.Kind == "user" && (syntheticText(e.Text) || v.Origin.Kind != "" && v.Origin.Kind != "human" || v.PromptSource == "system") {
