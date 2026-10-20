@@ -20,7 +20,7 @@ CC Remote is a small host program (a single executable) that runs on your comput
 
 ## Features
 
-- **Share a terminal session with the web**: run `ccr` in a project to start native Claude Code; the web UI talks to that very process, so you can keep going away from your desk.
+- **Share a terminal session with the web**: run `ccr` in a project to start native Claude Code; the web UI talks to that very process, so you can keep going away from your desk. The web can also switch to a terminal view of the full Claude Code screen, with an input box and a row of keys on phones.
 - **Managed sessions**: start sessions from the browser in any project directory, run several in parallel, and close the tab without stopping them.
 - **Answer approvals, questions and plans from the web**: tool permissions, AskUserQuestion choices and plan approvals show up as cards; in terminal sessions, whichever side answers first wins.
 - **Per-session model and permission mode**: every permission mode (including `bypassPermissions`, behind a confirmation) and reasoning effort, without touching your `~/.claude/settings.json`.

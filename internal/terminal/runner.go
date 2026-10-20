@@ -169,6 +169,14 @@ func Start(o Options) (*Runner, error) {
 	return r, nil
 }
 
+// Exited reports whether Claude Code exited. Unlike Done it is already true
+// when the front ends' channels close, so a front end can tell why its ended.
+func (r *Runner) Exited() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.exited
+}
+
 // Done is closed after Claude Code exited.
 func (r *Runner) Done() <-chan struct{} { return r.done }
 

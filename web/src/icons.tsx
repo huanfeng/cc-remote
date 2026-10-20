@@ -13,6 +13,7 @@ export const GearIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy="8" 
 export const RefreshIcon = ({ size }: P) => <Svg size={size}><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" /></Svg>;
 export const MenuIcon = ({ size }: P) => <Svg size={size}><path d="M2.5 4h11M2.5 8h11M2.5 12h11" /></Svg>;
 export const PlusIcon = ({ size }: P) => <Svg size={size}><path d="M8 3v10M3 8h10" /></Svg>;
+export const ChatIcon = ({ size }: P) => <Svg size={size}><path d="M2.5 4a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 4v5.5A1.5 1.5 0 0 1 12 11H7l-3 2.5V11a1.5 1.5 0 0 1-1.5-1.5z" /></Svg>;
 export const TerminalIcon = ({ size }: P) => <Svg size={size}><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" /><path d="M4.5 6.2 6.6 8l-2.1 1.8M8.3 10h3" /></Svg>;
 export const LogoutIcon = ({ size }: P) => <Svg size={size}><path d="M6 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H6M10.5 5l3 3-3 3M13.5 8H6" /></Svg>;
 export const StatusIcon = ({ size }: P) => <Svg size={size}><path d="M1.5 8.5h3l1.7-4 3.2 7.5 1.8-3.5h3.3" /></Svg>;

@@ -684,3 +684,35 @@ func TestTerminalStreamWebOrigin(t *testing.T) {
 		t.Fatalf("behind a proxy: %v", err)
 	}
 }
+
+// When Claude Code exits, a web stream closes with statusExited so the web
+// shows it instead of reconnecting (which would start Claude Code again).
+func TestTerminalStreamWebExit(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, b := call(t, base, "POST", "/api/terminals/"+x.ID+"/ticket", nil)
+	var v struct{ Ticket string }
+	_ = json.Unmarshal(b, &v)
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(base, "http")+"/api/terminals/"+x.ID+"/stream?ticket="+v.Ticket, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	if _, _, err := conn.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	ts := s.terminals[x.ID]
+	s.mu.Unlock()
+	ts.runner.Close(2 * time.Second)
+	for {
+		if _, _, err = conn.Read(ctx); err != nil {
+			break
+		}
+	}
+	if status := websocket.CloseStatus(err); status != statusExited {
+		t.Fatalf("closed with %v (%v), want %v", status, err, statusExited)
+	}
+}

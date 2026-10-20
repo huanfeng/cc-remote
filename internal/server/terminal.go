@@ -798,6 +798,9 @@ func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]string{"status": "ok"})
 }
 
+// statusExited closes a web terminal stream when Claude Code exited.
+const statusExited websocket.StatusCode = 4001
+
 // streamTicketTTL is how long the web has to open the stream it asked a ticket for.
 const streamTicketTTL = 30 * time.Second
 
@@ -916,13 +919,14 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 					_ = c.Close(websocket.StatusGoingAway, "host restarting")
 					return
 				}
-				reason := i18n.T("Disconnected", "已断开")
-				select {
-				case <-ts.runner.Done():
+				reason, status := i18n.T("Disconnected", "已断开"), websocket.StatusNormalClosure
+				if ts.runner.Exited() {
 					reason = i18n.T("Claude Code exited", "Claude Code 已退出")
-				default:
+					if web { // the web reconnects after any other close
+						status = statusExited
+					}
 				}
-				_ = c.Close(websocket.StatusNormalClosure, reason)
+				_ = c.Close(status, reason)
 				return
 			}
 			if err := c.Write(ctx, websocket.MessageBinary, chunk); err != nil {
