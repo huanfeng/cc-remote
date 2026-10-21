@@ -294,7 +294,7 @@ export function linkOutcomes(items: TranscriptItem[], events: TranscriptEvent[])
   return linked;
 }
 
-export type QuestionOption = { label: string; description?: string; selected: boolean };
+export type QuestionOption = { label: string; description?: string; preview?: string; selected: boolean };
 export type QuestionView = { question: string; header?: string; multiSelect: boolean; options: QuestionOption[]; answer?: string; custom?: string };
 
 /** Questions of an AskUserQuestion call with the recorded answer marked on its options. */
@@ -305,7 +305,7 @@ export function questionViews(call: ToolCall): QuestionView[] {
     const text = String(question?.question ?? '');
     const answer = answers[text];
     const picked = answer === undefined ? [] : question?.multiSelect ? answer.split(', ') : [answer];
-    const options: QuestionOption[] = (Array.isArray(question?.options) ? question.options : []).map((option: any) => ({ label: String(option?.label ?? ''), description: option?.description, selected: picked.includes(String(option?.label ?? '')) }));
+    const options: QuestionOption[] = (Array.isArray(question?.options) ? question.options : []).map((option: any) => ({ label: String(option?.label ?? ''), description: option?.description, preview: typeof option?.preview === 'string' && option.preview.trim() ? option.preview : undefined, selected: picked.includes(String(option?.label ?? '')) }));
     const matched = options.some(option => option.selected);
     return { question: text, header: question?.header, multiSelect: !!question?.multiSelect, options, answer, custom: answer !== undefined && !matched ? answer : undefined };
   });

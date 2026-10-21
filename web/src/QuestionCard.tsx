@@ -92,6 +92,8 @@ function AskCard({ call, waitingHint, onAnswer, onHandoff, answeredBy, busy, dra
   const interactive = !!onAnswer && unanswered(call);
   const [draft, setDraft] = useDraft(held, setHeld);
   const picks = draft.picks || {}, custom = draft.custom || {};
+  // The option whose preview is shown, as the terminal shows the focused one; picking also focuses.
+  const [focus, setFocus] = useState<Record<string, string>>({});
   const toggle = (question: string, label: string, multi: boolean) => setDraft(old => {
     const current = old.picks?.[question] || [];
     return { ...old, picks: { ...old.picks, [question]: multi ? (current.includes(label) ? current.filter(item => item !== label) : [...current, label]) : [label] } };
@@ -100,17 +102,27 @@ function AskCard({ call, waitingHint, onAnswer, onHandoff, answeredBy, busy, dra
   const value = (question: string) => custom[question]?.trim() || (picks[question] || []).join(', ');
   return <section className={`question-card is-${call.status}`}>
     <header><span className="eyebrow"><QuestionIcon size={12} /> {t('Claude asks', 'Claude 的提问')}</span><span className={`question-state is-${call.status}`}>{answered ? answeredBy === 'web' ? WEB_SUBMITTED : answeredBy === 'terminal' ? t('Answered in the terminal', '已在终端回答') : t('Answered', '已回答') : call.status === 'error' ? t('Not answered', '未回答') : waitingHint}</span></header>
-    {views.map((view, index) => <div className="question-item" key={index}>
+    {views.map((view, index) => {
+      const isSelected = (label: string) => interactive ? (picks[view.question] || []).includes(label) : view.options.some(option => option.label === label && option.selected);
+      const withPreview = view.options.some(option => option.preview);
+      const shown = withPreview ? view.options.find(option => option.label === focus[view.question]) || view.options.find(option => isSelected(option.label)) || view.options[0] : undefined;
+      const show = (label: string) => setFocus(old => old[view.question] === label ? old : { ...old, [view.question]: label });
+      const list = <ul className="question-options">{view.options.map(option => {
+        const selected = isSelected(option.label);
+        const body = <><span className="question-check">{selected && <CheckIcon size={12} />}</span><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span></>;
+        const previewed = withPreview && option === shown ? ' previewed' : '';
+        return <li key={option.label} className={(selected ? 'selected' : '') + previewed}>{interactive
+          ? <button type="button" disabled={busy} aria-pressed={selected} onMouseEnter={withPreview ? () => show(option.label) : undefined} onFocus={withPreview ? () => show(option.label) : undefined} onClick={() => { show(option.label); toggle(view.question, option.label, view.multiSelect); }}>{body}</button>
+          : withPreview ? <button type="button" className="question-option-view" onClick={() => show(option.label)}>{body}</button> : <div>{body}</div>}</li>;
+      })}</ul>;
+      return <div className="question-item" key={index}>
       {view.header && <span className="question-header">{view.header}</span>}
       <p className="question-text">{view.question}{view.multiSelect && <small>{t(' (multiple choice)', '（可多选）')}</small>}</p>
-      <ul className="question-options">{view.options.map(option => {
-        const selected = interactive ? (picks[view.question] || []).includes(option.label) : option.selected;
-        const body = <><span className="question-check">{selected && <CheckIcon size={12} />}</span><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span></>;
-        return <li key={option.label} className={selected ? 'selected' : ''}>{interactive ? <button type="button" disabled={busy} aria-pressed={selected} onClick={() => toggle(view.question, option.label, view.multiSelect)}>{body}</button> : <div>{body}</div>}</li>;
-      })}</ul>
+      {withPreview ? <div className="question-previewed">{list}<div className="question-preview" aria-live="polite"><span className="question-preview-label">{t('Preview: ', '预览：')}{shown!.label}</span>{shown!.preview ? <pre>{shown!.preview}</pre> : <p>{t('This option has no preview.', '此选项没有预览。')}</p>}</div></div> : list}
       {interactive && <input className="question-custom-input" aria-label={t(`Other answer: ${view.question}`, `其他回答：${view.question}`)} placeholder={t('Or type another answer', '或输入其他回答')} value={custom[view.question] || ''} disabled={busy} onChange={event => { const text = event.target.value; setDraft(old => ({ ...old, custom: { ...old.custom, [view.question]: text } })); }} />}
       {view.custom && <p className="question-custom">{t('Answer: ', '回答：')}{view.custom}</p>}
-    </div>)}
+    </div>;
+    })}
     {call.status === 'error' && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
     {answered && !views.some(view => view.answer !== undefined) && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
     {interactive && <div className="request-actions"><HandoffButton onHandoff={onHandoff} busy={busy} /><button type="button" className="primary" disabled={busy || views.some(view => !value(view.question))} onClick={() => onAnswer!(Object.fromEntries(views.map(view => [view.question, value(view.question)])))}>{t('Submit answers', '提交回答')}</button></div>}
