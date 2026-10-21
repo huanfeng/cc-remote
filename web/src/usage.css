@@ -1,0 +1,34 @@
+.usage-bar{display:flex;flex-direction:column;gap:5px;width:100%;margin:6px 0 2px;padding:8px 10px;border-radius:8px;background:none;text-align:left;color:#46553f;font-size:11px}
+.usage-bar:hover{background:#e3e7d8}
+.usage-bar.stale{opacity:.7}
+.usage-item{display:flex;align-items:center;gap:8px}
+.usage-label{width:26px;flex-shrink:0;color:var(--muted)}
+.usage-value{width:34px;flex-shrink:0;text-align:right;font-variant-numeric:tabular-nums}
+.usage-track{flex:1;min-width:0;height:5px;border-radius:3px;background:#dfe3d6;overflow:hidden}
+.usage-track.wide{height:7px;border-radius:4px}
+.usage-fill{display:block;height:100%;border-radius:inherit;background:#819f67;transition:width .3s}
+.usage-fill.warn{background:#c49a3e}
+.usage-fill.high{background:#c47464}
+.usage-details{margin-top:12px}
+.usage-details h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.usage-plan{font-size:10px;font-weight:500;padding:1px 7px;border-radius:999px;background:#e4ebd8;color:#5f7550;text-transform:capitalize}
+.usage-updated{margin-left:auto;font-size:10px;font-weight:400;color:var(--muted)}
+.usage-note{margin:4px 0 8px;font-size:12px;color:var(--muted);line-height:1.7}
+.usage-note.warn{color:#8a6414}
+.usage-rows{display:grid;gap:9px;margin:6px 0 4px}
+.usage-row{display:grid;grid-template-columns:minmax(80px,auto) minmax(0,1fr) 40px minmax(90px,auto);align-items:center;gap:10px;font-size:12px}
+.usage-row strong{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
+.usage-row small{font-size:10px;color:var(--muted);white-space:nowrap}
+.usage-chart{background:#fff}
+.usage-chart .usage-line{fill:none;stroke-width:1.6}
+.usage-line.fiveHour,.usage-dot.fiveHour{stroke:#819f67;fill:#819f67}
+.usage-line.weekly,.usage-dot.weekly{stroke:#b07a44;fill:#b07a44}
+.usage-chart polyline.usage-line{fill:none}
+.usage-chart .grid{stroke:var(--line);stroke-dasharray:3 3}
+.swatch.usage-5h{background:#819f67}
+.swatch.usage-week{background:#b07a44}
+.usage-range{margin-left:auto;display:inline-flex;gap:2px}
+.usage-range button{background:none;color:var(--muted);font-size:10px;padding:3px 7px;border-radius:6px}
+.usage-range button.active{background:#e4ebd8;color:#3f5234}
+.usage-empty{font-size:12px;color:var(--muted);margin:14px 0 18px;text-align:center}
+@media(max-width:760px){.usage-row{grid-template-columns:minmax(70px,auto) minmax(0,1fr) 36px}.usage-row small{grid-column:2/4}}

@@ -110,6 +110,14 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 
 网页和命令行支持简体中文和英文，默认跟随宿主的语言设置（安装时的 `--lang`，未设置时跟随系统）。网页可以在设置里为当前浏览器单独选择语言，不影响其它设备；命令行可用 `cc-remote service config --lang zh|en|auto` 修改服务的语言，或用环境变量 `CC_REMOTE_LANG` 临时指定。详见 [configuration.md](configuration.md#界面语言)。
 
+### 订阅用量
+
+侧栏底部显示 Claude 订阅的 5 小时额度和每周额度（与 Claude Code 的 `/usage` 相同），悬停可看重置时间和更新时间，点击打开「服务状态」中的详情：各额度（含单个模型的每周额度）的百分比、重置倒计时、套餐、更新时间，以及近 24 小时 / 7 天 / 30 天的用量曲线。
+
+- 宿主用 Claude Code 自己的登录令牌（`~/.claude/.credentials.json`，macOS 为钥匙串，或 `CLAUDE_CODE_OAUTH_TOKEN`）向 Anthropic 读取，页面打开时最多每分钟一次，此外每 10 分钟后台读取一次以记录历史；历史保存在宿主数据库，保留 30 天。
+- 只读取、不刷新令牌：令牌过期（Claude Code 长时间没运行）时显示上次的数据并注明，Claude Code 下次运行续期后自动恢复。服务端限流时显示上次的数据并稍后重试。
+- 只适用于官方 Claude 订阅账号。Claude Code 配置了第三方 `ANTHROPIC_BASE_URL`（如国内模型的兼容接口）、Bedrock / Vertex / Foundry，或使用 API Key 时不读取任何数据，侧栏不显示，「服务状态」里说明原因。
+
 ### 通知
 
 「设置 → 此浏览器」里可以打开系统通知（只对当前浏览器生效，打开时浏览器会请求通知权限）。会话需要你操作（权限审批、提问、计划确认）、执行完成、执行失败或终端会话的 Claude Code 中途退出时，弹出系统通知，三类可以分别关闭；点通知会回到页面并打开该会话。「执行完成」要等这一轮结束且子 agent、后台命令都结束才提醒；后台任务还在运行时 Claude Code 退出，算作退出。正在查看的会话不提醒。标签页标题前会显示等待你操作的会话数，如「(2) 主机名 · CC Remote」。

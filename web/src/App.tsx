@@ -27,6 +27,7 @@ import { notifyPrefs, notifying, sessionChanges, showNotification } from './noti
 import { SessionMenu } from './SessionMenu';
 import { TopbarMenu, type TopbarAction } from './TopbarMenu';
 import { TerminalView } from './TerminalView';
+import { UsageBar } from './Usage';
 import { matchProjects, projectKey, projectName, recentProjects, type RecentProject } from './recentProjects';
 
 type Session = { id: string; title: string; cwd: string; truncated?: boolean; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus; activeTasks?: number };
@@ -813,6 +814,7 @@ export default function App() {
           ]} />
         </div>;
       })}{filteredSessions.length > listLimit && <button type="button" className="list-more" onClick={() => setListLimit(n => n + LIST_RENDER)}>{t(`Show more (${filteredSessions.length - listLimit} left)`, `显示更多（还有 ${filteredSessions.length - listLimit} 个）`)}</button>}</div>
+      <UsageBar api={api} open={() => { setStatusOpen(true); setDrawer(false); }} />
       <nav className="sidebar-nav" aria-label={t('Global', '全局')}><button title={t('Settings', '设置')} onClick={() => { setSettingsOpen(true); setDrawer(false); }}><GearIcon size={15} /><span>{t('Settings', '设置')}</span></button><button title={t('Host status', '服务状态')} onClick={() => { setStatusOpen(true); setDrawer(false); }}><StatusIcon size={15} /><span>{t('Host status', '服务状态')}</span></button></nav>
     </aside>
     {!sidebarCollapsed && <SidebarResizer width={sidebar.width} max={sidebar.max} onChange={sidebar.set} />}

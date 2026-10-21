@@ -141,6 +141,10 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 			return nil, err
 		}
 	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS usage_samples(at TEXT PRIMARY KEY,data TEXT NOT NULL)`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS channel_transcript(session_id TEXT NOT NULL REFERENCES sessions(id),event_key TEXT NOT NULL,PRIMARY KEY(session_id,event_key))`); err != nil {
 		db.Close()
 		return nil, err
@@ -526,4 +530,41 @@ func (s *Store) Pending(session string) ([]Interaction, error) {
 		out = append(out, x)
 	}
 	return out, r.Err()
+}
+
+// UsageSample is the subscription usage read at one time, as JSON.
+type UsageSample struct {
+	At   time.Time       `json:"at"`
+	Data json.RawMessage `json:"data"`
+}
+
+// AddUsageSample records a usage reading and drops those older than keep.
+func (s *Store) AddUsageSample(at time.Time, data json.RawMessage, keep time.Duration) error {
+	if _, err := s.db.Exec(`INSERT OR REPLACE INTO usage_samples(at,data) VALUES(?,?)`, at.UTC().Format(time.RFC3339Nano), string(data)); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM usage_samples WHERE at<?`, at.Add(-keep).UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// UsageSamples lists the readings since a time, oldest first.
+func (s *Store) UsageSamples(since time.Time) ([]UsageSample, error) {
+	rows, err := s.db.Query(`SELECT at,data FROM usage_samples WHERE at>=? ORDER BY at`, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageSample
+	for rows.Next() {
+		var at, data string
+		if err := rows.Scan(&at, &data); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			continue
+		}
+		out = append(out, UsageSample{At: t, Data: json.RawMessage(data)})
+	}
+	return out, rows.Err()
 }

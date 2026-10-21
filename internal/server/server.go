@@ -123,6 +123,7 @@ type Server struct {
 	channels       map[string]*channelConnection
 	modelCache     modelsCache
 	statusCache    statusCache
+	usageCache     usageCache
 	// configMu serializes writers of preferences.json, Claude settings.json and
 	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.
 	configMu sync.Mutex
@@ -135,6 +136,7 @@ func New(st *store.Store, cfg Config) *Server {
 	}
 	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
+	go s.sampleUsage(s.stopReaper, usageSampleEvery)
 	return s
 }
 
@@ -146,6 +148,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/identity", s.identityAPI)
 	mux.HandleFunc("PUT /api/identity", s.identityAPI)
 	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/usage", s.usage)
+	mux.HandleFunc("GET /api/usage/history", s.usageHistory)
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
 	mux.HandleFunc("POST /api/admin/shutdown", s.shutdown)
 	mux.HandleFunc("POST /api/admin/restart", s.restart)

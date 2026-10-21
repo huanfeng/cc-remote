@@ -3,6 +3,7 @@ import type { Api } from './ClaudeSettings';
 import './status.css';
 import { CloseIcon } from './icons';
 import { locale, t } from './i18n';
+import { UsageDetails } from './Usage';
 
 export type Stats = { sessionId: string; turns: number; results: number; costUSD: number; costKnown: boolean; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; durationMs: number; toolCalls: number; errors: number; lastActivityAt: string };
 type SessionRow = Stats & { id: string; title: string; mode: string; status: string; online: boolean; cwd: string };
@@ -116,6 +117,7 @@ export function StatusPanel({ api, close, select }: { api: Api; close: () => voi
             <div><dt>{t('Database', '数据库')}</dt><dd>{bytes(data.storage.databaseBytes)}</dd></div><div><dt>{t('Uploads', '上传附件')}</dt><dd>{bytes(data.storage.uploadsBytes)}</dd></div><div><dt>{t('Logs', '日志')}</dt><dd>{bytes(data.storage.logBytes)}</dd></div>
           </dl><small className="status-path" title={data.dataDir}>{data.dataDir}</small></div>
         </div>
+        <UsageDetails api={api} />
         <Chart daily={data.daily} />
         <div className="status-table-wrap"><table className="status-table">
           <thead><tr>{header('title', L.title)}{header('mode', L.mode)}{header('status', L.status)}{header('turns', L.turns)}{header('tokens', 'Tokens')}{header('costUSD', L.cost)}{header('durationMs', L.time)}{header('lastActivityAt', L.last)}</tr></thead>
