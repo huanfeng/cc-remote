@@ -246,9 +246,10 @@ func (s *Store) SetResume(id string) error {
 	return err
 }
 
-// SetClaudeID follows a session to a new Claude session (/clear, /resume).
+// SetClaudeID follows a session to a new Claude session (/clear, /resume). It
+// keeps updated_at, which the web reads as "the status was set again".
 func (s *Store) SetClaudeID(id, claudeID string) error {
-	_, err := s.db.Exec(`UPDATE sessions SET claude_id=?,updated_at=? WHERE id=?`, claudeID, now(), id)
+	_, err := s.db.Exec(`UPDATE sessions SET claude_id=? WHERE id=?`, claudeID, id)
 	return err
 }
 

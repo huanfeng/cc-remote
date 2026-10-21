@@ -103,6 +103,7 @@
 - 提问（AskUserQuestion）和计划确认（ExitPlanMode）：原样复用共享会话的 `PermissionRequest` hook（`askhook.go`）和 `channelInteraction`、`resolve`、`finishSharedLocked` 这一套。网页和终端都能回答，以先回答的为准。
 - 普通工具审批：`PermissionRequest` hook 的匹配范围扩大到所有工具（matcher `*`），`channelInteraction` 增加 `approval` 类型。网页显示审批卡片（允许、拒绝、交给终端），终端里同时显示原生对话框，以先回答的为准。
 - 已实测（Claude Code，haiku）：hook 等网页时终端对话框照常可用；网页允许、网页拒绝、终端 Esc 拒绝（网页卡片约 2 秒内撤回）都正确；前台和后台子 agent 的工具审批也能在网页回答。后台子 agent 的对话框不立即显示在主界面，所以不能凭屏幕判断对话框已关闭，hook 改读子 agent 自己的 transcript。
+- 实测：终端批准一个 30 秒的命令后，工具约 2 秒后开始执行，Claude Code 显示「running PermissionRequest hooks」，tool_result 30 秒后才写入。所以主 agent 的审批改由宿主看屏幕撤卡：对话框（含「Esc to cancel」）出现过、又离开 2 秒即撤回，实测撤卡时间从 34 秒降到约 4 秒；对话框没人回答时 15 秒内不误撤，网页允许照常生效。
 
 ### 6. 网页结构化视图
 

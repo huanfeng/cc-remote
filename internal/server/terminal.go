@@ -424,10 +424,59 @@ func (s *Server) terminalLoop(ts *terminalSession) {
 			return
 		case <-tick.C:
 			s.updateFocus(ts)
+			s.watchDialogs(ts)
 		case <-ts.wake:
 		}
 		s.syncTerminal(ts)
 	}
+}
+
+// dialogGrace is how long an approval's dialog must be off the screen before
+// the web card is withdrawn: a redraw, or the next queued dialog, comes sooner.
+const dialogGrace = 2 * time.Second
+
+// watchDialogs withdraws the web card of a main-agent tool approval once its
+// dialog was on the terminal's screen and left it: the terminal answered.
+// Approvals of subagents (whose dialogs may wait behind the main screen) are
+// left to their hooks.
+func (s *Server) watchDialogs(ts *terminalSession) {
+	shown := dialogShown(ts.runner.Screen())
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, p := range s.requests {
+		if p.connection == ts.conn && p.onScreen && p.dialogStep(shown, now) {
+			s.finishSharedLocked(id, p, "terminal")
+		}
+	}
+}
+
+// dialogShown reports whether a dialog is at the bottom of the screen, where
+// its footer is ("Esc to cancel"): the same words in Claude's output above it
+// do not count.
+func dialogShown(screen string) bool {
+	lines := strings.Split(strings.TrimRight(screen, "\n "), "\n")
+	lines = lines[max(0, len(lines)-dialogFooterLines):]
+	return strings.Contains(strings.ToLower(flatText(strings.Join(lines, " "))), "esctocancel")
+}
+
+// dialogFooterLines is how far up from the bottom the footer may be: under it
+// come the input hints and status line.
+const dialogFooterLines = 8
+
+// dialogStep advances an approval's view of its dialog and reports whether
+// the terminal answered: the dialog was shown and has been gone dialogGrace.
+func (p *pending) dialogStep(shown bool, now time.Time) bool {
+	switch {
+	case shown:
+		p.dialogSeen, p.dialogGone = true, time.Time{}
+	case !p.dialogSeen:
+	case p.dialogGone.IsZero():
+		p.dialogGone = now
+	default:
+		return now.Sub(p.dialogGone) >= dialogGrace
+	}
+	return false
 }
 
 // webViewWindow is how long after the web's last poll a session counts as viewed.

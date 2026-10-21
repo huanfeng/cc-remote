@@ -139,6 +139,10 @@ func TestSessionListCountsActiveTasks(t *testing.T) {
 	if got := active(); got[x.ID] != 2 || got[idle.ID] != 0 {
 		t.Fatalf("active tasks %v", got)
 	}
+	// A restart for an update waits for them, though the turn has completed.
+	if busy := s.busySessions(); len(busy) != 1 || busy[0] != x.Title {
+		t.Fatalf("busy %v", busy)
+	}
 	add(x.ID, "task_notification", `{"subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_1","status":"completed","summary":"done"}`)
 	if got := active(); got[x.ID] != 1 {
 		t.Fatalf("after one finished %v", got)
@@ -146,5 +150,9 @@ func TestSessionListCountsActiveTasks(t *testing.T) {
 	_, b := call(t, base, "GET", "/api/sessions/"+x.ID, nil)
 	if !strings.Contains(string(b), `"activeTasks":1`) {
 		t.Fatalf("session: %s", b)
+	}
+	add(x.ID, "task_notification", `{"subtype":"task_notification","task_id":"a2","tool_use_id":"toolu_2","status":"completed","summary":"done"}`)
+	if busy := s.busySessions(); len(busy) != 0 {
+		t.Fatalf("busy after the tasks finished %v", busy)
 	}
 }

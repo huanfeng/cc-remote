@@ -275,3 +275,40 @@ func TestRunnerTerminalHoldsSize(t *testing.T) {
 		t.Fatalf("still held with no terminal: %v", got)
 	}
 }
+
+// A terminal dropped for not keeping up with the output no longer holds the size.
+func TestRunnerDroppedTerminalReleasesSize(t *testing.T) {
+	r := start(t)
+	web := r.SubscribeWeb()
+	defer r.Unsubscribe(web)
+	go func() {
+		for range web.C {
+		}
+	}()
+	<-web.Size
+	slow := r.Subscribe() // never read
+	if got := <-web.Size; !got.Held {
+		t.Fatalf("not held with a terminal attached: %v", got)
+	}
+	deadline := time.After(20 * time.Second)
+	for r.Attached() > 0 {
+		select {
+		case <-deadline:
+			t.Fatal("the slow terminal was never dropped")
+		default:
+		}
+		_ = r.Keys([]byte("x"))
+		time.Sleep(time.Millisecond)
+	}
+	if !slow.dropped {
+		t.Fatal("the terminal left without being dropped")
+	}
+	select {
+	case got := <-web.Size:
+		if got.Held {
+			t.Fatalf("still held after the terminal was dropped: %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no size notice after the terminal was dropped")
+	}
+}

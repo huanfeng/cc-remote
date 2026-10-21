@@ -55,10 +55,14 @@ func syncConnection(t *testing.T, s *Server, claudeID string) {
 }
 
 // askFromHook starts the long poll a terminal session's PermissionRequest hook makes.
-func askFromHook(t *testing.T, ctx context.Context, ts *httptest.Server, claudeID, kind, tool string, input any) chan hookResult {
+func askFromHook(t *testing.T, ctx context.Context, ts *httptest.Server, claudeID, kind, tool string, input any, agent ...string) chan hookResult {
 	t.Helper()
 	done := make(chan hookResult, 1)
-	b, _ := json.Marshal(map[string]any{"kind": kind, "toolName": tool, "input": input})
+	fields := map[string]any{"kind": kind, "toolName": tool, "input": input}
+	if len(agent) > 0 {
+		fields["agentId"] = agent[0]
+	}
+	b, _ := json.Marshal(fields)
 	r, _ := http.NewRequestWithContext(ctx, "POST", ts.URL+"/api/channels/"+claudeID+"/interactions", bytes.NewReader(b))
 	r.Header.Set("Authorization", "Bearer "+testToken)
 	go func() {
@@ -414,4 +418,111 @@ func TestSharedApprovalFromWebAndTerminal(t *testing.T) {
 		t.Fatalf("terminal answer reached hook as %+v", r)
 	}
 	waitOutcomes(t, st, x.ID, "web,terminal")
+}
+
+// A transcript result ends only the call an approval asks about: not an
+// identical call still running, nor a subagent's identical call. Answering one
+// approval keeps the session waiting while another is open.
+func TestSharedApprovalBackstopMatchesItsCall(t *testing.T) {
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	id := store.ID()
+	cwd := t.TempDir()
+	x, _ := connectTerminal(t, s, st, id, cwd)
+	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "shared-test")
+	_ = os.MkdirAll(dir, 0700)
+	path := filepath.Join(dir, id+".jsonl")
+	test := map[string]any{"command": "npm test"}
+	use := func(tid string) map[string]any {
+		return map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": tid, "name": "Bash", "input": test}}}}
+	}
+	result := func(tid string) map[string]any {
+		return map[string]any{"type": "user", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": tid, "content": "ok"}}}}
+	}
+
+	// npm test #1 was approved and still runs when the identical #2 asks.
+	appendTranscript(t, path, use("toolu_1"))
+	appendTranscript(t, path, use("toolu_2"))
+	second := askFromHook(t, context.Background(), ts, id, "approval", "Bash", test)
+	waitPending(t, st, x.ID, 1)
+	// A subagent asks for the same command; its call is not in this transcript.
+	agent := askFromHook(t, context.Background(), ts, id, "approval", "Bash", test, "a1b2c3")
+	waitPending(t, st, x.ID, 2)
+	appendTranscript(t, path, result("toolu_1"))
+	syncConnection(t, s, id)
+	if pending, _ := st.Pending(x.ID); len(pending) != 2 {
+		t.Fatalf("an identical call's result withdrew %d approvals", 2-len(pending))
+	}
+
+	_ = st.SetStatus(x.ID, "waiting")
+	pending, _ := st.Pending(x.ID)
+	if c, b := request(t, ts, "POST", "/api/requests/"+pending[0].ID, map[string]any{"decision": "allow"}, testToken); c != 200 {
+		t.Fatalf("allow %d %s", c, b)
+	}
+	var r hookResult
+	other := agent
+	select {
+	case r = <-second:
+	case r = <-agent:
+		other = second
+	case <-time.After(5 * time.Second):
+		t.Fatal("no hook got the web answer")
+	}
+	if r.body.Decision != "allow" {
+		t.Fatalf("hook got %+v", r)
+	}
+	if got, _ := st.Get(x.ID); got.Status != "waiting" {
+		t.Fatalf("status %s while another approval waits", got.Status)
+	}
+	pending, _ = st.Pending(x.ID)
+	if c, b := request(t, ts, "POST", "/api/requests/"+pending[0].ID, map[string]any{"decision": "deny"}, testToken); c != 200 {
+		t.Fatalf("deny %d %s", c, b)
+	}
+	if r := hookAnswer(t, other); r.body.Decision != "deny" {
+		t.Fatalf("hook got %+v", r)
+	}
+	if got, _ := st.Get(x.ID); got.Status != "running" {
+		t.Fatalf("status %s after the last approval", got.Status)
+	}
+}
+
+// The one open call an approval asks about: its result withdraws the card and,
+// with no other dialog open, ends "waiting". A subagent's identical approval is
+// not this transcript's call and stays.
+func TestSharedApprovalBackstopEndsItsCall(t *testing.T) {
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	id := store.ID()
+	cwd := t.TempDir()
+	x, _ := connectTerminal(t, s, st, id, cwd)
+	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "shared-test")
+	_ = os.MkdirAll(dir, 0700)
+	path := filepath.Join(dir, id+".jsonl")
+	build := map[string]any{"command": "npm run build"}
+	appendTranscript(t, path, map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": "toolu_b", "name": "Bash", "input": build}}}})
+
+	agent := askFromHook(t, context.Background(), ts, id, "approval", "Bash", build, "a1b2c3")
+	waitPending(t, st, x.ID, 1)
+	main := askFromHook(t, context.Background(), ts, id, "approval", "Bash", build)
+	waitPending(t, st, x.ID, 2)
+	_ = st.SetStatus(x.ID, "waiting")
+	appendTranscript(t, path, map[string]any{"type": "user", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_b", "content": "ok"}}}})
+	syncConnection(t, s, id)
+	if r := hookAnswer(t, main); r.body.Decision != "terminal" {
+		t.Fatalf("the asked call's result reached the hook as %+v", r)
+	}
+	if pending, _ := st.Pending(x.ID); len(pending) != 1 {
+		t.Fatalf("%d approvals open; the subagent's should stay", len(pending))
+	}
+	if got, _ := st.Get(x.ID); got.Status != "waiting" {
+		t.Fatalf("status %s while the subagent's dialog is open", got.Status)
+	}
+	pending, _ := st.Pending(x.ID)
+	if c, b := request(t, ts, "POST", "/api/requests/"+pending[0].ID, map[string]any{"decision": "terminal"}, testToken); c != 200 {
+		t.Fatalf("handoff %d %s", c, b)
+	}
+	if r := hookAnswer(t, agent); r.body.Decision != "terminal" {
+		t.Fatalf("hook got %+v", r)
+	}
+	if got, _ := st.Get(x.ID); got.Status != "waiting" {
+		t.Fatalf("status %s after a handoff; the dialog is still open in the terminal", got.Status)
+	}
 }

@@ -31,8 +31,10 @@ function NotifySettings() {
   const [permission, setPermission] = useState(() => notifySupported() ? Notification.permission : 'denied');
   const update = (next: NotifyPrefs) => { setPrefs(next); saveNotifyPrefs(next); };
   const toggle = async (on: boolean) => {
-    if (on && permission !== 'granted') {
-      const answer = await Notification.requestPermission();
+    if (on && Notification.permission !== 'granted') {
+      // Older Safari only takes a callback and returns nothing: read the outcome afterwards.
+      try { await new Promise(done => { const asked = Notification.requestPermission(done); if (asked) asked.then(done, done); }); } catch { /* treated as not allowed */ }
+      const answer = Notification.permission as NotificationPermission; // changed by the request above
       setPermission(answer);
       if (answer !== 'granted') return;
     }

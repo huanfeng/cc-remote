@@ -83,6 +83,19 @@ type pending struct {
 	connection *channelConnection
 	toolName   string
 	input      json.RawMessage
+	// The transcript call it asks about, when the transcript shows which: only
+	// that call's result ends it (an identical earlier call's must not). A
+	// subagent's or an ambiguous call is left to its hook, which reads the
+	// right transcript.
+	useID      string
+	noBackstop bool
+	// A main-agent tool approval: its native dialog is on the terminal's
+	// screen. Claude Code runs an approved tool before the hook returns, and
+	// writes nothing until its result, so the dialog leaving the screen is the
+	// first sign the terminal answered (dialogSeen, then dialogGone).
+	onScreen   bool
+	dialogSeen bool
+	dialogGone time.Time
 }
 type Server struct {
 	store          *store.Store

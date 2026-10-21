@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,6 +76,7 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 		Kind     string          `json:"kind"`
 		ToolName string          `json:"toolName"`
 		Input    json.RawMessage `json:"input"`
+		AgentID  string          `json:"agentId"` // a subagent's call: not in the session's transcript
 	}
 	if !decode(w, r, &req) {
 		return
@@ -101,7 +103,11 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 		s.applyTranscriptLocked(c, n, events)
 	}
 	x := store.Interaction{ID: store.ID(), SessionID: c.sessionID, Kind: req.Kind, ToolName: req.ToolName, Input: req.Input}
-	p := &pending{sessionID: c.sessionID, ctx: r.Context(), channel: make(chan answer, 1), connection: c, toolName: req.ToolName, input: req.Input}
+	p := &pending{sessionID: c.sessionID, ctx: r.Context(), channel: make(chan answer, 1), connection: c, toolName: req.ToolName, input: req.Input, noBackstop: req.AgentID != ""}
+	p.onScreen = req.Kind == "approval" && req.AgentID == ""
+	if historyErr == nil && !p.noBackstop {
+		p.useID, p.noBackstop = askedCall(p, events)
+	}
 	if err := s.store.AddInteraction(x); err != nil {
 		s.mu.Unlock()
 		fail(w, 500, s.lang(r).T("Could not save the interaction request", "无法保存交互请求"))
@@ -134,9 +140,8 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	web := a.Decision == "allow" || a.Decision == "deny"
-	if x, err := s.store.Get(c.sessionID); web && err == nil && x.Status == "waiting" {
-		// The dialog is answered; a denied tool has no PostToolUse to clear this.
-		_ = s.store.SetStatus(c.sessionID, "running")
+	if web {
+		s.dialogsAnsweredLocked(c.sessionID)
 	}
 	s.mu.Unlock()
 	// The tool result lands in the transcript right after the decision; show it soon.
@@ -253,6 +258,9 @@ func (s *Server) finishSharedLocked(id string, p *pending, status string) {
 	case p.channel <- answer{Decision: "terminal"}:
 	default:
 	}
+	if status == "terminal" { // expired or handed off, the dialog is still open
+		s.dialogsAnsweredLocked(p.sessionID)
+	}
 }
 
 // interactionEventLocked records where a shared question ended (web, handoff,
@@ -321,6 +329,49 @@ func checkSharedAnswer(l i18n.Lang, p *pending, a *answer) string {
 }
 
 // sameCall reports whether a transcript tool_use input is the call p waits on.
+// askedCall finds the transcript call p asks about: the one matching call that
+// has no result yet. Several such calls (identical calls in flight) are
+// ambiguous: then no transcript result may end p.
+func askedCall(p *pending, events []claude.Event) (useID string, ambiguous bool) {
+	var open []string
+	done := map[string]bool{}
+	for _, ev := range events {
+		var b struct {
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
+			ToolUseID string          `json:"tool_use_id"`
+			Input     json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(ev.Payload, &b) != nil {
+			continue
+		}
+		if ev.Kind == "tool" && b.Name == p.toolName && sameCall(p, b.Input) {
+			open = append(open, b.ID)
+		} else if ev.Kind == "tool_result" {
+			done[b.ToolUseID] = true
+		}
+	}
+	open = slices.DeleteFunc(open, func(id string) bool { return done[id] })
+	if len(open) == 1 {
+		return open[0], false
+	}
+	return "", len(open) > 1
+}
+
+// dialogsAnsweredLocked ends "waiting" once a session's last open dialog was
+// answered: a denied tool has no PostToolUse to clear it, and a session still
+// waiting takes no new prompt.
+func (s *Server) dialogsAnsweredLocked(sessionID string) {
+	for _, p := range s.requests {
+		if p.sessionID == sessionID {
+			return
+		}
+	}
+	if x, err := s.store.Get(sessionID); err == nil && x.Status == "waiting" {
+		_ = s.store.SetStatus(sessionID, "running")
+	}
+}
+
 func sameCall(p *pending, input json.RawMessage) bool {
 	var a, b map[string]any
 	_ = json.Unmarshal(p.input, &a)
@@ -389,7 +440,7 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		if added && e == nil && ev.Kind == "tool_result" {
 			// Backstop for a hook that missed the terminal answer: the question is over.
 			for id, p := range s.requests {
-				if p.connection == c && toolNames[tool.ToolUseID] == p.toolName && sameCall(p, toolInputs[tool.ToolUseID]) {
+				if p.connection == c && !p.noBackstop && (p.useID == "" || p.useID == tool.ToolUseID) && toolNames[tool.ToolUseID] == p.toolName && sameCall(p, toolInputs[tool.ToolUseID]) {
 					s.finishSharedLocked(id, p, "terminal")
 				}
 			}

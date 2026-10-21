@@ -109,7 +109,7 @@ func askHook(ctx context.Context, input io.Reader, output io.Writer, configPath 
 			cancel()
 		}
 	}()
-	a, err := requestAnswer(ctx, cfg, kind, req.ToolName, req.ToolInput)
+	a, err := requestAnswer(ctx, cfg, kind, req.ToolName, req.ToolInput, req.AgentID)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
@@ -123,9 +123,13 @@ func askHook(ctx context.Context, input io.Reader, output io.Writer, configPath 
 	return json.NewEncoder(output).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PermissionRequest", "decision": decision}})
 }
 
-func requestAnswer(ctx context.Context, cfg askConfig, kind, toolName string, input map[string]any) (webAnswer, error) {
+func requestAnswer(ctx context.Context, cfg askConfig, kind, toolName string, input map[string]any, agent string) (webAnswer, error) {
 	var a webAnswer
-	body, err := json.Marshal(map[string]any{"kind": kind, "toolName": toolName, "input": input})
+	fields := map[string]any{"kind": kind, "toolName": toolName, "input": input}
+	if agent != "" { // only then: a host not yet restarted after an update refuses unknown fields
+		fields["agentId"] = agent
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return a, err
 	}

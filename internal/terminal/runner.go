@@ -371,6 +371,7 @@ func (r *Runner) read() {
 			if len(r.recent) > recentBytes {
 				r.recent = append([]byte(nil), r.recent[len(r.recent)-recentBytes:]...)
 			}
+			terminalGone := false
 			for sub := range r.subs {
 				select {
 				case sub.C <- chunk:
@@ -378,7 +379,11 @@ func (r *Runner) read() {
 					sub.dropped = true
 					close(sub.C)
 					delete(r.subs, sub)
+					terminalGone = terminalGone || sub.Size == nil
 				}
+			}
+			if terminalGone {
+				r.notifyWebLocked() // maybe no longer held
 			}
 			// The dialog only comes at start: text about it later (a reply
 			// quoting it) must not press keys.
@@ -524,6 +529,9 @@ func (r *Runner) Keys(b []byte) error {
 // always wins: while one is attached a web front end's size is refused and the
 // web front end is told the held size again.
 func (r *Runner) ResizeFrom(sub *Sub, cols, rows int) error {
+	if err := validSize(cols, rows); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	if sub.Size == nil {
 		sub.want = [2]int{cols, rows}
@@ -550,8 +558,8 @@ func (r *Runner) KeysFrom(sub *Sub, b []byte) error {
 
 // Resize sets the terminal size: the most recent front end to resize wins.
 func (r *Runner) Resize(cols, rows int) error {
-	if cols < 20 || rows < 5 || cols > 1000 || rows > 500 {
-		return errors.New(i18n.T("invalid terminal size", "终端尺寸无效"))
+	if err := validSize(cols, rows); err != nil {
+		return err
 	}
 	r.mu.Lock()
 	same := cols == r.cols && rows == r.rows
@@ -565,6 +573,13 @@ func (r *Runner) Resize(cols, rows int) error {
 		return nil
 	}
 	return r.pty.Resize(cols, rows)
+}
+
+func validSize(cols, rows int) error {
+	if cols < 20 || rows < 5 || cols > 1000 || rows > 500 {
+		return errors.New(i18n.T("invalid terminal size", "终端尺寸无效"))
+	}
+	return nil
 }
 
 // Redraw makes the TUI paint the whole screen again, for a front end that

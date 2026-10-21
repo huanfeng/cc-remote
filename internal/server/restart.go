@@ -35,19 +35,21 @@ func localAdmin(w http.ResponseWriter, r *http.Request, l i18n.Lang, action stri
 }
 
 // busySessions names the sessions a restart would interrupt: a turn running
-// or waiting for an answer, or background tasks still running.
+// or waiting for an answer, or background tasks (subagents, background
+// commands) still running, in a managed or a terminal session.
 func (s *Server) busySessions() []string {
 	list, err := s.store.List()
 	if err != nil {
 		return []string{i18n.T("(could not read sessions)", "（无法读取会话）")}
 	}
+	s.fillActiveTasks(list)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var busy []string
 	for _, x := range list {
-		tasks := false
+		tasks := x.ActiveTasks > 0
 		if rt := s.procs[x.ID]; rt != nil && rt.proc != nil {
-			tasks = rt.proc.BackgroundTasks() > 0
+			tasks = tasks || rt.proc.BackgroundTasks() > 0
 		}
 		if x.Status == "running" || x.Status == "waiting" || tasks {
 			busy = append(busy, x.Title)
