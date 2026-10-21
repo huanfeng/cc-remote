@@ -2,7 +2,7 @@ module cc-remote
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/aymanbagabas/go-pty v0.2.3
