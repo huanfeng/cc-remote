@@ -23,6 +23,7 @@ const FONT = "'Cascadia Mono', Consolas, 'SFMono-Regular', Menlo, 'Noto Sans Mon
 const BASE_FONT = touch ? 12 : 13;
 const STATUS_EXITED = 4001; // the host closes with it when Claude Code exited
 const MAX_ATTEMPTS = 12; // about a minute and a half of retries: longer than a host restart
+const OPEN_TIMEOUT = 15_000; // a proxy that holds the upgrade neither opens nor closes the socket
 const THEME = { background: '#1d231f', foreground: '#e3e7dc', cursor: '#c7d8b3', selectionBackground: '#4c5d4580', black: '#1d231f', brightBlack: '#6b7568' };
 
 const read = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
@@ -108,10 +109,10 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
       if (disposed || exited || document.hidden) return;
       setState('connecting');
       let ticket = '';
-      try { ticket = (await api<{ ticket: string }>(`/api/terminals/${encodeURIComponent(id)}/ticket`, { method: 'POST' })).ticket; }
+      try { ticket = (await api<{ ticket: string }>(`/api/terminals/${encodeURIComponent(id)}/ticket`, { method: 'POST', signal: AbortSignal.timeout(OPEN_TIMEOUT) })).ticket; }
       catch (err) {
         if (disposed || g !== gen) return;
-        setReason((err as Error).message);
+        setReason((err as Error).name === 'TimeoutError' ? t('The host did not answer the ticket request in time', '宿主没有及时回应终端票据请求') : (err as Error).message);
         const status = (err as { status?: number }).status || 0;
         if (status >= 400 && status < 500) setState('failed'); // the session is gone or not a terminal: retrying cannot help
         else retry();
@@ -124,13 +125,16 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
       try { socket = new WebSocket(url); }
       catch (err) { setReason((err as Error).message); setState('failed'); return; } // a blocked address (http from an https page)
       socket.binaryType = 'arraybuffer';
-      let opened = false;
+      let opened = false, late = false;
+      // A socket the page's CSP blocks closes without a close event, so the timeout reports it too.
+      const opening = window.setTimeout(() => { if (ws === socket && !opened) { late = true; socket.close(); closed(1006); } }, OPEN_TIMEOUT);
       ws = socket;
       sent = '';
       firstSize = true; // the size the PTY had before this view connected
       socket.onopen = () => {
         if (ws !== socket) return;
         opened = true;
+        clearTimeout(opening);
         attempt = 0;
         setReason('');
         setState('open');
@@ -152,15 +156,17 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
         firstSize = false;
         schedule();
       };
-      socket.onclose = event => {
+      const closed = (code: number, reason = '') => {
+        clearTimeout(opening);
         if (disposed || ws !== socket) return;
         ws = undefined;
-        if (event.code === STATUS_EXITED) { exited = true; setState('exited'); setReason(event.reason); return; }
+        if (code === STATUS_EXITED) { exited = true; setState('exited'); setReason(reason); return; }
         // Refused before it opened: the ticket was fine, so something between this page and the host turned the WebSocket down.
-        setReason(opened ? event.reason || t(`Connection lost (${event.code})`, `连接已断开（${event.code}）`) : t(`The WebSocket to ${url.host} did not open (${event.code}); a reverse proxy or tunnel in between may not forward WebSocket`, `到 ${url.host} 的 WebSocket 没能建立（${event.code}），中间的反向代理或隧道可能没有转发 WebSocket`));
+        setReason(opened ? reason || t(`Connection lost (${code})`, `连接已断开（${code}）`) : late ? t(`The WebSocket to ${url.host} did not open within ${OPEN_TIMEOUT / 1000}s; the browser or a reverse proxy or tunnel in between held it`, `到 ${url.host} 的 WebSocket ${OPEN_TIMEOUT / 1000} 秒内没有建立，被浏览器拦下，或被中间的反向代理、隧道挂住`) : t(`The WebSocket to ${url.host} did not open (${code}); a reverse proxy or tunnel in between may not forward WebSocket`, `到 ${url.host} 的 WebSocket 没能建立（${code}），中间的反向代理或隧道可能没有转发 WebSocket`));
         if (document.hidden) { setState('paused'); return; }
         retry();
       };
+      socket.onclose = event => closed(event.code, event.reason);
     };
     const retry = () => {
       clearTimeout(timer);
