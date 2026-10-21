@@ -22,12 +22,23 @@ export function applyIdentity(hostId: HostIdentity) {
   if (!root) return;
   if (currentHost && (hostId.name !== currentHost.name || hostId.color !== currentHost.color || hostId.icon !== (currentHost.icon || ''))) updateCurrentHost({ name: hostId.name, color: hostId.color, icon: hostId.icon || undefined });
   const id = shown(hostId);
-  document.title = id.name === 'CC Remote' ? id.name : `${id.name} · CC Remote`;
+  shownName = id.name;
+  showTitle();
   root.style.setProperty('--host-color', id.color);
   const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
   // Drawn here (a standalone page's CSP loads no image from a host), as the host draws it.
   if (icon) icon.href = iconURL(id.color, id.icon);
   window.dispatchEvent(new CustomEvent<HostIdentity>(EVENT, { detail: id }));
+}
+
+let shownName = '', badge = 0;
+const showTitle = () => { document.title = (badge ? `(${badge}) ` : '') + (shownName === 'CC Remote' ? shownName : `${shownName} · CC Remote`); };
+
+/** Puts the number of sessions waiting for an answer in front of the tab title. */
+export function setTitleBadge(count: number) {
+  if (count === badge) return;
+  badge = count;
+  showTitle();
 }
 
 /** Calls listener whenever the identity changes; returns the unsubscribe function. */

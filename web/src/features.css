@@ -209,3 +209,4 @@ img.host-swatch{display:block;background:none}
 .host-clear{color:#a05e4f;border-top:0;font-size:13px}
 .host-clear:hover{background:#f6e9e3}
 .brand-meta .lan-pill,.brand-meta .version-pill{flex-shrink:0}
+.notify-event{margin:10px 0 10px 28px!important;font-weight:400}

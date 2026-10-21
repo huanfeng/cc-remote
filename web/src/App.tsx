@@ -22,7 +22,8 @@ import { QuestionCard, type QuestionDraft } from './QuestionCard';
 import { compactSummary, groupTranscript, isCompacting, parentOf, linkOutcomes, linkRequests, requestCall, requestSettled, stabilize, type ToolCall, type TranscriptItem } from './toolGroups';
 import { MAX_UI_CHARS, UI_KEY, UI_PREFIX, VIEW_KEY, deserialize, draftEmpty, emptyUI, forget, formatHash, mergeUI, parseHash, parseKey, parseViews, serialize, serializeViews, type Route, type SessionDraft, type UIState, type ViewState } from './persist';
 import { lang, t } from './i18n';
-import { applyIdentity, initialIdentity, onIdentity } from './hostIdentity';
+import { applyIdentity, initialIdentity, onIdentity, setTitleBadge } from './hostIdentity';
+import { notifyPrefs, notifying, sessionChanges, showNotification } from './notify';
 import { SessionMenu } from './SessionMenu';
 import { TopbarMenu, type TopbarAction } from './TopbarMenu';
 import { TerminalView } from './TerminalView';
@@ -254,7 +255,8 @@ export default function App() {
     let refreshing = false;
     setSessions(loadList(native));
     const refresh = async () => {
-      if (document.hidden || refreshing) return;
+      // A hidden page keeps polling only to notify (the browser slows its timer down).
+      if (document.hidden && !notifying() || refreshing) return;
       refreshing = true;
       const views = native ? [false, true] : [false];
       const results = await Promise.allSettled(views.map(async view => ({ view, data: await api<Session[]>(view ? '/api/native/sessions' : '/api/sessions') })));
@@ -263,6 +265,7 @@ export default function App() {
       for (const result of results) {
         if (result.status === 'rejected') { setError((result.reason as Error).message); continue; }
         const { view, data } = result.value;
+        if (!view) notifyChanges(data);
         if (view === native) setSessions(data);
         if (savedLists.current[String(view)] !== data) { savedLists.current[String(view)] = data; saveList(view, data); }
         setTabs(old => old.map(tab => tab.native === view ? { ...tab, session: data.find(item => item.id === tab.id) || tab.session } : tab));
@@ -272,6 +275,29 @@ export default function App() {
     return () => { active = false; clearInterval(timer); };
   }, [connected, api, native]);
   const savedLists = useRef<Record<string, Session[]>>({});
+  // Statuses seen in the last poll, per host session: changes become notifications.
+  const seenStatus = useRef(new Map<string, { status?: string; online?: boolean }>());
+  useEffect(() => { seenStatus.current.clear(); setTitleBadge(0); }, [token]);
+  const hostName = useRef(host.name); hostName.current = host.name;
+  const notifyChanges = (data: Session[]) => {
+    setTitleBadge(data.filter(item => item.status === 'waiting').length);
+    const changes = sessionChanges(seenStatus.current, data);
+    if (!changes.length || !notifying()) return;
+    const prefs = notifyPrefs();
+    for (const change of changes) {
+      // Nothing to say about the session in front of the user.
+      if (!prefs[change.event] || !document.hidden && document.hasFocus() && selectedRef.current === tabKey(change.id, false)) continue;
+      const hash = formatHash(change.id, false);
+      void showNotification(change, hostName.current, location.href.split('#')[0] + hash, () => { location.hash = hash; }).catch(() => {});
+    }
+  };
+  // A notification clicked while the page is open: the service worker focuses it and says where to go.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => { if (event.data?.type === 'cc-open' && typeof event.data.url === 'string') location.hash = new URL(event.data.url).hash; };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, []);
   const openKeys = tabs.map(tab => tab.key).join('|');
   useEffect(() => {
     if (!connected || !openKeys) return;

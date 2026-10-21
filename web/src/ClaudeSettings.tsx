@@ -5,6 +5,7 @@ import { Select } from './Select';
 import { hostLang, langOverride, setLang, t, type Lang } from './i18n';
 import { applyIdentity } from './hostIdentity';
 import { ColorChoices, IconChoices } from './HostLook';
+import { notifyPrefs, notifySupported, saveNotifyPrefs, type NotifyEvent, type NotifyPrefs } from './notify';
 
 export type { Api } from './ModelPicker';
 export type ClaudePreferences = { model: string; effortLevel: string; permissionMode: string; revision: string; path?: string };
@@ -16,8 +17,36 @@ const SECTIONS = [
   { id: 'remote', label: t('CC Remote defaults', 'CC Remote 默认'), hint: t('Recommended', '推荐') },
   { id: 'claude', label: t('Claude user settings', 'Claude 用户配置'), hint: 'settings.json' },
   { id: 'host', label: t('This host', '此主机'), hint: t('Name, color and icon', '名称、颜色与图标') },
-  { id: 'browser', label: t('This browser', '此浏览器'), hint: t('Language', '语言') },
+  { id: 'browser', label: t('This browser', '此浏览器'), hint: t('Language, notifications', '语言、通知') },
 ] as const;
+const NOTIFY_EVENTS: [NotifyEvent, string][] = [
+  ['waiting', t('Needs my answer: a permission, a question or a plan', '需要我操作：权限审批、提问、计划确认')],
+  ['done', t('A turn finished', '一轮执行完成')],
+  ['failed', t('A turn failed or Claude Code exited', '执行失败或 Claude Code 退出')],
+];
+
+/** Notifications of this browser: asks for permission when turned on. */
+function NotifySettings() {
+  const [prefs, setPrefs] = useState<NotifyPrefs>(notifyPrefs);
+  const [permission, setPermission] = useState(() => notifySupported() ? Notification.permission : 'denied');
+  const update = (next: NotifyPrefs) => { setPrefs(next); saveNotifyPrefs(next); };
+  const toggle = async (on: boolean) => {
+    if (on && permission !== 'granted') {
+      const answer = await Notification.requestPermission();
+      setPermission(answer);
+      if (answer !== 'granted') return;
+    }
+    update({ ...prefs, on });
+  };
+  if (!notifySupported()) return <p>{t('This page cannot show notifications: browsers allow them only over HTTPS (or on localhost), and some do not support them at all.', '此页面无法发送通知：浏览器只允许 HTTPS（或 localhost）页面发通知，有的浏览器完全不支持。')}</p>;
+  const on = prefs.on && permission === 'granted';
+  return <>
+    <label className="checkbox"><input type="checkbox" checked={on} disabled={permission === 'denied'} onChange={event => void toggle(event.target.checked)} />{t('Show a system notification when a session needs me', '会话需要我时发系统通知')}</label>
+    {permission === 'denied' && <p className="error">{t('The browser blocks notifications for this site; allow them in the site settings (the icon left of the address), then reload.', '浏览器已禁止此网站的通知；请在网站设置（地址栏左侧图标）里允许通知，然后刷新页面。')}</p>}
+    {on && NOTIFY_EVENTS.map(([event, label]) => <label key={event} className="checkbox notify-event"><input type="checkbox" checked={prefs[event]} onChange={change => update({ ...prefs, [event]: change.target.checked })} />{label}</label>)}
+  </>;
+}
+
 // Language names are written in their own language.
 const LANG_NAMES: Record<Lang, string> = { zh: '中文', en: 'English' };
 type SectionId = typeof SECTIONS[number]['id'];
@@ -104,6 +133,9 @@ export function ClaudeSettings({ api, close }: { api: Api; close: () => void }) 
           <h3>{t('Language', '语言')}</h3>
           <p>{t('Saved in this browser only; by default the page follows the language configured on the host. Changing it reloads the page.', '只保存在此浏览器；默认跟随宿主配置的语言。切换后页面会重新加载。')}</p>
           <label>{t('Interface language', '界面语言')}<Select label={t('Interface language', '界面语言')} value={langOverride()} options={[{ value: '', label: t(`Follow host (${LANG_NAMES[hostLang]})`, `跟随宿主（${LANG_NAMES[hostLang]}）`) }, { value: 'zh', label: LANG_NAMES.zh }, { value: 'en', label: LANG_NAMES.en }]} onChange={value => setLang(value as Lang | '')} /></label>
+          <h3>{t('Notifications', '通知')}</h3>
+          <p>{t('Saved in this browser only. They come while this page is open, also in a background tab or minimized; a phone may pause a page in the background, and then they wait until you open it. A notification is not shown for the session you are looking at. The tab title also counts the sessions waiting for you.', '只保存在此浏览器。页面打开时（包括后台标签页、最小化）才会收到；手机浏览器切到后台后可能暂停页面，通知会推迟到再次打开时。正在查看的会话不提醒。标签页标题也会显示等待你操作的会话数。')}</p>
+          <NotifySettings />
         </div>}
         {notice && <p role="status">{notice}</p>}
         {error && <div className="error" role="alert">{error}<button type="button" className="secondary" onClick={() => { void load(); if (section === 'claude' || value) void loadClaude(); }}>{t('Reload', '重新加载')}</button></div>}
