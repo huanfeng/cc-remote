@@ -830,9 +830,10 @@ func (s *Server) terminalTicket(w http.ResponseWriter, r *http.Request) {
 
 // terminalStream connects a terminal front end: binary frames carry keystrokes
 // and screen output; a text frame {"type":"resize","cols":..,"rows":..} sets the size.
-// A web front end (opened with a ticket) also gets {"type":"size","cols":..,"rows":..}
-// whenever the size changes, and is not counted as an attached terminal. It may
-// still resize: it does so only while its user takes over the terminal.
+// A web front end (opened with a ticket) also gets {"type":"size","cols":..,"rows":..,"held":..}
+// whenever the size or held changes, and is not counted as an attached terminal.
+// It may resize only while no terminal is attached (held false): a terminal
+// keeps its size.
 func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 	web := false
 	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
@@ -879,7 +880,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if typ == websocket.MessageBinary {
-				_ = ts.runner.Keys(data)
+				_ = ts.runner.KeysFrom(sub, data)
 				continue
 			}
 			var m struct {
@@ -894,7 +895,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if json.Unmarshal(data, &m) == nil && m.Type == "resize" {
-				_ = ts.runner.Resize(m.Cols, m.Rows)
+				_ = ts.runner.ResizeFrom(sub, m.Cols, m.Rows)
 				select {
 				case sized <- struct{}{}:
 				default:
@@ -960,7 +961,7 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case size := <-sub.Size: // nil, never ready, for a terminal
-			b, _ := json.Marshal(map[string]any{"type": "size", "cols": size[0], "rows": size[1]})
+			b, _ := json.Marshal(map[string]any{"type": "size", "cols": size.Cols, "rows": size.Rows, "held": size.Held})
 			if err := c.Write(ctx, websocket.MessageText, b); err != nil {
 				return
 			}

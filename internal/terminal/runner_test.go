@@ -209,7 +209,7 @@ func TestRunnerWebFrontEndFollowsSize(t *testing.T) {
 	r := start(t)
 	web := r.SubscribeWeb()
 	defer r.Unsubscribe(web)
-	if got := <-web.Size; got != [2]int{100, 30} {
+	if got := <-web.Size; got != (ViewSize{100, 30, false}) {
 		t.Fatalf("initial size %v", got)
 	}
 	term := r.Subscribe()
@@ -223,7 +223,7 @@ func TestRunnerWebFrontEndFollowsSize(t *testing.T) {
 	_ = r.Resize(80, 24) // only the latest is kept
 	select {
 	case got := <-web.Size:
-		if got != [2]int{80, 24} {
+		if got != (ViewSize{80, 24, true}) {
 			t.Fatalf("size %v", got)
 		}
 	case <-time.After(time.Second):
@@ -231,5 +231,47 @@ func TestRunnerWebFrontEndFollowsSize(t *testing.T) {
 	}
 	if term.Size != nil {
 		t.Fatal("a terminal front end gets size notices")
+	}
+}
+
+// An attached terminal keeps its size: the web cannot change it, and typing in
+// the terminal takes back a size another terminal set.
+func TestRunnerTerminalHoldsSize(t *testing.T) {
+	r := start(t)
+	web := r.SubscribeWeb()
+	defer r.Unsubscribe(web)
+	<-web.Size
+	if err := r.ResizeFrom(web, 120, 40); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-web.Size; got != (ViewSize{120, 40, false}) {
+		t.Fatalf("web resize without a terminal: %v", got)
+	}
+	term := r.Subscribe()
+	if got := <-web.Size; got != (ViewSize{120, 40, true}) {
+		t.Fatalf("after a terminal attached: %v", got)
+	}
+	if err := r.ResizeFrom(term, 90, 25); err != nil {
+		t.Fatal(err)
+	}
+	<-web.Size
+	if err := r.ResizeFrom(web, 150, 50); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-web.Size; got != (ViewSize{90, 25, true}) {
+		t.Fatalf("the web resized a held terminal: %v", got)
+	}
+	other := r.Subscribe()
+	defer r.Unsubscribe(other)
+	_ = r.ResizeFrom(other, 70, 20)
+	<-web.Size
+	_ = r.KeysFrom(term, []byte("x"))
+	if got := <-web.Size; got != (ViewSize{90, 25, true}) {
+		t.Fatalf("typing did not take the size back: %v", got)
+	}
+	r.Unsubscribe(term)
+	r.Unsubscribe(other)
+	if got := <-web.Size; got.Held {
+		t.Fatalf("still held with no terminal: %v", got)
 	}
 }

@@ -11,7 +11,8 @@ import './terminal.css';
 // set it wins, so the view either *controls* the size (fits the PTY to itself)
 // or *follows* it (scales its font to show the PTY's size as it is). On a
 // computer typing takes control; on a phone the view follows unless "fit this
-// device" is on, so a phone never squeezes the terminal on the computer.
+// device" is on, so a phone never squeezes the terminal on the computer. While
+// a local terminal (ccr) is attached the host keeps its size and the view follows.
 
 type Api = <T>(path: string, options?: RequestInit) => Promise<T>;
 type State = 'loading' | 'connecting' | 'open' | 'exited' | 'paused' | 'failed';
@@ -52,6 +53,7 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
   const [fitDevice, setFitDevice] = useState(() => touch && read('cc-term-fit') === '1');
   const fitRef = useRef(fitDevice); fitRef.current = fitDevice;
   const [control, setControl] = useState(!touch || fitDevice);
+  const [held, setHeld] = useState(false); // a local terminal keeps the size
   const [zoom, setZoom] = useState(() => Number(read('cc-term-zoom')) || 1);
   const zoomRef = useRef(zoom); zoomRef.current = zoom;
   const [draft, setDraft] = useState('');
@@ -67,6 +69,8 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
     let controlling = !touch || fitRef.current;
     // Taking control again sends the size even when it is the one sent before another front end changed it.
     const setMode = (value: boolean) => { controlling = value; sent = ''; setControl(value); };
+    // An attached local terminal keeps its size; the host says so with every size.
+    let holding = false;
     const send = (data: string) => { if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data)); };
     const sendJSON = (value: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); };
 
@@ -145,14 +149,16 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
       socket.onmessage = event => {
         if (ws !== socket) return;
         if (typeof event.data !== 'string') { term?.write(new Uint8Array(event.data)); return; }
-        let message: { type?: string; cols?: number; rows?: number };
+        let message: { type?: string; cols?: number; rows?: number; held?: boolean };
         try { message = JSON.parse(event.data); } catch { return; }
         if (message.type !== 'size' || !message.cols || !message.rows) return;
         hostSize = [message.cols, message.rows];
         setSize(hostSize);
         // Another front end set its size: follow it until this one is used again.
         const key = `${message.cols}x${message.rows}`, own = Date.now() - (mine.get(key) || 0) < 5000;
-        if (controlling && !firstSize && !own) setMode(false);
+        holding = !!message.held;
+        setHeld(holding);
+        if (controlling && (holding || !firstSize && !own)) setMode(false);
         firstSize = false;
         schedule();
       };
@@ -175,13 +181,13 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
       setState('connecting');
       timer = window.setTimeout(() => void connect(), Math.min(1000 * 2 ** attempt++, 10000));
     };
-    const take = () => { if (!controlling && (!touch || fitRef.current)) { setMode(true); layout(); } };
+    const take = () => { if (!controlling && !holding && (!touch || fitRef.current)) { setMode(true); layout(); } };
 
     engine.current = {
       send: data => { take(); send(data); },
       redraw: () => sendJSON({ type: 'redraw' }),
-      take: () => { if (!controlling) { setMode(true); layout(); } },
-      follow: value => { setMode(value); schedule(); },
+      take: () => { if (!controlling && !holding) { setMode(true); layout(); } },
+      follow: value => { setMode(value && !holding); schedule(); },
       layout: schedule,
       reconnect: () => { exited = false; attempt = 0; const socket = ws; ws = undefined; socket?.close(); void connect(); },
     };
@@ -261,11 +267,11 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
     <div className="term-bar">
       <span className={`dot ${state === 'open' ? 'idle' : state === 'exited' || state === 'failed' ? 'error' : 'running'}`} />
       <span className="term-state">{label}</span>
-      {size && <span className="term-size" title={control ? t('This view sets the terminal size', '终端尺寸由此处决定') : t('Showing the size another front end set', '显示的是其它端设定的尺寸')}>{size[0]}×{size[1]}{control ? '' : t(' · following', ' · 跟随')}</span>}
+      {size && <span className="term-size" title={control ? t('This view sets the terminal size', '终端尺寸由此处决定') : held ? t('A local terminal (ccr) is attached and keeps its own size', '本地终端（ccr）已接入，尺寸以它为准') : t('Showing the size another front end set', '显示的是其它端设定的尺寸')}>{size[0]}×{size[1]}{control ? '' : held ? t(' · following the local terminal', ' · 跟随本地终端') : t(' · following', ' · 跟随')}</span>}
       <span className="term-bar-actions">
         {touch && !fitDevice && <><button type="button" aria-label={t('Smaller', '缩小')} title={t('Smaller', '缩小')} onClick={() => setZoom(old => Math.max(0.5, Math.round((old - 0.25) * 100) / 100))}>A−</button><button type="button" aria-label={t('Larger', '放大')} title={t('Larger', '放大')} onClick={() => setZoom(old => Math.min(3, Math.round((old + 0.25) * 100) / 100))}>A+</button></>}
         {touch && <button type="button" className={fitDevice ? 'active' : ''} aria-pressed={fitDevice} title={t('Resize the terminal to this device; the terminal on your computer gets the same size', '把终端尺寸改成本机大小；电脑上的终端也会变成这个尺寸')} onClick={toggleFit}>{t('Fit device', '适配本机')}</button>}
-        {!touch && !control && <button type="button" title={t('Resize the terminal to this window', '把终端尺寸改成本窗口大小')} onClick={() => engine.current?.take()}>{t('Use this window', '使用本窗口尺寸')}</button>}
+        {!touch && !control && !held && <button type="button" title={t('Resize the terminal to this window', '把终端尺寸改成本窗口大小')} onClick={() => engine.current?.take()}>{t('Use this window', '使用本窗口尺寸')}</button>}
         {state === 'exited' ? <button type="button" onClick={() => engine.current?.reconnect()}>{t('Start again', '重新启动')}</button> : state === 'failed' ? <button type="button" onClick={() => engine.current?.reconnect()}>{t('Connect again', '重新连接')}</button> : <button type="button" title={t('Paint the whole screen again', '整屏重画')} disabled={state !== 'open'} onClick={() => engine.current?.redraw()}>{t('Redraw', '重绘')}</button>}
       </span>
     </div>

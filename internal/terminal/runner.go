@@ -74,17 +74,40 @@ type Sub struct {
 	C chan []byte
 	// Size has the terminal's size as it changes, for a web front end, which
 	// follows the size instead of setting it; nil for a terminal.
-	Size    chan [2]int
+	Size    chan ViewSize
 	dropped bool
+	want    [2]int // the size a terminal front end last set
+}
+
+// ViewSize is the terminal's size as a web front end sees it. Held means a
+// terminal is attached and keeps its size: the web cannot change it.
+type ViewSize struct {
+	Cols, Rows int
+	Held       bool
 }
 
 // sendSize leaves only the latest size queued.
-func (sub *Sub) sendSize(cols, rows int) {
+func (sub *Sub) sendSize(v ViewSize) {
 	select {
 	case <-sub.Size:
 	default:
 	}
-	sub.Size <- [2]int{cols, rows}
+	sub.Size <- v
+}
+
+// sizeLocked is the size web front ends are told.
+func (r *Runner) sizeLocked() ViewSize {
+	return ViewSize{r.cols, r.rows, r.attachedLocked() > 0}
+}
+
+// notifyWebLocked tells every web front end the size and whether it is held.
+func (r *Runner) notifyWebLocked() {
+	v := r.sizeLocked()
+	for sub := range r.subs {
+		if sub.Size != nil {
+			sub.sendSize(v)
+		}
+	}
 }
 
 const (
@@ -429,7 +452,7 @@ func (r *Runner) Subscribe() *Sub { return r.subscribe(&Sub{C: make(chan []byte,
 // SubscribeWeb attaches a web front end: it is not counted by Attached, and
 // sub.Size starts with the current size.
 func (r *Runner) SubscribeWeb() *Sub {
-	return r.subscribe(&Sub{C: make(chan []byte, subBuffer), Size: make(chan [2]int, 1)})
+	return r.subscribe(&Sub{C: make(chan []byte, subBuffer), Size: make(chan ViewSize, 1)})
 }
 
 func (r *Runner) subscribe(sub *Sub) *Sub {
@@ -443,10 +466,12 @@ func (r *Runner) subscribe(sub *Sub) *Sub {
 	if replay := r.modes.replay(); len(replay) > 0 {
 		sub.C <- replay
 	}
-	if sub.Size != nil {
-		sub.sendSize(r.cols, r.rows)
-	}
 	r.subs[sub] = true
+	if sub.Size != nil {
+		sub.sendSize(r.sizeLocked())
+	} else {
+		r.notifyWebLocked() // the size is held now
+	}
 	return sub
 }
 
@@ -457,6 +482,9 @@ func (r *Runner) Unsubscribe(sub *Sub) {
 	if r.subs[sub] {
 		delete(r.subs, sub)
 		close(sub.C)
+		if sub.Size == nil {
+			r.notifyWebLocked() // maybe no longer held
+		}
 	}
 }
 
@@ -464,6 +492,10 @@ func (r *Runner) Unsubscribe(sub *Sub) {
 func (r *Runner) Attached() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.attachedLocked()
+}
+
+func (r *Runner) attachedLocked() int {
 	n := 0
 	for sub := range r.subs {
 		if sub.Size == nil {
@@ -488,6 +520,34 @@ func (r *Runner) Keys(b []byte) error {
 	return r.write(b)
 }
 
+// ResizeFrom sets the size a front end asked for. A terminal's own window
+// always wins: while one is attached a web front end's size is refused and the
+// web front end is told the held size again.
+func (r *Runner) ResizeFrom(sub *Sub, cols, rows int) error {
+	r.mu.Lock()
+	if sub.Size == nil {
+		sub.want = [2]int{cols, rows}
+	} else if r.attachedLocked() > 0 {
+		sub.sendSize(r.sizeLocked())
+		r.mu.Unlock()
+		return nil
+	}
+	r.mu.Unlock()
+	return r.Resize(cols, rows)
+}
+
+// KeysFrom forwards a front end's keystrokes. Typing in a terminal gives it its
+// own size back if another terminal changed it meanwhile.
+func (r *Runner) KeysFrom(sub *Sub, b []byte) error {
+	r.mu.Lock()
+	want, size := sub.want, [2]int{r.cols, r.rows}
+	r.mu.Unlock()
+	if sub.Size == nil && want != [2]int{} && want != size {
+		_ = r.Resize(want[0], want[1])
+	}
+	return r.Keys(b)
+}
+
 // Resize sets the terminal size: the most recent front end to resize wins.
 func (r *Runner) Resize(cols, rows int) error {
 	if cols < 20 || rows < 5 || cols > 1000 || rows > 500 {
@@ -498,11 +558,7 @@ func (r *Runner) Resize(cols, rows int) error {
 	r.cols, r.rows = cols, rows
 	if !same {
 		r.scr.resize(cols, rows)
-		for sub := range r.subs {
-			if sub.Size != nil {
-				sub.sendSize(cols, rows)
-			}
-		}
+		r.notifyWebLocked()
 	}
 	r.mu.Unlock()
 	if same {
