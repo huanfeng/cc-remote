@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -64,8 +63,9 @@ func (s *Server) channelLocal(w http.ResponseWriter, r *http.Request) bool {
 var sharedQuestionTimeout = claude.AskWait
 
 // channelInteraction is the long poll of a terminal session's PermissionRequest
-// hook for AskUserQuestion / ExitPlanMode. The native dialog stays open while it
-// waits; the web answers through POST /api/requests/{id} like a managed question.
+// hook: a tool approval, AskUserQuestion or ExitPlanMode. The native dialog stays
+// open while it waits; the web answers through POST /api/requests/{id} like a
+// managed request.
 // A canceled request means the hook gave up because the terminal answered.
 func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 	if !s.channelLocal(w, r) {
@@ -80,7 +80,9 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var object map[string]any
-	if !(req.Kind == "question" && req.ToolName == "AskUserQuestion") && !(req.Kind == "plan" && req.ToolName == "ExitPlanMode") || json.Unmarshal(req.Input, &object) != nil || object == nil {
+	special := req.ToolName == "AskUserQuestion" || req.ToolName == "ExitPlanMode"
+	valid := req.Kind == "question" && req.ToolName == "AskUserQuestion" || req.Kind == "plan" && req.ToolName == "ExitPlanMode" || req.Kind == "approval" && !special && req.ToolName != "" && len(req.ToolName) <= 256
+	if !valid || json.Unmarshal(req.Input, &object) != nil || object == nil {
 		fail(w, 400, s.lang(r).T("Invalid interaction request", "无效的交互请求"))
 		return
 	}
@@ -131,8 +133,12 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 			a = answer{Decision: "terminal"}
 		}
 	}
-	s.mu.Unlock()
 	web := a.Decision == "allow" || a.Decision == "deny"
+	if x, err := s.store.Get(c.sessionID); web && err == nil && x.Status == "waiting" {
+		// The dialog is answered; a denied tool has no PostToolUse to clear this.
+		_ = s.store.SetStatus(c.sessionID, "running")
+	}
+	s.mu.Unlock()
 	// The tool result lands in the transcript right after the decision; show it soon.
 	// A web answer that arrived after the terminal had already answered was ignored
 	// by Claude: the result then disagrees with it and the outcome becomes terminal.
@@ -159,7 +165,10 @@ func (s *Server) channelInteraction(w http.ResponseWriter, r *http.Request) {
 // matching p contradicts the web answer a, i.e. the terminal answered first. An
 // unknown or missing result is not a contradiction.
 func sharedAnswerOverridden(events []claude.Event, p *pending, a answer) bool {
-	want := questionTexts(p.input)
+	if p.toolName != "AskUserQuestion" && p.toolName != "ExitPlanMode" {
+		// An allowed tool can still fail, so its result does not tell who answered.
+		return false
+	}
 	useID := ""
 	var result *claude.Event
 	for i, ev := range events {
@@ -172,7 +181,7 @@ func sharedAnswerOverridden(events []claude.Event, p *pending, a answer) bool {
 		if json.Unmarshal(ev.Payload, &b) != nil {
 			continue
 		}
-		if ev.Kind == "tool" && b.Name == p.toolName && (p.toolName != "AskUserQuestion" || slices.Equal(questionTexts(b.Input), want)) {
+		if ev.Kind == "tool" && b.Name == p.toolName && sameCall(p, b.Input) {
 			useID, result = b.ID, nil
 		} else if ev.Kind == "tool_result" && useID != "" && b.ToolUseID == useID && result == nil {
 			result = &events[i]
@@ -280,6 +289,10 @@ func checkSharedAnswer(l i18n.Lang, p *pending, a *answer) string {
 		a.Answers, a.Mode = nil, ""
 		return ""
 	}
+	if p.toolName != "AskUserQuestion" && p.toolName != "ExitPlanMode" {
+		a.Answers, a.Mode, a.Message = nil, "", ""
+		return ""
+	}
 	if p.toolName == "ExitPlanMode" {
 		a.Answers, a.Message = nil, ""
 		if a.Mode == "" {
@@ -305,6 +318,14 @@ func checkSharedAnswer(l i18n.Lang, p *pending, a *answer) string {
 	}
 	a.Answers = kept
 	return ""
+}
+
+// sameCall reports whether a transcript tool_use input is the call p waits on.
+func sameCall(p *pending, input json.RawMessage) bool {
+	var a, b map[string]any
+	_ = json.Unmarshal(p.input, &a)
+	_ = json.Unmarshal(input, &b)
+	return claude.SameCall(p.toolName, a, b)
 }
 
 // questionTexts identifies an AskUserQuestion call by its question strings.
@@ -368,7 +389,7 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		if added && e == nil && ev.Kind == "tool_result" {
 			// Backstop for a hook that missed the terminal answer: the question is over.
 			for id, p := range s.requests {
-				if p.connection == c && toolNames[tool.ToolUseID] == p.toolName && (p.toolName != "AskUserQuestion" || slices.Equal(questionTexts(toolInputs[tool.ToolUseID]), questionTexts(p.input))) {
+				if p.connection == c && toolNames[tool.ToolUseID] == p.toolName && sameCall(p, toolInputs[tool.ToolUseID]) {
 					s.finishSharedLocked(id, p, "terminal")
 				}
 			}

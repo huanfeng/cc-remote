@@ -157,7 +157,7 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 	ask["timeout"] = claude.AskHookTimeout
 	state := []any{map[string]any{"hooks": []any{command("terminal-hook")}}}
 	config := map[string]any{"hooks": map[string]any{
-		"PermissionRequest": []any{map[string]any{"matcher": "AskUserQuestion|ExitPlanMode", "hooks": []any{ask}}},
+		"PermissionRequest": []any{map[string]any{"matcher": "*", "hooks": []any{ask}}},
 		"SessionStart":      state,
 		"UserPromptSubmit":  state,
 		"Stop":              state,

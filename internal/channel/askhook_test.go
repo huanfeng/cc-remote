@@ -116,6 +116,16 @@ func TestAskDecisionMapping(t *testing.T) {
 	if m, _ := askDecision("plan", plan, webAnswer{Decision: "deny"})["message"].(string); !strings.Contains(m, "Keep planning") {
 		t.Fatalf("default feedback %q", m)
 	}
+	bash := map[string]any{"command": "ls"}
+	if d := askDecision("approval", bash, webAnswer{Decision: "allow", Mode: "bypassPermissions"}); d["behavior"] != "allow" || len(d) != 1 {
+		t.Fatalf("approval allow %+v", d)
+	}
+	if d := askDecision("approval", bash, webAnswer{Decision: "deny"}); d["behavior"] != "deny" || d["message"] == "" {
+		t.Fatalf("approval deny %+v", d)
+	}
+	if askDecision("approval", bash, webAnswer{Decision: "terminal"}) != nil {
+		t.Fatal("approval handoff must not decide")
+	}
 	if askDecision("plan", plan, webAnswer{Decision: "terminal"}) != nil {
 		t.Fatal("terminal handoff must not decide")
 	}
@@ -140,9 +150,6 @@ func TestAskHookFailsOpen(t *testing.T) {
 	}
 	if out, _ := run("ffffffff-1234-1234-1234-123456789abc", "AskUserQuestion", cfg); out != "" || calls != 0 {
 		t.Fatalf("other session answered: %q calls=%d", out, calls)
-	}
-	if out, _ := run(askSession, "Bash", cfg); out != "" || calls != 0 {
-		t.Fatal("non-interactive tool handled")
 	}
 	if out, err := run(askSession, "AskUserQuestion", cfg); out != "" || err == nil || calls != 1 {
 		t.Fatalf("host error: %q %v", out, err)
@@ -284,5 +291,20 @@ func TestWatchTranscriptFirstLookNeedsSuccessfulRead(t *testing.T) {
 	}()
 	if watchTranscript(ctx, path, "AskUserQuestion", askQuestion, "", 10*time.Millisecond) {
 		t.Fatal("an earlier answered question ended the hook")
+	}
+}
+
+func TestCallTranscript(t *testing.T) {
+	main := filepath.Join("projects", "p", askSession+".jsonl")
+	if got := callTranscript(main, askSession, ""); got != main {
+		t.Fatalf("main call %q", got)
+	}
+	if got, want := callTranscript(main, askSession, "a1b2c3"), filepath.Join("projects", "p", askSession, "subagents", "agent-a1b2c3.jsonl"); got != want {
+		t.Fatalf("subagent call %q, want %q", got, want)
+	}
+	for _, bad := range [][2]string{{askSession, "../x"}, {askSession, `a\b`}, {"../s", "a1"}} {
+		if got := callTranscript(main, bad[0], bad[1]); got != "" {
+			t.Fatalf("%v gave %q", bad, got)
+		}
 	}
 }

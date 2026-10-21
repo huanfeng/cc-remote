@@ -40,11 +40,12 @@ web                React / PWA 和嵌入式构建产物
 
 ## 终端会话的提问与计划确认（PermissionRequest Hook）
 
-终端会话由宿主在伪终端中运行交互式 Claude Code（见 [design/terminal-sessions.md](design/terminal-sessions.md)），网页从原生记录（JSONL）同步对话。宿主在会话的 `--settings` 中注册 `PermissionRequest` Hook（matcher `AskUserQuestion|ExitPlanMode`，命令 `cc-remote channel-ask-hook`，超时约 7 天，见 `claude.AskWait`：离开很久后回来仍能在网页作答；宿主先于 Hook 放弃，超时记为「已超时」而不是「已在终端回答」）。Hook 长轮询 `POST /api/channels/{Claude 会话 ID}/interactions`，网页经 `POST /api/requests/{id}` 回答。依据 Claude Code 2.1.300 的实测行为：
+终端会话由宿主在伪终端中运行交互式 Claude Code（见 [design/terminal-sessions.md](design/terminal-sessions.md)），网页从原生记录（JSONL）同步对话。宿主在会话的 `--settings` 中注册 `PermissionRequest` Hook（matcher `*`：工具审批、AskUserQuestion 和 ExitPlanMode，命令 `cc-remote channel-ask-hook`，超时约 7 天，见 `claude.AskWait`：离开很久后回来仍能在网页作答；宿主先于 Hook 放弃，超时记为「已超时」而不是「已在终端回答」）。Hook 长轮询 `POST /api/channels/{Claude 会话 ID}/interactions`，网页经 `POST /api/requests/{id}` 回答。依据 Claude Code 2.1.300 的实测行为：
 
 - 该 Hook 与原生对话框**并行**运行，终端对话框始终可操作。
 - 网页先答：Hook 输出决定。提问为 `updatedInput.answers`（多选标签以 `, ` 连接，可填自由文本）；批准计划时附 `setMode`（自动接受编辑 / 手动审批编辑 / 自动模式），或带修改意见「继续规划」。
-- 终端先答：Hook 轮询 transcript 发现对应 tool_result 后静默退出，网页卡片标记「已在终端回答」。
+- 网页批准工具时 Hook 输出 `allow`，拒绝时输出 `deny` 和说明。
+- 终端先答：Hook 轮询 transcript 发现对应 tool_result 后静默退出，网页卡片标记「已在终端回答」。工具调用按工具名和两边都有的输入字段对应；子 agent 的调用（Hook 输入带 `agent_id`）读 `<会话>/subagents/agent-<id>.jsonl`，因为后台子 agent 的对话框不会立即显示在主界面上，主界面的屏幕不能说明它已被回答。
 - 「交给终端」撤回网页卡片，只在终端作答。
 - Hook 一律 fail-open：会话不匹配、宿主不可达或任何错误都不输出决定，原生对话框照常可用。
 - Hook 连接宿主所需的令牌写在会话配置目录的 0600 文件 `ask.json` 中（经 `CC_REMOTE_ASK_FILE` 定位），不进入环境变量。

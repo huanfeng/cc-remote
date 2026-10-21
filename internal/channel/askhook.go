@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -46,9 +47,10 @@ var launchUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 
 const askTimeout = claude.AskWait + time.Minute // after the host, before Claude Code's hook timeout
 
-// AskHook is the PermissionRequest hook for AskUserQuestion and ExitPlanMode in a
-// terminal session. Claude Code keeps its native dialog interactive while the hook
-// runs, so the web and the terminal can both answer; the first answer wins.
+// AskHook is the PermissionRequest hook of a terminal session: tool approvals,
+// AskUserQuestion and ExitPlanMode. Claude Code keeps its native dialog interactive
+// while the hook runs, so the web and the terminal can both answer; the first
+// answer wins.
 // The hook fails open: on any problem it prints nothing and the dialog stays.
 func AskHook() error {
 	if err := askHook(context.Background(), os.Stdin, os.Stdout, os.Getenv("CC_REMOTE_ASK_FILE"), 500*time.Millisecond); err != nil {
@@ -63,12 +65,16 @@ func askHook(ctx context.Context, input io.Reader, output io.Writer, configPath 
 		TranscriptPath string         `json:"transcript_path"`
 		ToolName       string         `json:"tool_name"`
 		ToolInput      map[string]any `json:"tool_input"`
+		AgentID        string         `json:"agent_id"`
 	}
 	if err := json.NewDecoder(io.LimitReader(input, 2<<20)).Decode(&req); err != nil {
 		return err
 	}
 	kind := map[string]string{"AskUserQuestion": "question", "ExitPlanMode": "plan"}[req.ToolName]
-	if kind == "" || configPath == "" {
+	if kind == "" {
+		kind = "approval"
+	}
+	if req.ToolName == "" || configPath == "" {
 		return nil
 	}
 	data, err := os.ReadFile(configPath)
@@ -99,7 +105,7 @@ func askHook(ctx context.Context, input io.Reader, output io.Writer, configPath 
 	// The hook is not told when the terminal answers; the tool result in the
 	// transcript is the signal to give up and withdraw the web prompt.
 	go func() {
-		if watchTranscript(ctx, req.TranscriptPath, req.ToolName, req.ToolInput, cfg.BindingFile, interval) {
+		if watchTranscript(ctx, callTranscript(req.TranscriptPath, req.SessionID, req.AgentID), req.ToolName, req.ToolInput, cfg.BindingFile, interval) {
 			cancel()
 		}
 	}()
@@ -148,6 +154,9 @@ func requestAnswer(ctx context.Context, cfg askConfig, kind, toolName string, in
 func askDecision(kind string, input map[string]any, a webAnswer) map[string]any {
 	switch a.Decision {
 	case "allow":
+		if kind == "approval" {
+			return map[string]any{"behavior": "allow"}
+		}
 		updated := maps.Clone(input)
 		if kind == "question" {
 			if len(a.Answers) == 0 {
@@ -175,6 +184,22 @@ func askDecision(kind string, input map[string]any, a webAnswer) map[string]any 
 	return nil
 }
 
+var agentID = regexp.MustCompile(`^[0-9A-Za-z_-]{1,128}$`)
+
+// callTranscript is the transcript the asked call is written to: a subagent's
+// own file next to the session's (hook input names the session's transcript and
+// the agent). A background subagent's dialog waits behind the main screen, so
+// this file is the only sign that the terminal answered it.
+func callTranscript(path, sessionID, agent string) string {
+	if agent == "" || path == "" {
+		return path
+	}
+	if !agentID.MatchString(agent) || !launchUUID.MatchString(sessionID) {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), sessionID, "subagents", "agent-"+agent+".jsonl")
+}
+
 // watchTranscript reports true once the tool call this hook is waiting for has a
 // tool_result (answered or cancelled in the terminal) or the session binding
 // changed. It returns false only when ctx ends.
@@ -183,7 +208,6 @@ func watchTranscript(ctx context.Context, path, toolName string, input map[strin
 	var partial []byte
 	current, first := "", true
 	results := map[string]bool{}
-	want := questionTexts(input)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -214,7 +238,7 @@ func watchTranscript(ctx context.Context, path, toolName string, input map[strin
 				for _, b := range blocks {
 					// The call being asked is the latest matching tool_use; earlier
 					// identical questions already have their own results.
-					if b.Type == "tool_use" && b.Name == toolName && (toolName != "AskUserQuestion" || slices.Equal(questionTexts(b.Input), want)) {
+					if b.Type == "tool_use" && b.Name == toolName && claude.SameCall(toolName, input, b.Input) {
 						current = b.ID
 					} else if b.Type == "tool_result" {
 						results[b.ToolUseID] = true
@@ -293,19 +317,6 @@ func readTranscript(path string, offset int64, partial []byte, fn func([]byte)) 
 		data = data[i+1:]
 	}
 	return offset, append([]byte(nil), data...), true
-}
-
-// questionTexts identifies an AskUserQuestion call by its question strings; key
-// order and defaulted fields may differ between hook input and transcript.
-func questionTexts(input map[string]any) []string {
-	list, _ := input["questions"].([]any)
-	out := make([]string, 0, len(list))
-	for _, q := range list {
-		m, _ := q.(map[string]any)
-		text, _ := m["question"].(string)
-		out = append(out, text)
-	}
-	return out
 }
 
 func fileExists(path string) bool {

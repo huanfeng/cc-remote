@@ -47,7 +47,7 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 宿主在伪终端（Windows 为 ConPTY）里持有一个交互式 Claude Code。网页和本地终端都可以接入同一个进程，切换前端时进程不会重启，子 agent、后台任务等长时间运行的工作也不会中断。设计说明见 [design/terminal-sessions.md](design/terminal-sessions.md)。
 
 1. 网页「新建」，选「终端会话」，填写目录并勾选「信任此目录」（等同于在终端里确认信任此文件夹）。
-2. 对话来自 Claude Code 的记录，消息以粘贴的形式送进终端。Claude 正在工作时发送的消息会显示「排队」。Claude 弹出权限框或提问框时，网页消息会先等待，等对话框关闭后再发送，以免误答对话框。AskUserQuestion 和计划确认可以在网页回答。「停止」相当于按 Esc，15 秒内再按一次相当于 Ctrl+C。
+2. 对话来自 Claude Code 的记录，消息以粘贴的形式送进终端。Claude 正在工作时发送的消息会显示「排队」。Claude 弹出权限框或提问框时，网页消息会先等待，等对话框关闭后再发送，以免误答对话框。工具权限审批、AskUserQuestion 和计划确认都可以在网页回答，也可以「交给终端」。「停止」相当于按 Esc，15 秒内再按一次相当于 Ctrl+C。
 3. 点击会话标题栏的终端图标，复制接入命令，在宿主上运行即可在本地终端中操作同一个 Claude Code：
 
    ```sh

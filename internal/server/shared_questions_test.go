@@ -232,7 +232,9 @@ func TestSharedQuestionEndpointGuards(t *testing.T) {
 		t.Fatal("unauthenticated hook accepted")
 	}
 	for _, bad := range []map[string]any{
-		{"kind": "approval", "toolName": "Bash", "input": map[string]any{}},
+		{"kind": "approval", "toolName": "AskUserQuestion", "input": sharedQuestion},
+		{"kind": "approval", "toolName": "", "input": map[string]any{}},
+		{"kind": "question", "toolName": "Bash", "input": map[string]any{}},
 		{"kind": "question", "toolName": "ExitPlanMode", "input": map[string]any{}},
 		{"kind": "plan", "toolName": "ExitPlanMode", "input": "text"},
 	} {
@@ -362,4 +364,54 @@ func TestSharedWebAnswerOverriddenByTerminal(t *testing.T) {
 		t.Fatalf("matching answer corrected: %s", got)
 	}
 	ask("toolu_2", "Red", "Blue", "web,web,terminal")
+}
+
+func TestSharedApprovalFromWebAndTerminal(t *testing.T) {
+	s, ts, st := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	id := store.ID()
+	cwd := t.TempDir()
+	x, _ := connectTerminal(t, s, st, id, cwd)
+	bash := map[string]any{"command": "rm -rf build", "description": "Clean"}
+
+	_ = st.SetStatus(x.ID, "waiting")
+	done := askFromHook(t, context.Background(), ts, id, "approval", "Bash", bash)
+	p := waitPending(t, st, x.ID, 1)[0]
+	if p.Kind != "approval" || p.ToolName != "Bash" {
+		t.Fatalf("interaction %+v", p)
+	}
+	if c, b := request(t, ts, "POST", "/api/requests/"+p.ID, map[string]any{"decision": "allow", "answers": map[string]string{"x": "y"}, "mode": "bypassPermissions"}, testToken); c != 200 {
+		t.Fatalf("allow %d %s", c, b)
+	}
+	if r := hookAnswer(t, done); r.body.Decision != "allow" || r.body.Answers != nil || r.body.Mode != "" {
+		t.Fatalf("hook got %+v", r)
+	}
+	if got, _ := st.Get(x.ID); got.Status != "running" {
+		t.Fatalf("status after the web answer %s", got.Status)
+	}
+
+	// The terminal answers: only the result of the same call withdraws the web card.
+	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "shared-test")
+	_ = os.MkdirAll(dir, 0700)
+	path := filepath.Join(dir, id+".jsonl")
+	use := func(tid string, input map[string]any) map[string]any {
+		return map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": tid, "name": "Bash", "input": input}}}}
+	}
+	result := func(tid string) map[string]any {
+		return map[string]any{"type": "user", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": tid, "content": "ok"}}}}
+	}
+	appendTranscript(t, path, use("toolu_a", map[string]any{"command": "ls"}))
+	appendTranscript(t, path, use("toolu_b", bash))
+	done = askFromHook(t, context.Background(), ts, id, "approval", "Bash", bash)
+	waitPending(t, st, x.ID, 1)
+	appendTranscript(t, path, result("toolu_a"))
+	syncConnection(t, s, id)
+	if pending, _ := st.Pending(x.ID); len(pending) != 1 {
+		t.Fatal("another call's result withdrew the approval")
+	}
+	appendTranscript(t, path, result("toolu_b"))
+	syncConnection(t, s, id)
+	if r := hookAnswer(t, done); r.body.Decision != "terminal" {
+		t.Fatalf("terminal answer reached hook as %+v", r)
+	}
+	waitOutcomes(t, st, x.ID, "web,terminal")
 }

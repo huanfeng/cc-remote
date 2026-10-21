@@ -8,6 +8,7 @@
 - [x] 原生历史查看和导入，直接沿用原会话标题，不要求命名。
 - [x] 原生终端与网页通过 Claude Channels 共用一个交互式 Claude 进程；消息、工具审批和历史同步。（共享模式已移除，由终端会话取代；已有共享会话在宿主启动时迁移为终端会话。）
 - [x] 共享终端（现为终端会话）AskUserQuestion / ExitPlanMode 双端作答：`PermissionRequest` Hook `channel-ask-hook` 长轮询 `POST /api/channels/{id}/interactions`，网页经 `POST /api/requests/{id}` 回答（`decision: allow|deny|terminal`，计划可带 `mode`/`message`），终端先答时 Hook 轮询 transcript 退出、宿主同步兜底；`interaction` 事件记录结果（web/handoff/terminal/expired），网页卡片原位作答并显示「已在终端/网页回答」、「交给终端」。真实 Claude Code 2.1.300 + haiku 验证网页回答、终端回答、网页批准计划（acceptEdits）三种路径。
+- [x] 终端会话普通工具审批双端作答：`PermissionRequest` matcher 扩大到所有工具，`approval` 类型经同一套长轮询；终端先答时 Hook 按工具名和输入字段在 transcript（子 agent 读 `subagents/agent-<id>.jsonl`）里找到结果后退出。真实 Claude Code + haiku 验证网页允许 / 拒绝、终端拒绝、前台与后台子 agent 审批。
 - [x] 连接代际隔离、离线拒绝、队列确认、审批一次性响应、会话 ID 变更断开保护。
 
 ## 本次迭代
