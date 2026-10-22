@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 )
 
@@ -22,6 +24,9 @@ func fakeHost(t *testing.T, reload func(w http.ResponseWriter), restarts *int) *
 		if r.Header.Get("Authorization") != "Bearer test-token-0123456789" {
 			w.WriteHeader(401)
 		}
+	})
+	mux.HandleFunc("GET "+hostauth.Path, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"proof":%q}`, hostauth.Proof("test-token-0123456789", r.URL.Query().Get("nonce")))
 	})
 	mux.HandleFunc("POST /api/admin/reload", func(w http.ResponseWriter, _ *http.Request) { reload(w) })
 	mux.HandleFunc("POST /api/admin/restart", func(w http.ResponseWriter, _ *http.Request) {

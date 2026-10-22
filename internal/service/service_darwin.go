@@ -41,6 +41,7 @@ func renderPlist(cfg *Config) string {
 func register(cfg *Config, dryRun bool, out io.Writer) error {
 	path, plist := plistPath(), renderPlist(cfg)
 	if dryRun {
+		plist = renderPlist(redacted(cfg)) // shown, often pasted elsewhere: no --env secrets
 		fmt.Fprint(out, i18n.F("[dry-run] write %s:\n%s[dry-run] launchctl bootout %s/%s; launchctl bootstrap %s %s\n", "[dry-run] 写入 %s：\n%s[dry-run] launchctl bootout %s/%s；launchctl bootstrap %s %s\n", path, plist, domain(), LaunchdLabel, domain(), path))
 		return nil
 	}

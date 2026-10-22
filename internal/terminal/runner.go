@@ -126,12 +126,14 @@ var ansi = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\
 // no transcript, so a host started from inside Claude Code must drop them.
 var sessionMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"}
 
-// CleanEnv returns env without the markers of a parent Claude Code session.
+// CleanEnv returns env without the markers of a parent Claude Code session,
+// and without the host's access token (CC_REMOTE_TOKEN): Claude Code and every
+// command it runs would read it.
 func CleanEnv(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		drop := false
+		drop := strings.EqualFold(name, "CC_REMOTE_TOKEN")
 		for _, m := range sessionMarkers {
 			if strings.EqualFold(name, m) {
 				drop = true

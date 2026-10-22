@@ -312,3 +312,10 @@ func TestRunnerDroppedTerminalReleasesSize(t *testing.T) {
 		t.Fatal("no size notice after the terminal was dropped")
 	}
 }
+
+func TestCleanEnvDropsAccessToken(t *testing.T) {
+	got := CleanEnv([]string{"PATH=/bin", "CC_REMOTE_TOKEN=secret", "cc_remote_token=secret", "CLAUDECODE=1"})
+	if len(got) != 1 || got[0] != "PATH=/bin" {
+		t.Fatalf("CleanEnv = %q", got)
+	}
+}

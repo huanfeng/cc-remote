@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -19,6 +20,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("LOCALAPPDATA", base)  // windows
 	os.Setenv("XDG_DATA_HOME", base) // linux
 	os.Setenv("HOME", base)          // darwin
+	managerDisabled = errors.New("tests do not run the service manager")
 	code := m.Run()
 	os.RemoveAll(base)
 	os.Exit(code)

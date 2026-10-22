@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -40,23 +42,26 @@ const firstPromptTries = 3
 
 type terminalSession struct {
 	id, claudeID string
-	runner       *terminal.Runner
-	conn         *channelConnection
-	dir          string // per-session config (hook settings, ask.json)
-	send         chan string
-	withdraw     chan chan []string // the writer takes the queued messages back (see withdrawQueued)
-	queued       []terminalQueued   // web messages not yet in the transcript
-	scan         int                // transcript user messages already matched
-	lastStop     time.Time
-	closing      bool
-	prompts      int           // UserPromptSubmit hooks seen
-	confirmed    bool          // a web message was seen submitted since Claude Code started
-	wake         chan struct{} // a hook asks for a transcript sync now
-	cwd          string
-	live         *store.LiveStatus // from the status line
-	viewedAt     time.Time         // the web last showed this session (polling with viewing=1)
-	away         bool              // Claude Code was told nobody looks (focus out)
-	started      time.Time         // tasks recorded before this belong to an earlier Claude Code
+	// hookToken is what its hooks authenticate with, for their own endpoints
+	// only: Claude Code and every command it runs can read the hook files.
+	hookToken string
+	runner    *terminal.Runner
+	conn      *channelConnection
+	dir       string // per-session config (hook settings, ask.json)
+	send      chan string
+	withdraw  chan chan []string // the writer takes the queued messages back (see withdrawQueued)
+	queued    []terminalQueued   // web messages not yet in the transcript
+	scan      int                // transcript user messages already matched
+	lastStop  time.Time
+	closing   bool
+	prompts   int           // UserPromptSubmit hooks seen
+	confirmed bool          // a web message was seen submitted since Claude Code started
+	wake      chan struct{} // a hook asks for a transcript sync now
+	cwd       string
+	live      *store.LiveStatus // from the status line
+	viewedAt  time.Time         // the web last showed this session (polling with viewing=1)
+	away      bool              // Claude Code was told nobody looks (focus out)
+	started   time.Time         // tasks recorded before this belong to an earlier Claude Code
 }
 
 type terminalQueued struct {
@@ -101,7 +106,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), dir: dir, cwd: x.Cwd, started: time.Now(), send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
+	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), hookToken: newHookToken(), dir: dir, cwd: x.Cwd, started: time.Now(), send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
 	if err := s.writeTerminalConfig(ts); err != nil {
 		return nil, err
 	}
@@ -129,7 +134,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	// The user confirmed trusting the directory when creating the session.
 	r, err := terminal.Start(terminal.Options{Executable: exe, Args: args, Dir: x.Cwd, Env: env, TrustFolder: true, AwaitStart: true})
 	if err != nil {
-		_ = os.RemoveAll(dir) // holds the access token
+		_ = os.RemoveAll(dir)
 		return nil, err
 	}
 	ts.runner = r
@@ -146,6 +151,38 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	go s.terminalWriter(ts)
 	go s.terminalLoop(ts)
 	return ts, nil
+}
+
+func newHookToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand does not fail
+	}
+	return hex.EncodeToString(b)
+}
+
+// hookRequest reports whether r is a running terminal session's hook calling
+// one of its own endpoints with the session's hook token.
+func (s *Server) hookRequest(r *http.Request) bool {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/"), "/")
+	if r.Method != http.MethodPost || len(parts) != 3 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ts *terminalSession
+	switch {
+	case parts[0] == "terminals" && (parts[2] == "hook" || parts[2] == "status"):
+		ts = s.terminals[parts[1]]
+	case parts[0] == "channels" && parts[2] == "interactions":
+		for _, t := range s.terminals {
+			if t.claudeID == strings.ToLower(parts[1]) {
+				ts = t
+				break
+			}
+		}
+	}
+	return ts != nil && equalToken(r.Header.Get("Authorization"), ts.hookToken)
 }
 
 // writeTerminalConfig writes the hook settings and the files the hooks read.
@@ -175,9 +212,9 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 	config["statusLine"] = status
 	settings, _ := json.Marshal(config)
 	host := s.hookHost()
-	askFile, _ := json.Marshal(map[string]string{"host": host, "token": s.cfg.Token, "sessionId": ts.claudeID, "bindingFile": ""})
+	askFile, _ := json.Marshal(map[string]string{"host": host, "token": ts.hookToken, "sessionId": ts.claudeID, "bindingFile": ""})
 	ownCommand, _ := own["command"].(string)
-	termFile, _ := json.Marshal(terminalConfig{Host: host, Token: s.cfg.Token, Session: ts.id, StatusCommand: ownCommand})
+	termFile, _ := json.Marshal(terminalConfig{Host: host, Token: ts.hookToken, Session: ts.id, StatusCommand: ownCommand})
 	for name, data := range map[string][]byte{"settings.json": settings, "ask.json": askFile, "terminal.json": termFile} {
 		if err := os.WriteFile(filepath.Join(ts.dir, name), data, 0o600); err != nil {
 			return err

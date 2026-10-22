@@ -57,15 +57,17 @@ location / {
 - 只列入你自己控制的网站。列入的网站一旦被篡改，它的脚本就能读取在该站登录过的令牌。
 - 来源按协议、域名、端口精确匹配，不支持通配符。
 - 代理层的认证（Basic Auth、SSO 等）与独立前端不兼容：跨站请求的 `Authorization` 头已用于访问令牌，浏览器也不会带上代理的 Cookie 或 Basic 凭据。需要这类认证时，独立前端访问的宿主请改用 VPN 等网络层限制。
-- 独立前端的页面自带 CSP（不加载外部脚本和图片，Markdown 里的远程图片不会被请求）。`frame-ancestors` 只能通过响应头设置，请在静态站上配置 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`，并只通过 HTTPS 提供（Vercel、Cloudflare Pages 的配置已包含，GitHub Pages 无法设置）。
+- 独立前端的页面自带 CSP（不加载外部脚本和图片，Markdown 里的远程图片不会被请求）。`frame-ancestors` 只能通过响应头设置，请在静态站上配置 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`，并只通过 HTTPS 提供（Vercel、Cloudflare Pages 的配置已包含，GitHub Pages 无法设置）。页面自身也会检测是否被嵌入框架，被嵌入时不渲染界面。
 - 公共实例 `https://huanfeng.github.io` 与该账号其它仓库的 Pages 同源；介意的话请部署到自己的域名，见 [standalone.md](standalone.md#公共实例github-pages)。
 - 通过入口（文本地址）添加的宿主，令牌发往入口解析出的地址：能改动入口的人就能把令牌引向自己的服务器。自动切换只接受端口变化，主机名或协议变化需要重新添加宿主确认；入口请只用自己控制的服务，见 [standalone.md](standalone.md#安全入口决定令牌发往哪里)。
 
 ## 仅限本机的接口
 
 - `POST /api/admin/shutdown`（`service stop` 使用）必须来自回环地址、携带令牌，且不得带 `Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、`X-Real-IP` 等代理头，因此经本机反向代理转发的远程请求也会被拒绝。
-- `service` 子命令、`ccr` 等本机工具只连接回环地址，访问令牌不会发往其它主机。
-- 审批 MCP 和提问 Hook 通过本机独立监听端口回到宿主，每轮 / 每次启动使用独立的短期凭证；Hook 令牌写在 0600 临时文件中，不进入环境变量。
+- `service` 子命令、`ccr` 等本机工具只连接回环地址（`ccr --host` 另外允许 HTTPS 地址，拒绝其它明文地址），访问令牌不会发往其它主机。
+- 发送令牌前，本机工具先让宿主证明它持有令牌（`GET /api/hello?nonce=…`，宿主回 HMAC-SHA256(令牌, nonce)，令牌本身不发送）：宿主停止期间，同一台机器上的其它用户占用端口也拿不到令牌。`/api/hello` 不需要令牌，能连到宿主的人可以据此认出这是 CC Remote，但得不到令牌。旧版宿主没有这个接口：只在它持有数据目录的锁（`host.lock`，即它正在运行）、且该数据目录还没运行过新版宿主（新版启动时写入 `host-proof` 标记）时才被信任，所以这个兼容只在升级后、旧宿主重启前的一段时间内有效。
+- 审批 MCP 和提问 Hook 通过本机独立监听端口回到宿主，每轮 / 每次启动使用独立的短期凭证；终端会话的 Hook 令牌只对该会话自己的 Hook 接口有效，写在 0600 文件中，不进入环境变量。宿主启动 Claude Code 时去掉环境中的 `CC_REMOTE_TOKEN`。这只是纵深防御：Claude 运行的命令和宿主是同一个系统用户，仍能读到数据目录里的 `access-token`。
+- `ccr` 在 Claude Code 尚未信任的目录新建会话前，先询问是否信任该目录（与 `claude` 的信任对话框相同）；网页新建终端会话需勾选「信任此目录」。
 
 ## 其它要点
 

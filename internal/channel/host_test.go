@@ -5,7 +5,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"cc-remote/internal/hostauth"
 )
 
 func TestEnsureHostAuthenticatesMatchingDataDirectory(t *testing.T) {
@@ -15,6 +18,10 @@ func TestEnsureHostAuthenticatesMatchingDataDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == hostauth.Path {
+			w.Write([]byte(`{"proof":"` + hostauth.Proof("matching-test-token", r.URL.Query().Get("nonce")) + `"}`))
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer matching-test-token" {
 			w.WriteHeader(401)
 			return
@@ -27,6 +34,28 @@ func TestEnsureHostAuthenticatesMatchingDataDirectory(t *testing.T) {
 	}
 	if err := ensureHost(t.TempDir(), server.URL, "claude", ""); err == nil {
 		t.Fatal("accepted another data directory")
+	}
+}
+
+// Whatever listens on the port without proving it holds the token (another
+// user's server while the host is down) never receives it.
+func TestEnsureHostSendsNoTokenToAnImpostor(t *testing.T) {
+	t.Setenv("CC_REMOTE_TOKEN", "")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "access-token"), []byte("matching-test-token"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	leaked := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = leaked || strings.Contains(r.Header.Get("Authorization"), "matching-test-token")
+		w.WriteHeader(401)
+	}))
+	defer server.Close()
+	if err := ensureHost(dir, server.URL, "claude", ""); err == nil {
+		t.Fatal("accepted a service that cannot prove it is the host")
+	}
+	if leaked {
+		t.Fatal("the token was sent to it")
 	}
 }
 

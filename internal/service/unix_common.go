@@ -14,6 +14,9 @@ import (
 )
 
 func runQuiet(name string, args ...string) (string, error) {
+	if managerDisabled != nil {
+		return "", managerDisabled
+	}
 	b, err := exec.Command(name, args...).CombinedOutput()
 	out := strings.TrimSpace(string(b))
 	if err != nil {

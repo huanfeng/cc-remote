@@ -23,6 +23,7 @@ import (
 	"cc-remote/internal/channel"
 	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/hostlock"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
@@ -349,6 +350,9 @@ func runHost(argv []string) error {
 		return conflict(err)
 	}
 	defer release()
+	if err = hostauth.MarkHost(absData); err != nil {
+		log.Printf("host proof marker: %v", err)
+	}
 	// Leftovers of the retired shared mode's launcher (best effort).
 	for _, dir := range []string{"channel-config", "channel-locks"} {
 		_ = os.RemoveAll(filepath.Join(absData, dir))

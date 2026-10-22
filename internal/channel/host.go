@@ -13,28 +13,45 @@ import (
 	"strings"
 	"time"
 
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 )
 
 // ensureHost never starts a replacement when another service answers the port.
-// Authenticating with this directory's token prevents binding to the wrong host.
+// The host proves it holds this directory's token before the token is sent
+// (hostauth.Check), which also prevents binding to the wrong host.
 func ensureHost(dataDir, host, claudeBin, configDir string) error {
+	if !hostauth.Allowed(host) {
+		return i18n.Errorf("the host must be http://127.0.0.1:PORT (or localhost) or an https:// URL: %s", "宿主地址必须是 http://127.0.0.1:端口（或 localhost），或 https:// 地址：%s", host)
+	}
 	probe := func() (bool, error) {
 		token, tokenErr := tokenFrom(dataDir, "")
+		client := localClient()
+		client.Timeout = time.Second
+		mismatch := func() error {
+			return i18n.Errorf("a service is already listening at %s but does not accept this data directory's token; use the matching --data-dir or a different --host", "%s 上已有服务在监听，但它不接受此数据目录的令牌；请使用对应的 --data-dir 或换一个 --host", host)
+		}
+		if err := hostauth.Verify(client, host, token, dataDir); err != nil {
+			if errors.Is(err, hostauth.ErrWrongToken) || errors.Is(err, hostauth.ErrNotHost) {
+				return false, mismatch()
+			}
+			return false, nil // nothing answers
+		}
+		if tokenErr != nil || token == "" {
+			return false, mismatch()
+		}
 		request, err := http.NewRequest("GET", host+"/api/sessions", nil)
 		if err != nil {
 			return false, err
 		}
 		request.Header.Set("Authorization", "Bearer "+token)
-		client := localClient()
-		client.Timeout = time.Second
 		response, err := client.Do(request)
 		if err != nil {
 			return false, nil
 		}
 		defer response.Body.Close()
-		if tokenErr != nil || token == "" || response.StatusCode != http.StatusOK {
-			return false, i18n.Errorf("a service is already listening at %s but does not accept this data directory's token; use the matching --data-dir or a different --host", "%s 上已有服务在监听，但它不接受此数据目录的令牌；请使用对应的 --data-dir 或换一个 --host", host)
+		if response.StatusCode != http.StatusOK {
+			return false, mismatch()
 		}
 		var sessions []json.RawMessage
 		if err := json.NewDecoder(response.Body).Decode(&sessions); err != nil {

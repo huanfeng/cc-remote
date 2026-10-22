@@ -387,3 +387,11 @@ func TestCommandArgsPassLaunchPreferences(t *testing.T) {
 		}
 	}
 }
+
+func TestRunEnvironmentDropsAccessToken(t *testing.T) {
+	for _, kv := range runEnvironment([]string{"PATH=/bin", "CC_REMOTE_TOKEN=secret"}, Options{}) {
+		if strings.HasPrefix(kv, "CC_REMOTE_TOKEN=") {
+			t.Fatalf("the access token reaches Claude: %q", kv)
+		}
+	}
+}

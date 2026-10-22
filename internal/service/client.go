@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
 )
@@ -17,6 +18,10 @@ import (
 // errNotService is the answer of a host that runs without a service manager
 // (started by hand), which can neither reload nor restart itself.
 var errNotService = errors.New("the host is not running as a service")
+
+// managerDisabled, when set, refuses every service manager command (schtasks,
+// systemctl, launchctl). Tests set it: they must never change the real service.
+var managerDisabled error
 
 func readToken(dataDir string) string {
 	if t := strings.TrimSpace(os.Getenv("CC_REMOTE_TOKEN")); t != "" {
@@ -44,20 +49,19 @@ func request(method, url, token string, timeout time.Duration) (*http.Response, 
 	return client.Do(req)
 }
 
-// findHost returns the first local URL where a host accepts this data dir's token.
+// findHost returns the first local URL where this data dir's host answers,
+// having it prove it holds the token before the token is sent there.
 // answering reports whether anything listened at all.
 func findHost(cfg *Config) (url string, answering bool) {
 	token := readToken(cfg.DataDir)
+	client := *httpClient
+	client.Timeout = time.Second
 	for _, u := range listen.ProbeURLs(cfg.Listen) {
-		resp, err := request("GET", u+"/api/info", token, time.Second)
-		if err != nil {
-			continue
-		}
-		resp.Body.Close()
-		answering = true
-		if resp.StatusCode == http.StatusOK {
+		err := hostauth.Verify(&client, u, token, cfg.DataDir)
+		if err == nil {
 			return u, true
 		}
+		answering = answering || errors.Is(err, hostauth.ErrWrongToken) || errors.Is(err, hostauth.ErrNotHost)
 	}
 	return "", answering
 }

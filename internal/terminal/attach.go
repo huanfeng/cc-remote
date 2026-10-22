@@ -18,8 +18,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 
 	"github.com/coder/websocket"
@@ -128,6 +130,9 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
+		return err
+	}
+	if err := checkHost(*host); err != nil {
 		return err
 	}
 	if err := ensureHost(*dataDir, *host); err != nil {
@@ -301,16 +306,22 @@ func (c *client) resume(r resumeArgs, title string, options map[string]any) (rem
 			return remoteSession{}, err
 		}
 	}
-	// Continuing a session is trusting its directory, as running claude --resume there.
-	body := map[string]any{"title": title, "mode": "terminal", "trustFolder": true, "resume": target.ID}
+	body := map[string]any{"title": title, "mode": "terminal", "resume": target.ID}
 	for k, v := range options {
 		if v != "" {
 			body[k] = v
 		}
 	}
-	var x remoteSession
-	err = c.do("POST", "/api/sessions", body, &x)
-	return x, err
+	return c.start(body, target.Cwd)
+}
+
+// checkHost refuses a host the token must not go to: the token runs code on
+// the host, so it goes only to this machine or over HTTPS.
+func checkHost(host string) error {
+	if !hostauth.Allowed(strings.TrimRight(host, "/")) {
+		return i18n.Errorf("--host must be http://127.0.0.1:PORT (or localhost) or an https:// URL: %s", "--host 必须是 http://127.0.0.1:端口（或 localhost），或 https:// 地址：%s", host)
+	}
+	return nil
 }
 
 func newClient(host, dataDir string) (*client, error) {
@@ -322,7 +333,17 @@ func newClient(host, dataDir string) (*client, error) {
 		}
 		token = strings.TrimSpace(string(b))
 	}
-	return &client{host: strings.TrimRight(host, "/"), token: token}, nil
+	c := &client{host: strings.TrimRight(host, "/"), token: token}
+	if err := checkHost(c.host); err != nil {
+		return nil, err
+	}
+	if err := hostauth.Verify(c.http(), c.host, token, dataDir); err != nil {
+		if errors.Is(err, hostauth.ErrWrongToken) || errors.Is(err, hostauth.ErrNotHost) {
+			return nil, i18n.Errorf("the service at %s is not the host of this data directory (%v); point --data-dir at the host's data directory", "%s 上的服务不是此数据目录的宿主（%v）；用 --data-dir 指定宿主的数据目录", c.host, err)
+		}
+		return nil, i18n.Errorf("cannot reach the host at %s: %w", "无法连接宿主 %s：%w", c.host, err)
+	}
+	return c, nil
 }
 
 // here returns this directory's terminal session: the only one, a choice
@@ -402,9 +423,9 @@ func (c *client) do(method, path string, body any, out any) error {
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode >= 300 {
-		var e struct{ Error string }
+		var e struct{ Error, Code string }
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
-			return errors.New(e.Error)
+			return hostError{resp.StatusCode, e.Code, e.Error}
 		}
 		return i18n.Errorf("the host returned %d", "宿主返回 %d", resp.StatusCode)
 	}
@@ -422,16 +443,64 @@ func (c *client) create(title string, options map[string]any) (remoteSession, er
 	if title == "" {
 		title = filepath.Base(cwd)
 	}
-	// Running attach --new (or ccr) in a directory is the user's decision to trust it.
-	body := map[string]any{"title": title, "cwd": cwd, "mode": "terminal", "trustFolder": true}
+	body := map[string]any{"title": title, "cwd": cwd, "mode": "terminal"}
 	for k, v := range options {
 		if v != "" {
 			body[k] = v
 		}
 	}
+	return c.start(body, cwd)
+}
+
+// start creates a terminal session. In a folder Claude Code does not trust
+// yet, it asks first, as Claude Code itself would: the folder's settings can
+// run commands (hooks, MCP servers) as soon as Claude Code starts.
+func (c *client) start(body map[string]any, cwd string) (remoteSession, error) {
 	var x remoteSession
-	err = c.do("POST", "/api/sessions", body, &x)
+	err := c.do("POST", "/api/sessions", body, &x)
+	var refused hostError
+	// A host before the code answers 400 with its message only.
+	if errors.As(err, &refused) && (refused.code == "trust-required" || refused.status == http.StatusBadRequest && (strings.Contains(refused.message, "trust this folder") || strings.Contains(refused.message, "信任此目录"))) {
+		if !confirmTrust(cwd) {
+			return remoteSession{}, errors.New(i18n.T("the folder is not trusted; no session was started", "未信任此目录，没有启动会话"))
+		}
+		body["trustFolder"] = true
+		err = c.do("POST", "/api/sessions", body, &x)
+	}
 	return x, err
+}
+
+func confirmTrust(cwd string) bool {
+	fmt.Print(i18n.F(`Do you trust the files in this folder?
+  %s
+Claude Code may read, edit and run files here, and the folder's own settings can run commands (hooks, MCP servers).
+Only trust a folder whose code you trust. Trust it? [y/N] `, `是否信任此文件夹中的文件？
+  %s
+Claude Code 可以读取、修改和执行这里的文件，文件夹自身的设置也可以运行命令（hooks、MCP 服务器）。
+只信任你信得过其代码的文件夹。是否信任？[y/N] `, printable(cwd)))
+	line, _ := stdin.ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes" || answer == "是"
+}
+
+// hostError is a request the host refused; code names the reason when the
+// host gives one.
+type hostError struct {
+	status        int
+	code, message string
+}
+
+func (e hostError) Error() string { return printable(e.message) }
+
+// printable drops control and format characters: titles and paths come from
+// transcripts and must not send escape sequences to the local terminal.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func (c *client) terminals() ([]remoteSession, error) {
@@ -515,7 +584,7 @@ func choose(list []remoteSession, create func() (remoteSession, error)) (remoteS
 		if showCwd {
 			where = "  " + x.Cwd
 		}
-		fmt.Printf("%s%2d. %s  [%s]%s  (%s)\n", mark, i+1, x.Title, sessionState(x), where, x.ID[:8])
+		fmt.Printf("%s%2d. %s  [%s]%s  (%s)\n", mark, i+1, printable(x.Title), sessionState(x), printable(where), x.ID[:8])
 	}
 	if create != nil {
 		mark := " "
@@ -565,7 +634,7 @@ func confirmAttached(x remoteSession) bool {
 		return true
 	}
 	fmt.Print(i18n.F("“%s” already has %d terminal(s) attached: they share the screen and type into the same Claude Code. Attach anyway? [y/N] ",
-		"「%s」已有 %d 个终端接入：画面同步，输入会进入同一个 Claude Code。仍然接入？[y/N] ", x.Title, x.Attached))
+		"「%s」已有 %d 个终端接入：画面同步，输入会进入同一个 Claude Code。仍然接入？[y/N] ", printable(x.Title), x.Attached))
 	line, _ := stdin.ReadString('\n')
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes" || answer == "是"

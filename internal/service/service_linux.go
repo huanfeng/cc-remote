@@ -42,6 +42,7 @@ func renderUnit(cfg *Config) string {
 func register(cfg *Config, dryRun bool, out io.Writer) error {
 	path, unit := unitPath(), renderUnit(cfg)
 	if dryRun {
+		unit = renderUnit(redacted(cfg)) // shown, often pasted elsewhere: no --env secrets
 		fmt.Fprint(out, i18n.F("[dry-run] write %s:\n%s[dry-run] systemctl --user daemon-reload && systemctl --user enable %s\n", "[dry-run] 写入 %s：\n%s[dry-run] systemctl --user daemon-reload && systemctl --user enable %s\n", path, unit, unitName))
 		return nil
 	}

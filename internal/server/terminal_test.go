@@ -246,9 +246,12 @@ func eventTexts(st *store.Store, id string) []string {
 // status through the hooks; stop presses Esc, then Ctrl+C.
 func TestTerminalSessionMessagesStatusAndStop(t *testing.T) {
 	s, base, st, keys := setupTerminal(t)
-	if code, _ := call(t, base, "POST", "/api/sessions", map[string]any{"title": "x", "cwd": t.TempDir(), "mode": "terminal"}); code != 400 {
+	env := s.cfg.ClaudeConfigEnv
+	s.cfg.ClaudeConfigEnv = t.TempDir() // no folder is trusted yet
+	if code, _ := call(t, base, "POST", "/api/sessions", map[string]any{"title": "x", "cwd": t.TempDir(), "mode": "terminal"}); code != http.StatusPreconditionRequired {
 		t.Fatalf("terminal session without trust: %d", code)
 	}
+	s.cfg.ClaudeConfigEnv = env
 	x := createTerminal(t, base)
 	if code, b := call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "hello\nworld"}); code != 202 {
 		t.Fatalf("send: %d %s", code, b)

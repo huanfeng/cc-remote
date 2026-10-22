@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
 	"cc-remote/internal/i18n"
@@ -163,6 +164,11 @@ func Run(ctx context.Context, o Options, emit func(Event) error) error {
 }
 
 func runEnvironment(env []string, o Options) []string {
+	// The host's access token must not reach Claude or the commands it runs.
+	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return name == "CC_REMOTE_TOKEN" || runtime.GOOS == "windows" && strings.EqualFold(name, "CC_REMOTE_TOKEN")
+	})
 	env = replaceEnv(env, "CC_REMOTE_BRIDGE_URL", o.BridgeURL, runtime.GOOS == "windows")
 	env = replaceEnv(env, "CC_REMOTE_BRIDGE_TOKEN", o.BridgeToken, runtime.GOOS == "windows")
 	if o.ConfigDir != "" {

@@ -28,6 +28,7 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 
 - 当前目录已有终端会话时，`ccr` 列出它们（状态、已接入的终端数、最近活动）让你选择：回车选最近一个没有终端接入的会话，都有终端接入时回车新建，`0` 新建。
 - 接入一个已有终端接入的会话前会先确认：两个终端画面同步，输入会进入同一个 Claude Code。
+- 在 Claude Code 还没信任过的目录（`~/.claude.json` 里没有它或上级目录的信任记录）新建会话时，`ccr` 先问是否信任，和直接运行 `claude` 时的信任对话框一样：目录里的设置可以运行命令（hooks、MCP 服务器），克隆来的陌生仓库请先确认再信任。已信任的目录不再询问。
 - 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
 - `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
 - 宿主运行它自己配置的 Claude Code，`cc-remote -- claude` 里的 `claude` 只是占位。

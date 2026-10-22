@@ -55,6 +55,9 @@ func decodeOutput(b []byte) string {
 }
 
 func runQuiet(name string, args ...string) (string, error) {
+	if managerDisabled != nil {
+		return "", managerDisabled
+	}
 	cmd := exec.Command(name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	b, err := cmd.CombinedOutput()

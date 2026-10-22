@@ -2,6 +2,11 @@ package terminal
 
 import (
 	"bufio"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -72,5 +77,75 @@ func TestChoose(t *testing.T) {
 	answer("\n")
 	if confirmAttached(list[0]) || !confirmAttached(remoteSession{}) {
 		t.Fatal("attached without a yes, or asked for a free session")
+	}
+}
+
+// ccr sends the access token only to this machine or over HTTPS.
+func TestNewClientHost(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "access-token"), []byte("token-0123456789abcdef"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_REMOTE_TOKEN", "")
+	for _, host := range []string{"http://192.168.1.5:8787", "http://cc.example.com", "ftp://127.0.0.1", "http://user@127.0.0.1:8787"} {
+		if _, err := newClient(host, dir); err == nil || !strings.Contains(err.Error(), "--host") {
+			t.Fatalf("%s: %v", host, err)
+		}
+	}
+	if _, err := newClient("https://cc.example.invalid", dir); err != nil {
+		t.Fatalf("an HTTPS host: %v", err)
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	if got := printable("a\x1b]52;c;ZXZpbA==\x07b‮c\r\n"); got != "a]52;c;ZXZpbA==bc" {
+		t.Fatalf("printable = %q", got)
+	}
+}
+
+// In a folder Claude Code does not trust, ccr asks first and sends
+// trustFolder only after a yes.
+func TestStartAsksTrust(t *testing.T) {
+	var bodies []map[string]any
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		bodies = append(bodies, body)
+		if body["trustFolder"] != true {
+			w.WriteHeader(http.StatusPreconditionRequired)
+			w.Write([]byte(`{"error":"trust","code":"trust-required"}`))
+			return
+		}
+		w.WriteHeader(201)
+		w.Write([]byte(`{"id":"s1"}`))
+	}))
+	defer host.Close()
+	c := &client{host: host.URL, token: "t"}
+	defer func(old *bufio.Reader) { stdin = old }(stdin)
+	stdin = bufio.NewReader(strings.NewReader("\n"))
+	if _, err := c.start(map[string]any{"cwd": "x"}, "x"); err == nil || len(bodies) != 1 {
+		t.Fatalf("Enter (no) started a session: %v, %d requests", err, len(bodies))
+	}
+	bodies = nil
+	stdin = bufio.NewReader(strings.NewReader("y\n"))
+	if x, err := c.start(map[string]any{"cwd": "x"}, "x"); err != nil || x.ID != "s1" || len(bodies) != 2 || bodies[0]["trustFolder"] != nil {
+		t.Fatalf("yes: %+v %v %v", x, err, bodies)
+	}
+	// A host from before the code: 400 with the message only.
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["trustFolder"] != true {
+			w.WriteHeader(400)
+			w.Write([]byte(`{"error":"终端会话需要确认信任此目录"}`))
+			return
+		}
+		w.WriteHeader(201)
+		w.Write([]byte(`{"id":"s2"}`))
+	}))
+	defer old.Close()
+	stdin = bufio.NewReader(strings.NewReader("y\n"))
+	if x, err := (&client{host: old.URL, token: "t"}).start(map[string]any{"cwd": "x"}, "x"); err != nil || x.ID != "s2" {
+		t.Fatalf("old host: %+v %v", x, err)
 	}
 }

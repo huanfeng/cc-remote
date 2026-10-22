@@ -20,3 +20,18 @@ func Acquire(dir string) (func(), error) {
 	}
 	return func() { unlock(f); f.Close() }, nil
 }
+
+// Held reports whether a host holds dir's lock now. It never creates the
+// lock file, and only takes the lock (for a moment) when no host holds it.
+func Held(dir string) bool {
+	f, err := os.OpenFile(filepath.Join(dir, "host.lock"), os.O_RDWR, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if lock(f) != nil {
+		return true
+	}
+	unlock(f)
+	return false
+}

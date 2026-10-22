@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
@@ -144,6 +145,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/bridge/request", s.bridge)
 	mux.HandleFunc("POST /api/channels/{id}/interactions", s.channelInteraction)
+	mux.HandleFunc("GET "+hostauth.Path, s.hello)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/identity", s.identityAPI)
 	mux.HandleFunc("PUT /api/identity", s.identityAPI)
@@ -201,7 +203,7 @@ func (s *Server) Handler() http.Handler {
 			}
 			// A download's ticket is its credential: the browser saves it without the token.
 			// So is a web terminal stream's: a browser WebSocket cannot send the header.
-			if r.URL.Path != "/api/bridge/request" && !strings.HasPrefix(r.URL.Path, "/api/download/") && !streamTicket(r) && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) {
+			if r.URL.Path != "/api/bridge/request" && r.URL.Path != hostauth.Path && !strings.HasPrefix(r.URL.Path, "/api/download/") && !streamTicket(r) && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) && !s.hookRequest(r) {
 				fail(w, 401, s.lang(r).T("Invalid access token", "访问凭证无效"))
 				return
 			}
@@ -238,6 +240,17 @@ func sameOrigin(origin string, r *http.Request) bool {
 	}
 	// Some proxies send the host without the default port of the scheme.
 	return u.Port() == "" && strings.EqualFold(u.Hostname(), strings.TrimSuffix(strings.TrimSuffix(fwd, ":443"), ":80"))
+}
+
+// hello is GET /api/hello?nonce=N, without the token: the proof that this host
+// holds it, which local clients check before sending it (hostauth.Check).
+func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
+	nonce := r.URL.Query().Get("nonce")
+	if !hostauth.ValidNonce(nonce) {
+		fail(w, 400, s.lang(r).T("Invalid nonce", "无效的 nonce"))
+		return
+	}
+	respond(w, 200, map[string]string{"proof": hostauth.Proof(s.cfg.Token, nonce)})
 }
 
 func equalToken(header, token string) bool {
@@ -394,8 +407,8 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("Invalid session type", "无效的会话类型"))
 		return
 	}
-	if req.Mode == "terminal" && !req.TrustFolder {
-		fail(w, 400, s.lang(r).T("A terminal session requires confirming that you trust this folder", "终端会话需要确认信任此目录"))
+	if req.Mode == "terminal" && !req.TrustFolder && !s.claudeTrusts(cwd) {
+		s.trustRequired(w, r)
 		return
 	}
 	x, e := s.store.Create(req.Title, cwd, store.ID(), false)
@@ -418,16 +431,19 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, x)
 }
 
+// trustRequired refuses a terminal session in a folder Claude Code does not
+// trust yet: the request must confirm trusting it (trustFolder), as Claude
+// Code's own dialog would ask.
+func (s *Server) trustRequired(w http.ResponseWriter, r *http.Request) {
+	respond(w, http.StatusPreconditionRequired, map[string]string{"error": s.lang(r).T("A terminal session requires confirming that you trust this folder", "终端会话需要确认信任此目录"), "code": "trust-required"})
+}
+
 // createResumed answers a terminal session continuing a Claude Code session:
 // the one that already does, or a new one in the session's own directory.
 func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, claudeArgs []string, o overrideRequest) {
 	l := s.lang(r)
 	if mode != "terminal" {
 		fail(w, 400, l.T("Only a terminal session can resume a Claude Code session", "只有终端会话可以恢复 Claude Code 会话"))
-		return
-	}
-	if !trust {
-		fail(w, 400, l.T("A terminal session requires confirming that you trust this folder", "终端会话需要确认信任此目录"))
 		return
 	}
 	claudeID = strings.ToLower(strings.TrimSpace(claudeID))
@@ -462,6 +478,10 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 	cwd, e := validateCwd(l, n.Cwd)
 	if e != nil {
 		fail(w, 400, e.Error())
+		return
+	}
+	if !trust && !s.claudeTrusts(cwd) {
+		s.trustRequired(w, r)
 		return
 	}
 	if title == "" {

@@ -50,7 +50,7 @@ web                React / PWA 和嵌入式构建产物
 - 宿主的兜底只认审批对应的那次调用：建卡时 transcript 里唯一一个尚无结果的同名同输入调用；有多个这样的调用（相同调用并行）或是子 agent 的调用时不兜底，交给 Hook。网页回答一个审批后，同一会话还有别的审批在等时，会话保持「等待操作」。
 - 「交给终端」撤回网页卡片，只在终端作答。
 - Hook 一律 fail-open：会话不匹配、宿主不可达或任何错误都不输出决定，原生对话框照常可用。
-- Hook 连接宿主所需的令牌写在会话配置目录的 0600 文件 `ask.json` 中（经 `CC_REMOTE_ASK_FILE` 定位），不进入环境变量。
+- Hook 连接宿主所需的令牌写在会话配置目录的 0600 文件 `ask.json`、`terminal.json` 中（经 `CC_REMOTE_ASK_FILE`、`CC_REMOTE_TERMINAL_FILE` 定位），不进入环境变量。它不是访问令牌，而是每个终端会话启动时随机生成的 Hook 令牌，只能调用这个会话自己的 `/api/terminals/{id}/hook|status` 和 `/api/channels/{claudeID}/interactions`：Claude Code 及它运行的任何命令都读得到这两个文件，拿到的令牌不能审批请求、改权限模式或操作别的会话。
 
 早期的共享终端模式（Claude Code 在用户自己的终端里运行，网页经 Channels MCP 桥接）已移除；数据库中的共享会话在宿主启动时转为终端会话，沿用原 Claude 会话 ID，下次使用时以 `--resume` 恢复。
 
