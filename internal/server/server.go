@@ -250,7 +250,12 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("Invalid nonce", "无效的 nonce"))
 		return
 	}
-	respond(w, 200, map[string]string{"proof": hostauth.Proof(s.cfg.Token, nonce)})
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		fail(w, 500, s.lang(r).T("Unknown listening address", "未知的监听地址"))
+		return
+	}
+	respond(w, 200, map[string]string{"proof": hostauth.Proof(s.cfg.Token, nonce, local.String())})
 }
 
 func equalToken(header, token string) bool {

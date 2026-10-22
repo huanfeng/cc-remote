@@ -2,6 +2,8 @@ package hostauth
 
 import (
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,7 +44,7 @@ func TestCheckOldHost(t *testing.T) {
 func TestCheckProof(t *testing.T) {
 	const token = "token-0123456789abcdef"
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"proof":"` + Proof(token, r.URL.Query().Get("nonce")) + `"}`))
+		w.Write([]byte(`{"proof":"` + Proof(token, r.URL.Query().Get("nonce"), localAddr(r)) + `"}`))
 	}))
 	defer host.Close()
 	if err := Check(host.Client(), host.URL, token, ""); err != nil {
@@ -51,13 +53,25 @@ func TestCheckProof(t *testing.T) {
 	if err := Check(host.Client(), host.URL, "other-0123456789abcdef", ""); !errors.Is(err, ErrWrongToken) {
 		t.Fatalf("other token: %v", err)
 	}
-	replay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"proof":"` + Proof(token, "0123456789abcdef0123456789abcdef") + `"}`))
+	// Another service relays the challenge to the real host: the proof names
+	// the real host's address, not the one the client connected to.
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp, err := http.Get(host.URL + r.URL.RequestURI())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer resp.Body.Close()
+		io.Copy(w, resp.Body)
 	}))
-	defer replay.Close()
-	if err := Check(replay.Client(), replay.URL, token, ""); !errors.Is(err, ErrWrongToken) {
-		t.Fatalf("a replayed proof: %v", err)
+	defer relay.Close()
+	if err := Check(relay.Client(), relay.URL, token, ""); !errors.Is(err, ErrWrongToken) {
+		t.Fatalf("a relayed proof: %v", err)
 	}
+}
+
+func localAddr(r *http.Request) string {
+	return r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
 }
 
 func TestVerifyRemoteHTTPS(t *testing.T) {

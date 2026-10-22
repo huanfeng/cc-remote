@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -49,10 +50,13 @@ var nonceRE = regexp.MustCompile(`^[0-9a-f]{32,128}$`)
 // ValidNonce reports whether a request's nonce has the form clients send.
 func ValidNonce(nonce string) bool { return nonceRE.MatchString(nonce) }
 
-// Proof is what a host holding token answers for nonce.
-func Proof(token, nonce string) string {
+// Proof is what a host holding token answers for nonce on a connection to
+// addr, the address it accepted the connection on. Binding the address keeps a
+// proof from being relayed: a service on another port could otherwise ask the
+// real host for one and pass it off as its own.
+func Proof(token, nonce, addr string) string {
 	mac := hmac.New(sha256.New, []byte(token))
-	mac.Write([]byte("cc-remote host proof\x00" + nonce))
+	mac.Write([]byte("cc-remote host proof\x00" + nonce + "\x00" + addr))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -92,7 +96,15 @@ func Check(client *http.Client, base, token, dataDir string) error {
 		return err
 	}
 	nonce := hex.EncodeToString(b)
-	resp, err := client.Get(base + Path + "?nonce=" + nonce)
+	req, err := http.NewRequest(http.MethodGet, base+Path+"?nonce="+nonce, nil)
+	if err != nil {
+		return err
+	}
+	var addr string // where the request really went
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+		addr = info.Conn.RemoteAddr().String()
+	}}))
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -105,7 +117,7 @@ func Check(client *http.Client, base, token, dataDir string) error {
 		if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&v) != nil {
 			return ErrNotHost
 		}
-		if token == "" || !hmac.Equal([]byte(v.Proof), []byte(Proof(token, nonce))) {
+		if token == "" || addr == "" || !hmac.Equal([]byte(v.Proof), []byte(Proof(token, nonce, addr))) {
 			return ErrWrongToken
 		}
 		return nil

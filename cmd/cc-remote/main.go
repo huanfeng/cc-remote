@@ -350,8 +350,10 @@ func runHost(argv []string) error {
 		return conflict(err)
 	}
 	defer release()
+	// Without the marker, clients would keep trusting whatever answers while
+	// this host runs (the fallback for hosts before /api/hello).
 	if err = hostauth.MarkHost(absData); err != nil {
-		log.Printf("host proof marker: %v", err)
+		return err
 	}
 	// Leftovers of the retired shared mode's launcher (best effort).
 	for _, dir := range []string{"channel-config", "channel-locks"} {

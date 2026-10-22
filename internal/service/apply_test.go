@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,7 +27,7 @@ func fakeHost(t *testing.T, reload func(w http.ResponseWriter), restarts *int) *
 		}
 	})
 	mux.HandleFunc("GET "+hostauth.Path, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"proof":%q}`, hostauth.Proof("test-token-0123456789", r.URL.Query().Get("nonce")))
+		fmt.Fprintf(w, `{"proof":%q}`, hostauth.Proof("test-token-0123456789", r.URL.Query().Get("nonce"), r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()))
 	})
 	mux.HandleFunc("POST /api/admin/reload", func(w http.ResponseWriter, _ *http.Request) { reload(w) })
 	mux.HandleFunc("POST /api/admin/restart", func(w http.ResponseWriter, _ *http.Request) {

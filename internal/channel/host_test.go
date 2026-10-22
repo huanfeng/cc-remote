@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,7 @@ func TestEnsureHostAuthenticatesMatchingDataDirectory(t *testing.T) {
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == hostauth.Path {
-			w.Write([]byte(`{"proof":"` + hostauth.Proof("matching-test-token", r.URL.Query().Get("nonce")) + `"}`))
+			w.Write([]byte(`{"proof":"` + hostauth.Proof("matching-test-token", r.URL.Query().Get("nonce"), r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()) + `"}`))
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer matching-test-token" {
