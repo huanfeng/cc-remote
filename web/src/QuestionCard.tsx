@@ -18,6 +18,8 @@ type Props = {
   onAnswer?: (answers: Record<string, string>) => void;
   /** ExitPlanMode: when given and unanswered, approve with a permission mode or keep planning with feedback. */
   onDecide?: (decision: PlanDecision) => void;
+  /** AskUserQuestion: answer nothing and talk the questions over first ("Chat about this" in the terminal). */
+  onClarify?: (message: string) => void;
   /** Terminal session: withdraw the web prompt and answer in the native terminal. */
   onHandoff?: () => void;
   /** Where a recorded answer was given, when known. */
@@ -72,9 +74,9 @@ function PlanCard({ call, waitingHint, onDecide, onHandoff, answeredBy, busy, se
     {plan.split('\n').length > 16 && <button type="button" className="tool-more" onClick={() => setFull(!full)}>{full ? t('Show less', '收起') : t('Show the whole plan', '显示全部计划')}</button>}
     {call.status === 'error' && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
     {interactive && <>
-      <ul className="question-options plan-modes" aria-label={t('Permission mode after approval', '批准后的权限模式')}>{modes.map(option => {
+      <ul className="question-options plan-modes" role="radiogroup" aria-label={t('Permission mode after approval', '批准后的权限模式')}>{modes.map(option => {
         const selected = mode === option.value;
-        return <li key={option.value} className={selected ? 'selected' : ''}><button type="button" disabled={busy} aria-pressed={selected} onClick={() => setMode(option.value)}><span className="question-check">{selected && <CheckIcon size={12} />}</span><span><strong>{option.label}</strong><small>{option.description}</small></span></button></li>;
+        return <li key={option.value} className={selected ? 'selected' : ''}><button type="button" role="radio" disabled={busy} aria-checked={selected} onClick={() => setMode(option.value)}><Mark selected={selected} multi={false} /><span><strong>{option.label}</strong><small>{option.description}</small></span></button></li>;
       })}</ul>
       <textarea className="question-feedback" aria-label={t('Plan feedback', '计划修改意见')} rows={2} placeholder={t('To change the plan, write your feedback, then choose "Keep planning"', '需要调整时写下修改意见，再点「继续规划」')} value={feedback} disabled={busy} onChange={event => setFeedback(event.target.value)} />
       <div className="request-actions">
@@ -86,7 +88,30 @@ function PlanCard({ call, waitingHint, onDecide, onHandoff, answeredBy, busy, se
   </section>;
 }
 
-function AskCard({ call, waitingHint, onAnswer, onHandoff, answeredBy, busy, draft: held, setDraft: setHeld }: Props) {
+const CLARIFY = 'The user wants to clarify these questions.';
+
+/** What Claude reads when the user chats about the questions instead of answering,
+ * as Claude Code's own "Chat about this" words it: the questions and any picks so far. */
+export function clarifyMessage(questions: string[], picked: (question: string) => string): string {
+  return [CLARIFY,
+    'This means they may have additional information, context or questions for you.',
+    'Take their response into account and then reformulate the questions if appropriate.',
+    'Start by asking them what they would like to clarify.',
+    '',
+    'Questions asked:',
+    ...questions.flatMap(question => [`- "${question}"`, picked(question) ? `  Answer: ${picked(question)}` : '  (No answer provided)']),
+  ].join('\n');
+}
+
+/** Whether a declined question was declined to chat about it. */
+export const clarified = (call: ToolCall) => call.status === 'error' && call.resultText.includes(CLARIFY);
+
+/** A choice's mark: a radio dot for one answer, a check box for several. */
+function Mark({ selected, multi }: { selected: boolean; multi: boolean }) {
+  return <span className={`question-check${multi ? '' : ' radio'}`} aria-hidden="true">{selected && multi && <CheckIcon size={12} />}</span>;
+}
+
+function AskCard({ call, waitingHint, onAnswer, onClarify, onHandoff, answeredBy, busy, draft: held, setDraft: setHeld }: Props) {
   const views = questionViews(call);
   const answered = call.status === 'ok';
   const interactive = !!onAnswer && unanswered(call);
@@ -101,18 +126,18 @@ function AskCard({ call, waitingHint, onAnswer, onHandoff, answeredBy, busy, dra
   // Typed text replaces the picked options; multi-select labels are joined like Claude Code does.
   const value = (question: string) => custom[question]?.trim() || (picks[question] || []).join(', ');
   return <section className={`question-card is-${call.status}`}>
-    <header><span className="eyebrow"><QuestionIcon size={12} /> {t('Claude asks', 'Claude 的提问')}</span><span className={`question-state is-${call.status}`}>{answered ? answeredBy === 'web' ? WEB_SUBMITTED : answeredBy === 'terminal' ? t('Answered in the terminal', '已在终端回答') : t('Answered', '已回答') : call.status === 'error' ? t('Not answered', '未回答') : waitingHint}</span></header>
+    <header><span className="eyebrow"><QuestionIcon size={12} /> {t('Claude asks', 'Claude 的提问')}</span><span className={`question-state is-${call.status}`}>{answered ? answeredBy === 'web' ? WEB_SUBMITTED : answeredBy === 'terminal' ? t('Answered in the terminal', '已在终端回答') : t('Answered', '已回答') : clarified(call) ? t('Chose to chat about it', '已选择先聊聊') : call.status === 'error' ? t('Not answered', '未回答') : waitingHint}</span></header>
     {views.map((view, index) => {
       const isSelected = (label: string) => interactive ? (picks[view.question] || []).includes(label) : view.options.some(option => option.label === label && option.selected);
       const withPreview = view.options.some(option => option.preview);
       const shown = withPreview ? view.options.find(option => option.label === focus[view.question]) || view.options.find(option => isSelected(option.label)) || view.options[0] : undefined;
       const show = (label: string) => setFocus(old => old[view.question] === label ? old : { ...old, [view.question]: label });
-      const list = <ul className="question-options">{view.options.map(option => {
+      const list = <ul className="question-options" role={view.multiSelect ? 'group' : 'radiogroup'} aria-label={view.question}>{view.options.map(option => {
         const selected = isSelected(option.label);
-        const body = <><span className="question-check">{selected && <CheckIcon size={12} />}</span><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span></>;
+        const body = <><Mark selected={selected} multi={view.multiSelect} /><span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span></>;
         const previewed = withPreview && option === shown ? ' previewed' : '';
         return <li key={option.label} className={(selected ? 'selected' : '') + previewed}>{interactive
-          ? <button type="button" disabled={busy} aria-pressed={selected} onMouseEnter={withPreview ? () => show(option.label) : undefined} onFocus={withPreview ? () => show(option.label) : undefined} onClick={() => { show(option.label); toggle(view.question, option.label, view.multiSelect); }}>{body}</button>
+          ? <button type="button" role={view.multiSelect ? 'checkbox' : 'radio'} disabled={busy} aria-checked={selected} onMouseEnter={withPreview ? () => show(option.label) : undefined} onFocus={withPreview ? () => show(option.label) : undefined} onClick={() => { show(option.label); toggle(view.question, option.label, view.multiSelect); }}>{body}</button>
           : withPreview ? <button type="button" className="question-option-view" onClick={() => show(option.label)}>{body}</button> : <div>{body}</div>}</li>;
       })}</ul>;
       return <div className="question-item" key={index}>
@@ -123,9 +148,9 @@ function AskCard({ call, waitingHint, onAnswer, onHandoff, answeredBy, busy, dra
       {view.custom && <p className="question-custom">{t('Answer: ', '回答：')}{view.custom}</p>}
     </div>;
     })}
-    {call.status === 'error' && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
+    {call.status === 'error' && call.resultText && !clarified(call) && <p className="question-note">{firstLine(call.resultText)}</p>}
     {answered && !views.some(view => view.answer !== undefined) && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
-    {interactive && <div className="request-actions"><HandoffButton onHandoff={onHandoff} busy={busy} /><button type="button" className="primary" disabled={busy || views.some(view => !value(view.question))} onClick={() => onAnswer!(Object.fromEntries(views.map(view => [view.question, value(view.question)])))}>{t('Submit answers', '提交回答')}</button></div>}
+    {interactive && <div className="request-actions"><HandoffButton onHandoff={onHandoff} busy={busy} />{onClarify && <button type="button" className="secondary" disabled={busy} title={t('Answer nothing for now and talk these questions over with Claude first (Chat about this in the terminal)', '先不回答，和 Claude 讨论这些问题（同终端里的 Chat about this）')} onClick={() => onClarify(clarifyMessage(views.map(view => view.question), value))}>{t('Chat about this', '先聊聊')}</button>}<button type="button" className="primary" disabled={busy || views.some(view => !value(view.question))} onClick={() => onAnswer!(Object.fromEntries(views.map(view => [view.question, value(view.question)])))}>{t('Submit answers', '提交回答')}</button></div>}
   </section>;
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,8 @@ type bridgeRequest struct {
 type bridgeResponse struct {
 	Decision string            `json:"decision"`
 	Answers  map[string]string `json:"answers"`
+	// A denial's reason for Claude, such as the user asking to talk a question over first.
+	Message string `json:"message"`
 }
 
 func requestBridge(ctx context.Context, req bridgeRequest) (bridgeResponse, error) {
@@ -90,6 +93,9 @@ func runHook(input io.Reader, output io.Writer) error {
 		reason = "Remote interaction unavailable: " + err.Error()
 	} else {
 		decision = answer.Decision
+		if decision == "deny" && strings.TrimSpace(answer.Message) != "" {
+			reason = answer.Message
+		}
 	}
 	out := map[string]any{"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}
 	if decision == "allow" {

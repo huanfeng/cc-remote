@@ -257,7 +257,11 @@ func TestApprovalBridgeRoundtrip(t *testing.T) {
 		t.Fatal("not waiting")
 	}
 	path := "/api/requests/" + pending[0].ID
-	if code, b = request(t, ts, "POST", path, map[string]string{"decision": "allow"}, testToken); code != 200 {
+	// Only a denial may carry a message: "chat about this" on a question.
+	if code, _ = request(t, ts, "POST", path, map[string]string{"decision": "allow", "message": "x"}, testToken); code != 400 {
+		t.Fatal("a message with an approval was accepted")
+	}
+	if code, b = request(t, ts, "POST", path, map[string]string{"decision": "deny", "message": "The user wants to clarify these questions."}, testToken); code != 200 {
 		t.Fatalf("resolve %d %s", code, b)
 	}
 	if code, _ = request(t, ts, "POST", path, map[string]string{"decision": "deny"}, testToken); code != 409 {
@@ -265,7 +269,7 @@ func TestApprovalBridgeRoundtrip(t *testing.T) {
 	}
 	select {
 	case a := <-got:
-		if a.Decision != "allow" {
+		if a.Decision != "deny" || a.Message != "The user wants to clarify these questions." {
 			t.Fatal(a)
 		}
 	case <-time.After(3 * time.Second):

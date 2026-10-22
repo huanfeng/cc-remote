@@ -32,7 +32,8 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 - 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
 - `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
 - 宿主运行它自己配置的 Claude Code，`cc-remote -- claude` 里的 `claude` 只是占位。
-- 接入本机宿主时，Claude Code 输出里提到的本机文件（绝对路径，如 `C:\Users\me\shot.png`、`/home/me/app/main.go`）可以点击打开：`ccr` 把它们标成终端超链接（OSC 8）。只在已知支持的终端里启用（Windows Terminal、VS Code、iTerm2、WezTerm、kitty、Ghostty、Alacritty、JetBrains、VTE 系终端），tmux / screen 里不启用；超链接不占位置，画面不变。用 `CC_REMOTE_HYPERLINKS=1` 强制开启、`=0` 关闭。
+- 接入本机宿主时，Claude Code 输出里提到的本机文件（绝对路径，如 `C:\Users\me\shot.png`、`/home/me/app/main.go`）可以点击打开：`ccr` 把它们标成终端超链接（OSC 8）。只在已知支持的终端里启用（Windows Terminal、VS Code、iTerm2、WezTerm、kitty、Ghostty、Alacritty、JetBrains、VTE 系终端），tmux / screen 里不启用；超链接不占位置，画面不变。用 `CC_REMOTE_HYPERLINKS=1` 强制开启、`=0` 关闭（同时关闭下面的点击打开）。
+- Claude Code 的全屏界面会接管鼠标（点击用来展开工具调用等），终端此时不会自己打开链接。所以 `ccr` 会记住当前画面：**Ctrl+点击**（与 Windows Terminal 打开链接的习惯一致）落在本机存在的文件路径上时，由 `ccr` 用默认程序打开该文件，这次点击不再交给 Claude Code；普通点击照常交给 Claude Code（展开工具调用、在输入框里定位等）。这适用于任何终端；工具调用里的相对路径（如 `Update(web/src/App.tsx)`）按会话目录查找，被折到下一行的长路径点任意一段都可以。其它点击、拖动和滚轮也照常交给 Claude Code。
 - 旧的共享终端（Claude Code 在你的终端里运行、网页经 Channels 接入）已移除；之前的共享会话已自动转为终端会话，下次发送消息或用 `ccr` 接入时恢复原来的上下文。
 
 ### 托管会话
@@ -49,7 +50,7 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 宿主在伪终端（Windows 为 ConPTY）里持有一个交互式 Claude Code。网页和本地终端都可以接入同一个进程，切换前端时进程不会重启，子 agent、后台任务等长时间运行的工作也不会中断。设计说明见 [design/terminal-sessions.md](design/terminal-sessions.md)。
 
 1. 网页「新建」，选「终端会话」，填写目录并勾选「信任此目录」（等同于在终端里确认信任此文件夹）。
-2. 对话来自 Claude Code 的记录，消息以粘贴的形式送进终端。Claude 正在工作时发送的消息会显示「排队」。Claude 弹出权限框或提问框时，网页消息会先等待，等对话框关闭后再发送，以免误答对话框。工具权限审批、AskUserQuestion 和计划确认都可以在网页回答，也可以「交给终端」。「停止」相当于按 Esc，15 秒内再按一次相当于 Ctrl+C。
+2. 对话来自 Claude Code 的记录，消息以粘贴的形式送进终端。Claude 正在工作时发送的消息会显示「排队」。Claude 弹出权限框或提问框时，网页消息会先等待，等对话框关闭后再发送，以免误答对话框。工具权限审批、AskUserQuestion 和计划确认都可以在网页回答，也可以「交给终端」。AskUserQuestion 也可以选「先聊聊」：不作答，告诉 Claude 你想先讨论这些问题（同终端里的 Chat about this），托管会话同样可用。「停止」相当于按 Esc，15 秒内再按一次相当于 Ctrl+C。
 3. 点击会话标题栏的终端图标，复制接入命令，在宿主上运行即可在本地终端中操作同一个 Claude Code：
 
    ```sh

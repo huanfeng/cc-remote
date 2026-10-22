@@ -6,6 +6,8 @@ import { PALETTE, apiBase, blockedHttp, currentHost, findHost, forgetAllHosts, h
 import { lang, t } from './i18n';
 import { iconURL } from './hostIcon';
 import { ColorChoices, IconChoices } from './HostLook';
+import { LangSwitch } from './LangSwitch';
+import { SafetyNotice, useSafetyAck } from './SafetyNotice';
 
 type Ping = { online: boolean; running?: number; waiting?: number };
 
@@ -49,9 +51,11 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
   const [error, setError] = useState(shown);
   useEffect(() => setError(shown), [shown]); // the page reports a failed reconnect after mounting this
   const [busy, setBusy] = useState(false);
+  const safety = useSafetyAck();
   const others = loadHosts().hosts.filter(x => x.id !== currentHost?.id);
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!safety.ack) return;
     const entered = normalizeHostUrl(url);
     if (!entered) { setError(via === 'direct' ? t('Enter the host address, such as https://ccr.example.com', '请输入宿主地址，例如 https://ccr.example.com') : t('Enter the entry URL, such as https://example.com/ccr', '请输入入口地址，例如 https://example.com/ccr')); return; }
     // The entry keeps its query (a token for the address service, say); a bare one gets https.
@@ -105,8 +109,9 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
       <IconChoices value={emblem} onChange={setEmblem} color={tint || editing.color || PALETTE[0]} auto={{ label: t('Host', '宿主'), title: t('The host\'s own icon', '宿主自己的图标'), color: tint || editing.color || PALETTE[0], icon: editing.icon }} withLogo />
       <small className="host-via-hint">{t('Saved on this device only, over the name, color and icon set on the host; leave them empty or at Host for the host\'s own.', '只保存在此设备，覆盖宿主上设置的名称、颜色和图标；名称留空、颜色和图标选「宿主」则使用宿主自己的设置。')}</small>
     </>}
+    {!editing && safety.show && <SafetyNotice checked={safety.ack} onChange={safety.setAck} />}
     {error && <div className="error" role="alert">{error}</div>}
-    <button className="primary" disabled={busy}>{busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')} <span>→</span></button>
+    <button className="primary" disabled={busy || !safety.ack}>{busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')} <span>→</span></button>
     {onCancel && <button type="button" className="secondary host-login-cancel" onClick={onCancel}>{t('Cancel', '取消')}</button>}
     {!onCancel && !editing && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{x.entry || x.url}</small></button>)}</div>}
     {!editing && <AllowHint />}
@@ -119,12 +124,14 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
  * retrying: the page tries again by itself (no answer, not a refused token). */
 export function StandaloneHome({ error, retrying, onRetry }: { error: string; retrying: boolean; onRetry: () => void }) {
   const [form, setForm] = useState<'' | 'add' | 'edit'>('');
+  const safety = useSafetyAck();
   const host = currentHost;
   if (form === 'add') return <HostLogin onCancel={() => setForm('')} />;
   if (form === 'edit' && host) return <HostLogin editing={host} onCancel={() => setForm('')} />;
   const others = loadHosts().hosts.filter(x => x.id !== host?.id);
-  const add = <button type="button" className={host ? 'secondary host-home-add' : 'primary'} onClick={() => setForm('add')}>{host ? <><PlusIcon size={15} />{t('Add host', '添加宿主')}</> : <>{t('Add a host', '添加宿主')} <span>→</span></>}</button>;
+  const add = <button type="button" className={host ? 'secondary host-home-add' : 'primary'} disabled={!host && !safety.ack} onClick={() => setForm('add')}>{host ? <><PlusIcon size={15} />{t('Add host', '添加宿主')}</> : <>{t('Add a host', '添加宿主')} <span>→</span></>}</button>;
   if (!host) return <div className="login-card host-home">
+    <LangSwitch />
     <div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1>
     <p>{t('Use Claude Code on your computer from this browser: follow sessions, send messages, answer approvals and questions. This page is only the frontend; it keeps the hosts you add and their tokens on this device.', '在这个浏览器里使用你电脑上的 Claude Code：查看会话、发送消息、回答审批和提问。此页面只是前端，你添加的宿主和令牌只保存在本设备。')}</p>
     <ol className="host-home-steps">
@@ -132,10 +139,12 @@ export function StandaloneHome({ error, retrying, onRetry }: { error: string; re
       <li>{t('Let this page in on the host (below).', '在宿主上允许本页面访问（见下方）。')}</li>
       <li>{t('Add the host here with its address and access token.', '在这里添加宿主，填写地址和访问令牌。')}</li>
     </ol>
+    {safety.show && <SafetyNotice checked={safety.ack} onChange={safety.setAck} />}
     {add}
     <AllowHint />
   </div>;
   return <div className="login-card host-home">
+    <LangSwitch />
     <span className="eyebrow">CC REMOTE</span>
     <div className="host-home-current"><img className="host-swatch" src={iconURL(shownColor(host), shownIcon(host))} alt="" /><div><strong>{shownName(host)}</strong><small>{host.entry || host.url}</small></div></div>
     {error ? <div className="error" role="alert">{error}</div> : <p className="host-home-state"><span className="pulse" />{t('Connecting…', '正在连接…')}</p>}

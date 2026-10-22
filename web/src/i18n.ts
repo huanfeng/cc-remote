@@ -12,8 +12,11 @@ function parse(value: string | null | undefined): Lang | '' {
   return v.startsWith('zh') ? 'zh' : v.startsWith('en') ? 'en' : '';
 }
 
-/** The host's language, as served in index.html. */
-export const hostLang: Lang = (browser && parse(document.documentElement.lang)) || 'en';
+// The standalone page has no host to follow before one is added: it follows the browser.
+const standalone = import.meta.env?.MODE === 'standalone';
+
+/** The host's language, as served in index.html; on the standalone page, the browser's. */
+export const hostLang: Lang = (browser && (standalone ? parse(navigator.languages?.find(x => parse(x)) || navigator.language) : parse(document.documentElement.lang))) || 'en';
 
 /** This browser's choice, or '' to follow the host. */
 export function langOverride(): Lang | '' {

@@ -85,7 +85,7 @@ cc-remote --listen 127.0.0.1:8787,lan:8787
 - 宿主：`--lang auto|zh|en`。`auto`（默认）跟随系统语言：Windows 取用户界面语言，Linux / macOS 依次取 `LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG`；中文环境为中文，其它为英文。
 - 后台服务：`service install --lang zh` 或 `service config --lang en` 保存到 `service.json` 的 `language` 字段（`auto` 清除该字段），宿主每次启动时读取。重装 / `update` 未传 `--lang` 时沿用原设置。`auto` 在安装、`service config`、`update` 时按当前终端的语言确定（launchd / systemd 启动的宿主拿不到你的 `LANG`），之后改了系统语言，再执行一次 `service config --lang auto` 即可。
 - 手动运行的命令和手动启动的宿主（未传 `--lang`）：依次取环境变量 `CC_REMOTE_LANG`、已安装服务的 `language`、系统语言。
-- Web 界面：默认使用宿主的语言，每个浏览器可以在网页设置中单独选择语言。
+- Web 界面：默认使用宿主的语言；独立前端没有宿主可跟随，默认跟随浏览器语言。每个浏览器可以单独选择语言：登录页和独立前端首页右上角的「中文 / EN」，或登录后的网页设置。
 - 宿主日志（`host.log`）、Claude Code 看到的钩子 / MCP 文本不翻译，保持英文。
 
 ```sh

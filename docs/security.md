@@ -58,6 +58,7 @@ location / {
 - 来源按协议、域名、端口精确匹配，不支持通配符。
 - 代理层的认证（Basic Auth、SSO 等）与独立前端不兼容：跨站请求的 `Authorization` 头已用于访问令牌，浏览器也不会带上代理的 Cookie 或 Basic 凭据。需要这类认证时，独立前端访问的宿主请改用 VPN 等网络层限制。
 - 独立前端的页面自带 CSP（不加载外部脚本和图片，Markdown 里的远程图片不会被请求）。`frame-ancestors` 只能通过响应头设置，请在静态站上配置 `Content-Security-Policy: frame-ancestors 'none'` 和 `X-Content-Type-Options: nosniff`，并只通过 HTTPS 提供（Vercel、Cloudflare Pages 的配置已包含，GitHub Pages 无法设置）。页面自身也会检测是否被嵌入框架，被嵌入时不渲染界面。
+- 第一次输入令牌前（宿主自带的登录页、独立前端的首页和添加宿主表单），页面显示安全须知，勾选「我已了解」后才能继续，确认记录在本浏览器的 localStorage：说明令牌等同于宿主电脑的控制权；独立前端还说明页面代码由部署者决定、他人部署的副本可能记录令牌，并指出当前地址是否为官方实例 <https://huanfeng.github.io/cc-remote/>；宿主页面在非本机的明文 HTTP 下提示令牌可能被同网络的人截获。这只是提醒，不能阻止被改动的副本——被改动的副本也可以去掉它。
 - 公共实例 `https://huanfeng.github.io` 与该账号其它仓库的 Pages 同源；介意的话请部署到自己的域名，见 [standalone.md](standalone.md#公共实例github-pages)。
 - 通过入口（文本地址）添加的宿主，令牌发往入口解析出的地址：能改动入口的人就能把令牌引向自己的服务器。自动切换只接受端口变化，主机名或协议变化需要重新添加宿主确认；入口请只用自己控制的服务，见 [standalone.md](standalone.md#安全入口决定令牌发往哪里)。
 

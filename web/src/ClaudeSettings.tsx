@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 import { CloseIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
 import { Select } from './Select';
+import { STANDALONE } from './hosts';
 import { hostLang, langOverride, setLang, t, type Lang } from './i18n';
 import { applyIdentity } from './hostIdentity';
 import { ColorChoices, IconChoices } from './HostLook';
@@ -134,7 +135,7 @@ export function ClaudeSettings({ api, close }: { api: Api; close: () => void }) 
         {section === 'browser' && <div>
           <h3>{t('Language', '语言')}</h3>
           <p>{t('Saved in this browser only; by default the page follows the language configured on the host. Changing it reloads the page.', '只保存在此浏览器；默认跟随宿主配置的语言。切换后页面会重新加载。')}</p>
-          <label>{t('Interface language', '界面语言')}<Select label={t('Interface language', '界面语言')} value={langOverride()} options={[{ value: '', label: t(`Follow host (${LANG_NAMES[hostLang]})`, `跟随宿主（${LANG_NAMES[hostLang]}）`) }, { value: 'zh', label: LANG_NAMES.zh }, { value: 'en', label: LANG_NAMES.en }]} onChange={value => setLang(value as Lang | '')} /></label>
+          <label>{t('Interface language', '界面语言')}<Select label={t('Interface language', '界面语言')} value={langOverride()} options={[{ value: '', label: STANDALONE ? t(`Follow the browser (${LANG_NAMES[hostLang]})`, `跟随浏览器（${LANG_NAMES[hostLang]}）`) : t(`Follow host (${LANG_NAMES[hostLang]})`, `跟随宿主（${LANG_NAMES[hostLang]}）`) }, { value: 'zh', label: LANG_NAMES.zh }, { value: 'en', label: LANG_NAMES.en }]} onChange={value => setLang(value as Lang | '')} /></label>
           <h3>{t('Notifications', '通知')}</h3>
           <p>{t('Saved in this browser only. They come while this page is open, also in a background tab or minimized; a phone may pause a page in the background, and then they wait until you open it. A notification is not shown for the session you are looking at. The tab title also counts the sessions waiting for you.', '只保存在此浏览器。页面打开时（包括后台标签页、最小化）才会收到；手机浏览器切到后台后可能暂停页面，通知会推迟到再次打开时。正在查看的会话不提醒。标签页标题也会显示等待你操作的会话数。')}</p>
           <NotifySettings />

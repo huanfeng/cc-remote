@@ -223,3 +223,13 @@ img.host-swatch{display:block;background:none}
 .login-card .host-home-actions .primary{flex:1;margin-top:0;justify-content:center}
 .host-home-actions .secondary,.host-home-add{display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .host-home-add{width:100%;margin-top:14px}
+.safety-notice{margin:22px 0 0;padding:14px 16px;border:1px solid #e6d3a8;background:#fbf5e6;border-radius:12px;font-size:12px;line-height:1.75;color:#5a5236}
+.safety-notice strong{display:block;font-size:13px;font-weight:600;color:#6e5a26;margin-bottom:6px}
+.safety-notice ul{margin:0 0 10px;padding-left:18px}.safety-notice li+li{margin-top:4px}
+.safety-notice a{color:#527347}
+.safety-notice .safety-warn{color:#a05e4f;font-weight:500}.safety-notice .safety-ok{color:#4e6e3d}
+.safety-notice .checkbox{margin:0;font-size:12px;font-weight:500;color:#3f3a26;gap:8px}.safety-notice .checkbox input{margin-top:5px}
+.login-card{position:relative}
+.lang-switch{position:absolute;top:18px;right:18px;display:flex;gap:2px;padding:2px;border-radius:999px;background:#efefe7}
+.lang-switch button{background:transparent;color:var(--muted);font-size:11px;padding:4px 10px;border-radius:999px}
+.lang-switch button.active{background:#fffaf5;color:#28332d;box-shadow:0 1px 3px #27362c14}

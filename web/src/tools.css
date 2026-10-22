@@ -61,6 +61,9 @@
 .question-preview p{margin:0;font-size:12px;color:#55604f}
 @media(max-width:760px){.question-previewed{grid-template-columns:minmax(0,1fr)}}
 li.selected .question-check{background:#5d8a3e;border-color:#5d8a3e}
+.question-check.radio{border-radius:50%}
+.question-check.radio::after{content:'';width:6px;height:6px;border-radius:50%;background:#fff;transform:scale(0);transition:transform .12s}
+li.selected .question-check.radio::after{transform:scale(1)}
 .question-custom,.question-note{margin:8px 0 0;font-size:12px;color:#55604f}
 .question-card.is-error .question-note{color:#b23b1e}
 .question-custom-input{margin-top:6px;padding:8px 10px;font-size:12.5px;border-radius:9px}

@@ -969,7 +969,8 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		if a.Decision == "terminal" {
 			status = "terminal"
 		}
-	} else if a.Decision == "terminal" || a.Mode != "" || a.Message != "" {
+	} else if a.Decision == "terminal" || a.Mode != "" || a.Message != "" && a.Decision != "deny" || len(a.Message) > 64<<10 {
+		// A managed session's denial may say why ("chat about this" for a question).
 		fail(w, 400, s.lang(r).T("Invalid approval decision", "无效的审批结果"))
 		return
 	}

@@ -245,6 +245,23 @@ func TestQuestionAndPlanHook(t *testing.T) {
 	}
 }
 
+// "Chat about this" on the web denies the question with the reason Claude reads.
+func TestQuestionHookDenyCarriesMessage(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(bridgeResponse{Decision: "deny", Message: "The user wants to clarify these questions."})
+	}))
+	t.Cleanup(s.Close)
+	t.Setenv("CC_REMOTE_BRIDGE_URL", s.URL)
+	t.Setenv("CC_REMOTE_BRIDGE_TOKEN", "test-token")
+	var out bytes.Buffer
+	if err := runHook(strings.NewReader(`{"tool_name":"AskUserQuestion","tool_input":{"questions":[]}}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(out.String(), `"permissionDecisionReason":"The user wants to clarify these questions."`) {
+		t.Fatal(out.String())
+	}
+}
+
 func TestHookFailsClosed(t *testing.T) {
 	t.Setenv("CC_REMOTE_BRIDGE_URL", "https://example.com")
 	t.Setenv("CC_REMOTE_BRIDGE_TOKEN", "token")
