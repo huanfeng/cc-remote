@@ -68,6 +68,15 @@ func TestCheckProof(t *testing.T) {
 	if err := Check(relay.Client(), relay.URL, token, ""); !errors.Is(err, ErrWrongToken) {
 		t.Fatalf("a relayed proof: %v", err)
 	}
+	// Or it redirects the client there: the proof then names where the client
+	// was sent, but the token would go to the service.
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, host.URL+r.URL.RequestURI(), http.StatusFound)
+	}))
+	defer redirect.Close()
+	if err := Check(http.DefaultClient, redirect.URL, token, ""); err == nil {
+		t.Fatal("a redirect to the real host passed")
+	}
 }
 
 func localAddr(r *http.Request) string {

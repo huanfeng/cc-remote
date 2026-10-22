@@ -100,11 +100,16 @@ func Check(client *http.Client, base, token, dataDir string) error {
 	if err != nil {
 		return err
 	}
-	var addr string // where the request really went
+	var addr string // where the request really went: the first connection only
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
-		addr = info.Conn.RemoteAddr().String()
+		if addr == "" {
+			addr = info.Conn.RemoteAddr().String()
+		}
 	}}))
-	resp, err := client.Do(req)
+	// A redirect would let the service at base fetch the real host's proof.
+	once := *client
+	once.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := once.Do(req)
 	if err != nil {
 		return err
 	}
