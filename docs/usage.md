@@ -32,6 +32,7 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 - 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
 - `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
 - 宿主运行它自己配置的 Claude Code，`cc-remote -- claude` 里的 `claude` 只是占位。
+- 接入本机宿主时，Claude Code 输出里提到的本机文件（绝对路径，如 `C:\Users\me\shot.png`、`/home/me/app/main.go`）可以点击打开：`ccr` 把它们标成终端超链接（OSC 8）。只在已知支持的终端里启用（Windows Terminal、VS Code、iTerm2、WezTerm、kitty、Ghostty、Alacritty、JetBrains、VTE 系终端），tmux / screen 里不启用；超链接不占位置，画面不变。用 `CC_REMOTE_HYPERLINKS=1` 强制开启、`=0` 关闭。
 - 旧的共享终端（Claude Code 在你的终端里运行、网页经 Channels 接入）已移除；之前的共享会话已自动转为终端会话，下次发送消息或用 `ccr` 接入时恢复原来的上下文。
 
 ### 托管会话
@@ -174,6 +175,8 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 - Markdown 按格式渲染，可切换查看源码；其中的相对链接打开另一个文件（可返回），相对路径的图片直接显示。代码文件按语言高亮、显示行号，`:行号` 会标出并滚动到该行。PNG、JPEG、GIF、WebP、SVG 等图片直接预览；PDF 和其它无法预览的文件可以下载。文档里的 `#标题` 链接滚动到对应标题。
 - 相对路径依次在文档所在目录、同一条消息（或文档、打开文档的那条消息）里出现的绝对目录、会话工作目录中查找。例如消息里写了 worktree 目录，其后的 `docs/...` 就在该 worktree 中查找。
 - 只能打开会话工作目录，以及会话中出现过的目录、出现过的文件所在目录里的文件（符号链接按实际位置判断）；根目录、一级目录和用户主目录本身不会因为被提到而开放。超过 20 MiB 的文件不预览，但可以下载（不限大小，由浏览器直接下载，支持断点续传）；超过 2 MiB 的文本按纯文本显示，约 40 万字符以上的代码不高亮。网络共享路径（`\\host\share`）不会打开，以免宿主连接到其它机器。
+- 图片在查看器里自己缩放：双指捏合、滚轮或双击（手机上双击屏幕）放大，放大后拖动查看，右下角的按钮缩小、放大或回到适应窗口。
+- 网页终端里的文件路径同样可以点开。
 - 终端历史（未导入的原生会话）不支持打开文件。
 
 ## 刷新与状态恢复

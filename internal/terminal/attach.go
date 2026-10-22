@@ -777,8 +777,17 @@ func (c *client) attachOnce(x remoteSession) error {
 	if err != nil {
 		return err
 	}
+	var screenOut io.Writer = os.Stdout
+	var links *linkWriter
+	if hostauth.Local(c.host) && hyperlinks() { // file paths open with a click
+		links = newLinkWriter(os.Stdout)
+		screenOut = links
+	}
 	detached := false
 	defer func() {
+		if links != nil {
+			links.close()
+		}
 		os.Stdout.WriteString(resetModes)
 		_ = term.Restore(in, old)
 		if detached {
@@ -851,7 +860,7 @@ func (c *client) attachOnce(x remoteSession) error {
 				screen <- err
 				return
 			}
-			if _, err := os.Stdout.Write(data); err != nil {
+			if _, err := screenOut.Write(data); err != nil {
 				screen <- err
 				return
 			}
@@ -875,6 +884,9 @@ func (c *client) attachOnce(x remoteSession) error {
 			return errHostRestart
 		}
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+			if links != nil {
+				links.close() // the last of the screen before the notice
+			}
 			os.Stdout.WriteString(resetModes)
 			fmt.Print(i18n.T("\r\nThe session has ended.\r\n", "\r\n会话已结束。\r\n"))
 			return nil

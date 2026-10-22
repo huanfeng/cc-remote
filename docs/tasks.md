@@ -91,4 +91,6 @@ Windows 服务实测：计划任务无窗口运行、强杀后 5 秒内重启、
 - [x] 安全审查修复：`ccr` 在 Claude Code 未信任的目录先询问信任（宿主对未信任目录返回 428 `trust-required`）；本机工具发令牌前用 `/api/hello` 校验宿主（旧宿主以数据目录锁判断，新版宿主运行过后写 `host-proof` 不再兼容）；终端会话 Hook 改用会话级令牌，Claude 的环境去掉 `CC_REMOTE_TOKEN`；`ccr --host` 只接受回环或 HTTPS；`service install --dry-run` 隐去 `--env` 值；`ccr` 打印的标题过滤控制字符；页面被嵌入框架时不渲染；service 包测试禁止调用 schtasks/systemctl/launchctl。
 - [x] 回复中的裸网址遇到中文或全角标点即结束（GFM 只在空格处结束，「（http://…），用…」会把后文都链进去）。
 - [x] 独立前端未连接时不再直接显示添加表单：没有宿主时是介绍页 +「添加宿主」按钮；有宿主时显示连接状态、自动重试说明、「立即重试」「编辑宿主」、其他宿主和「添加宿主」，网络不稳时不必重新输入令牌。
+- [x] `ccr` 接入本机宿主时，把输出里本机存在的绝对路径包成 OSC 8 超链接（`file://`），在 Windows Terminal、VS Code、iTerm2、WezTerm、kitty 等终端里可点击打开；不占格子、不改变画面，其它终端和 tmux 不加，`CC_REMOTE_HYPERLINKS=1/0` 强制开关。网页终端里的文件路径点开文件查看器。
+- [x] 文件查看器的图片自己缩放：双指捏合、滚轮、双击（双击屏幕）放大，放大后拖动平移，右下角有缩小 / 适应窗口 / 放大，不再整页缩放。
 - [ ] Web Push（页面关闭后的推送）、Codex 适配器、项目 worktree 隔离。

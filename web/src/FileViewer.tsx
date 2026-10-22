@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { copyText } from './clipboard';
 import { BasesContext, FileContext, imageURL, releaseImageURL, type FetchedFile, type FileAccess, type FileRequest } from './fileContext';
 import { basename, dirname, fileKind, languageOf } from './filePaths';
@@ -121,7 +121,7 @@ function FileViewer({ request, access, canGoBack, back, close }: { request: File
   if (error) body = <div className="error" role="alert">{error}</div>;
   else if (tooLarge) body = <p className="file-note">{t('This file is too large to preview (over 20 MiB). ', '此文件超过 20 MiB，无法预览。')}<button type="button" className="tool-more" disabled={saving} onClick={() => void download()}>{saving ? t('Preparing…', '准备中…') : t('Download it', '下载')}</button></p>;
   else if (!file) body = <p className="file-note">{t('Loading…', '加载中…')}</p>;
-  else if (file.url) body = <div className="file-image-view"><img src={file.url} alt={basename(path)} /></div>;
+  else if (file.url) body = <ImageView src={file.url} alt={basename(path)} />;
   else if (file.binary) body = <p className="file-note">{t('This file cannot be previewed. ', '此文件无法预览。')}<button type="button" className="tool-more" onClick={() => void download()}>{t('Download it', '下载')}</button></p>;
   else if (kind === 'markdown' && !source && !large) body = <div className="file-doc"><BasesContext.Provider value={request.bases || NO_BASES}><Markdown text={file.text!} dir={dirname(path)} /></BasesContext.Provider></div>;
   else body = <CodeView code={file.text!} lang={large ? '' : kind === 'markdown' ? 'markdown' : languageOf(path)} line={request.line} />;
@@ -136,6 +136,129 @@ function FileViewer({ request, access, canGoBack, back, close }: { request: File
         <button type="button" className="icon" title={t('Close', '关闭')} aria-label={t('Close file viewer', '关闭文件查看')} onClick={close}><CloseIcon size={18} /></button>
       </div>
       <div className="file-viewer-body">{body}</div>
+    </div>
+  </div>;
+}
+
+// Zoom is relative to the image fitted to the viewer.
+const MAX_ZOOM = 10;
+type View = { scale: number; x: number; y: number };
+const FIT: View = { scale: 1, x: 0, y: 0 };
+
+/**
+ * An image that zooms by itself, not the page: pinch, wheel or double-click
+ * (double-tap) zooms at that point, a drag moves the zoomed image.
+ */
+function ImageView({ src, alt }: { src: string; alt: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const img = useRef<HTMLImageElement>(null);
+  const [view, setViewState] = useState<View>(FIT);
+  // The latest view at once: several wheel events can come before a render.
+  const viewRef = useRef(view);
+  const setView = useCallback((next: View) => { viewRef.current = next; setViewState(next); }, []);
+  const [moving, setMoving] = useState(false);
+  const [natural, setNatural] = useState(0); // the image's width in pixels, for the zoom shown
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  // The view and pointers a drag or pinch started from.
+  const start = useRef<{ view: View; x: number; y: number; dist: number } | undefined>(undefined);
+  const lastTap = useRef({ time: 0, x: 0, y: 0 });
+  const touched = useRef(false); // the last press was not a mouse: taps make the double-tap
+  const pinched = useRef(false); // two fingers were down: lifting them is no tap
+
+  // Keeps the zoomed image over the box: no dragging it out of sight.
+  const clamp = useCallback((scale: number, x: number, y: number): View => {
+    const b = box.current, i = img.current;
+    if (!b || !i || scale <= 1) return FIT;
+    const maxX = Math.max(0, (i.offsetWidth * scale - b.clientWidth) / 2);
+    const maxY = Math.max(0, (i.offsetHeight * scale - b.clientHeight) / 2);
+    return { scale, x: Math.min(maxX, Math.max(-maxX, x)), y: Math.min(maxY, Math.max(-maxY, y)) };
+  }, []);
+  // Where a client point is, from the box's center (the image's, unzoomed).
+  const fromCenter = (x: number, y: number) => {
+    const r = box.current!.getBoundingClientRect();
+    return { x: x - r.left - r.width / 2, y: y - r.top - r.height / 2 };
+  };
+  // Zooms from a view to scale, keeping the image point at `at` under `to`.
+  const zoom = useCallback((from: View, scale: number, at: { x: number; y: number }, to = at) => {
+    scale = Math.min(MAX_ZOOM, Math.max(1, scale));
+    const k = scale / from.scale;
+    setView(clamp(scale, to.x - (at.x - from.x) * k, to.y - (at.y - from.y) * k));
+  }, [clamp, setView]);
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    // React listens to wheel passively; a zoom must keep the page from scrolling.
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const r = el.getBoundingClientRect();
+      const at = { x: event.clientX - r.left - r.width / 2, y: event.clientY - r.top - r.height / 2 };
+      // A trackpad pinch comes as a wheel with Ctrl and small steps.
+      const step = event.deltaMode === 1 ? event.deltaY * 33 : event.deltaY;
+      zoom(viewRef.current, viewRef.current.scale * Math.exp(-step * (event.ctrlKey ? 0.01 : 0.002)), at);
+    };
+    const stop = (event: Event) => event.preventDefault(); // Safari's own pinch zoom
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('gesturestart', stop);
+    return () => { el.removeEventListener('wheel', onWheel); el.removeEventListener('gesturestart', stop); };
+  }, [zoom]);
+
+  const begin = () => {
+    const [a, b] = [...pointers.current.values()];
+    if (!a) { start.current = undefined; setMoving(false); return; }
+    const mid = b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : a;
+    start.current = { view: viewRef.current, x: mid.x, y: mid.y, dist: b ? Math.hypot(a.x - b.x, a.y - b.y) : 0 };
+    setMoving(true);
+  };
+  const toggle = (x: number, y: number) => {
+    if (viewRef.current.scale > 1) setView(FIT);
+    else zoom(FIT, 2.5, fromCenter(x, y));
+  };
+  const onPointerDown = (event: ReactPointerEvent) => {
+    if (event.button !== 0) return;
+    touched.current = event.pointerType !== 'mouse';
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pinched.current = pointers.current.size > 1; // a new press starts a new gesture
+    begin();
+  };
+  const onPointerMove = (event: ReactPointerEvent) => {
+    if (!pointers.current.has(event.pointerId) || !start.current) return;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const s = start.current;
+    const [a, b] = [...pointers.current.values()];
+    if (b) { // pinch: zoom by the fingers' spread, around and with their midpoint
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      zoom(s.view, s.view.scale * Math.hypot(a.x - b.x, a.y - b.y) / s.dist, fromCenter(s.x, s.y), fromCenter(mid.x, mid.y));
+    } else if (s.view.scale > 1) {
+      setView(clamp(s.view.scale, s.view.x + a.x - s.x, s.view.y + a.y - s.y));
+    }
+  };
+  const onPointerUp = (event: ReactPointerEvent) => {
+    const s = start.current;
+    const wasOne = pointers.current.size === 1;
+    if (!pointers.current.delete(event.pointerId)) return;
+    begin();
+    // A tap, twice in a row on a touch screen: zoom in there or back out (a mouse has dblclick).
+    if (touched.current && wasOne && !pinched.current && s && Math.hypot(event.clientX - s.x, event.clientY - s.y) < 10) {
+      const last = lastTap.current, now = event.timeStamp;
+      if (now - last.time < 300 && Math.hypot(event.clientX - last.x, event.clientY - last.y) < 30) {
+        lastTap.current = { time: 0, x: 0, y: 0 };
+        toggle(event.clientX, event.clientY);
+      } else lastTap.current = { time: now, x: event.clientX, y: event.clientY };
+    }
+  };
+  const step = (factor: number) => zoom(view, view.scale * factor, { x: 0, y: 0 });
+  const shown = natural && img.current ? Math.round(img.current.offsetWidth * view.scale / natural * 100) : 0;
+
+  return <div className="file-image-view">
+    <div ref={box} className={`file-image-stage${view.scale > 1 ? ' zoomed' : ''}${moving ? ' moving' : ''}`} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onDoubleClick={event => { if (!touched.current) toggle(event.clientX, event.clientY); }}>
+      <img ref={img} src={src} alt={alt} draggable={false} onLoad={event => setNatural(event.currentTarget.naturalWidth)} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }} />
+    </div>
+    <div className="file-image-zoom" role="toolbar" aria-label={t('Zoom', '缩放')}>
+      <button type="button" aria-label={t('Zoom out', '缩小')} title={t('Zoom out', '缩小')} disabled={view.scale <= 1} onClick={() => step(1 / 1.5)}>−</button>
+      <button type="button" className="file-image-fit" title={t('Fit to the window', '适应窗口')} disabled={view.scale === 1} onClick={() => setView(FIT)}>{shown ? `${shown}%` : t('Fit', '适应')}</button>
+      <button type="button" aria-label={t('Zoom in', '放大')} title={t('Zoom in', '放大')} disabled={view.scale >= MAX_ZOOM} onClick={() => step(1.5)}>+</button>
     </div>
   </div>;
 }

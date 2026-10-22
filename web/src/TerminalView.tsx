@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
 import { copyText } from './clipboard';
+import { useFiles } from './fileContext';
 import { apiUrl } from './hosts';
 import { t } from './i18n';
+import { filePathLinks } from './terminalLinks';
 import './terminal.css';
 
 // A terminal session's own screen: xterm.js on the host's PTY stream, the same
@@ -58,6 +60,8 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
   const zoomRef = useRef(zoom); zoomRef.current = zoom;
   const [draft, setDraft] = useState('');
   const composing = useRef(false);
+  const files = useFiles();
+  const filesRef = useRef(files); filesRef.current = files;
 
   useEffect(() => {
     // gen numbers connection attempts: a newer one (or hiding the page) makes an older one give up.
@@ -210,6 +214,7 @@ export function TerminalView({ id, api }: { id: string; api: Api }) {
       term.loadAddon(new Unicode11Addon());
       term.unicode.activeVersion = '11'; // CJK and emoji take two cells, as Claude Code draws them
       term.loadAddon(new WebLinksAddon());
+      term.registerLinkProvider(filePathLinks(term, () => filesRef.current?.open)); // file paths open in the viewer
       term.open(screen.current);
       engine.current!.term = term;
       if (touch && term.textarea) { term.textarea.readOnly = true; term.textarea.setAttribute('inputmode', 'none'); } // no keyboard on tap: the input bar types
