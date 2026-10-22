@@ -802,6 +802,10 @@ func (c *client) attachOnce(x remoteSession) error {
 	}
 	cols, rows, _ := term.GetSize(out)
 	sendSize(cols, rows)
+	var clicks *clicker
+	if hostauth.Local(c.host) && os.Getenv("CC_REMOTE_HYPERLINKS") != "0" { // a click on a file's path opens it
+		clicks = newClicker(cols, rows, x.Cwd, openFile)
+	}
 	go func() { // window size changes (polled: works the same on every platform)
 		t := time.NewTicker(250 * time.Millisecond)
 		defer t.Stop()
@@ -812,6 +816,9 @@ func (c *client) attachOnce(x remoteSession) error {
 			case <-t.C:
 				if c2, r2, err := term.GetSize(out); err == nil && (c2 != cols || r2 != rows) {
 					cols, rows = c2, r2
+					if clicks != nil {
+						clicks.resize(cols, rows)
+					}
 					sendSize(cols, rows)
 				}
 			}
@@ -843,6 +850,11 @@ func (c *client) attachOnce(x remoteSession) error {
 				keys <- nil
 				return
 			}
+			if clicks != nil {
+				if chunk = clicks.filter(chunk); len(chunk) == 0 {
+					continue
+				}
+			}
 			if err := conn.Write(ctx, websocket.MessageBinary, append([]byte(nil), chunk...)); err != nil {
 				keys <- err
 				return
@@ -859,6 +871,9 @@ func (c *client) attachOnce(x remoteSession) error {
 			if err != nil {
 				screen <- err
 				return
+			}
+			if clicks != nil {
+				clicks.observe(data)
 			}
 			if _, err := screenOut.Write(data); err != nil {
 				screen <- err

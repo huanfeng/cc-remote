@@ -242,24 +242,12 @@ func (l *linker) link(run []byte) []byte {
 	if !utf8.Valid(text) {
 		return run
 	}
-	s := string(text)
 	var out bytes.Buffer
 	last := 0
-	for _, m := range pathRE.FindAllStringIndex(s, -1) {
-		start := m[0]
-		// Inside a word or a URL ("https://x/a"): not a path of its own.
-		if start > 0 && isWord(s[start-1]) {
-			continue
-		}
-		if (runtime.GOOS == "windows") != (s[start+1] == ':') {
-			continue
-		}
-		path := l.existing(s[start:m[1]])
-		if path == "" {
-			continue
-		}
+	for _, p := range l.paths(string(text)) {
+		path := string(text[p[0]:p[1]])
 		// The link runs from the path's first byte to just after its last.
-		from, to := at[start], at[start+len(path)-1]+1
+		from, to := at[p[0]], at[p[1]-1]+1
 		out.Write(run[last:from])
 		out.WriteString("\x1b]8;;" + fileURL(path) + "\x1b\\")
 		out.Write(run[from:to])
@@ -271,6 +259,25 @@ func (l *linker) link(run []byte) []byte {
 	}
 	out.Write(run[last:])
 	return out.Bytes()
+}
+
+// paths returns where the paths of existing files are in s, as [start, end) byte offsets.
+func (l *linker) paths(s string) [][2]int {
+	var out [][2]int
+	for _, m := range pathRE.FindAllStringIndex(s, -1) {
+		start := m[0]
+		// Inside a word or a URL ("https://x/a"): not a path of its own.
+		if start > 0 && isWord(s[start-1]) {
+			continue
+		}
+		if (runtime.GOOS == "windows") != (s[start+1] == ':') {
+			continue
+		}
+		if path := l.existing(s[start:m[1]]); path != "" {
+			out = append(out, [2]int{start, start + len(path)})
+		}
+	}
+	return out
 }
 
 // existing returns the longest start of candidate that names a file here:
