@@ -113,6 +113,42 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
   </form>;
 }
 
+/** The standalone page while it is not connected: what the page is, with a button to
+ * add a host, or the current host's connection state. It never opens the add form by
+ * itself: on an unsteady network the page would sit on a form asking for the token again.
+ * retrying: the page tries again by itself (no answer, not a refused token). */
+export function StandaloneHome({ error, retrying, onRetry }: { error: string; retrying: boolean; onRetry: () => void }) {
+  const [form, setForm] = useState<'' | 'add' | 'edit'>('');
+  const host = currentHost;
+  if (form === 'add') return <HostLogin onCancel={() => setForm('')} />;
+  if (form === 'edit' && host) return <HostLogin editing={host} onCancel={() => setForm('')} />;
+  const others = loadHosts().hosts.filter(x => x.id !== host?.id);
+  const add = <button type="button" className={host ? 'secondary host-home-add' : 'primary'} onClick={() => setForm('add')}>{host ? <><PlusIcon size={15} />{t('Add host', '添加宿主')}</> : <>{t('Add a host', '添加宿主')} <span>→</span></>}</button>;
+  if (!host) return <div className="login-card host-home">
+    <div className="brand-symbol">↗</div><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1>
+    <p>{t('Use Claude Code on your computer from this browser: follow sessions, send messages, answer approvals and questions. This page is only the frontend; it keeps the hosts you add and their tokens on this device.', '在这个浏览器里使用你电脑上的 Claude Code：查看会话、发送消息、回答审批和提问。此页面只是前端，你添加的宿主和令牌只保存在本设备。')}</p>
+    <ol className="host-home-steps">
+      <li>{t('Run a cc-remote host on the computer with Claude Code.', '在装有 Claude Code 的电脑上运行 cc-remote 宿主。')}</li>
+      <li>{t('Let this page in on the host (below).', '在宿主上允许本页面访问（见下方）。')}</li>
+      <li>{t('Add the host here with its address and access token.', '在这里添加宿主，填写地址和访问令牌。')}</li>
+    </ol>
+    {add}
+    <AllowHint />
+  </div>;
+  return <div className="login-card host-home">
+    <span className="eyebrow">CC REMOTE</span>
+    <div className="host-home-current"><img className="host-swatch" src={iconURL(shownColor(host), shownIcon(host))} alt="" /><div><strong>{shownName(host)}</strong><small>{host.entry || host.url}</small></div></div>
+    {error ? <div className="error" role="alert">{error}</div> : <p className="host-home-state"><span className="pulse" />{t('Connecting…', '正在连接…')}</p>}
+    {error && retrying && <small className="host-home-note">{t('Trying again every 10 seconds; the page opens by itself once the host answers.', '每 10 秒自动重试，宿主恢复后自动进入。')}</small>}
+    <div className="host-home-actions">
+      <button type="button" className="primary" onClick={onRetry}>{t('Try again now', '立即重试')}</button>
+      <button type="button" className="secondary" onClick={() => setForm('edit')}><EditIcon size={15} />{t('Edit host', '编辑宿主')}</button>
+    </div>
+    {others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{x.entry || x.url}</small></button>)}</div>}
+    {add}
+  </div>;
+}
+
 /** How to let this page into a host: the command, copied on click. */
 function AllowHint() {
   const [copied, setCopied] = useState(false);

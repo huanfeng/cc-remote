@@ -2,6 +2,7 @@ import { memo, useContext, useMemo, useRef, useState, type ReactNode } from 'rea
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { remarkCjkAutolinks } from './autolinks';
 import { copyText } from './clipboard';
 import { BasesContext, FileImage, FileLink, PathText, useLinkedPaths } from './fileContext';
 import { absoluteDirs, FILE_SCHEME, headingSlug, parseFileHref, relativeTarget, remarkFilePaths } from './filePaths';
@@ -12,7 +13,7 @@ import './markdown.css';
 
 type Hast = { type: string; value?: string; tagName?: string; properties?: { className?: unknown }; children?: Hast[] };
 
-const plugins = [remarkGfm, remarkBreaks, remarkFilePaths];
+const plugins = [remarkGfm, remarkCjkAutolinks, remarkBreaks, remarkFilePaths];
 const urlTransform = (url: string) => url.startsWith(FILE_SCHEME) ? url : defaultUrlTransform(url);
 
 function textOf(node: Hast | undefined): string {
