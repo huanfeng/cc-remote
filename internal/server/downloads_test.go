@@ -92,3 +92,46 @@ func TestFileDownloadLink(t *testing.T) {
 		t.Fatalf("expired ticket: %d", resp.StatusCode)
 	}
 }
+
+// A slow download outlives its ticket's time: the ticket stays good while a
+// download runs and for downloadIdle after, so a broken one resumes.
+func TestDownloadTicketLastsWhileInUse(t *testing.T) {
+	var d downloadTickets
+	id := d.add(downloadTicket{session: "s", path: "f", expires: time.Now().Add(time.Minute)})
+	if _, ok := d.begin(id); !ok {
+		t.Fatal("a new ticket opens nothing")
+	}
+	expire := func() {
+		d.mu.Lock()
+		v := d.m[id]
+		v.expires = time.Now().Add(-time.Second)
+		d.m[id] = v
+		d.mu.Unlock()
+	}
+	expire() // the download runs past the ticket's time
+	if _, ok := d.begin(id); !ok {
+		t.Fatal("a resume during a running download was refused")
+	}
+	d.end(id)
+	d.end(id)
+	if _, ok := d.begin(id); !ok {
+		t.Fatal("a resume right after the download broke was refused")
+	}
+	d.end(id)
+	if v := d.m[id]; v.active != 0 || time.Until(v.expires) < downloadIdle-time.Minute {
+		t.Fatalf("after the downloads: %+v", v)
+	}
+	expire()
+	if _, ok := d.begin(id); ok {
+		t.Fatal("an idle expired ticket still opens the file")
+	}
+	// A full table drops idle tickets, never one in use.
+	busy := d.add(downloadTicket{expires: time.Now().Add(time.Minute)})
+	d.begin(busy)
+	for range maxDownloadTickets * 2 {
+		d.add(downloadTicket{expires: time.Now().Add(time.Minute)})
+	}
+	if _, ok := d.m[busy]; !ok || len(d.m) > maxDownloadTickets {
+		t.Fatalf("busy ticket kept: %v, %d tickets", ok, len(d.m))
+	}
+}

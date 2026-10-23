@@ -12,18 +12,26 @@ import (
 
 // Downloads save a file the session named the way the browser saves any file:
 // streamed, of any size, resumable. A browser download cannot send the access
-// token, so the web first asks for a link (with the token): a random ticket,
-// good for downloadTTL, for that one file. Every request checks the file
-// against the session's directories again.
+// token, so the web first asks for a link (with the token): a random ticket
+// for that one file, good for downloadTTL until a download starts. It stays
+// good while a download runs, however slow, and for downloadIdle after the
+// last one ends, so a download the network broke resumes from where it was.
+// Every request checks the file against the session's directories again.
 
 const (
 	downloadTTL        = 5 * time.Minute
+	downloadIdle       = 30 * time.Minute
 	maxDownloadTickets = 256
 )
 
 type downloadTicket struct {
 	session, path string
 	expires       time.Time
+	active        int // downloads running on the ticket
+}
+
+func (t downloadTicket) expired(now time.Time) bool {
+	return t.active == 0 && now.After(t.expires)
 }
 
 type downloadTickets struct {
@@ -42,15 +50,17 @@ func (d *downloadTickets) add(t downloadTicket) string {
 	}
 	now := time.Now()
 	for k, v := range d.m {
-		if now.After(v.expires) {
+		if v.expired(now) {
 			delete(d.m, k)
 		}
 	}
-	for k := range d.m { // still full: drop any
+	for k, v := range d.m { // still full: drop any not in use
 		if len(d.m) < maxDownloadTickets {
 			break
 		}
-		delete(d.m, k)
+		if v.active == 0 {
+			delete(d.m, k)
+		}
 	}
 	d.m[id] = t
 	return id
@@ -62,20 +72,37 @@ func (d *downloadTickets) take(id string) (downloadTicket, bool) {
 	defer d.mu.Unlock()
 	t, ok := d.m[id]
 	delete(d.m, id)
-	if !ok || time.Now().After(t.expires) {
+	if !ok || t.expired(time.Now()) {
 		return downloadTicket{}, false
 	}
 	return t, true
 }
 
-func (d *downloadTickets) get(id string) (downloadTicket, bool) {
+// begin marks a download running on the ticket until end.
+func (d *downloadTickets) begin(id string) (downloadTicket, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	t, ok := d.m[id]
-	if !ok || time.Now().After(t.expires) {
+	if !ok || t.expired(time.Now()) {
 		return downloadTicket{}, false
 	}
+	t.active++
+	d.m[id] = t
 	return t, true
+}
+
+func (d *downloadTickets) end(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	t, ok := d.m[id]
+	if !ok {
+		return
+	}
+	t.active--
+	if idle := time.Now().Add(downloadIdle); idle.After(t.expires) {
+		t.expires = idle
+	}
+	d.m[id] = t
 }
 
 // fileLink is POST /api/sessions/{id}/file/link?path=…&base=…: a download
@@ -93,11 +120,13 @@ func (s *Server) fileLink(w http.ResponseWriter, r *http.Request) {
 // download is GET /api/download/{ticket}, without the access token: the
 // ticket in the path is the credential.
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {
-	t, ok := s.downloads.get(r.PathValue("ticket"))
+	id := r.PathValue("ticket")
+	t, ok := s.downloads.begin(id)
 	if !ok {
 		fail(w, 404, s.lang(r).T("The download link has expired; download the file again from the page", "下载链接已过期，请在页面上重新下载"))
 		return
 	}
+	defer s.downloads.end(id)
 	sess, err := s.store.Get(t.session)
 	if err != nil {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
