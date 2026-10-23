@@ -103,6 +103,8 @@ type Server struct {
 	cfg            Config
 	mu             sync.Mutex
 	downloads      downloadTickets          // links the browser downloads files with (downloads.go)
+	sent           sends                    // messages taken, by the page's send ID (sends.go)
+	mentionIndex   mentionIndex             // files offered after @ in the message box (mentions.go)
 	streamTickets  downloadTickets          // the web's terminal streams, once each (terminal.go)
 	streamPing     time.Duration            // tests: ping terminal streams this often instead
 	origins        atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
@@ -135,7 +137,7 @@ func New(st *store.Store, cfg Config) *Server {
 	if start == nil {
 		start = defaultProcessStarter(cfg)
 	}
-	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
+	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, sent: sends{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
 	go s.sampleUsage(s.stopReaper, usageSampleEvery)
 	return s
@@ -178,6 +180,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
 	mux.HandleFunc("GET /api/sessions/{id}/file", s.file)
 	mux.HandleFunc("POST /api/sessions/{id}/file/link", s.fileLink)
+	mux.HandleFunc("GET /api/sessions/{id}/mentions", s.mentions)
 	mux.HandleFunc("GET /api/download/{ticket}", s.download)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/commands", s.commands)
@@ -626,6 +629,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text          string   `json:"text"`
 		AttachmentIDs []string `json:"attachmentIds"`
+		SendID        string   `json:"sendId"` // the same on a resend (sends.go)
 	}
 	if !decode(w, r, &req) {
 		return
@@ -635,11 +639,20 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("The message is empty or larger than 1 MiB", "消息为空或超过 1 MiB"))
 		return
 	}
+	if req.SendID != "" && !validSendID.MatchString(req.SendID) {
+		fail(w, 400, s.lang(r).T("Invalid send ID", "无效的发送 ID"))
+		return
+	}
 	id := r.PathValue("id")
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
 		fail(w, 503, s.lang(r).T("The host is shutting down", "宿主正在关闭"))
+		return
+	}
+	if status, ok := s.sent.seen(id, req.SendID); ok {
+		s.mu.Unlock()
+		respond(w, 202, map[string]any{"status": status, "duplicate": true})
 		return
 	}
 	x, e := s.store.Get(id)
@@ -661,7 +674,9 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, e.Error())
 			return
 		}
-		s.terminalMessageLocked(w, r, x, prompt, store.QueuedMessage{Text: req.Text, Payload: payload})
+		if status, ok := s.terminalMessageLocked(w, r, x, prompt, store.QueuedMessage{Text: req.Text, Payload: payload}); ok {
+			s.sent.remember(id, req.SendID, status)
+		}
 		s.mu.Unlock()
 		return
 	}
@@ -718,11 +733,12 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	}
 	rt := s.runtimeLocked(x)
 	queued := s.enqueueLocked(rt, outgoing{QueuedMessage: store.QueuedMessage{Text: req.Text, Payload: payload}, prompt: prompt})
-	s.mu.Unlock()
 	status := "running"
 	if queued {
 		status = "queued"
 	}
+	s.sent.remember(id, req.SendID, status)
+	s.mu.Unlock()
 	respond(w, 202, map[string]string{"status": status})
 }
 

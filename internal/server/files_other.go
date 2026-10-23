@@ -5,6 +5,7 @@ package server
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -28,3 +29,5 @@ func finalPath(f *os.File, path string) (string, error) {
 	}
 	return real, nil
 }
+
+func hideWindow(*exec.Cmd) {}

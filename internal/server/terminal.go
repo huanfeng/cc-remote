@@ -679,15 +679,16 @@ func (s *Server) closeTerminalAsync(ts *terminalSession) {
 }
 
 // terminalMessageLocked sends a web message to a terminal session.
-func (s *Server) terminalMessageLocked(w http.ResponseWriter, r *http.Request, x store.Session, prompt string, message store.QueuedMessage) {
+// It answers the request, and says what it answered when the message was taken.
+func (s *Server) terminalMessageLocked(w http.ResponseWriter, r *http.Request, x store.Session, prompt string, message store.QueuedMessage) (string, bool) {
 	ts, err := s.terminalLocked(x)
 	if err != nil {
 		fail(w, 500, s.lang(r).T("Could not start Claude Code: ", "无法启动 Claude Code：")+err.Error())
-		return
+		return "", false
 	}
 	if len(ts.queued) >= maxQueuedMessages {
 		fail(w, 429, s.lang(r).T("Too many queued messages; wait for Claude to process them", "排队的消息过多，请等待 Claude 处理"))
-		return
+		return "", false
 	}
 	status := "queued"
 	if latest, e := s.store.Get(x.ID); e == nil && latest.Status != "running" && latest.Status != "waiting" && len(ts.queued) == 0 {
@@ -698,13 +699,14 @@ func (s *Server) terminalMessageLocked(w http.ResponseWriter, r *http.Request, x
 	case ts.send <- prompt:
 	default:
 		fail(w, 429, s.lang(r).T("Too many queued messages; wait for Claude to process them", "排队的消息过多，请等待 Claude 处理"))
-		return
+		return "", false
 	}
 	// Local commands (/compact, /clear) never show up as a prompt: not queued.
 	if !strings.HasPrefix(prompt, "/") {
 		ts.queued = append(ts.queued, terminalQueued{text: prompt, message: message})
 	}
 	respond(w, 202, map[string]string{"status": status})
+	return status, true
 }
 
 // terminalStopLocked presses Esc; a second stop soon after presses Ctrl+C.

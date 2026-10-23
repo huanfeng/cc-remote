@@ -7,6 +7,19 @@ import './tools.css';
 
 const MAX_LINES = 60, MAX_CHARS = 6000;
 
+/** Time since a running call started (the host's timestamp), ticking each second. */
+export function Elapsed({ since }: { since?: string }) {
+  const start = Date.parse(since || '');
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (Number.isNaN(start)) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [start]);
+  if (Number.isNaN(start)) return null;
+  return <span className="tool-elapsed" title={t('Running for', '已运行')}>{formatDuration(Math.max(0, now - start))}</span>;
+}
+
 /** Monospace block that shows the head of long output with a "show all" toggle. */
 export function LongPre({ text, className = '' }: { text: string; className?: string }) {
   const [full, setFull] = useState(false);
@@ -73,7 +86,7 @@ function ToolCallRow({ call, open, onToggle, onLoadFull }: { call: ToolCall; ope
       <span className="tool-call-icon">{toolIcon(call.name)}</span>
       <span className="tool-call-name">{call.name}</span>
       <CallArg call={call} />
-      {call.durationMs !== undefined && <span className="tool-call-time">{formatDuration(call.durationMs)}</span>}
+      {call.status === 'running' ? <span className="tool-call-time is-running"><Elapsed since={call.startedAt} /></span> : call.durationMs !== undefined && <span className="tool-call-time">{formatDuration(call.durationMs)}</span>}
       <StatusMark status={call.status} />
     </button>
     {open && <ToolDetail call={call} onLoadFull={onLoadFull} />}
@@ -89,7 +102,7 @@ function ToolGroupView({ groupKey, calls, open, onToggle, openCalls, onToggleCal
       <span className="tool-group-icon">{stats.running ? <span className="tool-spinner" /> : <WrenchIcon size={13} />}</span>
       <span className="tool-group-label">{label}</span>
       {stats.failed > 0 && <span className="tool-badge is-failed">{t(`${stats.failed} failed`, `${stats.failed} 个失败`)}</span>}
-      {stats.running > 0 && <span className="tool-badge is-running">{t('Running', '执行中')}</span>}
+      {stats.running > 0 && <span className="tool-badge is-running">{t('Running', '执行中')}{stats.current?.startedAt && <> · <Elapsed since={stats.current.startedAt} /></>}</span>}
       <span className="tool-group-chevron"><ChevronDownIcon size={14} /></span>
     </button>
     {!open && stats.current && <div className="tool-current">{t('Running: ', '正在执行：')}<strong>{stats.current.name}</strong> <span>{argSummary(stats.current.name, stats.current.input).text}</span></div>}

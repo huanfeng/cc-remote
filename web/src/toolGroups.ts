@@ -6,7 +6,7 @@ import { t } from './i18n.ts'; // with extension: node tests import this file di
 export type TranscriptEvent = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 export type CallStatus = 'ok' | 'error' | 'running' | 'missing';
 /** `truncated` lists the seqs of this call's events whose long text the host cut in the listing. */
-export type ToolCall = { seq: number; id: string; name: string; input: any; result?: TranscriptEvent; resultText: string; status: CallStatus; durationMs?: number; truncated?: number[] };
+export type ToolCall = { seq: number; id: string; name: string; input: any; result?: TranscriptEvent; resultText: string; status: CallStatus; startedAt?: string; durationMs?: number; truncated?: number[] };
 export type TranscriptItem =
   | { type: 'event'; key: number; event: TranscriptEvent }
   | { type: 'tools'; key: number; calls: ToolCall[] }
@@ -81,7 +81,7 @@ function shapeTranscript(events: TranscriptEvent[], live: boolean, children: Map
     if (event.kind === 'tool') {
       const id = event.payload?.id || '';
       const result = id ? results.get(id) : undefined;
-      call = { seq: event.seq, id, name: event.payload?.name || event.payload?.toolName || t('Tool', '工具'), input: event.payload?.input ?? {}, result, resultText: result ? resultText(result) : '', status: result ? (result.payload?.is_error ? 'error' : 'ok') : 'missing' };
+      call = { seq: event.seq, id, name: event.payload?.name || event.payload?.toolName || t('Tool', '工具'), input: event.payload?.input ?? {}, result, resultText: result ? resultText(result) : '', status: result ? (result.payload?.is_error ? 'error' : 'ok') : 'missing', startedAt: event.createdAt };
       const ms = result ? Date.parse(result.createdAt) - Date.parse(event.createdAt) : NaN;
       if (ms >= 1000) call.durationMs = ms;
       const cut = [event, result].flatMap(item => item?.truncated ? [item.seq] : []);

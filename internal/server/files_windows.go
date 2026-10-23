@@ -2,7 +2,9 @@ package server
 
 import (
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 )
@@ -21,3 +23,6 @@ func finalPath(f *os.File, _ string) (string, error) {
 	}
 	return strings.TrimPrefix(p, `\\?\`), nil
 }
+
+// hideWindow keeps a console program the host runs from opening a window.
+func hideWindow(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} }

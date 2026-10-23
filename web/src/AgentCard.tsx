@@ -1,7 +1,7 @@
 import { memo, useEffect, type CSSProperties } from 'react';
 import Markdown from './Markdown';
 import { AgentIcon, CheckIcon, ChevronDownIcon, CloseIcon, TerminalIcon } from './icons';
-import { LongPre, ToolGroup } from './ToolGroup';
+import { Elapsed, LongPre, ToolGroup } from './ToolGroup';
 import { formatDuration, type ToolCall, type TranscriptItem } from './toolGroups';
 import { t } from './i18n';
 import './tools.css';
@@ -83,7 +83,7 @@ function AgentCardView({ call, items, nested }: { call: ToolCall; items: Transcr
       <span className={`agent-icon is-${status}`}><StatusIcon status={status} /></span>
       <span className="agent-title"><strong>{description}</strong>{type && <span className="agent-type">{type}</span>}{background && <span className="agent-type">{task ? taskKind(task) : t('Background', '后台')}</span>}</span>
       {meta && <span className="agent-meta">{meta}</span>}
-      <span className={`tool-badge agent-status is-${status}`}>{STATUS[status] || status}</span>
+      <span className={`tool-badge agent-status is-${status}`}>{STATUS[status] || status}{running && (task?.startedAt || call.startedAt) && <> · <Elapsed since={task?.startedAt || call.startedAt} /></>}</span>
       <span className="tool-group-chevron"><ChevronDownIcon size={14} /></span>
     </button>
     {running && task?.progress && <div className="tool-current">{t('Now: ', '正在：')}<span>{task.progress}</span></div>}
@@ -118,7 +118,7 @@ export function TaskPanel({ tasks, close, locate }: { tasks: TaskInfo[]; close: 
     {ordered.length === 0 ? <p>{t('This session has no subagents or background tasks yet.', '这个会话还没有子 agent 或后台任务。')}</p> : <ul className="task-list">{ordered.map(task => {
       const meta = [task.toolUses ? toolCount(task.toolUses) : '', task.tokens ? `${compact(task.tokens)} tokens` : '', task.durationMs ? formatDuration(task.durationMs) : ''].filter(Boolean).join(' · ');
       return <li key={task.id}><button type="button" className={`task-row is-${task.status}`} disabled={!task.toolUseId} onClick={() => locate(task)}>
-        <span className="task-row-head"><span className={`agent-icon is-${task.status}`}><StatusIcon status={task.status} shell={task.taskType === 'local_bash'} /></span><strong>{task.description || task.id}</strong><span className={`tool-badge agent-status is-${task.status}`}>{STATUS[task.status] || task.status}</span></span>
+        <span className="task-row-head"><span className={`agent-icon is-${task.status}`}><StatusIcon status={task.status} shell={task.taskType === 'local_bash'} /></span><strong>{task.description || task.id}</strong><span className={`tool-badge agent-status is-${task.status}`}>{STATUS[task.status] || task.status}{task.status === 'running' && <> · <Elapsed since={task.startedAt} /></>}</span></span>
         <small>{[task.subagentType, taskKind(task), meta].filter(Boolean).join(' · ')}</small>
         {task.status === 'running' && task.progress && <small className="task-progress">{t('Now: ', '正在：')}{task.progress}</small>}
       </button></li>;

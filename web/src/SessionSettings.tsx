@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { CloseIcon } from './icons';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ClockIcon, CloseIcon, GaugeIcon, ShieldIcon, SparkIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
 import { Select } from './Select';
 import { duration, money, number, tokens, type Stats } from './StatusPanel';
@@ -24,30 +24,40 @@ function useEscape(close: () => void) {
   }, []);
 }
 
+/** How full the context window is, as a ring that fills clockwise from the top. */
+export function ContextRing({ percent, size = 12 }: { percent: number; size?: number }) {
+  const r = 5, around = 2 * Math.PI * r;
+  const filled = Math.max(0, Math.min(100, percent)) / 100 * around;
+  return <svg className="context-ring" viewBox="0 0 14 14" width={size} height={size} aria-hidden="true" focusable="false">
+    <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeOpacity=".22" strokeWidth="2.2" />
+    {filled > 0 && <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeDasharray={`${filled} ${around}`} transform="rotate(-90 7 7)" />}
+  </svg>;
+}
+
 /** Effective settings in the top bar: override, or Default(<inherited>). Any chip opens
  * the session status (open), which has the full values, the switches and the settings. */
 export function SessionChips({ session, defaults, open }: { session: SessionInfo; defaults?: Defaults; open: (anchor: DOMRect) => void }) {
   const show = (event: { currentTarget: Element }) => open(event.currentTarget.getBoundingClientRect());
-  const button = (className: string, title: string, text: string) => <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={show}>{text}</button>;
-  const chip = (label: string, value: string | undefined, inherited: string | undefined, tone = '') => {
+  const button = (className: string, title: string, text: ReactNode, icon?: ReactNode) => <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={show}>{icon}<span>{text}</span></button>;
+  const chip = (label: string, value: string | undefined, inherited: string | undefined, icon: ReactNode, tone = '') => {
     const shown = value || t(`Default(${inherited || 'Claude settings'})`, `默认(${inherited || 'Claude 配置'})`);
-    return button(`chip${value ? '' : ' inherited'}${tone}`, t(`${label}: ${shown}`, `${label}：${shown}`), shown);
+    return button(`chip${value ? '' : ' inherited'}${tone}`, t(`${label}: ${shown}`, `${label}：${shown}`), shown, icon);
   };
   const live = session.mode === 'terminal' ? session.live : undefined;
   if (live?.model) {
     const effort = live.effort || session.effort || defaults?.effort;
     const pct = Math.round(live.contextPercent);
     return <div className="session-chips">
-      {button('chip', t(`Model: ${live.model}${live.modelId ? ` (${live.modelId})` : ''}`, `模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`), live.model)}
-      {effort && button('chip', t(`Effort: ${effort}`, `推理强度：${effort}`), effort)}
-      {live.contextSize > 0 && button(`chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`, t(`Context: ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`, `上下文：${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`), t(`Context ${pct}% · ${compact(live.contextTokens)}/${compact(live.contextSize)}`, `上下文 ${pct}% · ${compact(live.contextTokens)}/${compact(live.contextSize)}`))}
-      {live.durationMs > 0 && button('chip inherited', t('Session duration', '会话时长'), duration(live.durationMs / 1000))}
+      {button('chip', t(`Model: ${live.model}${live.modelId ? ` (${live.modelId})` : ''}`, `模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`), live.model, <SparkIcon size={11} />)}
+      {effort && button('chip', t(`Effort: ${effort}`, `推理强度：${effort}`), effort, <GaugeIcon size={11} />)}
+      {live.contextSize > 0 && button(`chip context-chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`, t(`Context: ${pct}% · ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`, `上下文：${pct}% · ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`), `${pct}%`, <ContextRing percent={pct} />)}
+      {live.durationMs > 0 && button('chip inherited', t('Session duration', '会话时长'), duration(live.durationMs / 1000), <ClockIcon size={11} />)}
       {live.costUSD > 0 && button('chip inherited', t('Cost of this run (estimated at API prices)', '本次运行的费用（按 API 价格估算）'), `$${live.costUSD.toFixed(2)}`)}
     </div>;
   }
   const perm = session.permissionMode || defaults?.permissionMode || '';
   return <div className="session-chips">
-    {chip(t('Model', '模型'), session.model, defaults?.model)}{chip(t('Effort', '推理强度'), session.effort, defaults?.effort)}{chip(t('Permission mode', '权限模式'), session.permissionMode, defaults?.permissionMode, permTone(perm))}
+    {chip(t('Model', '模型'), session.model, defaults?.model, <SparkIcon size={11} />)}{chip(t('Effort', '推理强度'), session.effort, defaults?.effort, <GaugeIcon size={11} />)}{chip(t('Permission mode', '权限模式'), session.permissionMode, defaults?.permissionMode, <ShieldIcon size={11} />, permTone(perm))}
   </div>;
 }
 

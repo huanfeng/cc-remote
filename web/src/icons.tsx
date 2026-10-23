@@ -34,3 +34,7 @@ export const EyeIcon = ({ size }: P) => <Svg size={size}><path d="M1.5 8S4 3.5 8
 export const EyeOffIcon = ({ size }: P) => <Svg size={size}><path d="M6.6 3.65A6 6 0 0 1 8 3.5c4 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.4M10.1 11.9a6 6 0 0 1-2.1.6C4 12.5 1.5 8 1.5 8a11 11 0 0 1 2.6-3M6.6 6.6a2 2 0 0 0 2.8 2.8M2 2l12 12" /></Svg>;
 export const ArrowDownIcon = ({ size }: P) => <Svg size={size}><path d="M8 2.5v10.5M3.5 8.5 8 13l4.5-4.5" /></Svg>;
 export const DownloadIcon = ({ size }: P) => <Svg size={size}><path d="M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10" /></Svg>;
+export const SparkIcon = ({ size }: P) => <Svg size={size}><path d="M8 1.75 9.4 6.6l4.85 1.4-4.85 1.4L8 14.25 6.6 9.4 1.75 8 6.6 6.6z" /></Svg>;
+export const GaugeIcon = ({ size }: P) => <Svg size={size}><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0M8 11.5l2.8-3.8" /></Svg>;
+export const ShieldIcon = ({ size }: P) => <Svg size={size}><path d="M8 1.75 13 3.6v4.1c0 3-2.1 5.4-5 6.55C5.1 13.1 3 10.7 3 7.7V3.6z" /></Svg>;
+export const ClockIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy="8" r="6" /><path d="M8 4.75V8l2.25 1.5" /></Svg>;

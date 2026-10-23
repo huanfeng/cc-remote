@@ -2,12 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import type { Defaults, SessionInfo } from './SessionSettings';
 import type { QuickKind } from './QuickSwitch';
 import { duration } from './StatusPanel';
-import { GearIcon } from './icons';
+import { GearIcon, TerminalIcon } from './icons';
 import { locale, t } from './i18n';
 
 /** The session's status under the top bar's chips: everything the chips cut short,
  * with the quick switches and the settings one tap away. */
-export function SessionStatus({ session, defaults, label, anchor, close, quick, settings }: { session: SessionInfo; defaults?: Defaults; label: string; anchor: DOMRect; close: () => void; quick: (kind: QuickKind, anchor: DOMRect) => void; settings: () => void }) {
+export function SessionStatus({ session, defaults, label, anchor, close, quick, settings, attach }: { session: SessionInfo; defaults?: Defaults; label: string; anchor: DOMRect; close: () => void; quick: (kind: QuickKind, anchor: DOMRect) => void; settings: () => void; attach?: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState({ left: anchor.left, top: anchor.bottom + 6 });
   useEffect(() => {
@@ -40,6 +40,7 @@ export function SessionStatus({ session, defaults, label, anchor, close, quick, 
       {live && live.costUSD > 0 && row(t('Cost', '费用'), <span title={t('Estimated at API prices', '按 API 价格估算')}>${live.costUSD.toFixed(2)}</span>)}
       {row(t('Directory', '目录'), <code>{session.cwd}</code>)}
     </dl>
+    {attach && <button type="button" className="session-status-settings" onClick={() => { close(); attach(); }}><TerminalIcon size={14} />{t('Attach from a local terminal', '在本地终端接入')}</button>}
     <button type="button" className="session-status-settings" onClick={() => { close(); settings(); }}><GearIcon size={14} />{t('Session settings', '会话设置')}</button>
   </div>;
 }
