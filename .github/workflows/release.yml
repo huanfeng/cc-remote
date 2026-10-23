@@ -67,6 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.meta.outputs.version }}
+      CC_REMOTE_VERSION: ${{ needs.meta.outputs.tag }} # the version the page shows
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

@@ -31,6 +31,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - working-directory: web
         run: pnpm run build:standalone
+        env:
+          # The version the page shows: the tag, or (another ref) the commit git describes.
+          CC_REMOTE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: web/dist-standalone

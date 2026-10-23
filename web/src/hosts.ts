@@ -120,6 +120,16 @@ const store = (key: string, value?: string) => { try { if (value === undefined) 
 const stored = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
 export const onLan = !!currentHost?.lan && stored(LAN_KEY + currentHost.id) === '1';
 
+/** This page's version (the release tag it was built from). */
+export const FRONTEND_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+
+// Host addresses can be hidden on this device, for a screen shown or shared.
+const HIDE_KEY = 'cc-hide-addresses';
+const hideListeners = new Set<() => void>();
+export const addressesHidden = () => stored(HIDE_KEY) === '1';
+export function hideAddresses(on: boolean) { store(HIDE_KEY, on ? '1' : undefined); hideListeners.forEach(f => f()); }
+export function onHiddenAddresses(listener: () => void) { hideListeners.add(listener); return () => { hideListeners.delete(listener); }; }
+
 /** Prefix of every API path: the current host's address, or nothing on the host's own page. */
 export const apiBase = (onLan ? currentHost?.lan : currentHost?.url) || '';
 export const apiUrl = (path: string) => apiBase + path;

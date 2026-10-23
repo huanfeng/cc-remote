@@ -1,5 +1,13 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { execSync } from 'node:child_process';
+
+// The version the page shows: the release's tag (CC_REMOTE_VERSION, set by the
+// workflows), else what git says about this checkout.
+function appVersion(): string {
+  if (process.env.CC_REMOTE_VERSION) return process.env.CC_REMOTE_VERSION;
+  try { return execSync('git describe --tags --always --dirty', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 'dev'; } catch { return 'dev'; }
+}
 
 // The host sends its page a Content-Security-Policy header; a static site may not,
 // so the standalone page carries one itself. It connects to any host the user adds
@@ -21,6 +29,7 @@ const standaloneCsp = (): Plugin => ({
 // that connects to hosts elsewhere, so it works from any path (base './').
 export default defineConfig(({ mode }) => ({
   plugins: [react(), ...(mode === 'standalone' ? [standaloneCsp()] : [])],
+  define: { __APP_VERSION__: JSON.stringify(appVersion()) },
   server: { proxy: { '/api': 'http://127.0.0.1:8787' } },
   ...(mode === 'standalone' ? { base: './', build: { outDir: 'dist-standalone' } } : {}),
 }));

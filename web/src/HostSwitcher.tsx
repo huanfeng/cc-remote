@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { copyText } from './clipboard';
-import { CloseIcon, EditIcon, LogoutIcon, PlusIcon } from './icons';
-import { PALETTE, apiBase, blockedHttp, currentHost, findHost, forgetAllHosts, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onLan, resolveEntry, shownColor, shownIcon, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
+import { CloseIcon, EditIcon, EyeIcon, EyeOffIcon, LogoutIcon, PlusIcon } from './icons';
+import { FRONTEND_VERSION, PALETTE, STANDALONE, addressesHidden, apiBase, blockedHttp, currentHost, findHost, forgetAllHosts, hideAddresses, hostLink, loadHosts, normalizeHostUrl, randomColor, rememberHost, removeHost, reopen, onHiddenAddresses, onLan, resolveEntry, shownColor, shownIcon, shownName, switchHost, updateHost, type HostEntry, type HostVia } from './hosts';
 import { lang, t } from './i18n';
 import { iconURL } from './hostIcon';
 import { ColorChoices, IconChoices } from './HostLook';
@@ -33,6 +33,22 @@ export function connectError(status?: number): string {
   return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page (on the host: ${allowCommand()})`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面（在宿主上运行：${allowCommand()}）`);
 }
 
+/** Whether host addresses are hidden on this device (for a screen shown or shared), and the switch. */
+export function useHiddenAddresses(): [boolean, (on: boolean) => void] {
+  return [useSyncExternalStore(onHiddenAddresses, addressesHidden), hideAddresses];
+}
+
+/** A host's address as this page shows it: hidden, or as is. */
+export const shownAddress = (address: string, hidden: boolean) => hidden ? t('Address hidden', '地址已隐藏') : address;
+
+function HideAddresses({ hidden, set }: { hidden: boolean; set: (on: boolean) => void }) {
+  const label = hidden ? t('Show addresses', '显示地址') : t('Hide addresses', '隐藏地址');
+  return <button type="button" className="icon-button host-hide" aria-pressed={hidden} aria-label={label} title={t(`${label} (on this device, before showing or sharing the screen)`, `${label}（本设备，展示或分享屏幕前用）`)} onClick={() => set(!hidden)}>{hidden ? <EyeOffIcon size={15} /> : <EyeIcon size={15} />}</button>;
+}
+
+/** This page's version, on the pages before a host is open. */
+const FrontendVersion = () => <small className="frontend-version">{t(`Frontend ${FRONTEND_VERSION}`, `前端版本 ${FRONTEND_VERSION}`)}</small>;
+
 const VIA_LABEL = { direct: () => t('Direct', '直连'), text: () => t('Address URL', '文本地址') };
 
 /** Adds a host (or signs in to the current one again) and opens it, or edits a host
@@ -52,6 +68,7 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
   useEffect(() => setError(shown), [shown]); // the page reports a failed reconnect after mounting this
   const [busy, setBusy] = useState(false);
   const safety = useSafetyAck();
+  const [hidden] = useHiddenAddresses();
   const others = loadHosts().hosts.filter(x => x.id !== currentHost?.id);
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -113,8 +130,9 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
     {error && <div className="error" role="alert">{error}</div>}
     <button className="primary" disabled={busy || !safety.ack}>{busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')} <span>→</span></button>
     {onCancel && <button type="button" className="secondary host-login-cancel" onClick={onCancel}>{t('Cancel', '取消')}</button>}
-    {!onCancel && !editing && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{x.entry || x.url}</small></button>)}</div>}
+    {!onCancel && !editing && others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{shownAddress(x.entry || x.url, hidden)}</small></button>)}</div>}
     {!editing && <AllowHint />}
+    {STANDALONE && !onCancel && !editing && <FrontendVersion />}
   </form>;
 }
 
@@ -125,6 +143,7 @@ export function HostLogin({ initialUrl = '', initialVia = 'direct', initialLan =
 export function StandaloneHome({ error, retrying, onRetry }: { error: string; retrying: boolean; onRetry: () => void }) {
   const [form, setForm] = useState<'' | 'add' | 'edit'>('');
   const safety = useSafetyAck();
+  const [hidden, setHidden] = useHiddenAddresses();
   const host = currentHost;
   if (form === 'add') return <HostLogin onCancel={() => setForm('')} />;
   if (form === 'edit' && host) return <HostLogin editing={host} onCancel={() => setForm('')} />;
@@ -142,19 +161,21 @@ export function StandaloneHome({ error, retrying, onRetry }: { error: string; re
     {safety.show && <SafetyNotice checked={safety.ack} onChange={safety.setAck} />}
     {add}
     <AllowHint />
+    <FrontendVersion />
   </div>;
   return <div className="login-card host-home">
     <LangSwitch />
     <span className="eyebrow">CC REMOTE</span>
-    <div className="host-home-current"><img className="host-swatch" src={iconURL(shownColor(host), shownIcon(host))} alt="" /><div><strong>{shownName(host)}</strong><small>{host.entry || host.url}</small></div></div>
+    <div className="host-home-current"><img className="host-swatch" src={iconURL(shownColor(host), shownIcon(host))} alt="" /><div><strong>{shownName(host)}</strong><small>{shownAddress(host.entry || host.url, hidden)}</small></div><HideAddresses hidden={hidden} set={setHidden} /></div>
     {error ? <div className="error" role="alert">{error}</div> : <p className="host-home-state"><span className="pulse" />{t('Connecting…', '正在连接…')}</p>}
     {error && retrying && <small className="host-home-note">{t('Trying again every 10 seconds; the page opens by itself once the host answers.', '每 10 秒自动重试，宿主恢复后自动进入。')}</small>}
     <div className="host-home-actions">
       <button type="button" className="primary" onClick={onRetry}>{t('Try again now', '立即重试')}</button>
       <button type="button" className="secondary" onClick={() => setForm('edit')}><EditIcon size={15} />{t('Edit host', '编辑宿主')}</button>
     </div>
-    {others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{x.entry || x.url}</small></button>)}</div>}
+    {others.length > 0 && <div className="host-login-others"><span className="eyebrow">{t('OTHER HOSTS', '其他宿主')}</span>{others.map(x => <button type="button" key={x.id} onClick={() => switchHost(x.id)}><img className="host-swatch" src={iconURL(shownColor(x), shownIcon(x))} alt="" />{shownName(x)}<small>{shownAddress(x.entry || x.url, hidden)}</small></button>)}</div>}
     {add}
+    <FrontendVersion />
   </div>;
 }
 
@@ -174,6 +195,7 @@ export function HostSwitcher({ name }: { name: string }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<HostEntry>();
   const [pings, setPings] = useState<Record<string, Ping>>({});
+  const [hidden, setHidden] = useHiddenAddresses();
   const box = useRef<HTMLDivElement>(null);
   const hosts = loadHosts().hosts;
   useEffect(() => {
@@ -199,12 +221,13 @@ export function HostSwitcher({ name }: { name: string }) {
       {hosts.map(host => { const p = pings[host.id]; return <div key={host.id} className={`host-row${host.id === currentHost?.id ? ' current' : ''}`}>
         <a role="menuitem" href={hostLink(host.id)} onClick={event => pick(event.nativeEvent, host)}>
           <img className="host-swatch" src={iconURL(shownColor(host), shownIcon(host))} alt="" />
-          <span className="host-text"><strong>{shownName(host)}</strong><small title={[host.entry ? `${host.entry} → ${host.url}` : '', host.lan ? t(`Home network: ${host.lan}`, `内网：${host.lan}`) : ''].filter(Boolean).join('\n') || undefined}>{host.id === currentHost?.id && onLan ? `${host.lan} · ${t('Home network', '内网')}` : <>{host.url}{host.via && ` · ${VIA_LABEL[host.via]()}`}</>}</small></span>
+          <span className="host-text"><strong>{shownName(host)}</strong><small title={hidden ? undefined : [host.entry ? `${host.entry} → ${host.url}` : '', host.lan ? t(`Home network: ${host.lan}`, `内网：${host.lan}`) : ''].filter(Boolean).join('\n') || undefined}>{host.id === currentHost?.id && onLan ? `${shownAddress(host.lan || '', hidden)} · ${t('Home network', '内网')}` : <>{shownAddress(host.url, hidden)}{host.via && ` · ${VIA_LABEL[host.via]()}`}</>}</small></span>
           <span className="host-state">{!p ? '…' : !p.online ? t('Offline', '离线') : p.waiting ? t(`${p.waiting} waiting`, `${p.waiting} 待操作`) : p.running ? t(`${p.running} running`, `${p.running} 执行中`) : <span className="dot idle" />}</span>
         </a>
         <button type="button" className="icon-button" aria-label={t(`Edit ${shownName(host)}`, `编辑 ${shownName(host)}`)} title={t('Edit name, color, icon, address or token', '编辑名称、颜色、图标、地址或令牌')} onClick={() => { setOpen(false); setEditing(host); }}><EditIcon size={15} /></button>
         <button type="button" className="icon-button" aria-label={t(`Remove ${shownName(host)}`, `移除 ${shownName(host)}`)} title={t('Remove from this page', '从此页面移除')} onClick={() => forget(host)}><CloseIcon size={15} /></button>
       </div>; })}
+      <button type="button" role="menuitemcheckbox" aria-checked={hidden} className="host-add" onClick={() => setHidden(!hidden)}>{hidden ? <EyeIcon size={14} /> : <EyeOffIcon size={14} />}{hidden ? t('Show addresses', '显示地址') : t('Hide addresses', '隐藏地址')}</button>
       <button type="button" role="menuitem" className="host-add" onClick={() => { setOpen(false); setAdding(true); }}><PlusIcon size={14} />{t('Add host', '添加宿主')}</button>
       <button type="button" role="menuitem" className="host-add host-clear" onClick={forgetAll}><LogoutIcon size={14} />{t('Sign out of all hosts and clear…', '退出并清除所有宿主…')}</button>
     </div>}

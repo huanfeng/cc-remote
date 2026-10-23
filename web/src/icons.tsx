@@ -30,4 +30,6 @@ export const QuestionIcon = ({ size }: P) => <Svg size={size}><circle cx="8" cy=
 export const ExpandAllIcon = ({ size }: P) => <Svg size={size}><path d="M4.5 3.5 8 6.5l3.5-3M4.5 9.5 8 12.5l3.5-3" /></Svg>;
 export const CollapseAllIcon = ({ size }: P) => <Svg size={size}><path d="M4.5 6.5 8 3.5l3.5 3M4.5 12.5 8 9.5l3.5 3" /></Svg>;
 export const BackIcon = ({ size }: P) => <Svg size={size}><path d="M10 3.5L5.5 8l4.5 4.5" /></Svg>;
+export const EyeIcon = ({ size }: P) => <Svg size={size}><path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" /><circle cx="8" cy="8" r="2" /></Svg>;
+export const EyeOffIcon = ({ size }: P) => <Svg size={size}><path d="M6.6 3.65A6 6 0 0 1 8 3.5c4 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.4M10.1 11.9a6 6 0 0 1-2.1.6C4 12.5 1.5 8 1.5 8a11 11 0 0 1 2.6-3M6.6 6.6a2 2 0 0 0 2.8 2.8M2 2l12 12" /></Svg>;
 export const DownloadIcon = ({ size }: P) => <Svg size={size}><path d="M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10" /></Svg>;
