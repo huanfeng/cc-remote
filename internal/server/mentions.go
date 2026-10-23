@@ -76,7 +76,9 @@ func listFiles(dir string) []string {
 func gitFiles(dir string) ([]string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	// A repository's own config can name a program for git to run (core.fsmonitor);
+	// listing files runs none.
+	cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "-C", dir, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	hideWindow(cmd)
 	b, err := cmd.Output()
 	if err != nil {

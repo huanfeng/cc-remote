@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -63,6 +64,11 @@ func TestMentionsListSessionFiles(t *testing.T) {
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
+	// A program the repository's config names is not run.
+	marker := filepath.Join(t.TempDir(), "ran")
+	if out, err := exec.Command("git", "-C", repo, "config", "core.fsmonitor", "touch '"+filepath.ToSlash(marker)+"'").CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v %s", err, out)
+	}
 	writeFile(t, filepath.Join(repo, ".gitignore"), "build/\n")
 	writeFile(t, filepath.Join(repo, "build", "out.go"), "x")
 	writeFile(t, filepath.Join(repo, "cmd", "tool.go"), "x")
@@ -75,6 +81,9 @@ func TestMentionsListSessionFiles(t *testing.T) {
 	}
 	if got := ask(b.ID, "out.go"); len(got) != 0 {
 		t.Fatalf("an ignored file is offered: %v", got)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the repository's core.fsmonitor ran")
 	}
 	if code, _ := request(t, ts, "GET", "/api/sessions/"+b.ID+"/mentions", nil, "wrong-token-wrong-token"); code != 401 {
 		t.Fatalf("without the token: %d", code)
