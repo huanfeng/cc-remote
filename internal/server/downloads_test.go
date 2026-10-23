@@ -125,6 +125,18 @@ func TestDownloadTicketLastsWhileInUse(t *testing.T) {
 	if _, ok := d.begin(id); ok {
 		t.Fatal("an idle expired ticket still opens the file")
 	}
+	// None, running or not, starts after the deadline: a leaked link cannot be kept alive.
+	old := d.add(downloadTicket{expires: time.Now().Add(time.Minute), deadline: time.Now().Add(time.Hour)})
+	d.begin(old)
+	d.mu.Lock()
+	v := d.m[old]
+	v.deadline = time.Now().Add(-time.Second)
+	d.m[old] = v
+	d.mu.Unlock()
+	if _, ok := d.begin(old); ok {
+		t.Fatal("a ticket past its deadline still opens the file")
+	}
+	d.end(old) // the download that ran on it ends
 	// A full table drops idle tickets, never one in use.
 	busy := d.add(downloadTicket{expires: time.Now().Add(time.Minute)})
 	d.begin(busy)

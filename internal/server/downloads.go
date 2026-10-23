@@ -15,23 +15,26 @@ import (
 // token, so the web first asks for a link (with the token): a random ticket
 // for that one file, good for downloadTTL until a download starts. It stays
 // good while a download runs, however slow, and for downloadIdle after the
-// last one ends, so a download the network broke resumes from where it was.
+// last one ends, so a download the network broke resumes from where it was;
+// none starts after downloadMaxLife, so a leaked link cannot be kept alive.
 // Every request checks the file against the session's directories again.
 
 const (
 	downloadTTL        = 5 * time.Minute
 	downloadIdle       = 30 * time.Minute
+	downloadMaxLife    = 24 * time.Hour
 	maxDownloadTickets = 256
 )
 
 type downloadTicket struct {
 	session, path string
 	expires       time.Time
-	active        int // downloads running on the ticket
+	deadline      time.Time // zero: none (the terminal's stream tickets)
+	active        int       // downloads running on the ticket
 }
 
 func (t downloadTicket) expired(now time.Time) bool {
-	return t.active == 0 && now.After(t.expires)
+	return t.active == 0 && now.After(t.expires) || !t.deadline.IsZero() && now.After(t.deadline)
 }
 
 type downloadTickets struct {
@@ -113,7 +116,8 @@ func (s *Server) fileLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Close()
-	ticket := s.downloads.add(downloadTicket{session: r.PathValue("id"), path: path, expires: time.Now().Add(downloadTTL)})
+	now := time.Now()
+	ticket := s.downloads.add(downloadTicket{session: r.PathValue("id"), path: path, expires: now.Add(downloadTTL), deadline: now.Add(downloadMaxLife)})
 	respond(w, 200, map[string]any{"url": "/api/download/" + ticket, "name": filepath.Base(path), "size": info.Size()})
 }
 
