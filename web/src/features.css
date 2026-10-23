@@ -235,3 +235,12 @@ img.host-swatch{display:block;background:none}
 .lang-switch button.active{background:#fffaf5;color:#28332d;box-shadow:0 1px 3px #27362c14}
 .host-home-current .host-hide{margin-left:auto;color:var(--muted);display:grid;place-items:center;width:30px;height:30px;padding:0;border-radius:8px}
 .login-card small.frontend-version{display:block;margin-top:14px;text-align:center;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+/* Reading history: the message box is a line (a click opens it again), and an arrow jumps to the latest. */
+.composer.compact textarea{min-height:0;max-height:46px;overflow:hidden;cursor:text}
+.composer.compact .composer-bottom,.composer.compact .attachments,.composer.compact .suggestion-bar,.composer.compact .command-menu,.composer.compact .composer-expand{display:none}
+.composer textarea{transition:max-height .16s ease,min-height .16s ease}
+.jump-latest-anchor{position:relative;height:0;align-self:stretch;z-index:3}
+.jump-latest{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);width:38px;height:38px;padding:0;border-radius:50%;border:1px solid #d8dfcd;background:#fffffff2;color:#3f4a37;display:grid;place-items:center;box-shadow:0 4px 14px #2a3a2d1f;cursor:pointer;animation:jump-in .16s ease}
+.jump-latest:hover{background:#f2f5ec}
+.jump-latest.live::after{content:'';position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:#87a568;box-shadow:0 0 0 2px #fff}
+@keyframes jump-in{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translateX(-50%)}}

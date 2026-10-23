@@ -3,7 +3,7 @@ import { t } from './i18n';
 
 // The message box grows with its text up to a few lines; longer text scrolls
 // and a button in the top-right corner enlarges the box.
-export function ComposerInput(props: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string }) {
+export function ComposerInput({ compact, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string; compact?: boolean }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [overflow, setOverflow] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -16,7 +16,7 @@ export function ComposerInput(props: TextareaHTMLAttributes<HTMLTextAreaElement>
     const over = box.scrollHeight > max + 1;
     setOverflow(over);
     if (!props.value) setExpanded(false); // sent: back to the normal size
-  }, [props.value, expanded]);
+  }, [props.value, expanded, compact]); // compact: a line while the history is read (App)
   return <div className={`composer-input${expanded ? ' expanded' : ''}`}>
     <textarea ref={ref} rows={1} {...props} />
     {(overflow || expanded) && <button type="button" className="composer-expand" aria-label={expanded ? t('Shrink message box', '收起输入框') : t('Enlarge message box', '放大输入框')} title={expanded ? t('Shrink', '收起') : t('Enlarge', '放大')} onClick={() => { setExpanded(old => !old); ref.current?.focus(); }}>
