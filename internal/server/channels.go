@@ -398,6 +398,7 @@ func questionTexts(input json.RawMessage) []string {
 // s.mu: a snapshot is a prefix of any later one and recording is idempotent, so
 // an older snapshot applied late adds nothing.
 func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSession, events []claude.Event) {
+	_ = s.store.SetConversationTime(c.sessionID, n.LastConversationAt, n.ConversationTimeEstimated)
 	if n.Title != "Claude session" {
 		_ = s.store.SetTitle(c.sessionID, n.Title)
 	}
@@ -436,7 +437,7 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 			_ = s.store.MarkTranscript(c.sessionID, key)
 			continue
 		}
-		added, e := s.store.RecordTranscript(c.sessionID, key, ev.Kind, ev.Text, ev.Payload)
+		added, e := s.store.RecordTranscriptAt(c.sessionID, key, ev.Kind, ev.Text, ev.Payload, ev.CreatedAt)
 		if added && e == nil && ev.Kind == "tool_result" {
 			// Backstop for a hook that missed the terminal answer: the question is over.
 			for id, p := range s.requests {

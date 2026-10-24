@@ -15,17 +15,19 @@ import (
 )
 
 type Session struct {
-	Provider        string `json:"provider"`
-	ID              string `json:"id"`
-	Title           string `json:"title"`
-	Cwd             string `json:"cwd"`
-	ClaudeSessionID string `json:"claudeSessionId"`
-	Status          string `json:"status"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
-	Resume          bool   `json:"-"`
-	Mode            string `json:"mode"`
-	Online          bool   `json:"online"`
+	Provider                  string `json:"provider"`
+	ID                        string `json:"id"`
+	Title                     string `json:"title"`
+	Cwd                       string `json:"cwd"`
+	ClaudeSessionID           string `json:"claudeSessionId"`
+	Status                    string `json:"status"`
+	CreatedAt                 string `json:"createdAt"`
+	UpdatedAt                 string `json:"updatedAt"`
+	LastConversationAt        string `json:"lastConversationAt,omitempty"`
+	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
+	Resume                    bool   `json:"-"`
+	Mode                      string `json:"mode"`
+	Online                    bool   `json:"online"`
 	// Per-session launch overrides; empty follows cc-remote preferences.
 	PermissionMode string `json:"permissionMode"`
 	Model          string `json:"model"`
@@ -160,6 +162,10 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
+	if err = migrateConversationActivity(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// Sessions synced before transcripts carried task and teammate events
 	// are flagged once, so their first sync does not append those of the
 	// whole history (see TranscriptFlag).
@@ -260,10 +266,12 @@ func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provide
 
 const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider`
 
+const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0)`
+
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.LastConversationAt, &x.ConversationTimeEstimated)
 	if err == nil {
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
 	}
@@ -271,18 +279,18 @@ func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 }
 
 func (s *Store) Get(id string) (Session, error) {
-	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE id=?`, id))
+	return scanSession(s.db.QueryRow(`SELECT `+sessionReadColumns+` FROM sessions WHERE id=?`, id))
 }
 func (s *Store) FindClaude(id string) (Session, error) {
 	return s.FindNative("claude", id)
 }
 
 func (s *Store) FindNative(provider, id string) (Session, error) {
-	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE provider=? AND claude_id=?`, provider, id))
+	return scanSession(s.db.QueryRow(`SELECT `+sessionReadColumns+` FROM sessions WHERE provider=? AND claude_id=?`, provider, id))
 }
 
 func (s *Store) List() ([]Session, error) {
-	r, err := s.db.Query(`SELECT ` + sessionColumns + ` FROM sessions ORDER BY updated_at DESC`)
+	r, err := s.db.Query(`SELECT ` + sessionReadColumns + ` FROM sessions ORDER BY julianday(COALESCE(NULLIF((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),created_at)) DESC,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +355,7 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"events", "interactions", "channel_transcript"} {
+	for _, table := range []string{"events", "interactions", "channel_transcript", "session_activity"} {
 		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE session_id=?`, id); err != nil {
 			return err
 		}
@@ -367,6 +375,11 @@ func (s *Store) Delete(id string) error {
 
 // RecordTranscript keeps repeated transcript scans idempotent.
 func (s *Store) RecordTranscript(id, key, kind, text string, payload json.RawMessage) (bool, error) {
+	return s.RecordTranscriptAt(id, key, kind, text, payload, now())
+}
+
+// RecordTranscriptAt preserves the source clock; missing timestamps stay unknown.
+func (s *Store) RecordTranscriptAt(id, key, kind, text string, payload json.RawMessage, at string) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
@@ -383,8 +396,16 @@ func (s *Store) RecordTranscript(id, key, kind, text string, payload json.RawMes
 	if len(payload) == 0 {
 		payload = json.RawMessage(`null`)
 	}
-	_, err = tx.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) VALUES(?,?,?,?,?)`, id, kind, text, string(payload), now())
+	sourceAt := conversationTimestamp(at)
+	storedAt := sourceAt
+	if storedAt == "" {
+		storedAt = now()
+	}
+	_, err = tx.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) VALUES(?,?,?,?,?)`, id, kind, text, string(payload), storedAt)
 	if err != nil {
+		return false, err
+	}
+	if err = recordConversation(tx, id, kind, text, sourceAt); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()
@@ -419,16 +440,37 @@ func (s *Store) ClearTranscriptFlag(id, key string) error {
 }
 
 func (s *Store) Append(id, kind, text string, payload json.RawMessage) (Event, error) {
+	return s.AppendAt(id, kind, text, payload, now())
+}
+
+// AppendAt records native history without treating import time as conversation time.
+func (s *Store) AppendAt(id, kind, text string, payload json.RawMessage, at string) (Event, error) {
 	if len(payload) == 0 || !json.Valid(payload) {
 		payload = json.RawMessage(`null`)
 	}
-	x := Event{SessionID: id, Kind: kind, Text: text, Payload: payload, CreatedAt: now()}
-	r, err := s.db.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) VALUES(?,?,?,?,?)`, id, kind, text, string(payload), x.CreatedAt)
+	sourceAt := conversationTimestamp(at)
+	storedAt := sourceAt
+	if storedAt == "" {
+		storedAt = now()
+	}
+	x := Event{SessionID: id, Kind: kind, Text: text, Payload: payload, CreatedAt: storedAt}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return x, err
+	}
+	defer tx.Rollback()
+	r, err := tx.Exec(`INSERT INTO events(session_id,kind,text,payload,created_at) VALUES(?,?,?,?,?)`, id, kind, text, string(payload), x.CreatedAt)
 	if err != nil {
 		return x, err
 	}
 	x.Seq, err = r.LastInsertId()
-	return x, err
+	if err != nil {
+		return x, err
+	}
+	if err = recordConversation(tx, id, kind, text, sourceAt); err != nil {
+		return x, err
+	}
+	return x, tx.Commit()
 }
 
 // LatestPayload returns the payload of the newest event of kind whose payload

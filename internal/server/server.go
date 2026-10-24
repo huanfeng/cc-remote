@@ -1124,10 +1124,19 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range ev {
-		if _, e = s.store.Append(managed.ID, v.Kind, v.Text, v.Payload); e != nil {
+		if _, e = s.store.AppendAt(managed.ID, v.Kind, v.Text, v.Payload, v.CreatedAt); e != nil {
 			fail(w, 500, s.lang(r).T("Could not save the history", "无法保存历史"))
 			return
 		}
+	}
+	if e = s.store.SetConversationTime(managed.ID, x.LastConversationAt, x.ConversationTimeEstimated); e != nil {
+		fail(w, 500, s.lang(r).T("Could not save the history time", "无法保存历史时间"))
+		return
+	}
+	managed, e = s.store.Get(managed.ID)
+	if e != nil {
+		fail(w, 500, e.Error())
+		return
 	}
 	respond(w, 201, managed)
 }

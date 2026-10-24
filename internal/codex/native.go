@@ -3,6 +3,7 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"container/list"
 	"encoding/json"
 	"errors"
@@ -29,31 +30,42 @@ type nativeMetadataKey struct {
 }
 
 type nativeMetadataEntry struct {
-	key     nativeMetadataKey
-	info    fs.FileInfo
-	session claude.NativeSession
+	key      nativeMetadataKey
+	info     fs.FileInfo
+	session  claude.NativeSession
+	events   []claude.Event
+	weight   int64
+	prefix   []byte
+	complete bool
 }
 
 type nativeMetadataStore struct {
 	sync.Mutex
 	entries map[nativeMetadataKey]*list.Element
 	order   list.List // least recently used first
+	bytes   int64
 }
 
 var nativeMetadataCache nativeMetadataStore
+var nativeHistoryCache nativeMetadataStore
 
 // metadata opens through the confined root even on cache hits, so removed files
 // and paths replaced with symlinks cannot resurrect a cached session. The lock
 // also avoids duplicate metadata reads by concurrent polling requests.
 func (c *nativeMetadataStore) metadata(root *os.Root, path string) (claude.NativeSession, error) {
+	s, _, err := c.read(root, path, false)
+	return s, err
+}
+
+func (c *nativeMetadataStore) read(root *os.Root, path string, history bool) (claude.NativeSession, []claude.Event, error) {
 	f, err := openNative(root, path)
 	if err != nil {
-		return claude.NativeSession{}, err
+		return claude.NativeSession{}, nil, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return claude.NativeSession{}, err
+		return claude.NativeSession{}, nil, err
 	}
 	key := nativeMetadataKey{home: root.Name(), path: filepath.ToSlash(filepath.Clean(path))}
 	c.Lock()
@@ -61,28 +73,58 @@ func (c *nativeMetadataStore) metadata(root *os.Root, path string) (claude.Nativ
 	if c.entries == nil {
 		c.entries = make(map[nativeMetadataKey]*list.Element)
 	}
+	var previous *nativeMetadataEntry
+	prefix := make([]byte, min(info.Size(), 256))
+	_, _ = f.ReadAt(prefix, 0)
 	if e := c.entries[key]; e != nil {
 		cached := e.Value.(nativeMetadataEntry)
 		if cached.info.Size() == info.Size() && cached.info.ModTime().Equal(info.ModTime()) && os.SameFile(cached.info, info) {
 			c.order.MoveToBack(e)
-			return cached.session, nil
+			return cached.session, cached.events[:len(cached.events):len(cached.events)], nil
 		}
 		c.order.Remove(e)
+		c.bytes -= cached.weight
 		delete(c.entries, key)
+		if history && cached.complete && info.Size() > cached.info.Size() && os.SameFile(cached.info, info) && len(prefix) >= len(cached.prefix) && bytes.Equal(prefix[:len(cached.prefix)], cached.prefix) {
+			previous = &cached
+		}
 	}
-	session, _, err := parseNative(f, info, false, nativeHistoryLimit)
+	var session claude.NativeSession
+	var events []claude.Event
+	if previous != nil && !previous.session.Truncated && info.Size() <= nativeHistoryLimit {
+		seed := previous.session
+		if seed.UpdatedAt == previous.info.ModTime().UTC().Format(time.RFC3339Nano) {
+			seed.UpdatedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+		}
+		session, events, err = parseNativeFrom(f, info, true, nativeHistoryLimit, seed, previous.info.Size())
+		events = append(previous.events[:len(previous.events):len(previous.events)], events...)
+	} else {
+		session, events, err = parseNative(f, info, history, nativeHistoryLimit)
+	}
 	if err != nil {
-		return claude.NativeSession{}, err
+		return claude.NativeSession{}, nil, err
 	}
 	// Keep the fingerprint from before parsing. If a writer appends during the
 	// read, the next poll sees a mismatch and reads the transcript again.
-	c.entries[key] = c.order.PushBack(nativeMetadataEntry{key, info, session})
-	if len(c.entries) > nativeFileLimit {
+	var weight int64
+	for _, ev := range events {
+		weight += int64(len(ev.Text)+len(ev.Payload)+len(ev.CreatedAt)) + 96
+	}
+	var last [1]byte
+	_, _ = f.ReadAt(last[:], info.Size()-1)
+	c.entries[key] = c.order.PushBack(nativeMetadataEntry{key: key, info: info, session: session, events: events, weight: weight, prefix: prefix, complete: last[0] == '\n'})
+	c.bytes += weight
+	maxEntries := nativeFileLimit
+	if history {
+		maxEntries = 8
+	}
+	for len(c.entries) > maxEntries || history && c.bytes > nativeHistoryLimit && len(c.entries) > 1 {
 		oldest := c.order.Front()
+		c.bytes -= oldest.Value.(nativeMetadataEntry).weight
 		delete(c.entries, oldest.Value.(nativeMetadataEntry).key)
 		c.order.Remove(oldest)
 	}
-	return session, nil
+	return session, events[:len(events):len(events)], nil
 }
 
 // nativeRoot confines all reads to the selected Codex home, including when a
@@ -188,7 +230,7 @@ func ListNative(configDir string) ([]claude.NativeSession, error) {
 		}
 		key := strings.ToLower(s.ID)
 		if i, ok := seen[key]; ok {
-			if s.UpdatedAt > out[i].UpdatedAt {
+			if nativeSessionTime(s).After(nativeSessionTime(out[i])) {
 				out[i] = s
 			}
 		} else {
@@ -196,7 +238,13 @@ func ListNative(configDir string) ([]claude.NativeSession, error) {
 			out = append(out, s)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	sort.Slice(out, func(i, j int) bool {
+		a, b := nativeSessionTime(out[i]), nativeSessionTime(out[j])
+		if !a.Equal(b) {
+			return a.After(b)
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out, nil
 }
 
@@ -227,7 +275,7 @@ func NativeHistory(configDir, id string) (claude.NativeSession, []claude.Event, 
 			if err != nil || !strings.EqualFold(s.ID, id) {
 				continue
 			}
-			return readNative(root, path, true, nativeHistoryLimit)
+			return nativeHistoryCache.read(root, path, true)
 		}
 	}
 	return claude.NativeSession{}, nil, os.ErrNotExist
@@ -250,6 +298,7 @@ type rolloutRecord struct {
 		Arguments    json.RawMessage `json:"arguments"`
 		Output       json.RawMessage `json:"output"`
 		IsError      bool            `json:"is_error"`
+		Message      string          `json:"message"`
 	} `json:"payload"`
 }
 
@@ -268,9 +317,25 @@ func readNative(root *os.Root, path string, history bool, limit int64) (claude.N
 
 func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claude.NativeSession, []claude.Event, error) {
 	s := claude.NativeSession{Provider: "codex", Title: "Codex session", UpdatedAt: info.ModTime().UTC().Format(time.RFC3339Nano)}
+	return parseNativeFrom(f, info, history, limit, s, 0)
+}
+
+func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s claude.NativeSession, offset int64) (claude.NativeSession, []claude.Event, error) {
 	var events []claude.Event
-	customTitle, userTitle := false, false
-	var reader io.Reader = io.LimitReader(f, limit)
+	customTitle, userTitle := s.Title != "Codex session", false
+	hasConversation := s.LastConversationAt != ""
+	noteActivity := func(stamp string) {
+		hasConversation = true
+		if stamp = nativeTimestamp(stamp); stamp != "" {
+			a, _ := time.Parse(time.RFC3339Nano, stamp)
+			b, _ := time.Parse(time.RFC3339Nano, s.LastConversationAt)
+			if s.ConversationTimeEstimated || a.After(b) {
+				s.LastConversationAt = stamp
+				s.ConversationTimeEstimated = false
+			}
+		}
+	}
+	var reader io.Reader = io.NewSectionReader(f, offset, min(limit, info.Size()-offset))
 	if !history {
 		// Listing is polled frequently. Read only bounded metadata windows,
 		// including the tail where a later rename or recent timestamp appears.
@@ -303,6 +368,12 @@ func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claud
 		}
 		p := r.Payload
 		if r.Type == "session_meta" {
+			if s.CreatedAt == "" {
+				s.CreatedAt = nativeTimestamp(p.Timestamp)
+				if s.CreatedAt == "" {
+					s.CreatedAt = nativeTimestamp(r.Timestamp)
+				}
+			}
 			if nativeUUID.MatchString(p.ID) && s.ID == "" {
 				s.ID = p.ID
 			}
@@ -328,11 +399,20 @@ func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claud
 			}
 		}
 		// event_msg user_message/agent_message mirror response_item messages.
+		// Some versions only timestamp these mirrors, so retain their source time
+		// without duplicating the visible response_item history.
+		if r.Type == "event_msg" && (p.Type == "user_message" || p.Type == "agent_message") && meaningfulNativeText(p.Message) {
+			noteActivity(r.Timestamp)
+		}
 		if r.Type != "response_item" {
 			continue
 		}
 		var ev claude.Event
 		switch p.Type {
+		case "reasoning", "custom_tool_call", "custom_tool_call_output":
+			// These execution records have no shared visible event shape yet.
+			noteActivity(r.Timestamp)
+			continue
 		case "message":
 			if p.Role != "user" && p.Role != "assistant" {
 				continue
@@ -354,7 +434,10 @@ func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claud
 			if strings.TrimSpace(ev.Text) == "" {
 				continue
 			}
-			if p.Role == "user" && !customTitle && !userTitle && meaningfulNativeText(ev.Text) {
+			if p.Role == "user" && !meaningfulNativeText(ev.Text) {
+				continue
+			}
+			if p.Role == "user" && !customTitle && !userTitle {
 				title := []rune(strings.Join(strings.Fields(ev.Text), " "))
 				if len(title) > 80 {
 					title = title[:80]
@@ -387,12 +470,42 @@ func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claud
 		default:
 			continue
 		}
+		ev.CreatedAt = nativeTimestamp(r.Timestamp)
+		noteActivity(r.Timestamp)
 		if history {
 			events = append(events, ev)
 		}
 	}
-	s.Truncated = history && info.Size() > limit
+	s.Truncated = history && info.Size()-offset > limit
+	if hasConversation && (s.LastConversationAt == "" || s.ConversationTimeEstimated) {
+		s.LastConversationAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+		s.ConversationTimeEstimated = true
+	}
+	if s.Truncated {
+		// History retains its existing size bound; metadata windows still give
+		// the recent source activity even when visible events were truncated.
+		if recent, _, err := parseNative(f, info, false, limit); err == nil {
+			s.LastConversationAt, s.ConversationTimeEstimated = recent.LastConversationAt, recent.ConversationTimeEstimated
+		}
+	}
 	return s, events, scanner.Err()
+}
+
+func nativeTimestamp(value string) string {
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func nativeSessionTime(s claude.NativeSession) time.Time {
+	value := s.LastConversationAt
+	if value == "" {
+		value = s.CreatedAt
+	}
+	t, _ := time.Parse(time.RFC3339Nano, value)
+	return t
 }
 
 func meaningfulNativeText(text string) bool {

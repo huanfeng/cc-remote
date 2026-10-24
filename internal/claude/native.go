@@ -19,15 +19,19 @@ import (
 )
 
 type NativeSession struct {
-	Provider  string `json:"provider,omitempty"`
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Cwd       string `json:"cwd"`
-	UpdatedAt string `json:"updatedAt"`
+	Provider                  string `json:"provider,omitempty"`
+	ID                        string `json:"id"`
+	Title                     string `json:"title"`
+	Cwd                       string `json:"cwd"`
+	UpdatedAt                 string `json:"updatedAt"`
+	CreatedAt                 string `json:"createdAt,omitempty"`
+	LastConversationAt        string `json:"lastConversationAt,omitempty"`
+	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
 	// Truncated: the transcript is too large and only its recent part was read.
-	Truncated   bool `json:"truncated,omitempty"`
-	customTitle bool
-	launches    map[string]launch // background tool calls awaiting their result, by id
+	Truncated       bool `json:"truncated,omitempty"`
+	customTitle     bool
+	launches        map[string]launch // background tool calls awaiting their result, by id
+	hasConversation bool
 }
 
 type nativeFile struct {
@@ -146,7 +150,14 @@ func ListNative(configDir string) ([]NativeSession, error) {
 			delete(listCache.entries, path)
 		}
 	}
-	sort.SliceStable(found, func(i, j int) bool { return found[i].mod.After(found[j].mod) })
+	sort.SliceStable(found, func(i, j int) bool {
+		a, b := found[i].session, found[j].session
+		x, y := nativeSessionTime(a), nativeSessionTime(b)
+		if !x.Equal(y) {
+			return x.After(y)
+		}
+		return a.ID < b.ID
+	})
 	out := make([]NativeSession, len(found))
 	for i, e := range found {
 		out[i] = e.session
@@ -171,6 +182,9 @@ func inspectFile(file nativeFile) (NativeSession, bool) {
 			inspectMetadata(tail[i+1:], &session)
 		}
 	}
+	finishConversationTime(&session, file.mod)
+	// Listing does not need pending background launches.
+	session.launches = nil
 	return session, true
 }
 
@@ -181,6 +195,10 @@ func inspectMetadata(data []byte, s *NativeSession) {
 }
 
 func inspectLine(line []byte, s *NativeSession) {
+	_ = transcriptEvents(line, s)
+}
+
+func inspectIdentity(line []byte, s *NativeSession) {
 	var v struct {
 		Type        string `json:"type"`
 		Cwd         string `json:"cwd"`
@@ -251,11 +269,12 @@ type historyEntry struct {
 	events  []Event
 	weight  atomic.Int64 // about the bytes events hold; read without mu by the cache
 	used    time.Time    // guarded by historyCache
+	prefix  []byte       // bounded rewrite detection, including replacements that grew
 }
 
 // eventWeight is about the memory one event holds.
 func eventWeight(ev Event) int64 {
-	return int64(len(ev.Kind)+len(ev.Text)+len(ev.Payload)+len(ev.Parent)) + 64
+	return int64(len(ev.Kind)+len(ev.Text)+len(ev.Payload)+len(ev.Parent)+len(ev.CreatedAt)) + 80
 }
 
 func NativeHistory(configDir, id string) (NativeSession, []Event, error) {
@@ -376,7 +395,10 @@ func (e *historyEntry) refresh(path, id string) error {
 	if info.Size() == e.size && info.ModTime().Equal(e.mod) && e.offset > 0 {
 		return nil
 	}
-	if info.Size() < e.offset || e.offset == 0 {
+	prefix := make([]byte, min(info.Size(), 256))
+	_, _ = f.ReadAt(prefix, 0)
+	rewritten := len(prefix) < len(e.prefix) || !bytes.Equal(prefix[:min(len(prefix), len(e.prefix))], e.prefix)
+	if rewritten || info.Size() < e.size || info.Size() == e.size && !info.ModTime().Equal(e.mod) || e.offset == 0 {
 		e.offset, e.events = 0, nil
 		e.weight.Store(0)
 		e.session = NativeSession{ID: id, Title: "Claude session"}
@@ -422,7 +444,9 @@ func (e *historyEntry) refresh(path, id string) error {
 		return err
 	}
 	e.size, e.mod = info.Size(), info.ModTime()
+	e.prefix = prefix
 	e.session.UpdatedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
+	finishConversationTime(&e.session, info.ModTime())
 	return nil
 }
 
@@ -454,7 +478,74 @@ func lineStart(f *os.File, pos int64) (int64, error) {
 // transcriptEvents updates the session metadata from one transcript line and
 // returns the events it shows in history.
 func transcriptEvents(line []byte, session *NativeSession) []Event {
-	inspectLine(line, session)
+	inspectIdentity(line, session)
+	events := transcriptRecordEvents(line, session)
+	var source struct {
+		Timestamp string `json:"timestamp"`
+	}
+	_ = json.Unmarshal(line, &source)
+	stamp := nativeTimestamp(source.Timestamp)
+	for i := range events {
+		// Task payloads can carry their own original time.
+		var task struct {
+			CreatedAt string `json:"createdAt"`
+			Timestamp string `json:"timestamp"`
+		}
+		if events[i].Kind == "status" || events[i].Kind == "teammate" {
+			_ = json.Unmarshal(events[i].Payload, &task)
+			if events[i].CreatedAt == "" {
+				events[i].CreatedAt = nativeTimestamp(task.CreatedAt)
+			}
+			if events[i].CreatedAt == "" {
+				events[i].CreatedAt = nativeTimestamp(task.Timestamp)
+			}
+		}
+		if events[i].CreatedAt == "" {
+			events[i].CreatedAt = stamp
+		}
+		switch events[i].Kind {
+		case "user", "assistant", "tool", "tool_result", "status", "teammate":
+			session.hasConversation = true
+			if t := events[i].CreatedAt; t != "" && (session.ConversationTimeEstimated || nativeAfter(t, session.LastConversationAt)) {
+				session.LastConversationAt, session.ConversationTimeEstimated = t, false
+			}
+		}
+	}
+	return events
+}
+
+// nativeTimestamp accepts only original RFC3339 times, never a read/import time.
+func nativeTimestamp(value string) string {
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func nativeAfter(a, b string) bool {
+	x, _ := time.Parse(time.RFC3339Nano, a)
+	y, _ := time.Parse(time.RFC3339Nano, b)
+	return x.After(y)
+}
+
+func nativeSessionTime(s NativeSession) time.Time {
+	value := s.LastConversationAt
+	if value == "" {
+		value = s.CreatedAt
+	}
+	t, _ := time.Parse(time.RFC3339Nano, value)
+	return t
+}
+
+func finishConversationTime(s *NativeSession, mod time.Time) {
+	if s.hasConversation && (s.LastConversationAt == "" || s.ConversationTimeEstimated) {
+		s.LastConversationAt = mod.UTC().Format(time.RFC3339Nano)
+		s.ConversationTimeEstimated = true
+	}
+}
+
+func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 	var v struct {
 		Type        string          `json:"type"`
 		Subtype     string          `json:"subtype"`
@@ -509,7 +600,7 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 	// Background work reports as turns Claude Code adds: a task's end, or a
 	// teammate's messages (see tasks.go).
 	if v.Type == "attachment" && v.Attachment.Type == "queued_command" {
-		if events, ok := noticeEvents(v.Attachment.Prompt); ok {
+		if events, ok := nativeNoticeEvents(v.Attachment.Prompt); ok {
 			return events
 		}
 	}
@@ -529,7 +620,7 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 	for _, e := range contentEvents(v.Message.Content, v.Type) {
 		if e.Kind == "user" {
 			e.Text = UnwrapPastes(e.Text)
-			if events, ok := noticeEvents(e.Text); ok {
+			if events, ok := nativeNoticeEvents(e.Text); ok {
 				out = append(out, events...)
 				continue
 			}
@@ -554,6 +645,44 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 		}
 	}
 	return out
+}
+
+// Teammate notifications can retain their original time inside the message,
+// predating the enclosing transcript record written when the task was read.
+func nativeNoticeEvents(text string) ([]Event, bool) {
+	events, ok := noticeEvents(text)
+	for _, block := range teammateBlock.FindAllStringSubmatch(text, -1) {
+		attrs := map[string]string{}
+		for _, attr := range attribute.FindAllStringSubmatch(block[1], -1) {
+			attrs[attr[1]] = attr[2]
+		}
+		var source struct {
+			Timestamp string `json:"timestamp"`
+			CreatedAt string `json:"createdAt"`
+		}
+		_ = json.Unmarshal([]byte(strings.TrimSpace(block[2])), &source)
+		stamp := nativeTimestamp(source.Timestamp)
+		if stamp == "" {
+			stamp = nativeTimestamp(source.CreatedAt)
+		}
+		if stamp == "" {
+			stamp = nativeTimestamp(attrs["timestamp"])
+		}
+		if stamp == "" || attrs["teammate_id"] == "" {
+			continue
+		}
+		for i := range events {
+			var payload struct {
+				TaskID     string `json:"task_id"`
+				TeammateID string `json:"teammate_id"`
+			}
+			_ = json.Unmarshal(events[i].Payload, &payload)
+			if payload.TaskID == attrs["teammate_id"] || payload.TeammateID == attrs["teammate_id"] {
+				events[i].CreatedAt = stamp
+			}
+		}
+	}
+	return events, ok
 }
 
 // pastedContent is how Claude Code records pasted text in a prompt, on lines

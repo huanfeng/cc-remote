@@ -54,17 +54,17 @@ func TestNativeHistoryResponseItems(t *testing.T) {
 	if s.ID != testNativeID || s.Provider != "codex" || s.Title != "Please fix the synthetic test" || s.Cwd != "/synthetic/project" || s.UpdatedAt != "2026-10-24T02:00:00Z" {
 		t.Fatalf("session: %+v", s)
 	}
-	if len(events) != 5 {
+	if len(events) != 4 {
 		t.Fatalf("events: %+v", events)
 	}
-	if events[1].Kind != "user" || events[2].Kind != "tool" || events[3].Kind != "tool_result" || events[4].Text != "Done\nVerified" {
+	if events[0].Kind != "user" || events[1].Kind != "tool" || events[2].Kind != "tool_result" || events[3].Text != "Done\nVerified" {
 		t.Fatalf("events: %+v", events)
 	}
 	var tool struct {
 		ID, Name string
 		Input    map[string]string
 	}
-	if err := json.Unmarshal(events[2].Payload, &tool); err != nil {
+	if err := json.Unmarshal(events[1].Payload, &tool); err != nil {
 		t.Fatal(err)
 	}
 	if tool.ID != "call-1" || tool.Name != "exec_command" || tool.Input["cmd"] != "echo synthetic" {
@@ -75,10 +75,10 @@ func TestNativeHistoryResponseItems(t *testing.T) {
 		Content string
 		IsError bool `json:"is_error"`
 	}
-	if err := json.Unmarshal(events[3].Payload, &result); err != nil {
+	if err := json.Unmarshal(events[2].Payload, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.ID != "call-1" || result.Content != "synthetic output" || !result.IsError || events[3].Text != "synthetic output" {
+	if result.ID != "call-1" || result.Content != "synthetic output" || !result.IsError || events[2].Text != "synthetic output" {
 		t.Fatalf("result: %+v", result)
 	}
 	list, err := ListNative(home)
@@ -92,9 +92,10 @@ func TestNativeListTitlesAndEnvironment(t *testing.T) {
 	t.Setenv("CODEX_HOME", home)
 	second := "22345678-abcd-4321-9876-123456789abc"
 	writeRollout(t, home, "old", nativeMeta(testNativeID)+nativeMessage("user", "Original title")+
+		`{"type":"event_msg","timestamp":"2026-10-24T02:00:00Z","payload":{"type":"user_message","message":"Original title"}}`+"\n"+
 		`{"type":"event_msg","payload":{"type":"session_title","title":"Saved title"}}`+"\n")
 	writeRollout(t, home, "new", nativeMeta(second)+nativeMessage("user", "A\n meaningful   title")+
-		`{"type":"event_msg","timestamp":"2026-10-24T03:00:00Z","payload":{"type":"ignored"}}`+"\n")
+		`{"type":"event_msg","timestamp":"2026-10-24T03:00:00Z","payload":{"type":"user_message","message":"A meaningful title"}}`+"\n")
 	writeRollout(t, home, "invalid", nativeMeta("../../outside"))
 	list, err := ListNative("")
 	if err != nil || len(list) != 2 {
@@ -107,6 +108,199 @@ func TestNativeListTitlesAndEnvironment(t *testing.T) {
 	list, err = ListNative(t.TempDir())
 	if err != nil || len(list) != 0 {
 		t.Fatalf("explicit home: %+v %v", list, err)
+	}
+}
+
+func TestNativeConversationSourceTimesAndCache(t *testing.T) {
+	home := t.TempDir()
+	data := nativeMeta(testNativeID) +
+		`{"type":"response_item","timestamp":"2020-01-01T01:00:00+01:00","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}` + "\n" +
+		`{"type":"response_item","timestamp":"2020-01-01T00:00:00.9Z","payload":{"type":"function_call","name":"exec","call_id":"x","arguments":"{}"}}` + "\n" +
+		`{"type":"response_item","timestamp":"2020-01-01T00:00:00.8Z","payload":{"type":"function_call_output","call_id":"x","output":"done"}}` + "\n" +
+		`{"type":"response_item","timestamp":"2030-01-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context> injected"}]}}` + "\n" +
+		`{"type":"event_msg","timestamp":"2030-01-01T00:00:00Z","payload":{"type":"token_count"}}` + "\n"
+	path := writeRollout(t, home, testNativeID, data)
+	want := "2020-01-01T00:00:00.9Z"
+	s, events, err := NativeHistory(home, testNativeID)
+	if err != nil || s.LastConversationAt != want || s.ConversationTimeEstimated || s.CreatedAt != "2026-10-24T01:00:00Z" {
+		t.Fatalf("source metadata: %+v %v", s, err)
+	}
+	if len(events) != 3 || events[0].CreatedAt != "2020-01-01T00:00:00Z" || events[1].CreatedAt != want {
+		t.Fatalf("source events: %+v", events)
+	}
+	// An unchanged history reuses the parsed event array.
+	_, again, err := NativeHistory(home, testNativeID)
+	if err != nil || &again[0] != &events[0] {
+		t.Fatalf("history cache not reused: %v", err)
+	}
+	list, err := ListNative(home)
+	if err != nil || len(list) != 1 || list[0].LastConversationAt != want {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	appendRecord := func(data string) {
+		t.Helper()
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteString(data + "\n")
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendRecord(`{"type":"session_title","timestamp":"2031-01-01T00:00:00Z","payload":{"title":"renamed"}}`)
+	s, again, err = NativeHistory(home, testNativeID)
+	if err != nil || s.LastConversationAt != want || s.Title != "renamed" || len(again) != len(events) {
+		t.Fatalf("metadata append: %+v %+v %v", s, again, err)
+	}
+	appendRecord(`{"type":"response_item","timestamp":"2020-01-02T00:00:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}`)
+	s, again, err = NativeHistory(home, testNativeID)
+	if err != nil || len(again) != len(events)+1 || s.LastConversationAt != "2020-01-02T00:00:00Z" || again[len(again)-1].CreatedAt != s.LastConversationAt {
+		t.Fatalf("activity append: %+v %+v %v", s, again, err)
+	}
+}
+
+func TestNativeHistoryExcludesSyntheticUsers(t *testing.T) {
+	for _, conversation := range []bool{false, true} {
+		t.Run(fmt.Sprint(conversation), func(t *testing.T) {
+			home := t.TempDir()
+			data := nativeMeta(testNativeID)
+			wantTime, wantCount := "", 0
+			if conversation {
+				wantTime, wantCount = "2026-10-24T02:00:00Z", 1
+				data += `{"type":"response_item","timestamp":"2026-10-24T02:00:00Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}}` + "\n"
+			}
+			var injected strings.Builder
+			for _, text := range []string{"<environment_context>\ninjected environment", "# AGENTS.md instructions\ninjected instructions", "<permissions instructions>\ninjected permissions"} {
+				for _, record := range []map[string]any{
+					{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}}},
+					{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": text}},
+				} {
+					record["timestamp"] = "2030-01-01T00:00:00Z"
+					line, err := json.Marshal(record)
+					if err != nil {
+						t.Fatal(err)
+					}
+					injected.Write(line)
+					injected.WriteByte('\n')
+				}
+			}
+			path := writeRollout(t, home, testNativeID, data+injected.String())
+			for pass := 0; pass < 2; pass++ {
+				if pass == 1 {
+					f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, writeErr := f.WriteString(injected.String())
+					closeErr := f.Close()
+					if writeErr != nil || closeErr != nil {
+						t.Fatalf("append: %v %v", writeErr, closeErr)
+					}
+				}
+				s, events, err := NativeHistory(home, testNativeID)
+				if err != nil || len(events) != wantCount || s.LastConversationAt != wantTime || s.ConversationTimeEstimated {
+					t.Fatalf("pass %d: session=%+v events=%+v err=%v", pass, s, events, err)
+				}
+				if s.ID != testNativeID || s.Cwd != "/synthetic/project" || s.CreatedAt != "2026-10-24T01:00:00Z" || s.UpdatedAt != "2030-01-01T00:00:00Z" || s.Title != "Codex session" {
+					t.Fatalf("metadata lost: %+v", s)
+				}
+				list, err := ListNative(home)
+				if err != nil || len(list) != 1 || !reflect.DeepEqual(list[0], s) {
+					t.Fatalf("list=%+v history=%+v err=%v", list, s, err)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeConversationFallbackAndMetadata(t *testing.T) {
+	for _, activity := range []bool{true, false} {
+		t.Run(fmt.Sprint(activity), func(t *testing.T) {
+			home := t.TempDir()
+			data := nativeMeta(testNativeID)
+			if activity {
+				data += nativeMessage("user", "hello")
+			}
+			data += `{"type":"session_title","timestamp":"2030-01-01T00:00:00Z","payload":{"title":"metadata"}}` + "\n"
+			path := writeRollout(t, home, testNativeID, data)
+			mod := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
+			if err := os.Chtimes(path, mod, mod); err != nil {
+				t.Fatal(err)
+			}
+			s, events, err := NativeHistory(home, testNativeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			list, err := ListNative(home)
+			if err != nil || len(list) != 1 {
+				t.Fatalf("list: %+v %v", list, err)
+			}
+			for _, got := range []struct {
+				last      string
+				estimated bool
+			}{{s.LastConversationAt, s.ConversationTimeEstimated}, {list[0].LastConversationAt, list[0].ConversationTimeEstimated}} {
+				if activity {
+					if got.last != mod.Format(time.RFC3339Nano) || !got.estimated || events[0].CreatedAt != "" {
+						t.Fatalf("fallback: %+v %+v", got, events)
+					}
+				} else if got.last != "" || got.estimated {
+					t.Fatalf("metadata fabricated activity: %+v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeConversationStableSort(t *testing.T) {
+	home := t.TempDir()
+	ids := []string{testNativeID, "22345678-abcd-4321-9876-123456789abc", "32345678-abcd-4321-9876-123456789abc"}
+	for i, id := range ids {
+		stamp := "2026-10-24T01:00:00Z"
+		if i == 2 {
+			stamp = "2026-10-24T01:00:00.1Z"
+		}
+		data := nativeMeta(id)
+		// A metadata-only session uses its reliable creation time.
+		if i != 1 {
+			data += `{"type":"event_msg","timestamp":"` + stamp + `","payload":{"type":"agent_message","message":"done"}}` + "\n"
+		}
+		writeRollout(t, home, id, data)
+	}
+	list, err := ListNative(home)
+	if err != nil || len(list) != 3 || list[0].ID != ids[2] || list[1].ID != ids[0] || list[2].LastConversationAt != "" {
+		t.Fatalf("sort: %+v %v", list, err)
+	}
+}
+
+func TestNativeHistoryCacheBoundAndRewrite(t *testing.T) {
+	home := t.TempDir()
+	cache := new(nativeMetadataStore)
+	root, err := nativeRoot(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	var rel string
+	for i := 0; i < 9; i++ {
+		path := writeRollout(t, home, fmt.Sprint(i), nativeMeta(testNativeID)+nativeMessage("user", "hello"))
+		rel, err = filepath.Rel(home, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := cache.read(root, rel, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(cache.entries) != 8 || cache.order.Len() != 8 {
+		t.Fatalf("unbounded history: %d", len(cache.entries))
+	}
+	// Rewriting the same file must discard cached activity and old events.
+	writeRollout(t, home, "8", nativeMeta(testNativeID)+strings.Repeat("metadata padding\n", 100))
+	s, events, err := cache.read(root, rel, true)
+	if err != nil || len(events) != 0 || s.LastConversationAt != "" || s.ConversationTimeEstimated {
+		t.Fatalf("rewrite: %+v %+v %v", s, events, err)
 	}
 }
 

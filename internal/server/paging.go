@@ -160,7 +160,11 @@ func nativeEvents(x claude.NativeSession, ev []claude.Event) []store.Event {
 		if len(raw) == 0 {
 			raw = json.RawMessage(`null`)
 		}
-		out = append(out, store.Event{Seq: int64(i + 1), SessionID: x.ID, Kind: v.Kind, Text: v.Text, Payload: raw, CreatedAt: x.UpdatedAt})
+		at := v.CreatedAt
+		if at == "" {
+			at = x.LastConversationAt
+		}
+		out = append(out, store.Event{Seq: int64(i + 1), SessionID: x.ID, Kind: v.Kind, Text: v.Text, Payload: raw, CreatedAt: at})
 	}
 	return out
 }

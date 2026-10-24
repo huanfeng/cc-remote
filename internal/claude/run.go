@@ -20,9 +20,10 @@ import (
 )
 
 type Event struct {
-	Kind    string          `json:"kind"`
-	Text    string          `json:"text,omitempty"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+	CreatedAt string          `json:"createdAt,omitempty"`
+	Kind      string          `json:"kind"`
+	Text      string          `json:"text,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
 	// Parent is the Agent tool call whose subagent produced this event; the
 	// payload carries it too (parent_tool_use_id) for the web to nest it.
 	Parent string `json:"-"`
