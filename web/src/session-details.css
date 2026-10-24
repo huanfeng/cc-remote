@@ -1,0 +1,20 @@
+.session-details-backdrop{justify-content:flex-end;padding:0}
+.modal.session-details{width:min(620px,100%);height:100dvh;max-height:100dvh;border-radius:0;border:0;padding:24px 28px;padding-bottom:max(24px,env(safe-area-inset-bottom));overscroll-behavior:contain}
+.session-details .modal-heading{position:sticky;top:-24px;background:var(--modal-bg,#fcfbf6);padding:16px 0;z-index:2}
+.session-details h3{font-size:15px;margin:24px 0 12px;overflow-wrap:anywhere}
+.session-detail-list{font-size:13px;margin:12px 0 20px}
+.session-detail-list>div{display:grid;grid-template-columns:minmax(110px,1fr) minmax(0,2fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.session-detail-list dt{color:var(--muted)}
+.session-detail-list dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.session-detail-list small{color:var(--muted)}
+.session-copy{display:flex;align-items:flex-start;gap:10px}
+.session-copy code{flex:1;min-width:0;user-select:text;overflow-wrap:anywhere}
+.session-copy button{flex-shrink:0;min-height:32px}
+.session-configuration-row dd{display:grid;gap:10px}
+.session-details details,.settings-modal details{margin:18px 0}
+.session-details summary,.settings-modal summary{cursor:pointer;min-height:44px;display:list-item;align-content:center;font-size:13px}
+.session-details fieldset,.settings-modal fieldset.settings-panel{border:0;padding:0;min-width:0;margin:0}
+.settings-modal .settings-panel>div>form{margin-bottom:24px}
+.session-details .modal-actions{flex-wrap:wrap}
+.session-details button:focus-visible,.session-details summary:focus-visible{outline:2px solid #718963;outline-offset:3px}
+@media(max-width:760px){.modal.session-details{width:100%;padding:16px;padding-bottom:max(16px,env(safe-area-inset-bottom))}.session-details .modal-heading{top:-16px}.session-detail-list>div{grid-template-columns:minmax(90px,1fr) minmax(0,2fr)}.session-copy{flex-wrap:wrap}.session-copy button{min-height:44px}.session-details .modal-actions button{min-height:44px}}

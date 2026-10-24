@@ -74,6 +74,11 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .sidebar-nav .svg-icon{color:var(--muted)}
 @media(max-width:760px){.sidebar-nav{padding-bottom:max(10px,env(safe-area-inset-bottom))}}
 /* Custom Select: trigger styled like inputs; listbox is portaled to <body>. */
+.session-meta{flex-wrap:wrap;row-gap:5px}
+.session-meta .session-state{min-width:0}
+.session-time{margin-left:auto;flex-shrink:0;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.session-meta .cache-marker{font-size:9px}
+.session-time:focus-visible{outline:2px solid #87a568;outline-offset:2px}
 .select-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin-top:8px;min-height:46px;padding:11px 14px;background:#fff;border:1px solid #daddd2;border-radius:10px;color:inherit;text-align:left;font-size:14px;font-weight:400;line-height:1.5;transition:border-color .15s,box-shadow .15s}
 .select-trigger:hover:not(:disabled){border-color:#bfc8b2}
 .select-trigger[aria-expanded=true]{border-color:#87a568;box-shadow:0 0 0 3px #87a56826}
