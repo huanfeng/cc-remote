@@ -18,16 +18,31 @@ const POLL = 60_000;
 
 /** Polls /api/usage while the page is visible; undefined until the first answer. */
 export function useUsage(api: Api) {
-  const [usage, setUsage] = useState<UsageReply>();
+  const [result, setResult] = useState<{ api: Api; usage: UsageReply }>();
+  const source = useRef(api);
+  source.current = api;
   useEffect(() => {
     let active = true;
-    const load = () => { if (!document.hidden) api<UsageReply>('/api/usage').then(next => { if (active) setUsage(next); }).catch(() => {}); };
+    let request = 0;
+    const load = () => {
+      if (document.hidden) return;
+      const id = ++request;
+      const current = () => active && source.current === api && id === request;
+      api<UsageReply>('/api/usage').then(usage => {
+        if (current()) setResult({ api, usage });
+      }).catch(() => {
+        if (current()) setResult(previous => ({ api, usage: {
+          ...(previous?.api === api ? previous.usage : { available: true }),
+          stale: true, error: 'request-failed',
+        } }));
+      });
+    };
     load();
     const timer = window.setInterval(load, POLL);
     document.addEventListener('visibilitychange', load);
     return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', load); };
   }, [api]);
-  return usage;
+  return result?.api === api ? result.usage : undefined;
 }
 
 const level = (w: Window) => w.severity && w.severity !== 'normal' ? (w.severity === 'warning' ? 'warn' : 'high') : w.percent >= 90 ? 'high' : w.percent >= 75 ? 'warn' : 'ok';
@@ -35,14 +50,14 @@ const percent = (w: Window) => `${Math.round(w.percent)}%`;
 
 function until(iso?: string) {
   const at = iso ? Date.parse(iso) : NaN;
-  if (!at) return '';
+  if (!Number.isFinite(at)) return '';
   const m = Math.max(0, Math.round((at - Date.now()) / 60000)), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
   return d ? t(`${d}d ${h}h`, `${d} 天 ${h} 小时`) : h ? t(`${h}h ${m % 60}m`, `${h} 小时 ${m % 60} 分`) : t(`${m}m`, `${m} 分钟`);
 }
 
 export function ago(iso?: string) {
   const at = iso ? Date.parse(iso) : NaN;
-  if (!at) return '';
+  if (!Number.isFinite(at)) return '';
   const s = Math.max(0, (Date.now() - at) / 1000);
   return s < 60 ? t('just now', '刚刚') : s < 3600 ? t(`${Math.floor(s / 60)} min ago`, `${Math.floor(s / 60)} 分钟前`) : s < 86400 ? t(`${Math.floor(s / 3600)} h ago`, `${Math.floor(s / 3600)} 小时前`) : new Date(at).toLocaleString(locale);
 }
@@ -58,11 +73,36 @@ export const unavailableText = (u: UsageReply) => u.reason === 'third-party' ? t
 export function UsageBar({ api, open }: { api: Api; open: () => void }) {
   const usage = useUsage(api);
   const u = usage?.usage;
-  if (!usage?.available || !u || (!u.fiveHour && !u.weekly)) return null;
-  const item = (label: string, w?: Window) => w && <span className="usage-item"><span className="usage-label">{label}</span><span className="usage-track"><span className={`usage-fill ${level(w)}`} style={{ width: `${w.percent}%` }} /></span><span className="usage-value">{percent(w)}</span></span>;
-  const title = [u.fiveHour && t(`5-hour limit: ${percent(u.fiveHour)}, resets in ${until(u.fiveHour.resetsAt)}`, `5 小时额度：${percent(u.fiveHour)}，${until(u.fiveHour.resetsAt)}后重置`), u.weekly && t(`Weekly limit: ${percent(u.weekly)}, resets in ${until(u.weekly.resetsAt)}`, `每周额度：${percent(u.weekly)}，${until(u.weekly.resetsAt)}后重置`), t(`Updated ${ago(usage.fetchedAt)}`, `更新于${ago(usage.fetchedAt)}`), usage.stale && staleText(usage)].filter(Boolean).join('\n');
-  return <button type="button" className={`usage-bar${usage.stale ? ' stale' : ''}`} title={title} onClick={open}>
-    {item(t('5h', '5h'), u.fiveHour)}{item(t('Week', '周'), u.weekly)}
+  const valid = (w?: Window): w is Window => !!w && Number.isFinite(w.percent) && w.percent >= 0 && w.percent <= 100;
+  const fresh = !!usage?.available && !usage.stale && !usage.error;
+  const state = !usage ? t('Loading usage', '正在加载用量')
+    : usage.error ? staleText(usage)
+    : usage.stale ? t('Usage is out of date', '用量已过期')
+    : !usage.available ? unavailableText(usage) : t('Usage unknown', '用量未知');
+  const item = (label: string, w?: Window) => {
+    const known = fresh && valid(w);
+    return <span className="usage-item">
+      <svg className="usage-ring" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <circle className="usage-ring-track" cx="16" cy="16" r="13" />
+        {known && <circle className={`usage-ring-fill ${level(w)}`} cx="16" cy="16" r="13" pathLength="100" strokeDasharray={`${w.percent} 100`} transform="rotate(-90 16 16)" />}
+      </svg>
+      <span className="usage-label">{label}</span><span className="usage-value">{known ? percent(w) : '—'}</span>
+    </span>;
+  };
+  const summary = (label: string, w?: Window) => {
+    const value = valid(w) ? t(`${percent(w)} used${fresh ? '' : ' (cached)'}`, `已使用 ${percent(w)}${fresh ? '' : '（缓存）'}`) : t('unknown', '未知');
+    const reset = w?.resetsAt && Number.isFinite(Date.parse(w.resetsAt))
+      ? t(`resets in ${until(w.resetsAt)} (${new Date(w.resetsAt).toLocaleString(locale)})`, `${until(w.resetsAt)}后重置（${new Date(w.resetsAt).toLocaleString(locale)}）`) : t('reset time unknown', '重置时间未知');
+    return `${label}: ${value}, ${reset}`;
+  };
+  const title = [t('Claude subscription usage', 'Claude 订阅用量'),
+    summary(t('5-hour limit', '5 小时额度'), u?.fiveHour), summary(t('Weekly limit', '每周额度'), u?.weekly),
+    usage?.fetchedAt && Number.isFinite(Date.parse(usage.fetchedAt)) ? t(`Updated ${ago(usage.fetchedAt)} (${new Date(usage.fetchedAt).toLocaleString(locale)})`, `更新于${ago(usage.fetchedAt)}（${new Date(usage.fetchedAt).toLocaleString(locale)}）`) : t('Update time unknown', '更新时间未知'),
+    (!fresh || !valid(u?.fiveHour) || !valid(u?.weekly)) && state,
+    t('Open service status details', '打开服务状态详情'),
+  ].filter(Boolean).join('\n');
+  return <button type="button" className="usage-bar" aria-label={title} title={title} onClick={open}>
+    {item('5h', u?.fiveHour)}{item(t('Week', '周'), u?.weekly)}
   </button>;
 }
 
