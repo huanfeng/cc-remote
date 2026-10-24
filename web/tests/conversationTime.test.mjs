@@ -13,7 +13,7 @@ test('conversation time distinguishes recent, calendar dates, missing and estima
   assert.equal(conversationTime({ id: 'a', lastConversationAt: yesterday.toISOString() }, now).label, 'Yesterday 14:30');
   assert.equal(conversationTime({ id: 'a', lastConversationAt: new Date(2026, 9, 21, 9, 15).toISOString() }, now).label, '10-21 09:15');
   assert.equal(conversationTime({ id: 'a', lastConversationAt: new Date(2025, 11, 31).toISOString() }, now).label, '2025-12-31');
-  assert.equal(conversationTime({ id: 'a', createdAt: iso(0) }, now).label, 'No conversation');
+  assert.equal(conversationTime({ id: 'a', createdAt: iso(0) }, now).label, 'Time unknown');
   assert.equal(conversationTime({ id: 'a', updatedAt: iso(0), lastConversationAt: 'invalid' }, now).label, 'Time unknown');
   const estimated = conversationTime({ id: 'a', lastConversationAt: iso(60_000), conversationTimeEstimated: true }, now);
   assert.equal(estimated.label, '≈ 14:31');

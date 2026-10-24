@@ -131,3 +131,13 @@ test('Codex session settings and chips identify the thread and inherit Codex con
   assert.match(chips, /Codex settings/);
   assert.doesNotMatch(chips, /Claude/);
 });
+
+
+test('Codex routing requires explicit host capability, independent of CLI installation', () => {
+  for (const info of [undefined, {}, { version: '0.21.1', claudeAvailable: true }, { providers: ['claude'] }]) {
+    assert.deepEqual(P.hostProviders(info), ['claude']);
+  }
+  for (const info of [{ providers: ['claude', 'codex'] }, { codexAvailable: true }, { codexAvailable: false }]) {
+    assert.deepEqual(P.hostProviders(info), ['claude', 'codex']);
+  }
+});

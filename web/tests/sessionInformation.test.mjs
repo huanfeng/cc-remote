@@ -110,7 +110,7 @@ test('dirty details close and cancel require discard confirmation; native histor
 test('global sections are fixed, provider selection stays in defaults and preserves host state', async () => {
   const renderer = createRenderer();
   const identity = { name: 'My host', color: '', icon: '', shownName: 'My host', shownColor: '#293c2e', defaultName: 'host', defaultColor: 'green', palette: [{ key: 'green', hex: '#293c2e' }] };
-  const props = { api: async path => path === '/api/identity' ? identity : path === '/api/info' ? { codexAvailable: true, codexVersion: '1' } : { provider: path.includes('codex') ? 'codex' : 'claude', model: '', effort: '', permissionMode: '', revision: 'r1' }, close() {} };
+  const props = { providers: ['claude', 'codex'], api: async path => path === '/api/identity' ? identity : path === '/api/info' ? { codexAvailable: true, codexVersion: '1' } : { provider: path.includes('codex') ? 'codex' : 'claude', model: '', effort: '', permissionMode: '', revision: 'r1' }, close() {} };
   let tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
   tree = renderer.render(ClaudeSettings, props);
   assert.deepEqual(nodes(tree).filter(node => node.props?.role === 'tab').map(node => content(node).split(' ')[0]), ['Session', 'This', 'This']);
@@ -149,7 +149,7 @@ test('late defaults replies cannot overwrite the selected provider', async () =>
   const renderer = createRenderer(); let finishClaude, finishCodex;
   const claude = new Promise(resolve => { finishClaude = resolve; });
   const codex = new Promise(resolve => { finishCodex = resolve; });
-  const props = { api: path => path.includes('codex') ? codex : claude, close() {} };
+  const props = { providers: ['claude', 'codex'], api: path => path.includes('codex') ? codex : claude, close() {} };
   let tree = renderer.render(ClaudeSettings, props); renderer.effects();
   control(tree, 'Settings provider').props.onChange('codex');
   renderer.render(ClaudeSettings, props); renderer.effects();
@@ -245,4 +245,55 @@ test('session status labels render in Chinese when the host language is Chinese'
     assert.match(content(tree), /等待回答/);
     assert.doesNotMatch(content(tree), /Status waiting/);
   } finally { globalThis.document = previousDocument; window.dispatchEvent = previousDispatch; }
+});
+
+
+test('legacy details open with unknown times and metrics when stats API is missing', async () => {
+  const renderer = createRenderer(); const calls = [];
+  const props = { session: { id: 'legacy', title: 'Old Claude session', cwd: '/work', updatedAt: '2026-10-01T00:00:00Z' }, api: async path => { calls.push(path); throw Object.assign(new Error('Not found'), { status: 404 }); }, close() {}, onUpdated() {}, onDelete() {} };
+  renderer.render(SessionSettings, props); renderer.effects(); await settle();
+  const tree = renderer.render(SessionSettings, props);
+  assert.ok(nodes(tree).some(node => node.props?.role === 'dialog'));
+  for (const label of ['Last conversation', 'Created']) {
+    const row = nodes(tree).find(node => node.type === 'div' && content(node).startsWith(label + ' '));
+    assert.match(content(row), /Time unknown/);
+  }
+  for (const label of ['Tokens', 'Cost (estimated)']) {
+    const row = nodes(tree).find(node => node.type === 'div' && content(node).startsWith(label + ' '));
+    assert.match(content(row), /Not provided/);
+  }
+  assert.deepEqual(calls, ['/api/sessions/legacy/stats']);
+  assert.ok(nodes(tree).some(node => node.type === 'button' && content(node) === 'Edit session overrides'));
+  renderer.dispose();
+});
+
+test('legacy defaults remain editable while unsupported Codex selection is blocked', async () => {
+  const renderer = createRenderer(); const calls = [];
+  const prefs = { permissionMode: 'default', model: 'sonnet', effort: 'high', revision: 'old' };
+  const props = { provider: 'codex', api: async (path, options) => { calls.push([path, options]); return options ? { ...prefs, ...JSON.parse(options.body) } : prefs; }, close() {} };
+  renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
+  let tree = renderer.render(ClaudeSettings, props);
+  assert.deepEqual(control(tree, 'Settings provider').props.options.map(option => option.value), ['claude']);
+  control(tree, 'Settings provider').props.onChange('codex');
+  tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
+  assert.equal(control(tree, 'Settings provider').props.value, 'claude');
+  control(tree, 'CC Remote default model').props.onChange('opus');
+  tree = renderer.render(ClaudeSettings, props); await submit(tree);
+  assert.equal(calls.at(-1)[0], '/api/preferences');
+  assert.equal(JSON.parse(calls.at(-1)[1].body).model, 'opus');
+  assert.ok(calls.every(([path]) => !path.includes('codex')));
+  renderer.dispose();
+});
+
+test('missing native settings API leaves Claude defaults usable', async () => {
+  const renderer = createRenderer();
+  const props = { api: async path => { if (path === '/api/claude/settings') throw Object.assign(new Error('Not found'), { status: 404 }); return { model: 'sonnet', effort: '', permissionMode: '', revision: 'r1' }; }, close() {} };
+  renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
+  let tree = renderer.render(ClaudeSettings, props);
+  find(tree, node => node.type === 'details').props.onToggle({ currentTarget: { open: true } });
+  renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
+  tree = renderer.render(ClaudeSettings, props);
+  assert.match(content(tree), /Not found/);
+  assert.equal(control(tree, 'CC Remote default model').props.value, 'sonnet');
+  renderer.dispose();
 });

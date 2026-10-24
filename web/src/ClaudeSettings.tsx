@@ -55,8 +55,8 @@ function NotifySettings() {
 const LANG_NAMES: Record<Lang, string> = { zh: '中文', en: 'English' };
 type SectionId = typeof SECTIONS[number]['id'];
 
-export function ClaudeSettings({ api, close, provider: initialProvider = 'claude', sendKey, onSendKey, onStatus }: { api: Api; close: () => void; provider?: Provider; sendKey?: string; onSendKey?: (value: string) => void; onStatus?: () => void }) {
-  const [provider, setProvider] = useState<Provider>(initialProvider);
+export function ClaudeSettings({ api, close, provider: initialProvider = 'claude', providers = ['claude'], sendKey, onSendKey, onStatus }: { api: Api; close: () => void; provider?: Provider; providers?: Provider[]; sendKey?: string; onSendKey?: (value: string) => void; onStatus?: () => void }) {
+  const [provider, setProvider] = useState<Provider>(providers.includes(initialProvider) ? initialProvider : 'claude');
   const sections = SECTIONS;
   const [nativeOpen, setNativeOpen] = useState(false);
   const requestId = useRef(0);
@@ -135,8 +135,8 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
       </div>
       <fieldset disabled={saving} className="settings-panel" role="tabpanel" id={`settings-panel-${section}`} aria-labelledby={`settings-tab-${section}`}>
         {section === 'remote' && <div>
-          <label>{t('Provider', '提供方')}<Select label={t('Settings provider', '设置提供方')} value={provider} options={[{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }]} disabled={saving} onChange={value => { if (value !== provider && mayLeave()) { setNativeOpen(false); setPrefs(undefined); setSavedPrefs(undefined); setProvider(value as Provider); } }} /></label>
-          <form onSubmit={event => { event.preventDefault(); if (!prefs || !savedPrefs) return; if (!confirmMode(prefs.permissionMode, savedPrefs.permissionMode, provider)) return; void save(async () => { const result = await api<RemotePreferences>(providerQuery('/api/preferences', provider), { method: 'PUT', body: JSON.stringify({ permissionMode: prefs.permissionMode, model: prefs.model, effort: prefs.effort, revision: prefs.revision, confirmDangerous: dangerousMode(prefs.permissionMode, provider) }) }); setPrefs(result); setSavedPrefs(result); setNotice(t('CC Remote defaults saved; managed sessions use them from their next turn.', 'CC Remote 默认值已保存，托管会话下一轮生效。')); }); }}>
+          <label>{t('Provider', '提供方')}<Select label={t('Settings provider', '设置提供方')} value={provider} options={providers.map(value => ({ value, label: providerName(value) }))} disabled={saving} onChange={value => { if (providers.includes(value as Provider) && value !== provider && mayLeave()) { setNativeOpen(false); setPrefs(undefined); setSavedPrefs(undefined); setProvider(value as Provider); } }} /></label>
+          <form onSubmit={event => { event.preventDefault(); if (!prefs || !savedPrefs || !providers.includes(provider)) return; if (!confirmMode(prefs.permissionMode, savedPrefs.permissionMode, provider)) return; void save(async () => { const result = await api<RemotePreferences>(providerQuery('/api/preferences', provider), { method: 'PUT', body: JSON.stringify({ permissionMode: prefs.permissionMode, model: prefs.model, effort: prefs.effort, revision: prefs.revision, confirmDangerous: dangerousMode(prefs.permissionMode, provider) }) }); if (providerOf(result) !== provider) throw new Error(t('This host does not support these provider defaults.', '此主机不支持该提供方的默认设置。')); setPrefs(result); setSavedPrefs(result); setNotice(t('CC Remote defaults saved; managed sessions use them from their next turn.', 'CC Remote 默认值已保存，托管会话下一轮生效。')); }); }}>
           <h3>{t(`${providerName(provider)} · CC Remote defaults`, `${providerName(provider)} · CC Remote 默认`)}</h3>
           <p>{t(`Defaults for ${providerName(provider)} sessions only. Each session can override them; empty fields follow the provider configuration.`, `仅用于 ${providerName(provider)} 会话。会话可单独覆盖；留空跟随该提供方配置。`)}</p>
           {prefs ? <>

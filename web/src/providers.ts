@@ -1,4 +1,8 @@
 export type Provider = 'claude' | 'codex';
+// Missing capability fields identify legacy Claude-only hosts. Availability false still
+// means a modern host understands Codex routing (history/defaults remain useful).
+export const hostProviders = (info?: { providers?: Provider[]; codexAvailable?: boolean }): Provider[] =>
+  info?.providers?.includes('codex') || typeof info?.codexAvailable === 'boolean' ? ['claude', 'codex'] : ['claude'];
 export const providerOf = (value?: { provider?: Provider }): Provider => value?.provider === 'codex' ? 'codex' : 'claude';
 export const providerName = (provider: Provider) => provider === 'codex' ? 'Codex' : 'Claude';
 export const providerQuery = (path: string, provider: Provider) => provider === 'codex' ? `${path}${path.includes('?') ? '&' : '?'}provider=codex` : path;

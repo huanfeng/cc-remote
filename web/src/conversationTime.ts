@@ -5,7 +5,8 @@ const validTime = (iso?: string) => iso && Number.isFinite(Date.parse(iso)) ? Da
 export function conversationTime(item: ConversationClock, now = Date.now(), language = 'en') {
   const at = validTime(item.lastConversationAt);
   const zh = language.startsWith('zh');
-  if (at === undefined) return { label: validTime(item.createdAt) !== undefined ? (zh ? '尚无对话' : 'No conversation') : (zh ? '时间未知' : 'Time unknown'), title: zh ? '尚无可靠的对话时间记录' : 'No reliable conversation time available', iso: undefined };
+  // Older hosts omit this field even for sessions with extensive history.
+  if (at === undefined) return { label: zh ? '时间未知' : 'Time unknown', title: zh ? '尚无可靠的对话时间记录' : 'No reliable conversation time available', iso: undefined };
   const date = new Date(at), today = new Date(now), yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
