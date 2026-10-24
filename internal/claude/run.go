@@ -29,6 +29,7 @@ type Event struct {
 }
 
 type Options struct {
+	Provider                                                                               string
 	Executable, SessionID, Cwd, Message, BridgeURL, BridgeToken, HostExecutable, ConfigDir string
 	Resume                                                                                 bool
 	// Empty values pass nothing, leaving Claude's own settings in charge.

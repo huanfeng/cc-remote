@@ -1,3 +1,4 @@
+import { providerName, providerOf, type Provider } from './providers';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ClockIcon, CloseIcon, GaugeIcon, ShieldIcon, SparkIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
@@ -5,14 +6,14 @@ import { Select } from './Select';
 import { duration, money, number, tokens, type Stats } from './StatusPanel';
 import { locale, t } from './i18n';
 
-export type SessionInfo = { id: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
+export type SessionInfo = { id: string; provider?: Provider; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
 // What Claude Code reports to a terminal session's status line.
 export type LiveStatus = { model?: string; modelId?: string; effort?: string; costUSD: number; durationMs: number; contextTokens: number; contextSize: number; contextPercent: number; activity?: string; suggestion?: string };
 const compact = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 
-export type Defaults = { permissionMode: string; model: string; effort: string };
+export type Defaults = { provider?: Provider; permissionMode: string; model: string; effort: string };
 
-const permTone = (mode: string) => mode === 'bypassPermissions' ? ' danger' : dangerousMode(mode) ? ' warn' : '';
+const permTone = (mode: string) => ['bypassPermissions', 'danger-full-access'].includes(mode) ? ' danger' : dangerousMode(mode) ? ' warn' : '';
 
 /** Closes a dialog on Escape; the latest callback is used without re-subscribing. */
 function useEscape(close: () => void) {
@@ -40,7 +41,7 @@ export function SessionChips({ session, defaults, open }: { session: SessionInfo
   const show = (event: { currentTarget: Element }) => open(event.currentTarget.getBoundingClientRect());
   const button = (className: string, title: string, text: ReactNode, icon?: ReactNode) => <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={show}>{icon}<span>{text}</span></button>;
   const chip = (label: string, value: string | undefined, inherited: string | undefined, icon: ReactNode, tone = '') => {
-    const shown = value || t(`Default(${inherited || 'Claude settings'})`, `默认(${inherited || 'Claude 配置'})`);
+    const shown = value || t(`Default(${inherited || `${providerName(providerOf(session))} settings`})`, `默认(${inherited || `${providerName(providerOf(session))} 配置`})`);
     return button(`chip${value ? '' : ' inherited'}${tone}`, t(`${label}: ${shown}`, `${label}：${shown}`), shown, icon);
   };
   const live = session.mode === 'terminal' ? session.live : undefined;
@@ -62,6 +63,7 @@ export function SessionChips({ session, defaults, open }: { session: SessionInfo
 }
 
 export function SessionSettings<T extends SessionInfo>({ api, session, defaults, close, onUpdated, onDelete }: { api: Api; session: T; defaults?: Defaults; close: () => void; onUpdated: (session: T) => void; onDelete: () => void }) {
+  const provider = providerOf(session);
   const saved = { permissionMode: session.permissionMode || '', model: session.model || '', effort: session.effort || '' };
   const [draft, setDraft] = useState(saved);
   const [stats, setStats] = useState<Stats>();
@@ -75,12 +77,12 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
   }, [api, session.id]);
   const changed = draft.permissionMode !== saved.permissionMode || draft.model.trim() !== saved.model || draft.effort !== saved.effort;
   const effective = draft.permissionMode || defaults?.permissionMode || '';
-  const inherit = (value?: string) => t(`Use default (${value || 'Claude settings'})`, `跟随默认（${value || 'Claude 配置'}）`);
+  const inherit = (value?: string) => t(`Use default (${value || `${providerName(provider)} settings`})`, `跟随默认（${value || `${providerName(provider)} 配置`}）`);
   async function save() {
-    if (!confirmMode(draft.permissionMode, saved.permissionMode)) return;
+    if (!confirmMode(draft.permissionMode, saved.permissionMode, provider)) return;
     setSaving(true); setError('');
     try {
-      onUpdated(await api<T>(`/api/sessions/${encodeURIComponent(session.id)}`, { method: 'PATCH', body: JSON.stringify({ ...draft, model: draft.model.trim(), confirmDangerous: dangerousMode(draft.permissionMode) }) }));
+      onUpdated(await api<T>(`/api/sessions/${encodeURIComponent(session.id)}`, { method: 'PATCH', body: JSON.stringify({ ...draft, model: draft.model.trim(), confirmDangerous: dangerousMode(draft.permissionMode, provider) }) }));
       close();
     } catch (err) { setError((err as Error).message); } finally { setSaving(false); }
   }
@@ -93,27 +95,28 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
       <h3>{t('Launch settings', '启动参数')}</h3>
       <p>{t('Applies to this session only, from its next turn; leave empty to use the CC Remote defaults in Settings.', '仅作用于此会话，下一轮执行生效；留空跟随「设置」中的 CC Remote 默认值。')}</p>
       <fieldset disabled={saving}>
-        <label>{t('Model', '模型')}<ModelPicker api={api} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></label>
+        <label>{t('Model', '模型')}<ModelPicker api={api} provider={provider} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></label>
         <div className="new-session-overrides">
-          <label>{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} disabled={saving} value={draft.effort} options={effortOptions(inherit(defaults?.effort))} onChange={effort => setDraft(old => ({ ...old, effort }))} /></label>
-          <label>{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} disabled={saving} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></label>
+          <label>{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} disabled={saving} value={draft.effort} options={effortOptions(inherit(defaults?.effort), provider)} onChange={effort => setDraft(old => ({ ...old, effort }))} /></label>
+          <label>{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} disabled={saving} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode, provider)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></label>
         </div>
-        {<p className="effective-line">{t('Effective permission mode: ', '生效权限模式：')}<span className={`chip${permTone(effective)}`}>{effective || t('Claude settings', 'Claude 配置')}</span>{effective === 'bypassPermissions' && <small className="danger-note">{t('Skips all approvals; use it only in trusted projects.', '跳过所有审批，仅在可信项目中使用。')}</small>}</p>}
+        {<p className="effective-line">{t('Effective permission mode: ', '生效权限模式：')}<span className={`chip${permTone(effective)}`}>{effective || t(`${providerName(provider)} settings`, `${providerName(provider)} 配置`)}</span>{['bypassPermissions', 'danger-full-access'].includes(effective) && <small className="danger-note">{provider === 'codex' ? t('Removes sandbox restrictions; use only in trusted projects.', '取消沙箱限制，仅用于可信项目。') : t('Skips all approvals; use it only in trusted projects.', '跳过所有审批，仅在可信项目中使用。')}</small>}</p>}
       </fieldset>
       <h3>{t('Session info', '会话信息')}</h3>
       <dl className="session-info">
+        <div><dt>{t('Provider', '提供方')}</dt><dd>{providerName(provider)}</dd></div>
         <div><dt>{t('Mode', '模式')}</dt><dd>{mode}</dd></div>
         <div><dt>{t('Created', '创建时间')}</dt><dd>{created}</dd></div>
         <div className="wide"><dt>{t('Project directory', '项目目录')}</dt><dd><code>{session.cwd}</code></dd></div>
         <div className="wide"><dt>{t('Session ID', '会话 ID')}</dt><dd><code>{session.id}</code></dd></div>
-        <div className="wide"><dt>{t('Claude session ID', 'Claude 会话 ID')}</dt><dd><code>{session.claudeSessionId || '—'}</code></dd></div>
+        <div className="wide"><dt>{provider === 'codex' ? t('Codex thread ID', 'Codex 线程 ID') : t('Claude session ID', 'Claude 会话 ID')}</dt><dd><code>{session.claudeSessionId || '—'}</code></dd></div>
         <div><dt>{t('Turns', '轮次')}</dt><dd>{stats ? number(stats.turns) : '…'}</dd></div>
         <div><dt>Tokens</dt><dd>{stats ? stats.costKnown ? number(tokens(stats)) : '—' : '…'}</dd></div>
         <div><dt>{t('Cost', '费用')}</dt><dd>{stats ? money(stats) : '…'}</dd></div>
         <div><dt>{t('Run time', '执行耗时')}</dt><dd>{stats ? stats.durationMs ? duration(stats.durationMs / 1000) : '—' : '…'}</dd></div>
       </dl>
       <section className="danger-zone">
-        <div><strong>{t('Delete session', '删除会话')}</strong><small>{t('Deletes only the CC Remote records and uploaded attachments; Claude Code\'s native history is kept.', '只删除 CC Remote 中的记录和上传附件；Claude Code 原生历史保留。')}</small></div>
+        <div><strong>{t('Delete session', '删除会话')}</strong><small>{t('Deletes only CC Remote records and uploaded attachments; native history is kept.', '只删除 CC Remote 中的记录和上传附件；原生历史保留。')}</small></div>
         <button type="button" className="danger-button" onClick={onDelete}>{t('Delete…', '删除…')}</button>
       </section>
       {error && <div className="error" role="alert">{error}</div>}
@@ -143,7 +146,7 @@ export function DeleteSessionDialog({ session, close, confirm }: { session: Sess
       <div id="delete-detail">
         <p>{t('This permanently deletes, for this session in CC Remote:', '将永久删除 CC Remote 中此会话的：')}</p>
         <ul><li>{t('Web messages and tool event records', '网页消息与工具事件记录')}</li><li>{t('Approval / question records', '审批 / 提问记录')}</li><li>{t('Terminal transcript sync records', '终端记录同步标记')}</li><li>{t('Images and files uploaded to the host', '上传到宿主的图片和文件')}</li></ul>
-        <p>{t('Claude Code\'s native session history (the JSONL under ~/.claude) ', 'Claude Code 原生会话历史（~/.claude 下的 JSONL）')}<strong>{t('is not deleted', '不会删除')}</strong>{t(' and can still be viewed or resumed under "Terminal history". This cannot be undone.', '，仍可在「终端历史」中查看或恢复。此操作无法撤销。')}</p>
+        <p>{t(`${providerName(providerOf(session))} native session history `, `${providerName(providerOf(session))} 原生会话历史 `)}<strong>{t('is not deleted', '不会删除')}</strong>{t(' and can still be viewed or resumed under "Terminal history". This cannot be undone.', '，仍可在「终端历史」中查看或恢复。此操作无法撤销。')}</p>
       </div>
       {running && <label className="checkbox"><input type="checkbox" checked={stop} onChange={event => setStop(event.target.checked)} />{t('This session is running; stop the current run before deleting', '此会话正在执行，先停止当前执行再删除')}</label>}
       {error && <div className="error" role="alert">{error}</div>}

@@ -15,6 +15,7 @@ import (
 )
 
 type Session struct {
+	Provider        string `json:"provider"`
 	ID              string `json:"id"`
 	Title           string `json:"title"`
 	Cwd             string `json:"cwd"`
@@ -113,6 +114,8 @@ func ID() string {
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
+const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',UNIQUE(provider,claude_id)`
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -121,7 +124,7 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
-CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL UNIQUE,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS sessions(` + sessionSchema + `);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,text TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
 CREATE INDEX IF NOT EXISTS events_tasks ON events(session_id,seq) WHERE kind='status' AND text LIKE 'task_%';
@@ -131,7 +134,7 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}} {
+	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}} {
 		var n int
 		if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c.name).Scan(&n); err == nil && n == 0 {
 			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c.name + ` TEXT NOT NULL DEFAULT ` + c.def)
@@ -140,6 +143,10 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 			db.Close()
 			return nil, err
 		}
+	}
+	if err = migrateNativeIdentity(db); err != nil {
+		db.Close()
+		return nil, err
 	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS usage_samples(at TEXT PRIMARY KEY,data TEXT NOT NULL)`); err != nil {
 		db.Close()
@@ -179,6 +186,45 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// migrateNativeIdentity replaces the old inline UNIQUE(claude_id) constraint.
+// Open runs without concurrent users on one connection. Disable foreign keys
+// before the transaction so replacing the parent preserves its child tables.
+func migrateNativeIdentity(db *sql.DB) (err error) {
+	var oldUnique int
+	if err = db.QueryRow(`SELECT count(*) FROM pragma_index_list('sessions') AS i
+WHERE i."unique"=1 AND (SELECT count(*) FROM pragma_index_info(i.name))=1
+AND EXISTS (SELECT 1 FROM pragma_index_info(i.name) WHERE name='claude_id')`).Scan(&oldUnique); err != nil || oldUnique == 0 {
+		return err
+	}
+	if _, err = db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer func() {
+		_, enableErr := db.Exec(`PRAGMA foreign_keys=ON`)
+		err = errors.Join(err, enableErr)
+	}()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`CREATE TABLE sessions_native_identity(` + sessionSchema + `);
+INSERT INTO sessions_native_identity (` + sessionColumns + `) SELECT ` + sessionColumns + ` FROM sessions;
+DROP TABLE sessions;
+ALTER TABLE sessions_native_identity RENAME TO sessions;`); err != nil {
+		return err
+	}
+	var table, parent string
+	var rowID sql.NullInt64
+	var key int
+	if err = tx.QueryRow(`PRAGMA foreign_key_check`).Scan(&table, &rowID, &parent, &key); err == nil {
+		return errors.New("foreign key violation while migrating native session identity")
+	} else if err != sql.ErrNoRows {
+		return err
+	}
+	return tx.Commit()
+}
+
 // migrateSharedSessions turns sessions of the retired shared mode ("channel")
 // into stopped terminal sessions, which resume the same Claude session. Their
 // recorded transcript keys get the terminal sessions' Claude session ID prefix,
@@ -199,18 +245,25 @@ func migrateSharedSessions(db *sql.DB) error {
 }
 
 func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error) {
-	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: claudeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: "managed"}
+	return s.CreateProvider(title, cwd, claudeID, resume, "claude")
+}
+
+func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provider string) (Session, error) {
+	if provider != "claude" && provider != "codex" {
+		return Session{}, errors.New("invalid session provider")
+	}
+	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: nativeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: "managed", Provider: provider}
 	x.UpdatedAt = x.CreatedAt
-	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume) VALUES(?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume)
+	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume,provider) VALUES(?,?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume, x.Provider)
 	return x, err
 }
 
-const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args`
+const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider)
 	if err == nil {
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
 	}
@@ -221,7 +274,11 @@ func (s *Store) Get(id string) (Session, error) {
 	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE id=?`, id))
 }
 func (s *Store) FindClaude(id string) (Session, error) {
-	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE claude_id=?`, id))
+	return s.FindNative("claude", id)
+}
+
+func (s *Store) FindNative(provider, id string) (Session, error) {
+	return scanSession(s.db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE provider=? AND claude_id=?`, provider, id))
 }
 
 func (s *Store) List() ([]Session, error) {

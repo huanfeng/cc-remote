@@ -20,6 +20,8 @@ type Config struct {
 	Listen          []string `json:"listen"`
 	Claude          string   `json:"claude"`
 	ClaudeConfigDir string   `json:"claudeConfigDir,omitempty"`
+	Codex           string   `json:"codex,omitempty"`
+	CodexHome       string   `json:"codexHome,omitempty"`
 	// Language of the host's messages and web UI: "en", "zh" or empty (the system language).
 	Language string `json:"language,omitempty"`
 	// AllowInsecureRemote permits all:/0.0.0.0/:: binds (--allow-insecure-remote).

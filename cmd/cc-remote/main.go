@@ -188,6 +188,7 @@ func run() error {
 type hostOptions struct {
 	listen, allowOrigin                                    stringList
 	dataDir, claudeBin, configDir, logFile, serviceManager *string
+	codexBin, codexHome                                    *string
 	allowInsecureRemote                                    *bool
 	lang                                                   *string
 }
@@ -198,6 +199,12 @@ func hostFlags() (*flag.FlagSet, *hostOptions) {
 	fs.Var(&o.listen, "listen", i18n.T("HTTP listen address, repeatable or comma separated (default 127.0.0.1:8787; lan:PORT = all private IPv4 addresses, all:PORT = 0.0.0.0)", "HTTP 监听地址，可重复或用逗号分隔（默认 127.0.0.1:8787；lan:PORT = 所有私有 IPv4 地址，all:PORT = 0.0.0.0）"))
 	o.dataDir = fs.String("data-dir", config.DefaultDataDir(), i18n.T("SQLite and access-token directory (or CC_REMOTE_DATA_DIR)", "SQLite 数据库和访问令牌所在目录（或 CC_REMOTE_DATA_DIR）"))
 	o.claudeBin = fs.String("claude", "claude", i18n.T("Claude Code executable path", "Claude Code 可执行文件路径"))
+	codexBin := os.Getenv("CC_REMOTE_CODEX")
+	if codexBin == "" {
+		codexBin = "codex"
+	}
+	o.codexBin = fs.String("codex", codexBin, i18n.T("Codex executable path (or CC_REMOTE_CODEX)", "Codex 可执行文件路径（或 CC_REMOTE_CODEX）"))
+	o.codexHome = fs.String("codex-home", "", i18n.T("Codex home directory (defaults to CODEX_HOME or ~/.codex)", "Codex 主目录（默认取 CODEX_HOME 或 ~/.codex）"))
 	o.configDir = fs.String("claude-config-dir", "", i18n.T("Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)", "Claude 配置目录（默认取 CLAUDE_CONFIG_DIR 或 ~/.claude）"))
 	o.logFile = fs.String("log-file", "", i18n.T("also write logs to this file (rotated at 10 MiB, one backup)", "同时把日志写入此文件（满 10 MiB 轮转，保留一份备份）"))
 	o.allowInsecureRemote = fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)", "允许 all:/0.0.0.0/:: 监听地址（在所有网卡上提供明文 HTTP）"))
@@ -413,6 +420,21 @@ func runHost(argv []string) error {
 	if explicitConfig {
 		configEnv = configDir
 	}
+	codexHome := *opts.codexHome
+	if codexHome == "" {
+		codexHome = os.Getenv("CODEX_HOME")
+	}
+	if codexHome == "" {
+		home, e := os.UserHomeDir()
+		if e != nil {
+			return e
+		}
+		codexHome = filepath.Join(home, ".codex")
+	}
+	codexHome, err = filepath.Abs(codexHome)
+	if err != nil {
+		return err
+	}
 	st, err := store.Open(filepath.Join(absData, "cc-remote.sqlite"))
 	if err != nil {
 		return err
@@ -477,7 +499,7 @@ func runHost(argv []string) error {
 		restart = func() { restartRequested.Store(true); stop() }
 		reload = func() (server.ReloadResult, error) { return reloadSettings(absData, started, i18n.Current(), ls) }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart, Reload: reload})
+	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, CodexExecutable: *opts.codexBin, CodexConfigDir: codexHome, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart, Reload: reload})
 	public.Handler = app.Handler()
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ls.serve()

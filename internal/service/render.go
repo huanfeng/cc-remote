@@ -275,6 +275,12 @@ func HostArgs(cfg Config, manager string) []string {
 	if cfg.ClaudeConfigDir != "" {
 		args = append(args, "--claude-config-dir", cfg.ClaudeConfigDir)
 	}
+	if cfg.Codex != "" {
+		args = append(args, "--codex", cfg.Codex)
+	}
+	if cfg.CodexHome != "" {
+		args = append(args, "--codex-home", cfg.CodexHome)
+	}
 	if cfg.AllowInsecureRemote {
 		args = append(args, "--allow-insecure-remote")
 	}

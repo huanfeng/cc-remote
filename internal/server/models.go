@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/codex"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/jsonedit"
 	"cc-remote/internal/prefs"
@@ -117,6 +118,10 @@ func (m modelSettings) envString(key string) string {
 }
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
+	provider, ok := requestProvider(w, r)
+	if !ok {
+		return
+	}
 	cwd := ""
 	if id := r.URL.Query().Get("sessionId"); id != "" {
 		x, err := s.store.Get(id)
@@ -125,14 +130,19 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cwd = x.Cwd
+		provider = x.Provider
 	}
-	respond(w, 200, s.modelList(s.lang(r), cwd, r.URL.Query().Get("refresh") == "1"))
+	respond(w, 200, s.providerModels(s.lang(r), provider, cwd, r.URL.Query().Get("refresh") == "1"))
 }
 
 // modelList must not be called with s.mu held: collection reads files and may call the API.
 // Lists are cached per language, as their descriptions and warnings are text.
 func (s *Server) modelList(l i18n.Lang, cwd string, refresh bool) modelList {
-	key := string(l) + "|" + cwd
+	return s.providerModels(l, "claude", cwd, refresh)
+}
+
+func (s *Server) providerModels(l i18n.Lang, provider, cwd string, refresh bool) modelList {
+	key := provider + "|" + string(l) + "|" + cwd
 	c := &s.modelCache
 	c.mu.Lock()
 	if c.entries == nil {
@@ -151,7 +161,13 @@ func (s *Server) modelList(l i18n.Lang, cwd string, refresh bool) modelList {
 	c.inflight[key] = call
 	c.mu.Unlock()
 
-	list, cacheable := s.collectModels(l, cwd)
+	var list modelList
+	cacheable := true
+	if provider == "codex" {
+		list = s.collectCodexModels(l, cwd)
+	} else {
+		list, cacheable = s.collectModels(l, cwd)
+	}
 	call.list = list
 	c.mu.Lock()
 	delete(c.inflight, key)
@@ -160,6 +176,23 @@ func (s *Server) modelList(l i18n.Lang, cwd string, refresh bool) modelList {
 	}
 	c.mu.Unlock()
 	close(call.done)
+	return list
+}
+
+func (s *Server) collectCodexModels(l i18n.Lang, cwd string) modelList {
+	list := modelList{Models: []modelOption{}, FetchedAt: time.Now().UTC().Format(time.RFC3339)}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	models, err := codex.Models(ctx, s.cfg.CodexExecutable, s.cfg.CodexConfigDir, cwd)
+	if err != nil {
+		list.Warnings = []string{l.T("Could not read Codex models: ", "无法读取 Codex 模型：") + err.Error()}
+		return list
+	}
+	for _, m := range models {
+		if prefs.ValidModel(m.ID) && m.ID != "" {
+			list.Models = append(list.Models, modelOption{ID: m.ID, Label: m.Label, Description: m.Description, Source: "codex"})
+		}
+	}
 	return list
 }
 

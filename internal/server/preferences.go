@@ -19,21 +19,25 @@ type preferencesBody struct {
 
 // Called under s.configMu.
 func (s *Server) savePreferences(l i18n.Lang, next prefs.Preferences, revision string, confirm bool) (preferencesBody, error) {
-	old, _, err := prefs.Load(s.cfg.DataDir)
+	old, _, err := prefs.LoadProvider(s.cfg.DataDir, next.Provider)
 	if err != nil {
 		return preferencesBody{}, err
 	}
 	if next.PermissionMode != old.PermissionMode && prefs.Dangerous(next.PermissionMode) && !confirm {
 		return preferencesBody{}, errConfirmDangerous(l)
 	}
-	saved, rev, err := prefs.Save(s.cfg.DataDir, next, revision)
+	saved, rev, err := prefs.SaveProvider(s.cfg.DataDir, next.Provider, next, revision)
 	return preferencesBody{Preferences: saved, Revision: rev}, err
 }
 
 func (s *Server) preferences(w http.ResponseWriter, r *http.Request) {
+	provider, ok := requestProvider(w, r)
+	if !ok {
+		return
+	}
 	if r.Method == http.MethodGet {
 		s.configMu.Lock()
-		p, rev, err := prefs.Load(s.cfg.DataDir)
+		p, rev, err := prefs.LoadProvider(s.cfg.DataDir, provider)
 		s.configMu.Unlock()
 		if err != nil {
 			fail(w, 500, i18n.Text(s.lang(r), err))
@@ -46,6 +50,7 @@ func (s *Server) preferences(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	req.Provider = provider
 	s.configMu.Lock()
 	result, err := s.savePreferences(s.lang(r), req.Preferences, req.Revision, req.ConfirmDangerous)
 	s.configMu.Unlock()
@@ -89,13 +94,13 @@ func (o overrideRequest) apply(l i18n.Lang, x *store.Session) error {
 }
 
 func sessionOverrides(x store.Session) prefs.Preferences {
-	return prefs.Preferences{PermissionMode: x.PermissionMode, Model: x.Model, Effort: x.Effort}
+	return prefs.Preferences{Provider: x.Provider, PermissionMode: x.PermissionMode, Model: x.Model, Effort: x.Effort}
 }
 
 // effectivePreferences resolves session override, then cc-remote preferences.
 // Empty fields leave the choice to Claude's own configuration.
 func (s *Server) effectivePreferences(x store.Session) prefs.Preferences {
-	p, _, err := prefs.Load(s.cfg.DataDir)
+	p, _, err := prefs.LoadProvider(s.cfg.DataDir, x.Provider)
 	if err != nil {
 		log.Printf("preferences: %v", err)
 	}

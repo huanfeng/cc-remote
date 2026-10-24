@@ -126,7 +126,7 @@ function AskCard({ call, waitingHint, onAnswer, onClarify, onHandoff, answeredBy
   // Typed text replaces the picked options; multi-select labels are joined like Claude Code does.
   const value = (question: string) => custom[question]?.trim() || (picks[question] || []).join(', ');
   return <section className={`question-card is-${call.status}`}>
-    <header><span className="eyebrow"><QuestionIcon size={12} /> {t('Claude asks', 'Claude 的提问')}</span><span className={`question-state is-${call.status}`}>{answered ? answeredBy === 'web' ? WEB_SUBMITTED : answeredBy === 'terminal' ? t('Answered in the terminal', '已在终端回答') : t('Answered', '已回答') : clarified(call) ? t('Chose to chat about it', '已选择先聊聊') : call.status === 'error' ? t('Not answered', '未回答') : waitingHint}</span></header>
+    <header><span className="eyebrow"><QuestionIcon size={12} /> {t('Questions', '提问')}</span><span className={`question-state is-${call.status}`}>{answered ? answeredBy === 'web' ? WEB_SUBMITTED : answeredBy === 'terminal' ? t('Answered in the terminal', '已在终端回答') : t('Answered', '已回答') : clarified(call) ? t('Chose to chat about it', '已选择先聊聊') : call.status === 'error' ? t('Not answered', '未回答') : waitingHint}</span></header>
     {views.map((view, index) => {
       const isSelected = (label: string) => interactive ? (picks[view.question] || []).includes(label) : view.options.some(option => option.label === label && option.selected);
       const withPreview = view.options.some(option => option.preview);
@@ -150,7 +150,7 @@ function AskCard({ call, waitingHint, onAnswer, onClarify, onHandoff, answeredBy
     })}
     {call.status === 'error' && call.resultText && !clarified(call) && <p className="question-note">{firstLine(call.resultText)}</p>}
     {answered && !views.some(view => view.answer !== undefined) && call.resultText && <p className="question-note">{firstLine(call.resultText)}</p>}
-    {interactive && <div className="request-actions"><HandoffButton onHandoff={onHandoff} busy={busy} />{onClarify && <button type="button" className="secondary" disabled={busy} title={t('Answer nothing for now and talk these questions over with Claude first (Chat about this in the terminal)', '先不回答，和 Claude 讨论这些问题（同终端里的 Chat about this）')} onClick={() => onClarify(clarifyMessage(views.map(view => view.question), value))}>{t('Chat about this', '先聊聊')}</button>}<button type="button" className="primary" disabled={busy || views.some(view => !value(view.question))} onClick={() => onAnswer!(Object.fromEntries(views.map(view => [view.question, value(view.question)])))}>{t('Submit answers', '提交回答')}</button></div>}
+    {interactive && <div className="request-actions"><HandoffButton onHandoff={onHandoff} busy={busy} />{onClarify && <button type="button" className="secondary" disabled={busy} title={t('Answer nothing for now and talk these questions over first (Chat about this in the terminal)', '先不回答，讨论这些问题（同终端里的 Chat about this）')} onClick={() => onClarify(clarifyMessage(views.map(view => view.question), value))}>{t('Chat about this', '先聊聊')}</button>}<button type="button" className="primary" disabled={busy || views.some(view => !value(view.question))} onClick={() => onAnswer!(Object.fromEntries(views.map(view => [view.question, value(view.question)])))}>{t('Submit answers', '提交回答')}</button></div>}
   </section>;
 }
 

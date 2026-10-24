@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/codex"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
 )
@@ -61,6 +63,7 @@ type outgoing struct {
 
 type sessionRuntime struct {
 	id    string
+	provider string
 	token string // bridge credential of this process
 	key   launchKey
 	proc  claudeProcess // nil while starting; set before ready is closed
@@ -99,7 +102,15 @@ func defaultProcessStarter(cfg Config) ProcessStarter {
 // background tasks is kept so they are not killed (the settings apply once
 // it has been idle long enough to be reaped).
 func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
-	opts := claude.Options{Executable: s.cfg.ClaudeExecutable, HostExecutable: s.cfg.HostExecutable, SessionID: x.ClaudeSessionID, Cwd: x.Cwd, Resume: x.Resume, BridgeURL: s.cfg.BridgeURL, ConfigDir: s.cfg.ClaudeConfigEnv}
+	opts := claude.Options{Provider: x.Provider, Executable: s.cfg.ClaudeExecutable, HostExecutable: s.cfg.HostExecutable, SessionID: x.ClaudeSessionID, Cwd: x.Cwd, Resume: x.Resume, BridgeURL: s.cfg.BridgeURL, ConfigDir: s.cfg.ClaudeConfigEnv}
+	starter := s.startProcess
+	if x.Provider == "codex" {
+		opts.Executable, opts.ConfigDir = s.cfg.CodexExecutable, s.cfg.CodexConfigDir
+		starter = s.cfg.StartCodexProcess
+		if starter == nil {
+			starter = func(o claude.Options, h claude.ProcessHooks) (claudeProcess, error) { return codex.StartProcess(o, h) }
+		}
+	}
 	p := s.effectivePreferences(x)
 	opts.PermissionMode, opts.Model, opts.Effort = p.PermissionMode, p.Model, p.Effort
 	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort}
@@ -109,7 +120,7 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 		}
 		s.closeAsync(s.detachLocked(x.ID))
 	}
-	rt := &sessionRuntime{id: x.ID, token: store.ID() + store.ID(), key: key, ready: make(chan struct{}), outcome: "completed", idleSince: time.Now()}
+	rt := &sessionRuntime{id: x.ID, provider: x.Provider, token: store.ID() + store.ID(), key: key, ready: make(chan struct{}), outcome: "completed", idleSince: time.Now()}
 	opts.BridgeToken = rt.token
 	s.procs[x.ID] = rt
 	hooks := claude.ProcessHooks{
@@ -121,13 +132,13 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	// Starting can take seconds (Windows, antivirus); it runs outside s.mu and
 	// messages queue meanwhile.
 	go func() {
-		proc, err := s.startProcess(opts, hooks)
+		proc, err := starter(opts, hooks)
 		s.mu.Lock()
 		rt.proc = proc
 		close(rt.ready)
 		if err != nil {
 			s.mu.Unlock()
-			s.processExit(rt, i18n.Errorf("Could not start Claude Code: %w", "无法启动 Claude Code：%w", err))
+			s.processExit(rt, i18n.Errorf("Could not start %s: %w", "无法启动 %s：%w", providerName(x.Provider), err))
 			return
 		}
 		detached := rt.stopping
@@ -143,6 +154,27 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 }
 
 func (s *Server) processEvent(rt *sessionRuntime, e claude.Event) error {
+	if e.Kind == "session" {
+		var native struct {
+			SessionID string `json:"session_id"`
+			Provider  string `json:"provider"`
+		}
+		if json.Unmarshal(e.Payload, &native) == nil && native.Provider == "codex" && native.SessionID != "" {
+			s.mu.Lock()
+			if s.procs[rt.id] != rt || rt.stopping {
+				s.mu.Unlock()
+				return nil
+			}
+			err := s.store.SetClaudeID(rt.id, native.SessionID)
+			if err == nil {
+				rt.key.claudeID = native.SessionID
+			}
+			s.mu.Unlock()
+			if err != nil {
+				return err
+			}
+		}
+	}
 	// A subagent's output belongs to its Agent call, not to a turn: a
 	// background agent keeps working after the turn that started it ended.
 	if e.Parent == "" && e.Kind != "session" && e.Kind != "status" && e.Kind != "result" {
@@ -369,7 +401,7 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 		return
 	}
 	if err == nil && !rt.stopping {
-		err = i18n.Errorf("Claude Code exited", "Claude Code 已退出")
+		err = i18n.Errorf("%s exited", "%s 已退出", providerName(rt.provider))
 	}
 	unsent := rt.sent
 	rt.sent, rt.unwritten = nil, 0
@@ -383,7 +415,7 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 		}
 	}
 	if len(unsent) > 0 && !rt.stopping {
-		if _, e := s.store.Append(rt.id, "error", i18n.T("Claude Code exited; the queued messages above did not run, send them again.", "Claude Code 已退出，以上排队消息未执行，请重新发送。"), nil); e != nil {
+		if _, e := s.store.Append(rt.id, "error", i18n.Current().F("%s exited; the queued messages above did not run, send them again.", "%s 已退出，以上排队消息未执行，请重新发送。", providerName(rt.provider)), nil); e != nil {
 			log.Printf("save execution error: %v", e)
 		}
 	}

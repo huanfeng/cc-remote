@@ -220,7 +220,10 @@ func (s *Server) eventAt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nativeEventsList(w http.ResponseWriter, r *http.Request) {
-	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, r.PathValue("id"))
+	if _, ok := requestProvider(w, r); !ok {
+		return
+	}
+	x, ev, e := s.nativeHistory(r, r.PathValue("id"))
 	if e != nil {
 		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
@@ -229,7 +232,10 @@ func (s *Server) nativeEventsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nativeEventAt(w http.ResponseWriter, r *http.Request) {
-	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, r.PathValue("id"))
+	if _, ok := requestProvider(w, r); !ok {
+		return
+	}
+	x, ev, e := s.nativeHistory(r, r.PathValue("id"))
 	if e != nil {
 		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return

@@ -20,6 +20,27 @@ const NOW = Date.UTC(2026, 9, 15);
 const att = id => ({ id, kind: 'file', name: `${id}.txt`, mime: 'text/plain', size: 3, url: `/api/sessions/s1/uploads/${id}` });
 const draft = (text, updatedAt = NOW, extra = {}) => ({ draft: text, attachments: [], questionDrafts: {}, answers: {}, updatedAt, ...extra });
 
+test('Codex history routes, tabs and views survive refresh without colliding with Claude', () => {
+  const codex = { id: 'same', native: true, provider: 'codex' };
+  assert.deepEqual(P.parseHash(P.formatHash('same', true, 'codex')), codex);
+  assert.deepEqual(P.parseKey('native-codex:same'), codex);
+  const state = { ...P.emptyUI(), open: ['native:same', 'native-codex:same'], selected: 'native-codex:same' };
+  assert.deepEqual(P.deserialize(P.serialize(state, NOW), NOW), state);
+  assert.deepEqual(P.forget(state, codex).open, ['native:same']);
+  assert.equal(P.forget(state, codex).selected, '');
+  const view = { scrollTop: 42, nearBottom: false, expandedTools: [], expandedGroups: {} };
+  assert.deepEqual(P.parseViews(P.serializeViews({ 'native-codex:same': view })), { 'native-codex:same': view });
+});
+
+test('native thread IDs do not delete or overwrite managed drafts with the same ID', () => {
+  const state = { ...P.emptyUI(), open: ['session:same', 'native:same', 'native-codex:same'], selected: 'session:same', drafts: { same: draft('unsent managed message') } };
+  const next = P.forget(state, { id: 'same', native: true, provider: 'codex' });
+  const restored = P.deserialize(P.serialize(next, NOW), NOW);
+  assert.equal(restored.drafts.same.draft, 'unsent managed message');
+  assert.equal(restored.selected, 'session:same');
+  assert.deepEqual(restored.open, ['session:same', 'native:same']);
+});
+
 test('hash routes round-trip and reject malformed input', () => {
   assert.equal(P.formatHash('abc', false), '#/s/abc');
   assert.equal(P.formatHash('x y/中', true), '#/native/x%20y%2F%E4%B8%AD');

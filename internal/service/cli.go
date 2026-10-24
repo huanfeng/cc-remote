@@ -307,6 +307,38 @@ func applySettings(cfg *Config, set map[string]bool, listenVals []string, claude
 	return nil
 }
 
+// codexFlags mirror the Claude settings while leaving old service configs
+// free to inherit CODEX_HOME from the host environment.
+type codexFlags struct{ executable, home *string }
+
+func addCodexFlags(fs *flag.FlagSet) codexFlags {
+	bin := os.Getenv("CC_REMOTE_CODEX")
+	if bin == "" {
+		bin = "codex"
+	}
+	return codexFlags{
+		executable: fs.String("codex", bin, i18n.T("Codex executable (resolved to an absolute path; or CC_REMOTE_CODEX)", "Codex 可执行文件（解析为绝对路径；或 CC_REMOTE_CODEX）")),
+		home:       fs.String("codex-home", "", i18n.T("Codex home directory (defaults to CODEX_HOME or ~/.codex; empty to clear)", "Codex 主目录（默认取 CODEX_HOME 或 ~/.codex；留空表示清除）")),
+	}
+}
+
+func (f codexFlags) apply(cfg *Config, set map[string]bool, out io.Writer) error {
+	if set["codex"] || cfg.Codex == "" {
+		cfg.Codex = resolveClaude(*f.executable, out)
+	}
+	if set["codex-home"] {
+		cfg.CodexHome = ""
+		if *f.home != "" {
+			abs, err := filepath.Abs(*f.home)
+			if err != nil {
+				return err
+			}
+			cfg.CodexHome = abs
+		}
+	}
+	return nil
+}
+
 type envFlags struct {
 	vals               multiFlag
 	capture, noCapture *bool
@@ -355,6 +387,7 @@ func redactedJSON(cfg *Config) []byte {
 
 func installCmd(args []string, version string) error {
 	fs := flag.NewFlagSet("service install", flag.ContinueOnError)
+	codexF := addCodexFlags(fs)
 	var listenVals multiFlag
 	fs.Var(&listenVals, "listen", i18n.T("listen address, repeatable or comma separated (default 127.0.0.1:8787; also lan:PORT, all:PORT, localhost:PORT)", "监听地址，可重复或用逗号分隔（默认 127.0.0.1:8787；也可用 lan:PORT、all:PORT、localhost:PORT）"))
 	dataDir := fs.String("data-dir", "", i18n.F("host data directory (default: the existing installation's, else %s)", "宿主数据目录（默认沿用现有安装的，否则为 %s）", config.DefaultDataDir()))
@@ -393,6 +426,9 @@ func installCmd(args []string, version string) error {
 		}
 	}
 	if err = applySettings(cfg, set, listenVals, *claudeBin, *configDir, *allowInsecure, out); err != nil {
+		return err
+	}
+	if err = codexF.apply(cfg, set, out); err != nil {
 		return err
 	}
 	if err = applyLanguage(cfg, set, *lang); err != nil {
@@ -546,6 +582,7 @@ func hostAnswering(cfg *Config) bool {
 
 func configCmd(args []string) error {
 	fs := flag.NewFlagSet("service config", flag.ContinueOnError)
+	codexF := addCodexFlags(fs)
 	var listenVals multiFlag
 	fs.Var(&listenVals, "listen", i18n.T("listen address, repeatable or comma separated", "监听地址，可重复或用逗号分隔"))
 	var originVals multiFlag
@@ -582,13 +619,16 @@ func configCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !set["listen"] && !set["allow-origin"] && !set["claude"] && !set["claude-config-dir"] && !set["allow-insecure-remote"] && !set["lang"] && !envChange {
+	if !set["listen"] && !set["allow-origin"] && !set["claude"] && !set["claude-config-dir"] && !set["codex"] && !set["codex-home"] && !set["allow-insecure-remote"] && !set["lang"] && !envChange {
 		if !changed {
 			printConfig(cfg, out)
 		}
 		return nil
 	}
 	if err = applySettings(cfg, set, listenVals, *claudeBin, *configDir, *allowInsecure, out); err != nil {
+		return err
+	}
+	if err = codexF.apply(cfg, set, out); err != nil {
 		return err
 	}
 	if set["allow-origin"] {
@@ -776,6 +816,12 @@ func printConfig(cfg *Config, out io.Writer) {
 	field(out, "Listen", "监听地址", strings.Join(cfg.Listen, ", "))
 	field(out, "Data dir", "数据目录", cfg.DataDir)
 	field(out, "Claude", "Claude", cfg.Claude)
+	if cfg.Codex != "" {
+		field(out, "Codex", "Codex", cfg.Codex)
+	}
+	if cfg.CodexHome != "" {
+		field(out, "Codex home", "Codex 主目录", cfg.CodexHome)
+	}
 	if cfg.ClaudeConfigDir != "" {
 		field(out, "Claude config", "Claude 配置", cfg.ClaudeConfigDir)
 	}

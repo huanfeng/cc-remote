@@ -17,6 +17,7 @@ import (
 
 // Empty fields mean "follow Claude's own configuration".
 type Preferences struct {
+	Provider       string `json:"provider,omitempty"`
 	PermissionMode string `json:"permissionMode"`
 	Model          string `json:"model"`
 	Effort         string `json:"effort"`
@@ -67,10 +68,29 @@ func ValidModel(x string) bool {
 
 // Dangerous modes skip or auto-answer approvals and need explicit confirmation.
 func Dangerous(mode string) bool {
-	return mode == "bypassPermissions" || mode == "dontAsk" || mode == "auto"
+	return mode == "bypassPermissions" || mode == "dontAsk" || mode == "auto" || mode == "danger-full-access"
 }
 
 func (p Preferences) Validate() error {
+	if p.Provider == "codex" {
+		switch p.PermissionMode {
+		case "", "read-only", "workspace-write", "danger-full-access":
+		default:
+			return i18n.NewError("invalid Codex sandbox mode: %s", "无效的 Codex 沙箱模式：%s", p.PermissionMode)
+		}
+		switch p.Effort {
+		case "", "none", "minimal", "low", "medium", "high", "xhigh":
+		default:
+			return i18n.NewError("invalid Codex reasoning effort: %s", "无效的 Codex 推理强度：%s", p.Effort)
+		}
+		if !ValidModel(p.Model) {
+			return i18n.NewError("model name is invalid or too long", "模型名称无效或过长")
+		}
+		return nil
+	}
+	if p.Provider != "" && p.Provider != "claude" {
+		return errors.New("invalid preferences provider")
+	}
 	if !ValidPermissionMode(p.PermissionMode) {
 		return i18n.NewError("invalid permission mode: %s", "无效的权限模式：%s", p.PermissionMode)
 	}
@@ -99,7 +119,33 @@ func (p Preferences) Over(override Preferences) Preferences {
 
 // Load returns zero preferences when the file does not exist.
 func Load(dataDir string) (Preferences, string, error) {
-	var p Preferences
+	return load(dataDir, "")
+}
+
+// Provider defaults are isolated so Claude aliases and permission modes never
+// become Codex launch settings. The existing preferences.json remains unchanged.
+func LoadProvider(dataDir, provider string) (Preferences, string, error) {
+	if provider == "codex" {
+		if dataDir != "" {
+			dataDir = filepath.Join(dataDir, "codex")
+		}
+		return load(dataDir, provider)
+	}
+	return Load(dataDir)
+}
+
+func SaveProvider(dataDir, provider string, p Preferences, revision string) (Preferences, string, error) {
+	if provider == "codex" {
+		p.Provider = provider
+		if dataDir != "" {
+			dataDir = filepath.Join(dataDir, "codex")
+		}
+	}
+	return Save(dataDir, p, revision)
+}
+
+func load(dataDir, provider string) (Preferences, string, error) {
+	p := Preferences{Provider: provider}
 	if dataDir == "" {
 		return p, Revision(nil), nil
 	}
@@ -112,6 +158,9 @@ func Load(dataDir string) (Preferences, string, error) {
 	}
 	if err = json.Unmarshal(b, &p); err != nil {
 		return Preferences{}, "", i18n.Errorf("preferences.json is not valid JSON: %w", "preferences.json 不是有效 JSON：%w", err)
+	}
+	if provider != "" {
+		p.Provider = provider
 	}
 	p.Model = strings.TrimSpace(p.Model)
 	if err = p.Validate(); err != nil {
@@ -129,7 +178,7 @@ func Save(dataDir string, p Preferences, revision string) (Preferences, string, 
 	if dataDir == "" {
 		return p, "", i18n.NewError("no data directory configured", "未配置数据目录")
 	}
-	_, current, err := Load(dataDir)
+	_, current, err := load(dataDir, p.Provider)
 	if err != nil {
 		return p, "", err
 	}

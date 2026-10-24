@@ -63,7 +63,7 @@ function Chart({ daily }: { daily: Daily[] }) {
   </figure>;
 }
 
-export function StatusPanel({ api, close, select }: { api: Api; close: () => void; select: (id: string) => void }) {
+export function StatusPanel({ api, close, select, providerStatus }: { api: Api; close: () => void; select: (id: string) => void; providerStatus?: { codexAvailable?: boolean; codexVersion?: string } }) {
   const [data, setData] = useState<HostStatus>();
   const [error, setError] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'lastActivityAt', desc: true });
@@ -102,6 +102,7 @@ export function StatusPanel({ api, close, select }: { api: Api; close: () => voi
           <div className="status-card"><small>{t('Uptime', '运行时长')}</small><strong>{duration(data.uptimeSeconds)}</strong><span title={data.startedAt}>{data.startedAt ? new Date(data.startedAt).toLocaleString(locale) : '—'}</span></div>
           <div className="status-card"><small>{t('Service', '服务托管')}</small><strong>{data.service.managed ? managerText[data.service.manager] || data.service.manager : t('Foreground / started manually', '前台 / 手动启动')}</strong><span>{data.service.managed ? t('Starts at boot', '开机自动运行') : t('Not registered as a system service', '未注册为系统服务')}</span></div>
           <div className="status-card"><small>Claude Code</small><strong className={data.claude.error ? 'warn' : ''}>{data.claude.version || t('Unavailable', '不可用')}</strong><span title={data.claude.path || data.claude.error}>{data.claude.path || data.claude.error}</span></div>
+          {providerStatus?.codexAvailable !== undefined && <div className="status-card"><small>Codex</small><strong className={providerStatus.codexAvailable ? '' : 'warn'}>{providerStatus.codexVersion || (providerStatus.codexAvailable ? t('Available', '可用') : t('Unavailable', '不可用'))}</strong></div>}
           <div className="status-card"><small>{t('Listening on', '监听地址')}</small>{(data.listeners.length ? data.listeners : [{ address: data.listen || '—', loopback: true }]).map(x => <span key={x.address} className="status-listener"><code>{x.address}</code>{!x.loopback && <em>{x.insecure ? t('Reachable from LAN · plain HTTP', '局域网可访问 · 明文 HTTP') : t('Reachable from LAN', '局域网可访问')}</em>}</span>)}</div>
         </div>
         <div className="status-grid">

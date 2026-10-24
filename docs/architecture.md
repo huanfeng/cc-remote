@@ -11,6 +11,7 @@ CC Remote 由三部分组成，编译为一个可执行文件：
 ```text
 cmd/cc-remote      宿主入口和 hook / MCP 子命令
 internal/claude    Claude Code 进程、事件解析、审批桥接、原生历史
+internal/codex     Codex app-server JSON-RPC、事件归一化、审批桥接、rollout 历史
 internal/channel   终端会话的提问 / 计划 Hook（channel-ask-hook）与 ccr 拉起宿主
 internal/server    HTTP API、会话执行和交互生命周期
 internal/store     SQLite 会话、事件和待回答记录
@@ -74,4 +75,5 @@ web                React / PWA 和嵌入式构建产物
 - 同一目录的多个会话可能修改相同文件，目前不自动创建 worktree。
 - 原生历史单文件最多读取 64 MiB，会话发现最多 5000 个文件；大历史、分叉 / 压缩后的记录暂无完整分页和分支选择。
 - 附件没有自动清理策略（删除会话时一并删除）。
-- 不含 Web Push 推送（页面关闭后的通知）和 Codex 适配器；页面打开时的系统通知由前端轮询会话列表产生。PWA 只缓存静态资源，不支持离线执行或离线发送队列。
+- Codex 适配器支持托管会话和原生历史导入，使用 app-server 的线程 / 轮次协议，沿用宿主的队列、审批、持久化和空闲回收；目前不接入 Claude 专用的终端 Hook 与 `ccr` 接力，见 [Codex](codex.md)。
+- 不含 Web Push 推送（页面关闭后的通知）；页面打开时的系统通知由前端轮询会话列表产生。PWA 只缓存静态资源，不支持离线执行或离线发送队列。

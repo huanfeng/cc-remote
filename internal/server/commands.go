@@ -71,6 +71,9 @@ func (s *Server) claudeCommands(id string) (names []string, known bool) {
 // natively in print mode. Before Claude has ever run nothing is known, so the
 // command is passed through and Claude answers it.
 func (s *Server) nativeCommand(x store.Session, name string) bool {
+	if x.Provider == "codex" {
+		return false
+	}
 	if reservedCommand(name) || !skillName.MatchString(name) {
 		return false
 	}
@@ -102,6 +105,9 @@ func terminalCommands(l i18n.Lang) []webCommand {
 
 // commandMenu lists the web commands plus, for managed sessions, Claude's own.
 func (s *Server) commandMenu(l i18n.Lang, x store.Session) []webCommand {
+	if x.Provider == "codex" {
+		return codexCommandList(l)
+	}
 	if x.Mode == "terminal" {
 		return append(terminalCommands(l), s.skillCommands(l, x.Cwd)...)
 	}
@@ -175,6 +181,11 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{}
 	switch name {
 	case "help":
+		if x.Provider == "codex" {
+			result["commands"] = codexCommandList(l)
+			result["message"] = l.T("Codex supports /model, /effort, /permission-mode, /config, /status, /compact, /clear and /stop. Settings apply to the next turn. Codex skills can be invoked with $skill-name in a message.", "Codex 支持 /model、/effort、/permission-mode、/config、/status、/compact、/clear 和 /stop。设置在下一轮生效；可在消息中用 $技能名 调用 Codex 技能。")
+			break
+		}
 		result["commands"] = commandList(l)
 		if x.Mode == "terminal" {
 			result["commands"] = terminalCommands(l)
@@ -231,6 +242,10 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 		closeRuntime(rt)
 		result["message"] = l.T("The context was reset; the web history is kept.", "已重置上下文，网页历史已保留。")
 	case "compact":
+		if x.Provider == "codex" && args != "" {
+			fail(w, 400, l.T("Codex /compact does not accept extra instructions", "Codex /compact 不接受附加指令"))
+			return
+		}
 		if message, code := compactBlocked(l, x); code != 0 {
 			fail(w, code, message)
 			return
@@ -290,12 +305,12 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 	// Model discovery reads files and may call the API, so it runs before taking s.mu.
 	var models *modelList
 	if value == "" && name == "model" {
-		list := s.modelList(l, x.Cwd, false)
+		list := s.providerModels(l, x.Provider, x.Cwd, false)
 		models = &list
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
-	current, rev, err := prefs.Load(s.cfg.DataDir)
+	current, rev, err := prefs.LoadProvider(s.cfg.DataDir, x.Provider)
 	if err != nil {
 		return i18n.Text(l, err), nil, 500
 	}
@@ -305,6 +320,19 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 			return map[string]string{"model": p.Model, "effort": p.Effort, "permission-mode": p.PermissionMode}[name]
 		}
 		lines := []string{l.F("Current session %s: %s", "当前会话%s：%s", label, displayDefault(l, pick(effective))), l.F("CC Remote default: %s", "CC Remote 默认：%s", displayDefault(l, pick(current)))}
+		if x.Provider == "codex" {
+			if name == "model" {
+				data["models"] = *models
+			}
+			if name == "effort" {
+				lines = append(lines, "none, minimal, low, medium, high, xhigh")
+			}
+			if name == "permission-mode" {
+				lines = append(lines, "read-only, workspace-write, danger-full-access")
+			}
+			data["preferences"] = preferencesBody{Preferences: current, Revision: rev}
+			return strings.ReplaceAll(strings.ReplaceAll(strings.Join(lines, "\n"), "Claude's default", "Codex default"), "跟随 Claude 默认值", "跟随 Codex 默认值"), data, 200
+		}
 		switch name {
 		case "model":
 			data["models"] = *models

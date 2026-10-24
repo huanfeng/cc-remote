@@ -2,6 +2,8 @@
 
 # CC Remote
 
+Codex managed sessions are also supported: select **Codex** when creating a web session. Streaming replies, tool events, approvals, questions, queued turns, interrupts, thread resume, and native history import use the local `codex app-server`. Provider defaults are stored separately. `ccr` and terminal handoff remain Claude Code features. See [Codex setup and scope](docs/codex.md).
+
 Use the Claude Code on your own machine from your phone or any browser — the terminal and the web UI share the same session, so you can pick up right where you left off.
 
 [![CI](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml)

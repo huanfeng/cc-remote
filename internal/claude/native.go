@@ -19,6 +19,7 @@ import (
 )
 
 type NativeSession struct {
+	Provider  string `json:"provider,omitempty"`
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Cwd       string `json:"cwd"`

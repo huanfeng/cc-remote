@@ -1,3 +1,4 @@
+import { sessionKey, type Provider } from './providers';
 // Pure helpers for UI state that survives a page refresh: the URL hash route,
 // per-session drafts and the opened-tab list in localStorage, and per-tab view
 // state (scroll, tool expansion) in sessionStorage. No DOM or storage access here.
@@ -11,32 +12,32 @@ export const DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;
 export const MAX_UI_CHARS = 1 << 20;
 const MAX_VIEWS = 64;
 
-export type Route = { id: string; native: boolean };
+export type Route = { id: string; native: boolean; provider?: Provider };
 export type SessionDraft = { draft: string; attachments: Attachment[]; questionDrafts: Record<string, QuestionDraft>; answers: Record<string, Record<string, string>>; updatedAt: number };
 /** `open` and `selected` hold tab keys (`session:<id>` / `native:<id>`); drafts are keyed by managed session id. */
 export type UIState = { v: 1; open: string[]; selected: string; sidebarTab: 'session' | 'native'; drafts: Record<string, SessionDraft> };
 export type ViewState = { scrollTop: number; nearBottom: boolean; expandedTools: number[]; expandedGroups: Record<number, boolean> };
 
 const isObject = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
-const isKey = (value: unknown): value is string => typeof value === 'string' && /^(session|native):./.test(value);
+const isKey = (value: unknown): value is string => typeof value === 'string' && /^(session|native|native-codex):./.test(value);
 
 export function parseHash(hash: string): Route | undefined {
-  const match = /^#\/(s|native)\/(.+)$/.exec(hash);
+  const match = /^#\/(s|native|native-codex)\/(.+)$/.exec(hash);
   if (!match) return undefined;
   try {
     const id = decodeURIComponent(match[2]);
-    return id && !id.includes('/') ? { id, native: match[1] === 'native' } : undefined;
+    return id && !id.includes('/') ? { id, native: match[1] !== 's', ...(match[1] === 'native-codex' ? { provider: 'codex' as const } : {}) } : undefined;
   } catch { return undefined; }
 }
 
-export function formatHash(id: string, native: boolean): string {
-  return id ? `#/${native ? 'native' : 's'}/${encodeURIComponent(id)}` : '';
+export function formatHash(id: string, native: boolean, provider: Provider = 'claude'): string {
+  return id ? `#/${native ? provider === 'codex' ? 'native-codex' : 'native' : 's'}/${encodeURIComponent(id)}` : '';
 }
 
 export function parseKey(key: string): Route | undefined {
   if (!isKey(key)) return undefined;
   const [kind, ...rest] = key.split(':');
-  return { id: rest.join(':'), native: kind === 'native' };
+  return { id: rest.join(':'), native: kind !== 'session', ...(kind === 'native-codex' ? { provider: 'codex' as const } : {}) };
 }
 
 export const emptyUI = (): UIState => ({ v: 1, open: [], selected: '', sidebarTab: 'session', drafts: {} });
@@ -125,7 +126,7 @@ export function mergeUI(stored: UIState, layout: Pick<UIState, 'open' | 'selecte
 
 /** Removes a session everywhere: its tab key from the open list and selection, and its draft. */
 export function forget(state: UIState, route: Route): UIState {
-  const key = `${route.native ? 'native' : 'session'}:${route.id}`;
+  const key = sessionKey(route.id, route.native, route.provider);
   const drafts = { ...state.drafts };
   if (!route.native) delete drafts[route.id];
   return { ...state, open: state.open.filter(item => item !== key), selected: state.selected === key ? '' : state.selected, drafts };

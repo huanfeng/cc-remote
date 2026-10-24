@@ -2,7 +2,7 @@
 
 # CC Remote
 
-在手机或浏览器上使用本机的 Claude Code——终端和网页共享同一个会话，随时接着干。
+在手机或浏览器上使用本机的 Claude Code 和 Codex。Claude Code 支持终端与网页接力，Codex 支持网页托管会话。
 
 [![CI](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/huanfeng/cc-remote?include_prereleases)](https://github.com/huanfeng/cc-remote/releases)
@@ -17,6 +17,8 @@
 CC Remote 是一个运行在你电脑上的小型宿主程序（单个可执行文件），直接调用本机已登录的 Claude Code CLI，并提供一个可在手机上使用的 Web 界面（PWA）。不需要终端模拟器，也不需要把代码传到别处。
 
 ## 功能特性
+
+- **Codex 托管会话**：新建时选择 Codex，支持流式回复、工具过程、网页审批与提问、排队、停止、恢复线程和原生历史导入；模型、推理强度与沙箱默认设置独立保存。见 [Codex 使用说明](docs/codex.md)。
 
 - **终端与网页接力**：在项目里运行 `ccr`，宿主持有一个交互式 Claude Code，本地终端接入使用；按 `Ctrl+]` 离开后它继续运行，网页和手机可以接着发消息，再运行 `ccr` 就接回来。子 agent 等长任务不会因为切换而中断。网页也可以切换到终端视图，直接操作完整的 Claude Code 界面，手机上有专门的输入框和按键行。
 - **网页托管会话**：直接在网页新建会话、指定项目目录，多个会话并行执行，关掉浏览器任务也不会停。

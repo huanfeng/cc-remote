@@ -59,7 +59,7 @@ func TestSendsForget(t *testing.T) {
 func TestInfoListsFeatures(t *testing.T) {
 	_, ts, _ := setup(t, nil)
 	code, b := request(t, ts, "GET", "/api/info", nil, testToken)
-	if code != 200 || !strings.Contains(string(b), `"features":["sendId","mentions"]`) {
+	if code != 200 || !strings.Contains(string(b), `"features":["sendId","mentions","codex"]`) {
 		t.Fatalf("info %d %s", code, b)
 	}
 }

@@ -23,6 +23,10 @@ func applyServiceConfig(o *hostOptions, c *service.Config) {
 		*o.claudeBin = c.Claude
 	}
 	*o.configDir = c.ClaudeConfigDir
+	if c.Codex != "" {
+		*o.codexBin = c.Codex
+	}
+	*o.codexHome = c.CodexHome
 	*o.allowInsecureRemote = c.AllowInsecureRemote
 	o.allowOrigin = stringList(c.AllowOrigins)
 	// Empty is "auto": what it stood for when saved, else the registered --lang.
@@ -102,6 +106,12 @@ func restartSettings(started, c *service.Config, lang i18n.Lang) []string {
 	}
 	if c.ClaudeConfigDir != started.ClaudeConfigDir {
 		names = append(names, "claude-config-dir")
+	}
+	if c.Codex != started.Codex {
+		names = append(names, "codex")
+	}
+	if c.CodexHome != started.CodexHome {
+		names = append(names, "codex-home")
 	}
 	if l := effectiveLanguage(c); l != "" && l != string(lang) {
 		names = append(names, "lang")

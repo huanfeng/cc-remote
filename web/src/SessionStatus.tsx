@@ -1,3 +1,4 @@
+import { providerName, providerOf } from './providers';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Defaults, SessionInfo } from './SessionSettings';
 import type { QuickKind } from './QuickSwitch';
@@ -21,7 +22,7 @@ export function SessionStatus({ session, defaults, label, anchor, close, quick, 
     if (rect) setPlace({ left: Math.max(8, Math.min(anchor.left, window.innerWidth - rect.width - 8)), top: anchor.bottom + 6 });
   }, [anchor]);
   const live = session.mode === 'terminal' ? session.live : undefined;
-  const inherited = (value: string | undefined, fallback: string | undefined) => value || t(`Default (${fallback || 'Claude settings'})`, `默认（${fallback || 'Claude 配置'}）`);
+  const inherited = (value: string | undefined, fallback: string | undefined) => value || t(`Default (${fallback || `${providerName(providerOf(session))} settings`})`, `默认（${fallback || `${providerName(providerOf(session))} 配置`}）`);
   const model = live?.model ? `${live.model}${live.modelId && live.modelId !== live.model ? ` · ${live.modelId}` : ''}` : inherited(session.model, defaults?.model);
   const effort = live?.effort || inherited(session.effort, defaults?.effort);
   const perm = session.permissionMode || defaults?.permissionMode || '';
@@ -30,11 +31,12 @@ export function SessionStatus({ session, defaults, label, anchor, close, quick, 
   const row = (name: string, value: ReactNode, extra?: ReactNode) => <div className="session-status-row"><dt>{name}</dt><dd>{value}</dd>{extra}</div>;
   return <div ref={box} className="session-status popover-menu" role="dialog" aria-label={t('Session status', '会话状态')} style={{ left: place.left, top: place.top }}>
     <dl>
+      {row(t('Provider', '提供方'), providerName(providerOf(session)))}
       {row(t('Status', '状态'), <><span className={`dot ${session.status || 'idle'}`} />{label}</>)}
       {live?.activity && row(t('Activity', '当前活动'), live.activity)}
       {row(t('Model', '模型'), model, switcher('model'))}
       {row(t('Effort', '推理强度'), effort, switcher('effort'))}
-      {row(t('Permission mode', '权限模式'), <span className={perm === 'bypassPermissions' ? 'danger' : ''}>{inherited(session.permissionMode, defaults?.permissionMode)}</span>)}
+      {row(t('Permission mode', '权限模式'), <span className={['bypassPermissions', 'danger-full-access'].includes(perm) ? 'danger' : ''}>{inherited(session.permissionMode, defaults?.permissionMode)}</span>)}
       {live && pct !== undefined && row(t('Context', '上下文'), <span className="session-status-context"><span className="session-status-meter" aria-hidden="true"><i className={pct >= 80 ? 'danger' : pct >= 60 ? 'warn' : ''} style={{ width: `${pct}%` }} /></span>{`${pct}% · ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)}`}</span>)}
       {live && live.durationMs > 0 && row(t('Duration', '会话时长'), duration(live.durationMs / 1000))}
       {live && live.costUSD > 0 && row(t('Cost', '费用'), <span title={t('Estimated at API prices', '按 API 价格估算')}>${live.costUSD.toFixed(2)}</span>)}

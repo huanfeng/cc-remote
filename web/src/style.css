@@ -74,10 +74,10 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .sidebar-nav .svg-icon{color:var(--muted)}
 @media(max-width:760px){.sidebar-nav{padding-bottom:max(10px,env(safe-area-inset-bottom))}}
 /* Custom Select: trigger styled like inputs; listbox is portaled to <body>. */
-.select-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;margin-top:8px;min-height:44px;padding:8px 10px 8px 12px;background:#fff;border:1px solid #daddd2;border-radius:10px;color:inherit;text-align:left;font-size:14px;font-weight:400;transition:border-color .15s,box-shadow .15s}
+.select-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;margin-top:8px;min-height:46px;padding:11px 14px;background:#fff;border:1px solid #daddd2;border-radius:10px;color:inherit;text-align:left;font-size:14px;font-weight:400;line-height:1.5;transition:border-color .15s,box-shadow .15s}
 .select-trigger:hover:not(:disabled){border-color:#bfc8b2}
 .select-trigger[aria-expanded=true]{border-color:#87a568;box-shadow:0 0 0 3px #87a56826}
-.select-trigger>.svg-icon{color:var(--muted);transition:transform .15s}
+.select-trigger>.svg-icon{flex-shrink:0;color:var(--muted);transition:transform .15s}
 .select-trigger[aria-expanded=true]>.svg-icon{transform:rotate(180deg)}
 .select-value{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
 .select-label,.select-placeholder{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -86,6 +86,10 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .select-tag.warn{background:#fbf1dc;border-color:#ecd8a8;color:#7a5b16}.select-tag.danger{background:#fbe3df;border-color:#efb7ad;color:#a3321f}
 .popover-menu{background:#fcfbf6;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px #27372c26;padding:4px;overflow:auto;overscroll-behavior:contain}
 .select-menu{z-index:60;margin:0;list-style:none;width:max-content;box-sizing:border-box}
+.select-menu.popover-menu{padding:6px}
+.select-menu .popover-option{min-height:42px;padding:10px 12px;gap:10px;align-items:center}
+.select-menu .popover-option+.popover-option{margin-top:2px}
+.sidebar .select-trigger{min-height:40px;margin:0 0 10px;padding:9px 12px;font-size:13px}
 .popover-option{display:flex;align-items:flex-start;gap:6px;width:100%;padding:7px 12px 7px 6px;border-radius:7px;cursor:pointer;color:inherit;background:transparent;text-align:left;font-size:13px;line-height:1.4}
 .popover-option.active{background:#e6eddc}
 .popover-option[aria-selected=true] .popover-label{font-weight:600;color:#273c2d}
@@ -93,7 +97,7 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .popover-text{display:flex;flex-direction:column;gap:1px;min-width:0}
 .popover-label{display:flex;align-items:center;gap:6px;min-height:18px;overflow-wrap:anywhere}
 .popover-text small,.modal .popover-text small{display:block;font-size:11px;color:var(--muted);line-height:1.45}
-@media(pointer:coarse){.popover-option{padding-top:10px;padding-bottom:10px}}
+@media(pointer:coarse){.popover-option{padding-top:10px;padding-bottom:10px}.select-menu .popover-option{min-height:46px}.sidebar .select-trigger{min-height:44px}}
 .composer-bottom .select-trigger.send-key{width:auto;max-width:170px;min-height:0;margin:0;padding:3px 6px 3px 8px;font-size:10.5px;border-radius:6px;background:#f5f6ef;border-color:#e3e6d9;color:#6d7866;gap:4px}
 .composer-bottom .select-trigger.send-key .svg-icon{width:12px;height:12px}
 /* Settings dialog: section list on the left (top tabs on phones). */

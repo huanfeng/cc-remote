@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/codex"
 	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
@@ -29,6 +30,8 @@ import (
 
 type Runner func(context.Context, claude.Options, func(claude.Event) error) error
 type Config struct {
+	CodexExecutable, CodexConfigDir                                          string
+	StartCodexProcess                                                        ProcessStarter
 	UploadDir                                                                string
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL string
 	AttachCommand                                                            string // cc-remote attach with this host's flags; the web appends a session
@@ -308,7 +311,12 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon, "features": hostFeatures})
+	codexBin := s.cfg.CodexExecutable
+	if codexBin == "" {
+		codexBin = "codex"
+	}
+	_, codexErr := exec.LookPath(codexBin)
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "codexAvailable": codexErr == nil, "providers": []string{"claude", "codex"}, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon, "features": hostFeatures})
 }
 
 // language is the host's language (English when unset, as in tests).
@@ -367,8 +375,9 @@ func folderTitle(dir string) string {
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title string `json:"title"`
-		Cwd   string `json:"cwd"`
+		Provider string `json:"provider"`
+		Title    string `json:"title"`
+		Cwd      string `json:"cwd"`
 		// Mode "terminal" runs an interactive Claude Code the host holds; the
 		// request must confirm trusting the directory (Claude asks on first use).
 		Mode        string `json:"mode"`
@@ -380,6 +389,17 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		overrideRequest
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "claude"
+	}
+	if req.Provider != "claude" && req.Provider != "codex" {
+		fail(w, 400, "Invalid session provider")
+		return
+	}
+	if req.Provider == "codex" && (req.Mode == "terminal" || len(req.ClaudeArgs) > 0 || req.Resume != "") {
+		fail(w, 400, s.lang(r).T("Codex uses managed sessions; resume native threads from history", "Codex 使用托管会话；请从历史记录导入原生线程"))
 		return
 	}
 	req.Title = strings.TrimSpace(req.Title)
@@ -406,7 +426,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	if req.Title == "" {
 		req.Title = s.lang(r).T("New session", "新会话")
 	}
-	var overrides store.Session
+	overrides := store.Session{Provider: req.Provider}
 	if e = req.apply(s.lang(r), &overrides); e != nil {
 		fail(w, 400, e.Error())
 		return
@@ -419,7 +439,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		s.trustRequired(w, r)
 		return
 	}
-	x, e := s.store.Create(req.Title, cwd, store.ID(), false)
+	x, e := s.store.CreateProvider(req.Title, cwd, store.ID(), false, req.Provider)
 	if e == nil {
 		e = s.store.SetOverrides(x.ID, overrides.PermissionMode, overrides.Model, overrides.Effort)
 		x.PermissionMode, x.Model, x.Effort = overrides.PermissionMode, overrides.Model, overrides.Effort
@@ -684,6 +704,11 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	name, args, _ := strings.Cut(strings.TrimPrefix(req.Text, "/"), " ")
 	native := strings.HasPrefix(req.Text, "/") && s.nativeCommand(x, name)
 	if strings.HasPrefix(req.Text, "/") && name == "compact" {
+		if x.Provider == "codex" && strings.TrimSpace(args) != "" {
+			s.mu.Unlock()
+			fail(w, 400, s.lang(r).T("Codex /compact does not accept extra instructions", "Codex /compact 不接受附加指令"))
+			return
+		}
 		message, code := compactBlocked(s.lang(r), x)
 		if code != 0 {
 			s.mu.Unlock()
@@ -700,6 +725,11 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if strings.HasPrefix(req.Text, "/") {
+		if x.Provider == "codex" {
+			s.mu.Unlock()
+			fail(w, 400, s.lang(r).T("Use the command menu for Codex commands; invoke skills with $skill-name", "请通过命令菜单执行 Codex 命令；使用 $技能名 调用技能"))
+			return
+		}
 		var found bool
 		promptText, found, e = s.skillPrompt(s.lang(r), x.Cwd, name, strings.TrimSpace(args))
 		if e != nil || !found {
@@ -1007,15 +1037,28 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nativeList(w http.ResponseWriter, r *http.Request) {
-	x, e := claude.ListNative(s.cfg.ClaudeConfigDir)
+	provider, ok := requestProvider(w, r)
+	if !ok {
+		return
+	}
+	var x []claude.NativeSession
+	var e error
+	if provider == "codex" {
+		x, e = codex.ListNative(s.cfg.CodexConfigDir)
+	} else {
+		x, e = claude.ListNative(s.cfg.ClaudeConfigDir)
+	}
 	if e != nil {
-		fail(w, 500, s.lang(r).T("Could not read Claude Code's native sessions: ", "无法读取 Claude Code 原生会话：")+e.Error())
+		fail(w, 500, s.lang(r).F("Could not read %s native sessions: %s", "无法读取 %s 原生会话：%s", providerName(provider), e.Error()))
 		return
 	}
 	respond(w, 200, x)
 }
 func (s *Server) nativeGet(w http.ResponseWriter, r *http.Request) {
-	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, r.PathValue("id"))
+	if _, ok := requestProvider(w, r); !ok {
+		return
+	}
+	x, ev, e := s.nativeHistory(r, r.PathValue("id"))
 	if e != nil {
 		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
@@ -1037,6 +1080,10 @@ func (s *Server) nativeGet(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]any{"session": x, "events": out, "hasMore": older})
 }
 func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
+	provider, ok := requestProvider(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		ConfirmStopped bool `json:"confirmStopped"`
 	}
@@ -1050,14 +1097,18 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if x, e := s.store.FindClaude(id); e == nil {
+	if x, e := s.store.FindNative(provider, id); e == nil {
+		if x.Provider != provider {
+			fail(w, 409, "Native session belongs to another provider")
+			return
+		}
 		respond(w, 200, x)
 		return
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		fail(w, 500, s.lang(r).T("Could not read sessions", "无法读取会话"))
 		return
 	}
-	x, ev, e := claude.NativeHistory(s.cfg.ClaudeConfigDir, id)
+	x, ev, e := s.nativeHistory(r, id)
 	if e != nil {
 		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
 		return
@@ -1067,7 +1118,7 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, e.Error())
 		return
 	}
-	managed, e := s.store.Create(x.Title, cwd, x.ID, true)
+	managed, e := s.store.CreateProvider(x.Title, cwd, x.ID, true, provider)
 	if e != nil {
 		fail(w, 500, s.lang(r).T("Could not import the session", "无法导入会话"))
 		return

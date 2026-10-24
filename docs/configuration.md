@@ -10,6 +10,8 @@
 | `--data-dir` | 见[数据目录](#数据目录) | SQLite、令牌、附件、日志和宿主锁所在目录 |
 | `--claude` | `claude` | Claude Code 可执行文件路径 |
 | `--claude-config-dir` | `CLAUDE_CONFIG_DIR` 或 `~/.claude` | 原生历史发现和实际执行使用的 Claude 配置目录 |
+| `--codex` | `CC_REMOTE_CODEX` 或 `codex` | Codex CLI 可执行文件路径 |
+| `--codex-home` | `CODEX_HOME` 或 `~/.codex` | Codex 配置、登录和原生历史目录；同样用于 app-server 子进程 |
 | `--log-file` | 空（仅 stderr） | 同时写入日志文件，10 MiB 轮转并保留一个 `.1` 备份；Go 运行时崩溃信息也写入该文件 |
 | `--allow-insecure-remote` | 关 | 允许 `all:PORT` / `0.0.0.0` / `::` 这类绑定所有网卡的地址 |
 | `--lang` | `auto` | 提示信息和 Web 界面的默认语言：`auto`（跟随系统）、`zh` 或 `en`，见[界面语言](#界面语言) |
@@ -36,6 +38,7 @@
 | `cc-remote.sqlite`（及 `-wal`/`-shm`） | 会话、消息事件、审批记录 |
 | `access-token` | 访问令牌（首次启动生成，权限 0600） |
 | `preferences.json` | CC Remote 默认的模型、推理强度、权限模式 |
+| `codex/preferences.json` | 独立的 Codex 默认模型、推理强度与沙箱模式，见 [Codex](codex.md) |
 | `identity.json` | 主机名称、颜色与图标（见[主机名称、颜色与图标](#主机名称颜色与图标)） |
 | `service.json` | 服务配置（监听地址、允许的网页前端 `allowOrigins`、Claude 路径、界面语言 `language`、服务环境变量等） |
 | `uploads/<会话 ID>/` | 上传的附件 |

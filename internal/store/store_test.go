@@ -4,9 +4,189 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestNativeSessionIdentityIsProviderScoped(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	nativeID := ID()
+	claude, err := s.Create("Claude", "/tmp", nativeID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex, err := s.CreateProvider("Codex", "/tmp", nativeID, true, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider, want := range map[string]Session{"claude": claude, "codex": codex} {
+		got, err := s.FindNative(provider, nativeID)
+		if err != nil || got.ID != want.ID || got.Provider != provider {
+			t.Fatalf("FindNative(%q): %+v %v", provider, got, err)
+		}
+		if _, err := s.CreateProvider("Duplicate", "/tmp", nativeID, false, provider); err == nil {
+			t.Fatalf("duplicate %s native ID accepted", provider)
+		}
+	}
+	if got, err := s.FindClaude(nativeID); err != nil || got.ID != claude.ID {
+		t.Fatalf("FindClaude: %+v %v", got, err)
+	}
+	if _, err := s.FindNative("unknown", nativeID); err != sql.ErrNoRows {
+		t.Fatalf("unknown provider: %v", err)
+	}
+}
+
+func TestMigratesNativeIdentityPreservingChildren(t *testing.T) {
+	for _, withProvider := range []bool{false, true} {
+		t.Run(map[bool]string{false: "legacy", true: "provider_column"}[withProvider], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "old.sqlite")
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = db.Exec(`PRAGMA foreign_keys=ON;
+CREATE TABLE sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL UNIQUE,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0);
+INSERT INTO sessions VALUES('old','Old','/tmp','native-id','idle','created','updated',1);
+CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,text TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
+INSERT INTO events VALUES(41,'old','assistant','saved message','{"saved":true}','event-time');
+CREATE TABLE interactions(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,tool_name TEXT NOT NULL,input TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
+INSERT INTO interactions VALUES('approval','old','approval','Bash','{"command":"pwd"}','resolved','interaction-time');
+CREATE TABLE channel_transcript(session_id TEXT NOT NULL REFERENCES sessions(id),event_key TEXT NOT NULL,PRIMARY KEY(session_id,event_key));
+INSERT INTO channel_transcript VALUES('old','saved-key');`)
+			if err == nil && withProvider {
+				_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude';
+ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'managed';
+ALTER TABLE sessions ADD COLUMN permission_mode TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN effort TEXT NOT NULL DEFAULT '';
+ALTER TABLE sessions ADD COLUMN claude_args TEXT NOT NULL DEFAULT '[]';
+UPDATE sessions SET mode='terminal',permission_mode='acceptEdits',model='opus',effort='high',claude_args='["--verbose"]';
+INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume,provider) VALUES('codex','Codex','/tmp','codex-native','idle','c','u',1,'codex');`)
+			}
+			closeErr := db.Close()
+			if err != nil || closeErr != nil {
+				t.Fatalf("fixture: %v %v", err, closeErr)
+			}
+			var first Session
+			for attempt := range 2 {
+				s, err := Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				func() {
+					defer s.Close()
+					x, err := s.FindClaude("native-id")
+					if err != nil || x.ID != "old" || x.Provider != "claude" || x.Title != "Old" || x.Cwd != "/tmp" || x.Status != "idle" || x.CreatedAt != "created" || x.UpdatedAt != "updated" || !x.Resume {
+						t.Fatalf("session: %+v %v", x, err)
+					}
+					if withProvider && (x.Mode != "terminal" || x.PermissionMode != "acceptEdits" || x.Model != "opus" || x.Effort != "high" || !reflect.DeepEqual(x.ClaudeArgs, []string{"--verbose"})) {
+						t.Fatalf("overrides lost: %+v", x)
+					}
+					if attempt == 0 {
+						first = x
+						if _, err := s.CreateProvider("Same ID", "/tmp", "native-id", true, "codex"); err != nil {
+							t.Fatal(err)
+						}
+					} else if !reflect.DeepEqual(first, x) {
+						t.Fatalf("reopen changed session: %+v -> %+v", first, x)
+					}
+					if withProvider {
+						if got, err := s.FindNative("codex", "codex-native"); err != nil || got.ID != "codex" {
+							t.Fatalf("existing Codex row: %+v %v", got, err)
+						}
+					}
+					events, err := s.Events("old", 0)
+					if err != nil || len(events) != 1 || events[0].Seq != 41 || events[0].Kind != "assistant" || events[0].Text != "saved message" || string(events[0].Payload) != `{"saved":true}` || events[0].CreatedAt != "event-time" {
+						t.Fatalf("events: %+v %v", events, err)
+					}
+					var kind, tool, input, status, created string
+					if err := s.db.QueryRow(`SELECT kind,tool_name,input,status,created_at FROM interactions WHERE id='approval' AND session_id='old'`).Scan(&kind, &tool, &input, &status, &created); err != nil || kind != "approval" || tool != "Bash" || input != `{"command":"pwd"}` || status != "resolved" || created != "interaction-time" {
+						t.Fatalf("interaction: %s %s %s %s %s %v", kind, tool, input, status, created, err)
+					}
+					if !s.TranscriptFlag("old", "saved-key") {
+						t.Fatal("transcript key lost")
+					}
+					var enabled int
+					if err := s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&enabled); err != nil || enabled != 1 {
+						t.Fatalf("foreign_keys: %d %v", enabled, err)
+					}
+					rows, err := s.db.Query(`PRAGMA foreign_key_check`)
+					if err != nil {
+						t.Fatal(err)
+					}
+					invalid := rows.Next()
+					rowsErr := rows.Err()
+					rows.Close()
+					if invalid || rowsErr != nil {
+						t.Fatalf("foreign key violation: %v %v", invalid, rowsErr)
+					}
+					for _, table := range []string{"events", "interactions", "channel_transcript"} {
+						rows, err := s.db.Query(`PRAGMA foreign_key_list(` + table + `)`)
+						if err != nil {
+							t.Fatal(err)
+						}
+						var id, seq int
+						var parent, from, to, update, delete, match string
+						if !rows.Next() {
+							rows.Close()
+							t.Fatalf("%s lost foreign key", table)
+						}
+						err = rows.Scan(&id, &seq, &parent, &from, &to, &update, &delete, &match)
+						rows.Close()
+						if err != nil || parent != "sessions" || from != "session_id" || to != "id" {
+							t.Fatalf("%s foreign key: %s %s %s %v", table, parent, from, to, err)
+						}
+					}
+					if _, err := s.Append("missing", "user", "orphan", nil); err == nil {
+						t.Fatal("foreign key enforcement lost")
+					}
+				}()
+			}
+		})
+	}
+}
+
+func TestNativeIdentityMigrationFailureRollsBack(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "invalid.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	legacySchema := strings.Replace(sessionSchema, "UNIQUE(provider,claude_id)", "UNIQUE(claude_id)", 1)
+	if _, err := db.Exec(`CREATE TABLE sessions(` + legacySchema + `);
+INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at) VALUES('old','Old','/tmp','native','idle','c','u');
+CREATE TABLE child(session_id TEXT NOT NULL REFERENCES sessions(id));
+INSERT INTO child VALUES('missing');
+PRAGMA foreign_keys=ON;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateNativeIdentity(db); err == nil {
+		t.Fatal("migration accepted broken foreign key")
+	}
+	var enabled, sessions, children, temporary int
+	for query, target := range map[string]*int{
+		`PRAGMA foreign_keys`: &enabled,
+		`SELECT count(*) FROM sessions WHERE id='old' AND claude_id='native'`:      &sessions,
+		`SELECT count(*) FROM child WHERE session_id='missing'`:                    &children,
+		`SELECT count(*) FROM sqlite_schema WHERE name='sessions_native_identity'`: &temporary,
+	} {
+		if err := db.QueryRow(query).Scan(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if enabled != 1 || sessions != 1 || children != 1 || temporary != 0 {
+		t.Fatalf("rollback: foreign_keys=%d sessions=%d children=%d temporary=%d", enabled, sessions, children, temporary)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,provider) VALUES('new','New','/tmp','native','idle','c','u','codex')`); err == nil {
+		t.Fatal("rollback did not restore original uniqueness constraint")
+	}
+}
 
 func TestDurableEventsAndInterruptedRecovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.sqlite")
@@ -145,7 +325,7 @@ INSERT INTO sessions VALUES('old','Old','/tmp','abcd1234-1234-1234-1234-12345678
 	}
 	defer s.Close()
 	x, err := s.Get("old")
-	if err != nil || x.Mode != "managed" || x.PermissionMode != "" || x.Model != "" || x.Effort != "" || !x.Resume {
+	if err != nil || x.Provider != "claude" || x.Mode != "managed" || x.PermissionMode != "" || x.Model != "" || x.Effort != "" || !x.Resume {
 		t.Fatalf("migrated %+v %v", x, err)
 	}
 	if err = s.SetOverrides("old", "bypassPermissions", "opus", "high"); err != nil {
