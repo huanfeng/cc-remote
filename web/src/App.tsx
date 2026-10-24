@@ -36,7 +36,7 @@ import { matchProjects, projectKey, projectName, recentProjects, type RecentProj
 type Session = { id: string; title: string; cwd: string; truncated?: boolean; claudeArgs?: string[]; status?: string; createdAt?: string; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: { text: string; payload?: any }[]; live?: LiveStatus; activeTasks?: number };
 type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
 type Request = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
-type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; attachCommand?: string; language?: string; name?: string; color?: string; icon?: string };
+type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; attachCommand?: string; features?: string[]; language?: string; name?: string; color?: string; icon?: string };
 type ConversationTab = { key: string; id: string; native: boolean; session?: Session; events: Event[]; requests: Request[]; draft: string; attachments: Attachment[]; notice?: string; scrollTop: number; nearBottom: boolean; loaded: boolean; hasOlder: boolean; loadingOlder: boolean; expandedTools: number[]; expandedGroups: Record<number, boolean>; answers: Record<string, Record<string, string>>; questionDrafts: Record<string, QuestionDraft> };
 type Command = { name: string; description: string; terminalOnly?: boolean };
 const SEND_KEYS = [{ value: 'ctrl-enter', label: 'Ctrl / ⌘ + Enter', description: t('Enter adds a new line; the shortcut sends', 'Enter 换行，组合键发送') }, { value: 'enter', label: t('Enter sends', 'Enter 发送'), description: t('Shift + Enter adds a new line', 'Shift + Enter 换行') }];
@@ -577,7 +577,11 @@ export default function App() {
     return { cached, status: waiting ? 'waiting' : item.activeTasks && !['running', 'waiting'].includes(item.status || '') ? 'running' : item.status || 'idle', label: waiting ? t('Needs action', '等待操作') : native ? t('Read-only history', '只读历史') : sessionLabel(item) };
   }
   const running = current?.status === 'running' || current?.status === 'waiting';
-  const mention = useMentions({ sessionId: current && !native ? current.id : '', draft, setDraft, api });
+  // An older host refuses a field it does not know (the whole message), so these go
+  // only to a host that lists them in /api/info.
+  const hostHas = (feature: string) => !!info?.features?.includes(feature);
+  const hostSendId = (key: string, content: string) => hostHas('sendId') ? sendIdFor(key, content) : undefined;
+  const mention = useMentions({ sessionId: current && !native && hostHas('mentions') ? current.id : '', draft, setDraft, api });
   // Terminal sessions: the host holds Claude Code; a local terminal attaches to it.
   const attaching = !native && current?.mode === 'terminal';
   const showTerm = attaching && termViews.includes(current!.id);
@@ -790,7 +794,7 @@ export default function App() {
     const id = selected;
     await action(async () => {
       const sendKey = `suggestion:${id}`;
-      await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, sendId: sendIdFor(sendKey, text) }) });
+      await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, sendId: hostSendId(sendKey, text) }) });
       sendIds.delete(sendKey);
       await list();
     });
@@ -812,13 +816,13 @@ export default function App() {
       if (isCommand) {
         if (attachments.length) throw new Error(t('Remove the attachments before running a command, or send them with a regular message', '请先移除附件再执行控制命令，或发送描述附件的普通消息'));
         const result = await api<{ message?: string; openSettings?: boolean; sendMessage?: boolean }>(`/api/sessions/${id}/commands`, { method: 'POST', body: JSON.stringify({ command: text }) });
-        if (result.sendMessage) await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, sendId: sendIdFor(key, text) }) });
+        if (result.sendMessage) await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, sendId: hostSendId(key, text) }) });
         sendIds.delete(key);
         if (result.openSettings) setSettingsOpen(true);
         updateTab(key, tab => ({ ...tab, notice: result.message, draft: tab.draft.trim() === text ? '' : tab.draft }));
       } else {
         const attachmentIds = sentImages.map(image => image.id);
-        await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, attachmentIds, sendId: sendIdFor(key, [text, ...attachmentIds].join('\n')) }) });
+        await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, attachmentIds, sendId: hostSendId(key, [text, ...attachmentIds].join('\n')) }) });
         sendIds.delete(key);
         updateTab(key, tab => ({ ...tab, draft: tab.draft.trim() === text ? '' : tab.draft, attachments: tab.attachments.filter(image => !sentImages.some(sent => sent.id === image.id)) }));
       }

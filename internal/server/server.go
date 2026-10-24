@@ -308,7 +308,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			version = strings.TrimSpace(string(b))
 		}
 	}
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon})
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon, "features": hostFeatures})
 }
 
 // language is the host's language (English when unset, as in tests).

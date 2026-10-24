@@ -53,3 +53,13 @@ func TestSendsForget(t *testing.T) {
 		t.Fatal("a send ID is known across sessions")
 	}
 }
+
+// A page sends sendId only to a host that lists it: an older host refuses the
+// whole message for a field it does not know.
+func TestInfoListsFeatures(t *testing.T) {
+	_, ts, _ := setup(t, nil)
+	code, b := request(t, ts, "GET", "/api/info", nil, testToken)
+	if code != 200 || !strings.Contains(string(b), `"features":["sendId","mentions"]`) {
+		t.Fatalf("info %d %s", code, b)
+	}
+}

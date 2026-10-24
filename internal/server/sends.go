@@ -15,6 +15,11 @@ const (
 	maxSendsKept = 512
 )
 
+// hostFeatures tells a page (GET /api/info) what this host takes beyond older
+// ones: a request body with an unknown field is refused, so a page sends sendId
+// only to a host that lists it.
+var hostFeatures = []string{"sendId", "mentions"}
+
 var validSendID = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 
 type sentMessage struct {
