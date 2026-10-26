@@ -62,17 +62,18 @@ type outgoing struct {
 }
 
 type sessionRuntime struct {
-	id    string
+	id       string
 	provider string
-	token string // bridge credential of this process
-	key   launchKey
-	proc  claudeProcess // nil while starting; set before ready is closed
-	ready chan struct{}
+	token    string // bridge credential of this process
+	key      launchKey
+	proc     claudeProcess // nil while starting; set before ready is closed
+	ready    chan struct{}
 
 	sent      []outgoing // accepted, not yet echoed by Claude (oldest first)
 	unwritten int        // trailing entries of sent the writer has not written
 	writing   bool       // the writer goroutine runs
 	turn      bool       // Claude is in a turn
+	steering  bool       // a Codex turn/steer acknowledgement is pending
 	early     *outgoing  // recorded on a turn's first output, before its echo (slash commands)
 	approvals int        // open bridge requests
 
@@ -345,7 +346,16 @@ func (s *Server) busyLocked(rt *sessionRuntime) {
 
 // settleLocked ends the execution once nothing is left to do.
 func (s *Server) settleLocked(rt *sessionRuntime) {
-	if rt.run == nil || rt.turn || rt.approvals > 0 || (len(rt.sent) > 0 && !rt.stopping) {
+	if rt.run == nil || rt.turn || rt.steering || rt.approvals > 0 || (len(rt.sent) > 0 && !rt.stopping) {
+		return
+	}
+	if s.runs[rt.id] != rt.run {
+		// A process exit can remove the runtime while a steer acknowledgement
+		// is pending. A replacement execution owns status and approvals now.
+		run := rt.run
+		rt.run = nil
+		rt.release()
+		close(run.done)
 		return
 	}
 	status := rt.outcome
@@ -428,7 +438,7 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 // call anyway. A second stop, or a turn still running after interruptGrace,
 // ends the process.
 func (s *Server) interruptLocked(rt *sessionRuntime) {
-	if !rt.turn && len(rt.sent) == 0 {
+	if !rt.turn && len(rt.sent) == 0 && rt.approvals == 0 {
 		return // nothing runs
 	}
 	if rt.interrupting {

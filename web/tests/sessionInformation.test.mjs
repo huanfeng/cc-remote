@@ -68,7 +68,7 @@ test('details are read-only by default, disclose estimated times and keep token 
   assert.equal(nodes(tree).some(node => node.type === 'form'), false);
   assert.match(content(tree), /Estimated from history metadata/);
   assert.match(content(tree), /Current ·  reported-current/);
-  assert.match(content(tree), /Configured \/ next turn ·  configured-old/);
+  assert.match(content(tree), /Configured \/ next process ·  configured-old/);
   const rows = nodes(tree).filter(node => node.type === 'div');
   assert.match(content(rows.find(node => content(node).startsWith('Tokens '))), /15/);
   assert.match(content(rows.find(node => content(node).startsWith('Cost \(estimated\) '))), /Not provided/);
@@ -88,6 +88,20 @@ test('running-session save sends only overrides and leaves reported values uncha
   tree = renderer.render(SessionSettings, { ...props, session: updated });
   assert.match(content(tree), /reported-current/); assert.match(content(tree), /next-model/);
   assert.equal(nodes(tree).some(node => node.type === 'form'), false);
+  renderer.dispose();
+});
+
+test('Codex details prefer the latest cumulative token report without requiring cost', async () => {
+  const renderer = createRenderer();
+  const props = { api: async () => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, costKnown: false }), session,
+    events: [{ seq: 10, kind: 'status', payload: { tokenUsage: { total: { totalTokens: 125, inputTokens: 100, cachedInputTokens: 80, outputTokens: 25 } } } }],
+    close() {}, onUpdated() {}, onDelete() {} };
+  renderer.render(SessionSettings, props); renderer.effects(); await settle();
+  let tree = renderer.render(SessionSettings, props);
+  const tokenRow = nodes(tree).find(node => node.type === 'div' && content(node).startsWith('Tokens '));
+  assert.match(content(tokenRow), /125/);
+  tree = renderer.render(SessionSettings, { ...props, events: [{ seq: 11, kind: 'status', payload: { tokenUsage: { total: { totalTokens: 0 } } } }] });
+  assert.match(content(nodes(tree).find(node => node.type === 'div' && content(node).startsWith('Tokens '))), /Tokens 0/);
   renderer.dispose();
 });
 

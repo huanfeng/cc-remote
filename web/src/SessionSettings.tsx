@@ -1,4 +1,6 @@
 import { providerName, providerOf, type Provider } from './providers';
+import { readCodexUsage, type CodexEvent } from './codexStatus';
+import { CodexSessionUsage } from './CodexStatusEvent';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ClockIcon, CloseIcon, GaugeIcon, ShieldIcon, SparkIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
@@ -62,7 +64,7 @@ export function SessionChips({ session, defaults, open }: { session: SessionInfo
   </div>;
 }
 
-export function SessionSettings<T extends SessionInfo>({ api, session, defaults, close, onUpdated, onDelete, onImport }: { api: Api; session: T; defaults?: Defaults; close: () => void; onUpdated: (session: T) => void; onDelete: () => void; onImport?: () => void }) {
+export function SessionSettings<T extends SessionInfo>({ api, session, defaults, events, close, onUpdated, onDelete, onImport }: { api: Api; session: T; defaults?: Defaults; events?: readonly CodexEvent[]; close: () => void; onUpdated: (session: T) => void; onDelete: () => void; onImport?: () => void }) {
   const provider = providerOf(session);
   const nativeHistory = !!session.readOnly || session.mode === 'native' || session.mode === 'history';
   const saved = { permissionMode: session.permissionMode || '', model: session.model || '', effort: session.effort || '' };
@@ -103,7 +105,7 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
     setSaving(true); setError('');
     try {
       onUpdated(await api<T>(`/api/sessions/${encodeURIComponent(session.id)}`, { method: 'PATCH', body: JSON.stringify({ ...draft, model: draft.model.trim(), confirmDangerous: dangerousMode(draft.permissionMode, provider) }) }));
-      setEditing(false); setNotice(t('Saved. Configuration applies from the next turn.', '已保存，配置下一轮生效。'));
+      setEditing(false); setNotice(t('Saved. Configuration applies on the next send after current work and background tasks finish.', '已保存，配置在当前工作及后台任务结束后，下次发送时生效。'));
     } catch (err) { setError((err as Error).message); } finally { setSaving(false); }
   }
   const unknown = t('Not provided', '未提供');
@@ -118,11 +120,12 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
     const override = session[key], fallback = nativeHistory ? undefined : defaults?.[key];
     const source = override ? t('Session override', '本会话覆盖') : fallback ? t('CC Remote default', 'CC Remote 默认') : t(`Provider native configuration (${providerName(provider)} settings)`, `提供方原生配置（${providerName(provider)} 配置）`);
     if (nativeHistory) return <div key={key}><dt>{label}</dt><dd>{override || unknown}<small>{t('Native history metadata', '原生历史元数据')}</small></dd></div>;
-    return <div className="session-configuration-row" key={key}><dt>{label}</dt><dd>{reportedConfiguration && <span>{t('Current · ', '当前 · ')}{reported || t('Not reported', '未报告')}{reported && <small>{t('CLI reported', 'CLI 实际报告')}</small>}</span>}<span>{t('Configured / next turn · ', '配置 / 下一轮 · ')}{override || fallback || t('Inherit native configuration (value unknown)', '继承原生配置（值未知）')}<small>{source}</small></span></dd></div>;
+    return <div className="session-configuration-row" key={key}><dt>{label}</dt><dd>{reportedConfiguration && <span>{t('Current · ', '当前 · ')}{reported || t('Not reported', '未报告')}{reported && <small>{t('CLI reported', 'CLI 实际报告')}</small>}</span>}<span>{t('Configured / next process · ', '配置 / 下次启动 · ')}{override || fallback || t('Inherit native configuration (value unknown)', '继承原生配置（值未知）')}<small>{source}</small></span></dd></div>;
   };
   const tokenFields = [currentStats?.inputTokens, currentStats?.outputTokens, currentStats?.cacheReadTokens, currentStats?.cacheCreationTokens];
-  const tokenTotal = tokenFields.every(value => typeof value === 'number' && Number.isFinite(value)) ? tokenFields.reduce<number>((sum, value) => sum + (value || 0), 0) : undefined;
-  const tokensKnown = currentStats?.tokensKnown !== false && tokenTotal !== undefined && (currentStats?.tokensKnown === true || tokenTotal > 0);
+  const reportedTokens = provider === 'codex' ? readCodexUsage(events || [])?.total?.totalTokens : undefined;
+  const tokenTotal = reportedTokens ?? (tokenFields.every(value => typeof value === 'number' && Number.isFinite(value)) ? tokenFields.reduce<number>((sum, value) => sum + (value || 0), 0) : undefined);
+  const tokensKnown = reportedTokens !== undefined || currentStats?.tokensKnown !== false && tokenTotal !== undefined && (currentStats?.tokensKnown === true || tokenTotal > 0);
   const metric = (value: number | undefined, format = number) => typeof value === 'number' && Number.isFinite(value) ? format(value) : unknown;
   return <div className="modal-backdrop session-details-backdrop" onClick={event => { if (event.target === event.currentTarget) requestClose(); }}>
     <div ref={panel} tabIndex={-1} className="modal session-settings session-details" role="dialog" aria-modal="true" aria-label={t('Session details', '会话详情')} onKeyDown={event => {
@@ -154,11 +157,11 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
       </dl>
       </>}
       <h3>{nativeHistory ? t('Recorded configuration', '历史配置') : t('Configuration', '配置')}</h3>
-      {!nativeHistory && !reportedConfiguration && <p>{t('Current configuration has not been reported by the CLI. Values below are configured for the next turn.', 'CLI 尚未报告当前配置。以下为下一轮使用的配置预期。')}</p>}
+      {!nativeHistory && !reportedConfiguration && <p>{t('Current configuration has not been reported by the CLI. Values below apply when the process can safely restart.', 'CLI 尚未报告当前配置。以下为进程可安全重启时应用的配置预期。')}</p>}
       <dl className="session-detail-list">{configuration('model', t('Model', '模型'), live?.model || live?.modelId)}{configuration('effort', t('Effort', '推理强度'), live?.effort)}{configuration('permissionMode', t('Permission / sandbox', '权限 / 沙箱'), live?.permissionMode)}</dl>
       {!nativeHistory && !editing && <button type="button" className="secondary" onClick={() => { setDraft(saved); setEditing(true); setNotice(''); }}>{t('Edit session overrides', '修改本会话覆盖')}</button>}
       {editing && <form onSubmit={event => { event.preventDefault(); if (changed) void save(); }}>
-        <p>{t('Changes apply from the next turn. Empty fields inherit defaults; current execution values remain as reported.', '修改下一轮生效；留空继承默认值，当前执行值仍以实际报告为准。')}</p>
+        <p>{t('Changes apply on the next send after current work and background tasks finish. Empty fields inherit defaults; current execution values remain as reported.', '修改在当前工作及后台任务结束后，下次发送时生效；留空继承默认值，当前执行值仍以实际报告为准。')}</p>
         <fieldset disabled={saving}>
           <label>{t('Model', '模型')}<ModelPicker api={api} provider={provider} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></label>
           <label>{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} value={draft.effort} options={effortOptions(inherit(defaults?.effort), provider)} onChange={effort => setDraft(old => ({ ...old, effort }))} /></label>
@@ -178,6 +181,7 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
         {row(t('Last recorded event', '最后记录事件'), fullTime(currentStats?.lastActivityAt))}
         {row(t('Statistics retrieved', '统计读取时间'), fullTime(nativeHistory ? undefined : statsReadAt))}
       </dl>
+      {provider === 'codex' && events && <CodexSessionUsage events={events} />}
       {nativeHistory && onImport && <button type="button" className="primary" onClick={onImport}>{t('Import session…', '导入会话…')}</button>}
       {!nativeHistory && <details><summary>{t('Management', '管理')}</summary><button type="button" className="danger-button" disabled={saving} onClick={() => { if (mayLeave()) onDelete(); }}>{t('Delete session…', '删除会话…')}</button></details>}
       {notice && <p role="status">{notice}</p>}{error && <div className="error" role="alert">{error}</div>}

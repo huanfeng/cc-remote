@@ -221,6 +221,20 @@ func fakeAppServer() {
 			notify("item/agentMessage/delta", map[string]any{"threadId": "actual-thread", "turnId": fmt.Sprintf("turn-%d", turn), "itemId": "agent-1", "delta": "echo " + active})
 			notify("item/completed", map[string]any{"threadId": "actual-thread", "turnId": fmt.Sprintf("turn-%d", turn), "item": map[string]any{"id": "agent-1", "type": "agentMessage", "text": "echo " + active}, "completedAtMs": 125})
 			finish("completed")
+		case "turn/steer":
+			if active != "hold" || params["threadId"] != "actual-thread" || params["expectedTurnId"] != fmt.Sprintf("turn-%d", turn) {
+				fail("wrong steer target")
+			}
+			switch os.Getenv("CODEX_ADAPTER_TEST_MODE") {
+			case "steer-reject":
+				send(map[string]any{"id": msg.ID, "error": map[string]any{"code": -32601, "message": "turn/steer unsupported"}})
+			case "steer-wrong-ack":
+				reply(map[string]any{"turnId": "different-turn"})
+			case "steer-disconnect":
+				fail("lost steer acknowledgement")
+			default:
+				reply(map[string]any{"turnId": fmt.Sprintf("turn-%d", turn)})
+			}
 		case "turn/interrupt":
 			if active == "" || params["turnId"] != fmt.Sprintf("turn-%d", turn) {
 				fail("wrong interrupt target")

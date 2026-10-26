@@ -21,6 +21,7 @@ type Process struct {
 	threadID         string
 	turnID           string
 	interruptPending bool
+	compacting       bool
 	turnDone         chan struct{}
 	queue            chan string
 	queued           int
@@ -168,6 +169,7 @@ func (p *Process) runQueue() {
 		done := make(chan struct{})
 		p.turnDone = done
 		p.turnID = ""
+		p.compacting = strings.TrimSpace(text) == "/compact"
 		p.queued--
 		threadID := p.threadID
 		p.mu.Unlock()

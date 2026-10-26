@@ -183,7 +183,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	case "help":
 		if x.Provider == "codex" {
 			result["commands"] = codexCommandList(l)
-			result["message"] = l.T("Codex supports /model, /effort, /permission-mode, /config, /status, /compact, /clear and /stop. Settings apply to the next turn. Codex skills can be invoked with $skill-name in a message.", "Codex 支持 /model、/effort、/permission-mode、/config、/status、/compact、/clear 和 /stop。设置在下一轮生效；可在消息中用 $技能名 调用 Codex 技能。")
+			result["message"] = l.T("Codex supports /model, /effort, /permission-mode, /config, /status, /compact, /clear and /stop. Settings apply on the next send after current work and background tasks finish. Codex skills can be invoked with $skill-name in a message.", "Codex 支持 /model、/effort、/permission-mode、/config、/status、/compact、/clear 和 /stop。设置在当前工作及后台任务结束后，下次发送时生效；可在消息中用 $技能名 调用 Codex 技能。")
 			break
 		}
 		result["commands"] = commandList(l)
@@ -192,7 +192,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 			result["message"] = l.T("In a terminal session, every command except /help, /status, /config and /stop is typed into Claude Code's terminal as is (including plugin commands and skills).", "终端会话里，除 /help、/status、/config、/stop 外，所有命令都原样输入 Claude Code 的终端执行（包括插件命令和技能）。")
 			break
 		}
-		result["message"] = l.T("The web supports /status, /model, /effort, /permission-mode, /config, /permissions, /clear (/new, /reset), /compact and /stop; in managed sessions, other commands Claude Code reports (such as /context, /usage, /init, plugin commands and skills) go to Claude as is. /model and /effort apply to the current managed session by default (from the next turn); add --default to change the CC Remote default, and the argument inherit restores the default (default is Claude Code's model alias and is passed through). These settings are passed to Claude as launch flags and do not change ~/.claude/settings.json.", "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear（/new、/reset）、/compact、/stop；托管会话中 Claude Code 报告的其它命令（如 /context、/usage、/init 及插件命令和技能）原样交给 Claude 执行。/model 与 /effort 默认作用于当前托管会话（下一轮生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。")
+		result["message"] = l.T("The web supports /status, /model, /effort, /permission-mode, /config, /permissions, /clear (/new, /reset), /compact and /stop; in managed sessions, other commands Claude Code reports (such as /context, /usage, /init, plugin commands and skills) go to Claude as is. /model and /effort apply to the current managed session by default (on the next send after current work and background tasks finish); add --default to change the CC Remote default, and the argument inherit restores the default (default is Claude Code's model alias and is passed through). These settings are passed to Claude as launch flags and do not change ~/.claude/settings.json.", "网页支持 /status、/model、/effort、/permission-mode、/config、/permissions、/clear（/new、/reset）、/compact、/stop；托管会话中 Claude Code 报告的其它命令（如 /context、/usage、/init 及插件命令和技能）原样交给 Claude 执行。/model 与 /effort 默认作用于当前托管会话（当前工作及后台任务结束后，下次发送时生效），加 --default 修改 CC Remote 默认，参数 inherit 恢复为默认值（default 是 Claude Code 的模型别名，会原样传递）；这些设置以启动参数传给 Claude，不修改 ~/.claude/settings.json。")
 	case "status":
 		s.mu.Lock()
 		s.decorate(&x)
@@ -370,7 +370,7 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 			return i18n.Text(l, err), nil, code
 		}
 		data["preferences"] = saved
-		return l.F("Saved the CC Remote default %s: %s. Managed sessions use it from the next turn, terminal sessions the next time their Claude Code starts; Claude's configuration is not changed.", "已保存 CC Remote 默认%s：%s。托管会话下一轮生效，终端会话在下次启动 Claude Code 时生效；不修改 Claude 配置。", label, displayDefault(l, value)), data, 200
+		return l.F("Saved the CC Remote default %s: %s. Managed sessions use it on the next send after current work and background tasks finish, terminal sessions the next time their Claude Code starts; Claude's configuration is not changed.", "已保存 CC Remote 默认%s：%s。托管会话在当前工作及后台任务结束后，下次发送时生效，终端会话在下次启动 Claude Code 时生效；不修改 Claude 配置。", label, displayDefault(l, value)), data, 200
 	}
 	fresh, err := s.store.Get(x.ID)
 	if err != nil {
@@ -392,9 +392,9 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 		return l.T("Could not save session settings", "无法保存会话设置"), nil, 500
 	}
 	data["session"] = fresh
-	message := l.F("The current session's %s is now %s, from the next turn.", "当前会话%s已设为：%s，下一轮生效。", label, displayDefault(l, value))
+	message := l.F("The current session's %s is now %s, on the next send after current work and background tasks finish.", "当前会话%s已设为：%s，在当前工作及后台任务结束后，下次发送时生效。", label, displayDefault(l, value))
 	if value == "" {
-		message = l.F("The current session's %s is back to the CC Remote default (%s), from the next turn.", "当前会话%s已恢复为 CC Remote 默认（%s），下一轮生效。", label, displayDefault(l, map[string]string{"model": current.Model, "effort": current.Effort, "permission-mode": current.PermissionMode}[name]))
+		message = l.F("The current session's %s is back to the CC Remote default (%s), on the next send after current work and background tasks finish.", "当前会话%s已恢复为 CC Remote 默认（%s），在当前工作及后台任务结束后，下次发送时生效。", label, displayDefault(l, map[string]string{"model": current.Model, "effort": current.Effort, "permission-mode": current.PermissionMode}[name]))
 	}
 	if name == "permission-mode" && prefs.Dangerous(value) {
 		message += l.T(" Note: this mode skips or automatically handles tool approvals.", " 注意：此模式会跳过或自动处理工具审批。")

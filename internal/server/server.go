@@ -179,6 +179,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/terminals/{id}/stream", s.terminalStream)
 	mux.HandleFunc("POST /api/terminals/{id}/ticket", s.terminalTicket)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
+	mux.HandleFunc("POST /api/sessions/{id}/steer", s.steer)
+	mux.HandleFunc("GET /api/sessions/{id}/steer/{sendId}", s.steerStatus)
 	mux.HandleFunc("POST /api/sessions/{id}/uploads", s.upload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
 	mux.HandleFunc("GET /api/sessions/{id}/file", s.file)
@@ -751,6 +753,11 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	if _, e = validateCwd(s.lang(r), x.Cwd); e != nil {
 		s.mu.Unlock()
 		fail(w, 400, e.Error())
+		return
+	}
+	if rt := s.procs[id]; rt != nil && rt.steering {
+		s.mu.Unlock()
+		fail(w, 409, s.lang(r).T("Wait for the additional instruction to finish sending", "请等待追加指令发送完成"))
 		return
 	}
 	if rt := s.procs[id]; rt != nil && len(rt.sent) >= maxQueuedMessages {
