@@ -28,7 +28,7 @@ func setup(t *testing.T, runner Runner) (*Server, *httptest.Server, *store.Store
 		t.Fatal(err)
 	}
 	config := t.TempDir()
-	s := New(st, Config{Token: testToken, Runner: runner, Cwd: t.TempDir(), ClaudeConfigDir: config, ClaudeConfigEnv: config})
+	s := New(st, Config{Token: testToken, Runner: runner, Cwd: t.TempDir(), ClaudeConfigDir: config, ClaudeConfigEnv: config, CCSwitchDBPath: filepath.Join(config, "not-installed", "cc-switch.db")})
 	ts := httptest.NewServer(s.Handler())
 	s.cfg.BridgeURL = ts.URL + "/api/bridge/request"
 	t.Cleanup(func() {

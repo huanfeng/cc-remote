@@ -16,6 +16,9 @@ import (
 
 type Session struct {
 	Provider                  string `json:"provider"`
+	ProfileID                 string `json:"profileId"`
+	ProfileName               string `json:"profileName"`
+	ProfileJSON               string `json:"-"`
 	ID                        string `json:"id"`
 	Title                     string `json:"title"`
 	Cwd                       string `json:"cwd"`
@@ -116,7 +119,7 @@ func ID() string {
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',UNIQUE(provider,claude_id)`
+const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',profile_id TEXT NOT NULL DEFAULT '',profile_json TEXT NOT NULL DEFAULT '',UNIQUE(provider,claude_id)`
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -136,7 +139,7 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}} {
+	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}, {"profile_id", "''"}, {"profile_json", "''"}} {
 		var n int
 		if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c.name).Scan(&n); err == nil && n == 0 {
 			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c.name + ` TEXT NOT NULL DEFAULT ` + c.def)
@@ -264,16 +267,22 @@ func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provide
 	return x, err
 }
 
-const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider`
+const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json`
 
 const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0)`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.LastConversationAt, &x.ConversationTimeEstimated)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.LastConversationAt, &x.ConversationTimeEstimated)
 	if err == nil {
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
+		var profile struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal([]byte(x.ProfileJSON), &profile) == nil {
+			x.ProfileName = profile.Name
+		}
 	}
 	return x, err
 }
@@ -666,4 +675,18 @@ func (s *Store) UsageSamples(since time.Time) ([]UsageSample, error) {
 		out = append(out, UsageSample{At: t, Data: json.RawMessage(data)})
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) SetProfile(id, profileID, snapshot string) error {
+	result, err := s.db.Exec("UPDATE sessions SET profile_id=?,profile_json=? WHERE id=?", profileID, snapshot, id)
+	if err == nil {
+		n, e := result.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+	}
+	return err
 }

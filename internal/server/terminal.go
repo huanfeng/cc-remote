@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -47,6 +48,7 @@ type terminalSession struct {
 	hookToken string
 	runner    *terminal.Runner
 	conn      *channelConnection
+	cleaned   chan struct{}
 	dir       string // per-session config (hook settings, ask.json)
 	send      chan string
 	withdraw  chan chan []string // the writer takes the queued messages back (see withdrawQueued)
@@ -93,6 +95,9 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 			return ts, nil
 		}
 	}
+	if s.switching[x.ID] {
+		return nil, fmt.Errorf("正在切换配置")
+	}
 	if s.closing {
 		return nil, i18n.Errorf("The host is shutting down", "宿主正在关闭")
 	}
@@ -106,7 +111,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	ts := &terminalSession{id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), hookToken: newHookToken(), dir: dir, cwd: x.Cwd, started: time.Now(), send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
+	ts := &terminalSession{cleaned: make(chan struct{}), id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), hookToken: newHookToken(), dir: dir, cwd: x.Cwd, started: time.Now(), send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
 	if err := s.writeTerminalConfig(ts); err != nil {
 		return nil, err
 	}
@@ -120,9 +125,13 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 		args = append(args, "--session-id", ts.claudeID)
 	}
 	p := s.effectivePreferences(x)
-	args = append(args, claude.LaunchFlags(p.PermissionMode, p.Model, p.Effort)...)
-	args = append(args, x.ClaudeArgs...) // checked when the session was created
-	env := terminal.CleanEnv(os.Environ())
+	opts := claude.Options{PermissionMode: p.PermissionMode, Model: p.Model, Effort: p.Effort}
+	if err := profileOptions(x, &opts); err != nil {
+		return nil, err
+	}
+	args = append(args, claude.LaunchFlags(opts.PermissionMode, opts.Model, opts.Effort)...)
+	args = append(args, x.ClaudeArgs...)
+	env := claude.ProfileEnvironment(terminal.CleanEnv(os.Environ()), opts.ProfileEnv)
 	env = append(env, "CC_REMOTE_ASK_FILE="+filepath.Join(dir, "ask.json"), "CC_REMOTE_TERMINAL_FILE="+filepath.Join(dir, "terminal.json"))
 	if s.cfg.ClaudeConfigEnv != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+s.cfg.ClaudeConfigEnv)
@@ -210,6 +219,17 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 		status["padding"] = p
 	}
 	config["statusLine"] = status
+	x, e := s.store.Get(ts.id)
+	if e != nil {
+		return e
+	}
+	p, e := sessionProfile(x)
+	if e != nil {
+		return e
+	}
+	if p.ID != "" {
+		config["env"] = claude.SupplierEnv(p.Settings.Env)
+	}
 	settings, _ := json.Marshal(config)
 	host := s.hookHost()
 	askFile, _ := json.Marshal(map[string]string{"host": host, "token": ts.hookToken, "sessionId": ts.claudeID, "bindingFile": ""})
@@ -637,6 +657,9 @@ func normalizePrompt(s string) string {
 }
 
 func (s *Server) terminalExited(ts *terminalSession) {
+	if ts.cleaned != nil {
+		defer close(ts.cleaned)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.terminals[ts.id] == ts {

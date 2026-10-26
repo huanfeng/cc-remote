@@ -188,7 +188,7 @@ func run() error {
 type hostOptions struct {
 	listen, allowOrigin                                    stringList
 	dataDir, claudeBin, configDir, logFile, serviceManager *string
-	codexBin, codexHome                                    *string
+	codexBin, codexHome, ccSwitchDB                        *string
 	allowInsecureRemote                                    *bool
 	lang                                                   *string
 }
@@ -204,6 +204,7 @@ func hostFlags() (*flag.FlagSet, *hostOptions) {
 		codexBin = "codex"
 	}
 	o.codexBin = fs.String("codex", codexBin, i18n.T("Codex executable path (or CC_REMOTE_CODEX)", "Codex 可执行文件路径（或 CC_REMOTE_CODEX）"))
+	o.ccSwitchDB = fs.String("cc-switch-db", "", "CC-Switch SQLite path (or CC_REMOTE_CC_SWITCH_DB; default ~/.cc-switch/cc-switch.db)")
 	o.codexHome = fs.String("codex-home", "", i18n.T("Codex home directory (defaults to CODEX_HOME or ~/.codex)", "Codex 主目录（默认取 CODEX_HOME 或 ~/.codex）"))
 	o.configDir = fs.String("claude-config-dir", "", i18n.T("Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)", "Claude 配置目录（默认取 CLAUDE_CONFIG_DIR 或 ~/.claude）"))
 	o.logFile = fs.String("log-file", "", i18n.T("also write logs to this file (rotated at 10 MiB, one backup)", "同时把日志写入此文件（满 10 MiB 轮转，保留一份备份）"))
@@ -499,7 +500,7 @@ func runHost(argv []string) error {
 		restart = func() { restartRequested.Store(true); stop() }
 		reload = func() (server.ReloadResult, error) { return reloadSettings(absData, started, i18n.Current(), ls) }
 	}
-	app := server.New(st, server.Config{UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, CodexExecutable: *opts.codexBin, CodexConfigDir: codexHome, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart, Reload: reload})
+	app := server.New(st, server.Config{CCSwitchDBPath: *opts.ccSwitchDB, UploadDir: filepath.Join(absData, "uploads"), Token: token, ClaudeExecutable: claudeBin, CodexExecutable: *opts.codexBin, CodexConfigDir: codexHome, HostExecutable: hostExe, Cwd: cwd, ClaudeConfigDir: configDir, ClaudeConfigEnv: configEnv, Language: i18n.Current(), AllowOrigins: origins, BridgeURL: "http://" + bridgeListener.Addr().String() + "/api/bridge/request", AttachCommand: attachCommand, Assets: webui.Files(), DataDir: absData, Listen: strings.Join(bound, ","), Version: version, LogFile: *opts.logFile, StartedAt: time.Now(), Shutdown: stop, Restart: restart, Reload: reload})
 	public.Handler = app.Handler()
 	bridge := &http.Server{Handler: app.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ls.serve()

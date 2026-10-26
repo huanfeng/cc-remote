@@ -12,10 +12,11 @@ export const codexPermissions = ['read-only', 'workspace-write', 'danger-full-ac
 export const dangerousPermission = (mode: string, provider: Provider = 'claude') => provider === 'codex' ? mode === 'danger-full-access' : ['bypassPermissions', 'dontAsk', 'auto'].includes(mode);
 export const sessionKey = (id: string, native: boolean, provider: Provider = 'claude') => `${native ? provider === 'codex' ? 'native-codex' : 'native' : 'session'}:${id}`;
 
-export function newSessionBody(provider: Provider, title: string, cwd: string, overrides: { permissionMode: string; model: string; effort: string }, mode: 'managed' | 'terminal', trustFolder: boolean) {
+export function newSessionBody(provider: Provider, title: string, cwd: string, overrides: { permissionMode: string; model: string; effort: string }, mode: 'managed' | 'terminal', trustFolder: boolean, profileId = '') {
   return {
     ...(provider === 'codex' ? { provider } : {}), title: title.trim(), cwd: cwd.trim(), ...overrides, model: overrides.model.trim(),
     confirmDangerous: dangerousPermission(overrides.permissionMode, provider),
     ...(provider === 'codex' ? { mode: 'managed' } : mode === 'terminal' ? { mode, trustFolder } : {}),
+    ...(profileId ? { profileId } : {}),
   };
 }

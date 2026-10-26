@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "defaultProfiles": { "claude": "work", "codex": "work" },
+  "profiles": [
+    {
+      "id": "work",
+      "name": "Claude Work",
+      "app": "claude",
+      "settings": {
+        "env": {
+          "ANTHROPIC_BASE_URL": "https://claude.example.invalid",
+          "ANTHROPIC_AUTH_TOKEN": "fixture-token-not-real",
+          "ANTHROPIC_DEFAULT_SONNET_MODEL": "fixture-sonnet"
+        }
+      }
+    },
+    {
+      "id": "work",
+      "name": "Codex Work",
+      "app": "codex",
+      "settings": {
+        "auth": { "OPENAI_API_KEY": "fixture-key-not-real" },
+        "configOverrides": {
+          "model": "fixture-model",
+          "model_provider": "custom",
+          "model_providers": {
+            "custom": {
+              "name": "Custom",
+              "base_url": "https://codex.example.invalid/v1",
+              "wire_api": "responses",
+              "env_key": "OPENAI_API_KEY",
+              "requires_openai_auth": false
+            }
+          }
+        }
+      }
+    }
+  ]
+}

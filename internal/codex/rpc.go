@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bufio"
+	"cc-remote/internal/claude"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -120,13 +122,29 @@ func childEnvironment(configDir string) []string {
 	return env
 }
 
-func startRPC(executable, configDir, cwd string, onMessage func(rpcMessage) error, onExit func(error)) (*rpcClient, error) {
+func startRPC(executable, configDir, cwd string, onMessage func(rpcMessage) error, onExit func(error), profileOptions ...claude.Options) (*rpcClient, error) {
 	cmd, err := executableCommand(executable)
 	if err != nil {
 		return nil, err
 	}
 	cmd.Dir = cwd
 	cmd.Env = childEnvironment(configDir)
+	if len(profileOptions) > 0 {
+		o := profileOptions[0]
+		cmd.Env = claude.ProfileEnvironment(cmd.Env, o.ProfileEnv)
+		keys := make([]string, 0, len(o.ConfigOverrides))
+		for k := range o.ConfigOverrides {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			value, e := tomlValue(o.ConfigOverrides[k])
+			if e != nil {
+				return nil, e
+			}
+			cmd.Args = append(cmd.Args, "-c", k+"="+value)
+		}
+	}
 	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -329,3 +347,47 @@ func (r *rpcClient) close() {
 }
 
 func (r *rpcClient) kill() { r.killOnce.Do(func() { killProcessTree(r.cmd) }) }
+
+// JSON profiles are data, never shell syntax. Each override is one argv value.
+func tomlValue(v any) (string, error) {
+	switch x := v.(type) {
+	case string:
+		b, _ := json.Marshal(x)
+		return string(b), nil
+	case bool:
+		if x {
+			return "true", nil
+		}
+		return "false", nil
+	case float64:
+		return fmt.Sprintf("%v", x), nil
+	case []any:
+		parts := []string{}
+		for _, e := range x {
+			t, err := tomlValue(e)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, t)
+		}
+		return "[" + strings.Join(parts, ",") + "]", nil
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := []string{}
+		for _, k := range keys {
+			t, e := tomlValue(x[k])
+			if e != nil {
+				return "", e
+			}
+			key, _ := json.Marshal(k)
+			parts = append(parts, string(key)+"="+t)
+		}
+		return "{" + strings.Join(parts, ",") + "}", nil
+	default:
+		return "", errors.New("unsupported Codex configuration value")
+	}
+}

@@ -25,6 +25,8 @@ func TestSplitCCR(t *testing.T) {
 		{[]string{"--resume=abc"}, ccrArgs{resume: resumeArgs{set: true, query: "abc"}}},
 		{[]string{"-c", "--effort", "high"}, ccrArgs{own: []string{"--effort", "high"}, resume: resumeArgs{set: true, last: true}}},
 		{[]string{"--new", "--title", "x"}, ccrArgs{own: []string{"--new", "--title", "x"}}},
+		{[]string{"--profile", "work", "--new"}, ccrArgs{own: []string{"--profile", "work", "--new"}}},
+		{[]string{"--profile=work"}, ccrArgs{own: []string{"--profile=work"}}},
 		{[]string{"abc"}, ccrArgs{words: []string{"abc"}}},
 		// Claude Code options, with the values Claude Code would take, and its prompt.
 		{[]string{"--host", "h", "--add-dir", "a", "b", "--chrome", "-n", "fix", "--dangerously-skip-permissions"},
@@ -41,6 +43,95 @@ func TestSplitCCR(t *testing.T) {
 	}
 	if n := splitCCR([]string{"--add-dir", "a", "-n", "Login fix"}).name(); n != "Login fix" {
 		t.Errorf("name %q", n)
+	}
+}
+
+func TestChooseProfile(t *testing.T) {
+	defer func(old *bufio.Reader) { stdin = old }(stdin)
+	list := []supplierProfile{{ID: "a", Name: "Work", App: "claude"}, {ID: "b", Name: "Backup", App: "claude"}}
+	for _, tc := range []struct {
+		input, want string
+		invalid     bool
+	}{{"\n", "", false}, {"0\n", "", false}, {"1\n", "a", false}, {"2\n", "b", false}, {"3\n", "", true}, {"x\n", "", true}} {
+		stdin = bufio.NewReader(strings.NewReader(tc.input))
+		got, err := chooseProfile(list, "a")
+		if got != tc.want || (err != nil) != tc.invalid {
+			t.Fatalf("%q: got %q, %v", tc.input, got, err)
+		}
+	}
+}
+
+func TestSelectProfile(t *testing.T) {
+	defer func(old *bufio.Reader) { stdin = old }(stdin)
+	requests := 0
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/profiles" || r.Header.Get("Authorization") != "Bearer t" {
+			t.Errorf("profile request: %s, auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Write([]byte(`{"profiles":[{"id":"codex-only","name":"Codex","app":"codex"},{"id":"a","name":"Claude","app":"claude"}],"defaultProfiles":{"claude":"a"}}`))
+	}))
+	defer host.Close()
+	c := &client{host: host.URL, token: "t"}
+	if got, err := c.selectProfile(nil, false); got != "" || err != nil || requests != 0 {
+		t.Fatalf("non-interactive default: %q %v, requests=%d", got, err, requests)
+	}
+	stdin = bufio.NewReader(strings.NewReader("1\n"))
+	if got, err := c.selectProfile(nil, true); got != "a" || err != nil {
+		t.Fatalf("Claude-only picker: %q %v", got, err)
+	}
+	if got, err := c.selectProfile("a", false); got != "a" || err != nil {
+		t.Fatalf("explicit: %q %v", got, err)
+	}
+	if _, err := c.selectProfile("codex-only", false); err == nil {
+		t.Fatal("accepted a Codex profile for Claude")
+	}
+}
+
+func TestProfileOldHostAndFailures(t *testing.T) {
+	status := http.StatusNotFound
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+	defer host.Close()
+	c := &client{host: host.URL, token: "t"}
+	if got, err := c.selectProfile(nil, true); got != "" || err != nil {
+		t.Fatalf("old host default: %q %v", got, err)
+	}
+	if _, err := c.selectProfile("work", false); err == nil {
+		t.Fatal("old host silently ignored explicit profile")
+	}
+	status = http.StatusUnauthorized
+	if _, err := c.selectProfile(nil, true); err == nil {
+		t.Fatal("ignored profile authentication failure")
+	}
+}
+
+func TestProfileRejectsExistingSessionTargets(t *testing.T) {
+	for _, args := range [][]string{{"--profile", "work", "existing"}} {
+		called := false
+		err := CCR(args, t.TempDir(), func(string, string) error { called = true; return nil })
+		if err == nil || called {
+			t.Fatalf("%v: err=%v, contacted host=%v", args, err, called)
+		}
+	}
+}
+
+func TestCreateSendsSelectedProfile(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/profiles" {
+			w.Write([]byte(`{"profiles":[{"id":"work","name":"Work","app":"claude"}]}`))
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["profileId"] != "work" || body["mode"] != "terminal" {
+			t.Errorf("create body: %+v", body)
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"new"}`))
+	}))
+	defer host.Close()
+	if x, err := (&client{host: host.URL, token: "t"}).create("test", map[string]any{"profileId": "work"}); err != nil || x.ID != "new" {
+		t.Fatalf("create selected profile: %+v %v", x, err)
 	}
 }
 
@@ -147,5 +238,31 @@ func TestStartAsksTrust(t *testing.T) {
 	stdin = bufio.NewReader(strings.NewReader("y\n"))
 	if x, err := (&client{host: old.URL, token: "t"}).start(map[string]any{"cwd": "x"}, "x"); err != nil || x.ID != "s2" {
 		t.Fatalf("old host: %+v %v", x, err)
+	}
+}
+
+func TestResumeSelectsSupplierBeforeStarting(t *testing.T) {
+	cwd, _ := os.Getwd()
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/native/sessions":
+			json.NewEncoder(w).Encode([]remoteSession{{ID: "native-id", Cwd: cwd}})
+		case "/api/profiles":
+			w.Write([]byte(`{"profiles":[{"id":"ccswitch:work","name":"Work","app":"claude"}]}`))
+		case "/api/sessions":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["resume"] != "native-id" || body["profileId"] != "work" {
+				t.Errorf("wrong resume body: %v", body)
+			}
+			w.Write([]byte(`{"id":"remote-id"}`))
+		default:
+			t.Errorf("unexpected route %s", r.URL.Path)
+		}
+	}))
+	defer host.Close()
+	x, err := (&client{host: host.URL, token: "t"}).resume(resumeArgs{set: true, last: true}, "", map[string]any{"profileId": "work"})
+	if err != nil || x.ID != "remote-id" {
+		t.Fatalf("resume %v %v", x, err)
 	}
 }

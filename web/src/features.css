@@ -3,7 +3,7 @@ select{font:inherit;color:inherit;background:#fff;border:1px solid #daddd2;borde
 .model-picker{position:relative;margin-top:8px}.model-input{display:flex;gap:4px}.model-input input{flex:1;min-width:0;margin:0}.model-menu{position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:280px;z-index:20}.model-menu .popover-option:hover{background:#e6eddc}.model-group{display:block;font-size:10px;letter-spacing:.4px;color:var(--muted);padding:7px 10px 3px 28px}
 .model-button{display:inline-grid;place-items:center;flex-shrink:0;width:40px;padding:0;line-height:1;background:#fff;border:1px solid #daddd2;border-radius:10px;color:var(--muted)}.model-button:hover{border-color:#bfc8b2;color:#344730}.model-button[aria-expanded=true]{border-color:#87a568}.model-button[aria-expanded=true] .svg-icon{transform:rotate(180deg)}
 .spinning{display:grid;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-.danger-note{color:#a3321f}.new-session-overrides{display:flex;gap:10px}.new-session-overrides label{flex:1;min-width:0}.settings-modal{width:520px}.settings-modal h3{font-size:14px;margin:6px 0 0}.settings-modal form>.primary,.settings-modal form>.secondary{width:100%}.settings-advanced{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}.settings-advanced summary{cursor:pointer;font-size:13px;font-weight:600}
+.danger-note{color:#a3321f}.new-session-overrides{display:flex;gap:10px}.new-session-overrides label,.new-session-overrides .field{flex:1;min-width:0}.settings-modal{width:520px}.settings-modal h3{font-size:14px;margin:6px 0 0}.settings-modal form>.primary,.settings-modal form>.secondary{width:100%}.settings-advanced{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}.settings-advanced summary{cursor:pointer;font-size:13px;font-weight:600}
 @media (max-width:640px){.new-session-overrides{flex-direction:column;gap:0}}
 
 /* Top bar: read-only session chips; editing happens in the session settings dialog. */
@@ -33,7 +33,7 @@ select{font:inherit;color:inherit;background:#fff;border:1px solid #daddd2;borde
 .session-settings h3{font-size:12px;font-weight:600;letter-spacing:.4px;color:#5d6d55;margin:20px 0 4px}
 .modal .session-settings-title{margin:4px 0 0;font-size:13px;color:#46553f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-settings fieldset{border:0;padding:0;margin:0;min-width:0}.session-settings fieldset:disabled{opacity:.55}
-.session-settings fieldset label{margin:12px 0}
+.session-settings fieldset label,.session-settings fieldset .field{margin:12px 0}
 .modal .effective-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:4px 0 0;font-size:12px}.modal .effective-line small{display:inline}
 .session-info{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 12px;margin:8px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#f8f7f1}
 .session-info .wide{grid-column:1/-1}.session-info>div:nth-child(-n+2){grid-column:span 2}.session-info dt{font-size:10px;color:var(--muted)}

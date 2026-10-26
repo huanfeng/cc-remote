@@ -18,3 +18,8 @@
 .session-details .modal-actions{flex-wrap:wrap}
 .session-details button:focus-visible,.session-details summary:focus-visible{outline:2px solid #718963;outline-offset:3px}
 @media(max-width:760px){.modal.session-details{width:100%;padding:16px;padding-bottom:max(16px,env(safe-area-inset-bottom))}.session-details .modal-heading{top:-16px}.session-detail-list>div{grid-template-columns:minmax(90px,1fr) minmax(0,2fr)}.session-copy{flex-wrap:wrap}.session-copy button{min-height:44px}.session-details .modal-actions button{min-height:44px}}
+
+.session-profile .select-trigger{width:100%}
+.profile-confirm{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px}
+.profile-error{display:grid;gap:8px;margin:12px 0;font-size:13px;color:var(--muted)}
+.profile-error button{justify-self:start}

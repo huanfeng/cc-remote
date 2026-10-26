@@ -5,12 +5,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ClockIcon, CloseIcon, GaugeIcon, ShieldIcon, SparkIcon } from './icons';
 import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
 import { Select } from './Select';
+import { SessionProfile } from './SupplierProfile';
 import { duration, money, number, type Stats } from './StatusPanel';
 import { locale, t } from './i18n';
 import { copyText } from './clipboard';
 import './session-details.css';
 
-export type SessionInfo = { id: string; provider?: Provider; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; lastConversationAt?: string; conversationTimeEstimated?: boolean; queued?: { text: string; payload?: any }[]; activeTasks?: number; readOnly?: boolean; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
+export type SessionInfo = { id: string; provider?: Provider; profileId?: string; profileName?: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; lastConversationAt?: string; conversationTimeEstimated?: boolean; queued?: { text: string; payload?: any }[]; activeTasks?: number; readOnly?: boolean; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
 // What Claude Code reports to a terminal session's status line.
 export type LiveStatus = { model?: string; modelId?: string; effort?: string; costUSD: number; durationMs: number; contextTokens: number; contextSize: number; contextPercent: number; activity?: string; suggestion?: string; permissionMode?: string };
 
@@ -77,9 +78,10 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const changed = editing && (draft.permissionMode !== saved.permissionMode || draft.model.trim() !== saved.model || draft.effort !== saved.effort);
-  const mayLeave = () => !saving && (!changed || window.confirm(t('Discard unsaved session changes?', '放弃未保存的会话修改？')));
+  const mayLeave = () => !saving && !profileBusy && (!changed || window.confirm(t('Discard unsaved session changes?', '放弃未保存的会话修改？')));
   const requestClose = () => { if (mayLeave()) close(); };
   useEscape(requestClose);
   useEffect(() => {
@@ -88,10 +90,10 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
     return () => previous?.focus();
   }, []);
   useEffect(() => {
-    const beforeUnload = (event: BeforeUnloadEvent) => { if (changed || saving) { event.preventDefault(); event.returnValue = ''; } };
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (changed || saving || profileBusy) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, [changed, saving]);
+  }, [changed, saving, profileBusy]);
   useEffect(() => {
     let active = true;
     setStats(undefined); setStatsReadAt(undefined); setStatsError(false);
@@ -136,7 +138,7 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
       if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) { event.preventDefault(); first.focus(); }
     }}>
-      <div className="modal-heading"><h2>{t('Session details', '会话详情')}</h2><button type="button" className="icon" disabled={saving} aria-label={t('Close session details', '关闭会话详情')} onClick={requestClose}><CloseIcon size={18} /></button></div>
+      <div className="modal-heading"><h2>{t('Session details', '会话详情')}</h2><button type="button" className="icon" disabled={saving || profileBusy} aria-label={t('Close session details', '关闭会话详情')} onClick={requestClose}><CloseIcon size={18} /></button></div>
       <h3>{session.title || t('Untitled session', '未命名会话')}</h3>
       <dl className="session-detail-list">
         {row(t('Provider', '提供方'), providerName(provider))}
@@ -156,16 +158,17 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
         {row(t('Background tasks', '后台任务'), metric(session.activeTasks ?? 0))}
       </dl>
       </>}
+      {!nativeHistory && !editing && <SessionProfile api={api} app={provider} session={session} onUpdated={onUpdated} onBusy={setProfileBusy} />}
       <h3>{nativeHistory ? t('Recorded configuration', '历史配置') : t('Configuration', '配置')}</h3>
       {!nativeHistory && !reportedConfiguration && <p>{t('Current configuration has not been reported by the CLI. Values below apply when the process can safely restart.', 'CLI 尚未报告当前配置。以下为进程可安全重启时应用的配置预期。')}</p>}
       <dl className="session-detail-list">{configuration('model', t('Model', '模型'), live?.model || live?.modelId)}{configuration('effort', t('Effort', '推理强度'), live?.effort)}{configuration('permissionMode', t('Permission / sandbox', '权限 / 沙箱'), live?.permissionMode)}</dl>
-      {!nativeHistory && !editing && <button type="button" className="secondary" onClick={() => { setDraft(saved); setEditing(true); setNotice(''); }}>{t('Edit session overrides', '修改本会话覆盖')}</button>}
+      {!nativeHistory && !editing && <button type="button" className="secondary" disabled={profileBusy} onClick={() => { setDraft(saved); setEditing(true); setNotice(''); }}>{t('Edit session overrides', '修改本会话覆盖')}</button>}
       {editing && <form onSubmit={event => { event.preventDefault(); if (changed) void save(); }}>
         <p>{t('Changes apply on the next send after current work and background tasks finish. Empty fields inherit defaults; current execution values remain as reported.', '修改在当前工作及后台任务结束后，下次发送时生效；留空继承默认值，当前执行值仍以实际报告为准。')}</p>
         <fieldset disabled={saving}>
-          <label>{t('Model', '模型')}<ModelPicker api={api} provider={provider} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></label>
-          <label>{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} value={draft.effort} options={effortOptions(inherit(defaults?.effort), provider)} onChange={effort => setDraft(old => ({ ...old, effort }))} /></label>
-          <label>{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode, provider)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></label>
+          <div className="field">{t('Model', '模型')}<ModelPicker api={api} provider={provider} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></div>
+          <div className="field">{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} value={draft.effort} options={effortOptions(inherit(defaults?.effort), provider)} onChange={effort => setDraft(old => ({ ...old, effort }))} /></div>
+          <div className="field">{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode, provider)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></div>
           <div className="modal-actions"><button type="button" className="secondary" onClick={() => setDraft({ permissionMode: '', model: '', effort: '' })}>{t('Restore inheritance', '恢复继承')}</button><button type="button" className="secondary" onClick={() => { if (mayLeave()) { setDraft(saved); setEditing(false); } }}>{t('Cancel', '取消')}</button><button className="primary" disabled={!changed}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button></div>
         </fieldset>
       </form>}

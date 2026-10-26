@@ -55,7 +55,7 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 		if h.Exit != nil {
 			h.Exit(err)
 		}
-	})
+	}, o)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +67,9 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 		return nil, fmt.Errorf("initialize Codex: %w", err)
 	}
 	params := map[string]any{}
+	if o.ModelProvider != "" {
+		params["modelProvider"] = o.ModelProvider
+	}
 	method := "thread/start"
 	if o.Resume {
 		method = "thread/resume"

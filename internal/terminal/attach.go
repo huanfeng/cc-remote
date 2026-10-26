@@ -104,8 +104,9 @@ func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host str
 	model := fs.String("model", "", i18n.T("model of a new session", "新会话的模型"))
 	effort := fs.String("effort", "", i18n.T("reasoning effort of a new session", "新会话的推理强度"))
 	mode := fs.String("permission-mode", "", i18n.T("permission mode of a new session", "新会话的权限模式"))
+	profile := fs.String("profile", "", i18n.T("supplier configuration for a new session", "新会话使用的供应商配置"))
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]
+		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr [--new] [--profile ID] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]
        ccr -r, --resume [id or search]   (continue a Claude Code session as a terminal session; no value: pick one of this directory's)
        ccr -c, --continue                (continue this directory's most recent Claude Code session)
        ccr ls                            (recent terminal sessions in every directory; pick one to attach)
@@ -114,7 +115,7 @@ func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host str
 
 ccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.
 Claude Code options the host sets itself (--settings, --session-id, -p and the like) are refused.
-`, `用法：ccr [--new] [--title T] [--model M] [--effort E] [--permission-mode P] [会话 ID 前缀或标题]
+`, `用法：ccr [--new] [--profile ID] [--title T] [--model M] [--effort E] [--permission-mode P] [会话 ID 前缀或标题]
       ccr -r, --resume [ID 或关键词]    （以终端会话继续 Claude Code 会话；不带值则从当前目录的会话中选择）
       ccr -c, --continue                （继续当前目录最近的 Claude Code 会话）
       ccr ls                            （所有目录最近的终端会话，选一个接入）
@@ -132,6 +133,9 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 		}
 		return err
 	}
+	if *profile != "" && (!resume.set && !*create && !split.launch && len(split.claude) == 0 && len(split.words) > 0) {
+		return errors.New(i18n.T("--profile requires --new or --resume; an active session can switch suppliers in the web", "--profile 请搭配 --new 或 --resume；活动会话可在网页中切换供应商"))
+	}
 	if err := checkHost(*host); err != nil {
 		return err
 	}
@@ -143,6 +147,9 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 		return err
 	}
 	options := map[string]any{"model": *model, "effort": *effort, "permissionMode": *mode}
+	if *profile != "" {
+		options["profileId"] = *profile
+	}
 	if len(split.claude) > 0 {
 		options["claudeArgs"] = split.claude
 	}
@@ -156,7 +163,7 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	switch {
 	case resume.set:
 		target, err = api.resume(resume, *title, options)
-	case *create || launch:
+	case *create || launch || *profile != "":
 		target, err = api.create(*title, options)
 	case len(split.words) == 1 && (split.words[0] == "ls" || split.words[0] == "list"):
 		target, err = api.recent(*title, options)
@@ -199,7 +206,7 @@ type ccrArgs struct {
 
 // ccr's own options; --model, --effort and --permission-mode are also Claude
 // Code's and become the session's settings.
-var ccrValueFlags = map[string]bool{"host": true, "data-dir": true, "title": true, "model": true, "effort": true, "permission-mode": true}
+var ccrValueFlags = map[string]bool{"host": true, "data-dir": true, "title": true, "model": true, "effort": true, "permission-mode": true, "profile": true}
 
 func splitCCR(args []string) ccrArgs {
 	var out ccrArgs
@@ -306,9 +313,16 @@ func (c *client) resume(r resumeArgs, title string, options map[string]any) (rem
 			return remoteSession{}, err
 		}
 	}
+	profile, err := c.selectResumeProfile(options["profileId"], term.IsTerminal(int(os.Stdin.Fd())))
+	if err != nil {
+		return remoteSession{}, err
+	}
 	body := map[string]any{"title": title, "mode": "terminal", "resume": target.ID}
+	if profile != "" {
+		body["profileId"] = profile
+	}
 	for k, v := range options {
-		if v != "" {
+		if v != "" && k != "profileId" {
 			body[k] = v
 		}
 	}
@@ -427,7 +441,7 @@ func (c *client) do(method, path string, body any, out any) error {
 		if json.Unmarshal(data, &e) == nil && e.Error != "" {
 			return hostError{resp.StatusCode, e.Code, e.Error}
 		}
-		return i18n.Errorf("the host returned %d", "宿主返回 %d", resp.StatusCode)
+		return hostError{resp.StatusCode, "", i18n.F("the host returned %d", "宿主返回 %d", resp.StatusCode)}
 	}
 	if out != nil {
 		return json.Unmarshal(data, out)
@@ -449,7 +463,101 @@ func (c *client) create(title string, options map[string]any) (remoteSession, er
 			body[k] = v
 		}
 	}
+	profile, err := c.selectProfile(body["profileId"], term.IsTerminal(int(os.Stdin.Fd())))
+	if err != nil {
+		return remoteSession{}, err
+	}
+	if profile != "" {
+		body["profileId"] = profile
+	}
 	return c.start(body, cwd)
+}
+
+type supplierProfile struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	App  string `json:"app"`
+}
+
+// Creation follows the CC-Switch default; resume keeps its saved supplier.
+// Reattaching an already running terminal never changes its supplier.
+func (c *client) selectProfile(value any, interactive bool) (string, error) {
+	return c.pickProfile(value, interactive, false)
+}
+func (c *client) selectResumeProfile(value any, interactive bool) (string, error) {
+	return c.pickProfile(value, interactive, true)
+}
+func (c *client) pickProfile(value any, interactive, resuming bool) (string, error) {
+	explicit, _ := value.(string)
+	if explicit == "@native" {
+		return explicit, nil
+	}
+	if explicit == "" && !interactive {
+		return "", nil
+	}
+	var catalog struct {
+		Profiles        []supplierProfile `json:"profiles"`
+		DefaultProfiles map[string]string `json:"defaultProfiles"`
+	}
+	if err := c.do("GET", "/api/profiles", nil, &catalog); err != nil {
+		var refused hostError
+		if errors.As(err, &refused) && refused.status == http.StatusNotFound && explicit == "" {
+			return "", nil // host predates supplier profiles
+		}
+		return "", err
+	}
+	var list []supplierProfile
+	for _, p := range catalog.Profiles {
+		if p.App == "claude" {
+			list = append(list, p)
+			if explicit != "" && (p.ID == explicit || strings.TrimPrefix(p.ID, "ccswitch:") == explicit) {
+				return explicit, nil
+			}
+		}
+	}
+	if explicit != "" {
+		return "", i18n.Errorf("Claude supplier configuration %q was not found on the host", "宿主上找不到 Claude 供应商配置 %q", explicit)
+	}
+	if len(list) == 0 {
+		return "", nil
+	}
+	list = append(list, supplierProfile{ID: "@native", Name: i18n.T("Native configuration", "宿主原生配置"), App: "claude"})
+	defaultID := catalog.DefaultProfiles["claude"]
+	if resuming {
+		defaultID = "@keep"
+	}
+	return chooseProfile(list, defaultID)
+}
+
+func chooseProfile(list []supplierProfile, defaultID string) (string, error) {
+	label := i18n.T("host configuration", "宿主配置")
+	if defaultID == "@keep" {
+		label = i18n.T("Keep session configuration", "沿用原会话配置")
+	}
+	for _, p := range list {
+		if p.ID == defaultID {
+			label = p.Name
+		}
+	}
+	fmt.Println(i18n.T("Supplier configuration:", "供应商配置："))
+	fmt.Printf("  0. %s (%s)\n", i18n.T("Default", "默认"), printable(label))
+	for i, p := range list {
+		fmt.Printf("  %d. %s (%s)\n", i+1, printable(p.Name), printable(p.ID))
+	}
+	fmt.Print(i18n.T("Configuration number (Enter: default): ", "选择配置编号（回车 = 默认）："))
+	line, err := stdin.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	line = strings.TrimSpace(line)
+	if line == "" || line == "0" {
+		return "", nil
+	}
+	n, err := strconv.Atoi(line)
+	if err != nil || n < 1 || n > len(list) {
+		return "", errors.New(i18n.T("invalid supplier configuration choice", "无效的供应商配置选择"))
+	}
+	return list[n-1].ID, nil
 }
 
 // start creates a terminal session. In a folder Claude Code does not trust

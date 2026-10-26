@@ -30,6 +30,7 @@ import (
 
 type Runner func(context.Context, claude.Options, func(claude.Event) error) error
 type Config struct {
+	CCSwitchDBPath                                                           string
 	CodexExecutable, CodexConfigDir                                          string
 	StartCodexProcess                                                        ProcessStarter
 	UploadDir                                                                string
@@ -105,6 +106,7 @@ type Server struct {
 	store          *store.Store
 	cfg            Config
 	mu             sync.Mutex
+	switching      map[string]bool
 	downloads      downloadTickets          // links the browser downloads files with (downloads.go)
 	sent           sends                    // messages taken, by the page's send ID (sends.go)
 	mentionIndex   mentionIndex             // files offered after @ in the message box (mentions.go)
@@ -140,7 +142,7 @@ func New(st *store.Store, cfg Config) *Server {
 	if start == nil {
 		start = defaultProcessStarter(cfg)
 	}
-	s := &Server{store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, sent: sends{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
+	s := &Server{switching: map[string]bool{}, store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, sent: sends{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
 	go s.sampleUsage(s.stopReaper, usageSampleEvery)
 	return s
@@ -152,6 +154,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/channels/{id}/interactions", s.channelInteraction)
 	mux.HandleFunc("GET "+hostauth.Path, s.hello)
 	mux.HandleFunc("GET /api/info", s.info)
+	mux.HandleFunc("GET /api/profiles", s.profilesAPI)
+	mux.HandleFunc("POST /api/sessions/{id}/profile", s.switchProfile)
 	mux.HandleFunc("GET /api/identity", s.identityAPI)
 	mux.HandleFunc("PUT /api/identity", s.identityAPI)
 	mux.HandleFunc("GET /api/status", s.status)
@@ -377,9 +381,10 @@ func folderTitle(dir string) string {
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider string `json:"provider"`
-		Title    string `json:"title"`
-		Cwd      string `json:"cwd"`
+		Provider  string  `json:"provider"`
+		ProfileID *string `json:"profileId"`
+		Title     string  `json:"title"`
+		Cwd       string  `json:"cwd"`
 		// Mode "terminal" runs an interactive Claude Code the host holds; the
 		// request must confirm trusting the directory (Claude asks on first use).
 		Mode        string `json:"mode"`
@@ -409,7 +414,12 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Resume != "" {
-		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.ClaudeArgs, req.overrideRequest)
+		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.ClaudeArgs, req.overrideRequest, req.ProfileID)
+		return
+	}
+	profile, profileErr := s.selectProfile(req.Provider, profileValue(req.ProfileID))
+	if profileErr != nil {
+		fail(w, 400, profileErr.Error())
 		return
 	}
 	if len(req.Title) > 300 {
@@ -443,6 +453,11 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	x, e := s.store.CreateProvider(req.Title, cwd, store.ID(), false, req.Provider)
 	if e == nil {
+		x.ProfileID, x.ProfileJSON = profile.ID, profile.snapshot()
+		x.ProfileName = profile.Name
+		e = s.store.SetProfile(x.ID, x.ProfileID, x.ProfileJSON)
+	}
+	if e == nil {
 		e = s.store.SetOverrides(x.ID, overrides.PermissionMode, overrides.Model, overrides.Effort)
 		x.PermissionMode, x.Model, x.Effort = overrides.PermissionMode, overrides.Model, overrides.Effort
 	}
@@ -470,7 +485,7 @@ func (s *Server) trustRequired(w http.ResponseWriter, r *http.Request) {
 
 // createResumed answers a terminal session continuing a Claude Code session:
 // the one that already does, or a new one in the session's own directory.
-func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, claudeArgs []string, o overrideRequest) {
+func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, claudeArgs []string, o overrideRequest, profileID *string) {
 	l := s.lang(r)
 	if mode != "terminal" {
 		fail(w, 400, l.T("Only a terminal session can resume a Claude Code session", "只有终端会话可以恢复 Claude Code 会话"))
@@ -486,11 +501,20 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 		fail(w, 400, i18n.Text(l, e))
 		return
 	}
+	profile, err := s.resumeProfile("claude", profileID)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if x, e := s.store.FindClaude(claudeID); e == nil {
 		if x.Mode != "terminal" {
 			fail(w, 409, l.F("This Claude Code session is already “%s” in CC Remote (%s)", "这个 Claude Code 会话已是 CC Remote 中的「%s」（%s）", x.Title, modeName(l, x.Mode)))
+			return
+		}
+		if err := s.applyResumeProfile(&x, profile); err != nil {
+			fail(w, 409, err.Error())
 			return
 		}
 		s.decorate(&x)
@@ -518,6 +542,9 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 		title = n.Title
 	}
 	x, e := s.store.Create(title, cwd, claudeID, true)
+	if e == nil {
+		e = s.applyResumeProfile(&x, profile)
+	}
 	if e == nil {
 		e = s.store.SetOverrides(x.ID, overrides.PermissionMode, overrides.Model, overrides.Effort)
 		x.PermissionMode, x.Model, x.Effort = overrides.PermissionMode, overrides.Model, overrides.Effort
@@ -667,6 +694,12 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	s.mu.Lock()
+	if s.switching[r.PathValue("id")] {
+		s.mu.Unlock()
+		fail(w, 409, "正在切换配置，请稍后重试")
+		return
+	}
+
 	if s.closing {
 		s.mu.Unlock()
 		fail(w, 503, s.lang(r).T("The host is shutting down", "宿主正在关闭"))
@@ -818,6 +851,12 @@ const deleteStopTimeout = 15 * time.Second
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
+	if s.switching[id] {
+		s.mu.Unlock()
+		fail(w, 409, "正在切换配置，请稍后重试")
+		return
+	}
+
 	x, err := s.store.Get(id)
 	if err != nil {
 		s.mu.Unlock()
@@ -855,6 +894,12 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mu.Lock()
+	if s.switching[id] {
+		s.mu.Unlock()
+		fail(w, 409, "正在切换配置，请稍后重试")
+		return
+	}
+
 	x.Online = false
 	s.decorate(&x)
 	if s.runs[id] != nil || x.Online {
@@ -1092,7 +1137,8 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ConfirmStopped bool `json:"confirmStopped"`
+		ConfirmStopped bool    `json:"confirmStopped"`
+		ProfileID      *string `json:"profileId"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -1101,12 +1147,21 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("Stop the native session before handing it over", "请先停止原生会话再交接"))
 		return
 	}
+	profile, err := s.resumeProfile(provider, req.ProfileID)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 	id := r.PathValue("id")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if x, e := s.store.FindNative(provider, id); e == nil {
 		if x.Provider != provider {
 			fail(w, 409, "Native session belongs to another provider")
+			return
+		}
+		if err := s.applyResumeProfile(&x, profile); err != nil {
+			fail(w, 409, err.Error())
 			return
 		}
 		respond(w, 200, x)
@@ -1128,6 +1183,10 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 	managed, e := s.store.CreateProvider(x.Title, cwd, x.ID, true, provider)
 	if e != nil {
 		fail(w, 500, s.lang(r).T("Could not import the session", "无法导入会话"))
+		return
+	}
+	if e = s.applyResumeProfile(&managed, profile); e != nil {
+		fail(w, 500, "无法保存供应商配置")
 		return
 	}
 	for _, v := range ev {

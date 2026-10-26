@@ -30,6 +30,9 @@ type Event struct {
 }
 
 type Options struct {
+	ProfileEnv                                                                             map[string]string
+	ConfigOverrides                                                                        map[string]any
+	ModelProvider                                                                          string
 	Provider                                                                               string
 	Executable, SessionID, Cwd, Message, BridgeURL, BridgeToken, HostExecutable, ConfigDir string
 	Resume                                                                                 bool
@@ -176,6 +179,7 @@ func runEnvironment(env []string, o Options) []string {
 	if o.ConfigDir != "" {
 		env = replaceEnv(env, "CLAUDE_CONFIG_DIR", o.ConfigDir, runtime.GOOS == "windows")
 	}
+	env = ProfileEnvironment(env, o.ProfileEnv)
 	return env
 }
 
@@ -208,6 +212,9 @@ func (b *limitedBuffer) String() string { return string(b.data) }
 func writeConfigs(dir string, o Options) (string, string, error) {
 	// Exec-form hooks avoid shell interpretation of executable paths on both OSes.
 	settings := map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": "AskUserQuestion|ExitPlanMode", "hooks": []any{map[string]any{"type": "command", "command": o.HostExecutable, "args": []string{"hook"}, "timeout": 1800}}}}}}
+	if o.ProfileEnv != nil {
+		settings["env"] = SupplierEnv(o.ProfileEnv)
+	}
 	mcp := map[string]any{"mcpServers": map[string]any{"cc_remote": map[string]any{"type": "stdio", "command": o.HostExecutable, "args": []string{"permission-mcp"}, "env": map[string]string{"CC_REMOTE_BRIDGE_URL": o.BridgeURL, "CC_REMOTE_BRIDGE_TOKEN": o.BridgeToken}}}}
 	paths := []string{filepath.Join(dir, "settings.json"), filepath.Join(dir, "mcp.json")}
 	for i, v := range []any{settings, mcp} {
@@ -355,4 +362,36 @@ func contentEvents(raw json.RawMessage, role string) []Event {
 		out = append([]Event{{Kind: role, Text: text.String()}}, out...)
 	}
 	return out
+}
+
+// ProfileEnvironment applies only child-scoped supplier settings.
+func ProfileEnvironment(env []string, values map[string]string) []string {
+	if values == nil {
+		return env
+	}
+	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		k = strings.ToUpper(k)
+		return strings.HasPrefix(k, "ANTHROPIC_") || k == "CLAUDE_CODE_OAUTH_TOKEN" || k == "OPENAI_API_KEY"
+	})
+	for k, v := range values {
+		env = replaceEnv(env, k, v, runtime.GOOS == "windows")
+	}
+	return env
+}
+
+// --settings merges env objects with global settings. Explicit empty values
+// prevent old auth/model fields from another supplier surviving that merge.
+func SupplierEnv(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	env := map[string]string{}
+	for _, k := range []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"} {
+		env[k] = ""
+	}
+	for k, v := range values {
+		env[k] = v
+	}
+	return env
 }

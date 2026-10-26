@@ -52,7 +52,7 @@ const (
 // launchKey is what a running process was started with; a difference makes
 // the next message restart it with --resume.
 type launchKey struct {
-	claudeID, permissionMode, model, effort string
+	claudeID, permissionMode, model, effort, profile string
 }
 
 // outgoing is a web message waiting to be written to Claude.
@@ -114,7 +114,11 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	}
 	p := s.effectivePreferences(x)
 	opts.PermissionMode, opts.Model, opts.Effort = p.PermissionMode, p.Model, p.Effort
-	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort}
+	profileErr := profileOptions(x, &opts)
+	if profileErr != nil {
+		starter = func(claude.Options, claude.ProcessHooks) (claudeProcess, error) { return nil, profileErr }
+	}
+	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort, x.ProfileJSON}
 	if rt := s.procs[x.ID]; rt != nil {
 		if rt.key == key || rt.run != nil || rt.proc == nil || rt.proc.BackgroundTasks() > 0 {
 			return rt

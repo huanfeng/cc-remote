@@ -11,6 +11,7 @@
 | `--claude` | `claude` | Claude Code 可执行文件路径 |
 | `--claude-config-dir` | `CLAUDE_CONFIG_DIR` 或 `~/.claude` | 原生历史发现和实际执行使用的 Claude 配置目录 |
 | `--codex` | `CC_REMOTE_CODEX` 或 `codex` | Codex CLI 可执行文件路径 |
+| `--cc-switch-db` | `CC_REMOTE_CC_SWITCH_DB` 或 `~/.cc-switch/cc-switch.db` | 只读供应商数据库；后台服务用 `service config --env CC_REMOTE_CC_SWITCH_DB=路径` 设置，见[供应商选择](supplier-profiles.md) |
 | `--codex-home` | `CODEX_HOME` 或 `~/.codex` | Codex 配置、登录和原生历史目录；同样用于 app-server 子进程 |
 | `--log-file` | 空（仅 stderr） | 同时写入日志文件，10 MiB 轮转并保留一个 `.1` 备份；Go 运行时崩溃信息也写入该文件 |
 | `--allow-insecure-remote` | 关 | 允许 `all:PORT` / `0.0.0.0` / `::` 这类绑定所有网卡的地址 |

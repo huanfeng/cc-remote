@@ -57,7 +57,9 @@ func TestCodexSessionValidation(t *testing.T) {
 	if legacy := createSession(t, ts); legacy.Provider != "claude" {
 		t.Fatalf("legacy default: %+v", legacy)
 	}
-	if code,b:=request(t,ts,"POST","/api/sessions/"+x.ID+"/messages",map[string]string{"text":"/compact keep details"},testToken);code!=400 {t.Fatalf("invalid compact accepted: %d %s",code,b)}
+	if code, b := request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "/compact keep details"}, testToken); code != 400 {
+		t.Fatalf("invalid compact accepted: %d %s", code, b)
+	}
 }
 
 func TestCodexPreferencesIsolated(t *testing.T) {
@@ -155,6 +157,9 @@ func TestCodexRuntimeDispatchResumeAndClear(t *testing.T) {
 func TestCodexHistoryImport(t *testing.T) {
 	s, ts, st := setup(t, nil)
 	s.cfg.CodexConfigDir = t.TempDir()
+	db := switchFixture(t, s)
+	cfg, _ := json.Marshal(map[string]any{"auth": map[string]string{"OPENAI_API_KEY": "fake-key"}, "config": "model_provider = \"relay\"\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\""})
+	switchProvider(t, db, "cx", "codex", string(cfg), `{}`, true)
 	const id = "01900000-0000-7000-8000-000000000002"
 	cwd := t.TempDir()
 	meta, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": map[string]any{"id": id, "cwd": cwd, "timestamp": "2026-10-24T00:00:00Z"}})
@@ -167,7 +172,7 @@ func TestCodexHistoryImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/api/native/sessions/" + id + "/import?provider=codex"
-	code, b := request(t, ts, "POST", path, map[string]bool{"confirmStopped": true}, testToken)
+	code, b := request(t, ts, "POST", path, map[string]any{"confirmStopped": true, "profileId": "cx"}, testToken)
 	if code != 201 {
 		t.Fatalf("import %d %s", code, b)
 	}
@@ -175,7 +180,7 @@ func TestCodexHistoryImport(t *testing.T) {
 	if err := json.Unmarshal(b, &x); err != nil {
 		t.Fatal(err)
 	}
-	if x.Provider != "codex" || !strings.Contains(x.Title, "Codex") {
+	if x.ProfileID != "ccswitch:cx" || x.Provider != "codex" || !strings.Contains(x.Title, "Codex") {
 		t.Fatalf("imported %+v", x)
 	}
 	got, err := st.Get(x.ID)
@@ -184,6 +189,10 @@ func TestCodexHistoryImport(t *testing.T) {
 	}
 	if code, _ = request(t, ts, "POST", path, map[string]bool{"confirmStopped": true}, testToken); code != 200 {
 		t.Fatal("reimport not idempotent")
+	}
+	fresh, _ := st.Get(x.ID)
+	if fresh.ProfileID != "ccswitch:cx" {
+		t.Fatal("reimport dropped saved supplier")
 	}
 }
 
