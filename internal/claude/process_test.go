@@ -200,3 +200,32 @@ func TestProcessTracksTaskEnds(t *testing.T) {
 		t.Fatal("ended tasks still tracked")
 	}
 }
+
+// Claude can acknowledge a merged queue as text blocks rather than a string.
+// Losing that acknowledgement leaves every message after the first queued.
+func TestProcessReplaysTextBlocks(t *testing.T) {
+	for _, content := range []string{
+		`"one\ntwo"`,
+		`[{"type":"text","text":"one"},{"type":"text","text":"two"}]`,
+		`[{"type":"text","text":"one\ntwo"},{"type":"image","source":{}}]`,
+	} {
+		t.Run(content, func(t *testing.T) {
+			var replays []string
+			var events []Event
+			p := &Process{tasks: map[string]bool{}}
+			line := `{"type":"user","isReplay":true,"message":{"role":"user","content":` + content + `}}` + "\n"
+			if err := p.read(strings.NewReader(line), ProcessHooks{
+				Replay: func(text string) { replays = append(replays, text) },
+				Event:  func(e Event) error { events = append(events, e); return nil },
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(replays) != 1 || replays[0] != "one\ntwo" {
+				t.Fatalf("queue acknowledgement lost: %q", replays)
+			}
+			if len(events) != 0 {
+				t.Fatalf("replay emitted duplicate transcript events: %+v", events)
+			}
+		})
+	}
+}

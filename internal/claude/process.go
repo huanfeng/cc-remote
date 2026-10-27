@@ -151,7 +151,26 @@ func (p *Process) read(stdout io.Reader, hooks ProcessHooks) error {
 		p.trackTasks(meta)
 		if meta.Type == "user" && meta.IsReplay {
 			var content string
-			if json.Unmarshal(meta.Message.Content, &content) == nil && hooks.Replay != nil {
+			if json.Unmarshal(meta.Message.Content, &content) != nil {
+				// Merged messages (including prompts with attachments) may be
+				// replayed as content blocks. Their text acknowledges the queue
+				// just as a string does; ignoring it strands later messages.
+				var blocks []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(meta.Message.Content, &blocks) != nil {
+					continue
+				}
+				var texts []string
+				for _, block := range blocks {
+					if block.Type == "text" {
+						texts = append(texts, block.Text)
+					}
+				}
+				content = strings.Join(texts, "\n")
+			}
+			if content != "" && hooks.Replay != nil {
 				hooks.Replay(content)
 			}
 			continue // already shown as the user's message

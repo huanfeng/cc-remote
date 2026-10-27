@@ -23,6 +23,10 @@ import (
 // pasted message by writing a transcript turn and calling the hooks, logs
 // Esc / Ctrl+C, and echoes other keys to the screen.
 func TestMain(m *testing.M) {
+	if os.Getenv("CC_REMOTE_FAKE_REPLAY") == "1" {
+		fakeReplayProcess()
+		return
+	}
 	if os.Getenv("CC_REMOTE_FAKE_TERMINAL") == "1" {
 		fakeTerminal()
 		return

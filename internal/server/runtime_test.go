@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,88 @@ import (
 	"cc-remote/internal/claude"
 	"cc-remote/internal/store"
 )
+
+// Exercise the actual stream reader and server queue together: the CLI merges
+// two messages and acknowledges them using content blocks before tool output.
+func fakeReplayProcess() {
+	in := bufio.NewScanner(os.Stdin)
+	out := json.NewEncoder(os.Stdout)
+	var messages []string
+	batchSize := 2
+	for in.Scan() {
+		var msg struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(in.Bytes(), &msg) != nil {
+			continue
+		}
+		messages = append(messages, msg.Message.Content)
+		if len(messages) != batchSize {
+			continue
+		}
+		_ = out.Encode(map[string]any{"type": "user", "isReplay": true, "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": strings.Join(messages, "\n")}}}})
+		_ = out.Encode(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": "read-image", "name": "Read", "input": map[string]any{"file_path": "image.png"}}}}})
+		_ = out.Encode(map[string]any{"type": "result", "subtype": "success", "result": "done"})
+		// This marker is read after Result returns, so assertions do not race
+		// the server's completion callback.
+		_ = out.Encode(map[string]any{"type": "system", "subtype": "replay_test_done"})
+		messages, batchSize = nil, 1
+	}
+}
+
+func TestMergedBlockReplayClearsQueue(t *testing.T) {
+	t.Setenv("CC_REMOTE_FAKE_REPLAY", "1")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, ts, st := setup(t, nil)
+	s.startProcess = func(o claude.Options, h claude.ProcessHooks) (claudeProcess, error) {
+		o.Executable, o.HostExecutable = exe, exe
+		return claude.StartProcess(o, h)
+	}
+	x := createSession(t, ts)
+	for _, text := range []string{"fix the card", "fix the card corners with image.png"} {
+		if code, b := request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": text}, testToken); code != 202 {
+			t.Fatalf("send: %d %s", code, b)
+		}
+	}
+	await(t, func() bool {
+		events, _ := st.Events(x.ID, 0)
+		for _, e := range events {
+			if e.Kind == "status" && e.Text == "replay_test_done" {
+				return true
+			}
+		}
+		return false
+	})
+	code, b := request(t, ts, "GET", "/api/sessions", nil, testToken)
+	var sessions []store.Session
+	if code != 200 || json.Unmarshal(b, &sessions) != nil {
+		t.Fatalf("sessions: %d %s", code, b)
+	}
+	for _, y := range sessions {
+		if y.ID == x.ID && (len(y.Queued) != 0 || y.Status != "completed") {
+			t.Fatalf("processed message still waiting: status=%s queue=%+v", y.Status, y.Queued)
+		}
+	}
+	if got := strings.Join(userTexts(st, x.ID), "|"); got != "fix the card|fix the card corners with image.png" {
+		t.Fatalf("messages must be recorded once: %q", got)
+	}
+	if code, b := request(t, ts, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "next turn"}, testToken); code != 202 {
+		t.Fatalf("next send: %d %s", code, b)
+	}
+	await(t, func() bool {
+		y, _ := st.Get(x.ID)
+		return len(userTexts(st, x.ID)) == 3 && y.Status == "completed"
+	})
+	code, b = request(t, ts, "GET", "/api/sessions", nil, testToken)
+	if code != 200 || strings.Contains(string(b), `"queued"`) {
+		t.Fatalf("queue reappeared on the next turn: %d %s", code, b)
+	}
+}
 
 // TestIdleProcessIsReaped: an idle session process exits after the idle
 // timeout and the next message starts a new one that resumes the conversation.
