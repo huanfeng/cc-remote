@@ -10,6 +10,7 @@ import { hostLang, langOverride, setLang, t, type Lang } from './i18n';
 import { applyIdentity } from './hostIdentity';
 import { ColorChoices, IconChoices } from './HostLook';
 import { notifyPrefs, notifySupported, saveNotifyPrefs, type NotifyEvent, type NotifyPrefs } from './notify';
+import { currentTheme, setTheme, type Theme } from './theme';
 
 export type { Api } from './ModelPicker';
 export type ClaudePreferences = { model: string; effortLevel: string; permissionMode: string; revision: string; path?: string };
@@ -183,6 +184,7 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
           <h3>{t('Language', '语言')}</h3>
           <p>{t('Saved in this browser only; by default the page follows the language configured on the host. Changing it reloads the page.', '只保存在此浏览器；默认跟随宿主配置的语言。切换后页面会重新加载。')}</p>
           <div className="field">{t('Interface language', '界面语言')}<Select label={t('Interface language', '界面语言')} value={langOverride()} options={[{ value: '', label: STANDALONE ? t(`Follow the browser (${LANG_NAMES[hostLang]})`, `跟随浏览器（${LANG_NAMES[hostLang]}）`) : t(`Follow host (${LANG_NAMES[hostLang]})`, `跟随宿主（${LANG_NAMES[hostLang]}）`) }, { value: 'zh', label: LANG_NAMES.zh }, { value: 'en', label: LANG_NAMES.en }]} onChange={value => { if (mayLeave()) setLang(value as Lang | ''); }} /></div>
+          <div className="field">{t('Theme', '主题')}<Select label={t('Interface theme', '界面主题')} value={currentTheme()} options={[{ value: 'codex', label: t('Codex · neutral light', 'Codex · 中性黑白灰') }, { value: 'forest', label: t('Forest · warm green', '森林 · 暖绿') }]} onChange={value => setTheme(value as Theme)} /></div>
           {onSendKey && <div className="field">{t('Send shortcut', '发送快捷键')}<Select label={t('Send shortcut', '发送快捷键')} value={sendKey || 'ctrl-enter'} options={[{ value: 'ctrl-enter', label: 'Ctrl / ⌘ + Enter' }, { value: 'enter', label: t('Enter sends · Shift + Enter adds a line', 'Enter 发送 · Shift + Enter 换行') }]} onChange={onSendKey} /></div>}
           <h3>{t('Notifications', '通知')}</h3>
           <p>{t('Saved in this browser only. They come while this page is open, also in a background tab or minimized; a phone may pause a page in the background, and then they wait until you open it. A notification is not shown for the session you are looking at. The tab title also counts the sessions waiting for you.', '只保存在此浏览器。页面打开时（包括后台标签页、最小化）才会收到；手机浏览器切到后台后可能暂停页面，通知会推迟到再次打开时。正在查看的会话不提醒。标签页标题也会显示等待你操作的会话数。')}</p>

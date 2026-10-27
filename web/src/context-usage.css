@@ -1,6 +1,6 @@
-.context-usage-button{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;margin:0;padding:1px;border:1px solid var(--line);border-radius:8px;background:#f8f9f3;color:#5d744b;transition:background .15s,border-color .15s}
-.context-usage-button:hover{background:#edf1e4;border-color:#c6d0b8}
-.context-usage-button.warn{color:#a07830;background:#fbf6ea;border-color:#e8d6af}
+.context-usage-button{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;margin:0;padding:1px;border:1px solid var(--line);border-radius:8px;background:var(--bg-inset);color:var(--ok);transition:background .15s,border-color .15s}
+.context-usage-button:hover{background:var(--accent-soft);border-color:var(--line-strong)}
+.context-usage-button.warn{color:var(--warn);background:var(--warn-soft);border-color:var(--warn)}
 .context-usage-track,.context-usage-fill{fill:none;stroke:currentColor;stroke-width:3}
 .context-usage-track{stroke-opacity:.2}
 .context-usage-button text{fill:currentColor;font-size:8px;font-variant-numeric:tabular-nums}

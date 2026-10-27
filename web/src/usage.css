@@ -1,40 +1,40 @@
-.usage-track{flex:1;min-width:0;height:5px;border-radius:3px;background:#dfe3d6;overflow:hidden}
+.usage-track{flex:1;min-width:0;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
 .usage-track.wide{height:7px;border-radius:4px}
-.usage-fill{display:block;height:100%;border-radius:inherit;background:#819f67;transition:width .3s}
-.usage-fill.warn{background:#c49a3e}
-.usage-fill.high{background:#c47464}
+.usage-fill{display:block;height:100%;border-radius:inherit;background:var(--ok);transition:width .3s}
+.usage-fill.warn{background:var(--warn)}
+.usage-fill.high{background:var(--danger)}
 .usage-details{margin-top:12px}
 .usage-details h3{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.usage-plan{font-size:10px;font-weight:500;padding:1px 7px;border-radius:999px;background:#e4ebd8;color:#5f7550;text-transform:capitalize}
+.usage-plan{font-size:10px;font-weight:500;padding:1px 7px;border-radius:999px;background:var(--accent-soft);color:var(--text);text-transform:capitalize}
 .usage-updated{margin-left:auto;font-size:10px;font-weight:400;color:var(--muted)}
 .usage-note{margin:4px 0 8px;font-size:12px;color:var(--muted);line-height:1.7}
-.usage-note.warn{color:#8a6414}
+.usage-note.warn{color:var(--warn)}
 .usage-rows{display:grid;gap:9px;margin:6px 0 4px}
 .usage-row{display:grid;grid-template-columns:minmax(80px,auto) minmax(0,1fr) 40px minmax(90px,auto);align-items:center;gap:10px;font-size:12px}
 .usage-row strong{font-weight:500;text-align:right;font-variant-numeric:tabular-nums}
 .usage-row small{font-size:10px;color:var(--muted);white-space:nowrap}
 .usage-chart{background:#fff}
 .usage-chart .usage-line{fill:none;stroke-width:1.6}
-.usage-line.fiveHour,.usage-dot.fiveHour{stroke:#819f67;fill:#819f67}
-.usage-line.weekly,.usage-dot.weekly{stroke:#b07a44;fill:#b07a44}
+.usage-line.fiveHour,.usage-dot.fiveHour{stroke:var(--ok);fill:var(--ok)}
+.usage-line.weekly,.usage-dot.weekly{stroke:var(--warn);fill:var(--warn)}
 .usage-chart polyline.usage-line{fill:none}
 .usage-chart .grid{stroke:var(--line);stroke-dasharray:3 3}
-.swatch.usage-5h{background:#819f67}
-.swatch.usage-week{background:#b07a44}
+.swatch.usage-5h{background:var(--ok)}
+.swatch.usage-week{background:var(--warn)}
 .usage-range{margin-left:auto;display:inline-flex;gap:2px}
 .usage-range button{background:none;color:var(--muted);font-size:10px;padding:3px 7px;border-radius:6px}
-.usage-range button.active{background:#e4ebd8;color:#3f5234}
+.usage-range button.active{background:var(--accent-soft);color:var(--text)}
 .usage-empty{font-size:12px;color:var(--muted);margin:14px 0 18px;text-align:center}
 @media(max-width:760px){.usage-row{grid-template-columns:minmax(70px,auto) minmax(0,1fr) 36px}.usage-row small{grid-column:2/4}}
 .usage-provider-tabs{display:flex;gap:4px;margin-top:14px}
 .usage-provider-tabs button{background:transparent;color:var(--muted);padding:6px 12px;border-radius:7px;font-size:12px}
-.usage-provider-tabs button.active{background:var(--accent);color:#293c2e}
+.usage-provider-tabs button.active{background:var(--accent-soft);color:var(--text)}
 /* Compact account quota: actual window, used fraction and reset countdown. */
-.usage-bar,.topbar .usage-bar{display:flex;align-items:center;gap:10px;width:auto;flex-shrink:0;margin:0;padding:4px 6px;min-height:0;border:0;border-radius:8px;background:transparent;color:#526071;text-align:left;font-variant-numeric:tabular-nums}
-.usage-bar:hover{background:#e9eddf}
+.usage-bar,.topbar .usage-bar{display:flex;align-items:center;gap:10px;width:auto;flex-shrink:0;margin:0;padding:4px 6px;min-height:0;border:0;border-radius:8px;background:transparent;color:var(--muted);text-align:left;font-variant-numeric:tabular-nums}
+.usage-bar:hover{background:var(--accent-soft)}
 .usage-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-size:11px;line-height:1.4}
 .usage-label{display:inline-flex;align-items:center;justify-content:center;padding:1px 6px;border-radius:5px;background:#e8ecff;color:#4338ca;font-weight:600;line-height:1.3}
 .usage-label.weekly{background:#dcfce7;color:#15803d}
-.usage-value{color:#526071}
-.usage-reset{color:#8d98a8}
+.usage-value{color:var(--muted)}
+.usage-reset{color:var(--muted)}
 @media(max-width:760px){.usage-item{gap:3px;font-size:10px}.usage-bar,.topbar .usage-bar{padding:2px;gap:6px}}

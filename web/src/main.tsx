@@ -2,7 +2,9 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './style.css';
+import { applyTheme, currentTheme } from './theme';
 import { trackVisualViewport } from './viewport';
+applyTheme(currentTheme());
 // Another site must not frame the page to have its buttons (approvals) clicked.
 // The host's CSP says so too, but a static host serving the standalone build may
 // send no headers.
