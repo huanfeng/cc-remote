@@ -195,6 +195,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
+	mux.HandleFunc("POST /api/sessions/{id}/exit", s.exitSession)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/withdraw", s.withdrawQueue)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/{messageId}/withdraw", s.withdrawQueueMessage)
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{messageId}", s.withdrawQueueMessage)
@@ -847,6 +848,47 @@ func (s *Server) withdrawQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.terminalWithdrawLocked(w, r, ts) // unlocks s.mu
+}
+
+// exitSession ends a session's background process without deleting its records:
+// the next message relaunches it, and a Codex session can then be used in its
+// native app again.
+func (s *Server) exitSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.Lock()
+	x, err := s.store.Get(id)
+	if err != nil {
+		s.mu.Unlock()
+		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
+		return
+	}
+	if s.switching[id] {
+		s.mu.Unlock()
+		fail(w, 409, "正在切换配置，请稍后重试")
+		return
+	}
+	var closed bool
+	if ts := s.terminals[id]; ts != nil {
+		delete(s.terminals, id)
+		if s.channels[ts.claudeID] == ts.conn {
+			delete(s.channels, ts.claudeID)
+		}
+		s.closeTerminalAsync(ts)
+		closed = true
+	}
+	if rt := s.procs[id]; rt != nil {
+		s.closeAsync(s.detachLocked(id))
+		closed = true
+	}
+	s.mu.Unlock()
+	if closed && (x.Status == "running" || x.Status == "waiting") {
+		_ = s.store.SetStatus(id, "interrupted")
+	}
+	status := "idle"
+	if closed {
+		status = "closing"
+	}
+	respond(w, 200, map[string]any{"status": status})
 }
 
 const deleteStopTimeout = 15 * time.Second

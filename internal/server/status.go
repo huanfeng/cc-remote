@@ -32,17 +32,43 @@ type claudeVersion struct {
 // This mutex is never s.mu: a slow first query only delays other status readers.
 var versionCache struct {
 	sync.Mutex
-	value claudeVersion
+	value      claudeVersion
+	refreshing bool
 }
 
+// claudeVersion returns a cached reading at once, refreshing in the background
+// once stale: spawning claude --version takes seconds on Windows, and that must
+// never sit inside the polling path.
 func (s *Server) claudeVersion() claudeVersion {
 	versionCache.Lock()
-	defer versionCache.Unlock()
 	v := versionCache.value
-	if v.Executable == s.cfg.ClaudeExecutable && time.Since(v.checked) < 5*time.Minute {
+	sameExe := v.Executable == s.cfg.ClaudeExecutable
+	fresh := sameExe && time.Since(v.checked) < 5*time.Minute
+	hasOld := sameExe && !v.checked.IsZero()
+	if fresh || (hasOld && (versionCache.refreshing || s.startVersionRefresh())) {
+		versionCache.Unlock()
 		return v
 	}
-	v = claudeVersion{Executable: s.cfg.ClaudeExecutable, checked: time.Now()}
+	versionCache.Unlock()
+	return s.computeClaudeVersion()
+}
+
+// startVersionRefresh marks a background refresh as running; caller keeps the lock.
+func (s *Server) startVersionRefresh() bool {
+	versionCache.refreshing = true
+	go func() {
+		v := s.computeClaudeVersion()
+		versionCache.Lock()
+		versionCache.value = v
+		versionCache.refreshing = false
+		versionCache.Unlock()
+	}()
+	return true
+}
+
+// computeClaudeVersion probes the CLI version without holding any lock.
+func (s *Server) computeClaudeVersion() claudeVersion {
+	v := claudeVersion{Executable: s.cfg.ClaudeExecutable, checked: time.Now()}
 	path, err := exec.LookPath(s.cfg.ClaudeExecutable)
 	if err == nil {
 		v.Path = path
@@ -55,7 +81,6 @@ func (s *Server) claudeVersion() claudeVersion {
 	if err != nil {
 		v.Error = err.Error()
 	}
-	versionCache.value = v
 	return v
 }
 
