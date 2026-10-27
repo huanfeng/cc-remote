@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cc-remote/internal/i18n"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -312,7 +313,7 @@ func (s *Server) sendQueueMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		s.removeQueuedItemLocked(id, mid)
 		s.sent.remember(id, operation, "queue-unknown")
-		_, _ = s.store.Append(id, "error", s.lang(r).T("An additional instruction's delivery is unknown. It will not be retried automatically; later messages continue normally.", "一条追加指令的送达状态未知，不会自动重复发送；后续消息仍可正常处理。"), nil)
+		_, _ = s.store.Append(id, "error", s.lang(r).T("An additional instruction's delivery was not confirmed; it will not be resent automatically.", "一条追加指令的送达未确认，不会自动重发。"), nil)
 		s.writeLocked(rt)
 		s.settleLocked(rt)
 		steerFailure(w, 409, "unknown", s.lang(r).T("Delivery is unknown; this item will not be resent automatically", "送达状态未知，此消息不会自动重复发送"))
@@ -351,5 +352,5 @@ func (s *Server) preserveQueueWarningsLocked(rt *sessionRuntime) {
 		_, _ = s.store.Append(rt.id, "user", m.Text, queueDeliveryPayload(m.Payload, "unknown"))
 	}
 	rt.uncertain = nil
-	_, _ = s.store.Append(rt.id, "error", "An additional instruction's delivery was not confirmed; it will not be resent automatically.", nil)
+	_, _ = s.store.Append(rt.id, "error", i18n.T("An additional instruction's delivery was not confirmed; it will not be resent automatically.", "一条追加指令的送达未确认，不会自动重发。"), nil)
 }

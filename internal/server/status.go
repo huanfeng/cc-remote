@@ -50,7 +50,11 @@ func (s *Server) claudeVersion() claudeVersion {
 		return v
 	}
 	versionCache.Unlock()
-	return s.computeClaudeVersion()
+	v = s.computeClaudeVersion()
+	versionCache.Lock()
+	versionCache.value = v
+	versionCache.Unlock()
+	return v
 }
 
 // startVersionRefresh marks a background refresh as running; caller keeps the lock.
