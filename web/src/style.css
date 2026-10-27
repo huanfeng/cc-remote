@@ -209,3 +209,7 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 /* Hints span the whole field row under caption and control. */
 .modal label>small,.modal .field>small{grid-column:1/-1;margin:0}
 .settings-panel form .field:last-of-type,.settings-panel form label:last-of-type{border-bottom:0}
+
+/* Tall field rows (color/icon grids): caption starts at the top of the row. */
+.modal .field-tall{align-items:start}
+.modal .field-tall>:first-child{padding-top:6px}

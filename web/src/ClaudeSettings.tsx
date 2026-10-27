@@ -176,8 +176,8 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
           <p>{t('Tell several hosts apart in the browser: the name is in the tab title, the sidebar and the login page, the color and icon make the tab icon and logo. Leave them empty for the defaults: the machine name, a color picked by the name, and the CC Remote logo. Also: ', '在浏览器里区分多台宿主：名称显示在标签页标题、侧栏和登录页，颜色和图标组成标签页图标和标志。留空使用默认值：机器名、按名称挑选的颜色，以及 CC Remote 标志。也可以用命令：')}<code>cc-remote service config --name NAME --color COLOR --icon ICON</code></p>
           {identity ? <>
             <label>{t('Name', '名称')}<input value={hostName} maxLength={40} placeholder={identity.defaultName} onChange={event => setHostName(event.target.value)} /></label>
-            <ColorChoices value={hostColor} onChange={setHostColor} auto={{ label: t('Auto', '自动'), title: t('Automatic', '自动'), color: paletteHex(identity, identity.defaultColor) }} />
-            <IconChoices value={hostIcon} onChange={setHostIcon} color={hostColor || paletteHex(identity, identity.defaultColor)} auto={{ label: t('Logo', '标志'), title: t('The CC Remote logo', 'CC Remote 标志'), color: hostColor || paletteHex(identity, identity.defaultColor) }} />
+            <div className="field field-tall">{t('Color', '颜色')}<ColorChoices value={hostColor} onChange={setHostColor} auto={{ label: t('Auto', '自动'), title: t('Automatic', '自动'), color: paletteHex(identity, identity.defaultColor) }} /></div>
+            <div className="field field-tall">{t('Icon', '图标')}<IconChoices value={hostIcon} onChange={setHostIcon} color={hostColor || paletteHex(identity, identity.defaultColor)} auto={{ label: t('Logo', '标志'), title: t('The CC Remote logo', 'CC Remote 标志'), color: hostColor || paletteHex(identity, identity.defaultColor) }} /></div>
             <button className="primary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button>
           </> : <p>{t('Loading…', '加载中…')}</p>}
         </form>}
