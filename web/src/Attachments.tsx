@@ -74,5 +74,5 @@ export function AttachmentList({ items, token, remove }: { items: Attachment[]; 
 
 export function AttachButton({ disabled, upload }: { disabled: boolean; upload: (files: File[]) => void }) {
   const input = useRef<HTMLInputElement>(null);
-  return <><input ref={input} type="file" multiple hidden onChange={event => { upload(Array.from(event.target.files || [])); event.target.value = ''; }} /><button type="button" className="attach-button" title={t('Add images or files (≤ 20 MiB each, up to 8 per message); you can also paste or drop them into the message box', '添加图片或文件（单个 ≤ 20 MiB，每条最多 8 个），也可以粘贴或拖放到输入框')} aria-label={t('Add attachments', '添加附件')} disabled={disabled} onClick={() => input.current?.click()}><PlusIcon size={17} /></button></>;
+  return <><input ref={input} type="file" multiple hidden onChange={event => { upload(Array.from(event.target.files || [])); event.target.value = ''; }} /><button type="button" className="attach-button" data-tip={t('Add images or files (≤ 20 MiB each, up to 8 per message); you can also paste or drop them into the message box', '添加图片或文件（单个 ≤ 20 MiB，每条最多 8 个），也可以粘贴或拖放到输入框')} aria-label={t('Add attachments', '添加附件')} disabled={disabled} onClick={() => input.current?.click()}><PlusIcon size={17} /></button></>;
 }

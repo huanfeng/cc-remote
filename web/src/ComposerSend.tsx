@@ -8,7 +8,7 @@ export function ComposerSend({ disabled, uploading, running, extra }: {
 }) {
   return <div className="composer-send">
     {extra}
-    <button type="submit" className="primary" disabled={disabled} title={running ? t('Send after the current task', '当前任务结束后发送') : t('Send message', '发送消息')}>
+    <button type="submit" className="primary" disabled={disabled} data-tip={running ? t('Send after the current task', '当前任务结束后发送') : t('Send message', '发送消息')}>
       {uploading ? t('Uploading…', '上传中…') : t('Send ↑', '发送 ↑')}
     </button>
   </div>;

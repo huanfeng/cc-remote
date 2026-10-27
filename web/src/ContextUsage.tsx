@@ -37,7 +37,7 @@ export function ContextUsage({ provider, live, events = [], sessionId }: { provi
   const n = (value?: number) => value === undefined ? t('Not reported', '未报告') : value.toLocaleString(locale);
   const row = (label: string, value: string) => <div><dt>{label}</dt><dd>{value}</dd></div>;
   return <>
-    <button ref={trigger} type="button" className={`context-usage-button${known && reading.percent! >= 80 ? ' warn' : ''}`} aria-label={title} title={title} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+    <button ref={trigger} type="button" className={`context-usage-button${known && reading.percent! >= 80 ? ' warn' : ''}`} aria-label={title} data-tip={title} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><circle cx="16" cy="16" r="12" className="context-usage-track" />
         {known && <circle cx="16" cy="16" r="12" className="context-usage-fill" pathLength="100" strokeDasharray={`${reading.percent} 100`} transform="rotate(-90 16 16)" />}
         <text x="16" y="19" textAnchor="middle">{shown}</text>
