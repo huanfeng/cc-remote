@@ -107,7 +107,7 @@ export function TurnRail({ turns, container }: { turns: readonly TurnEntry[]; co
               <span className="turn-rail-bar" />
               {hovered === turn.seq && (
                 <span className="turn-rail-tooltip" role="tooltip">
-                  <strong>#{turn.index}</strong>
+                  <strong>{t(`TURN ${turn.index}`, `第 ${turn.index} 轮`)}</strong>
                   <span>{turn.summary}</span>
                 </span>
               )}

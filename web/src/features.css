@@ -264,3 +264,12 @@ img.host-swatch{display:block;background:none}
 /* A sent /command renders as a tappable chip; /model and /effort reopen their switcher. */
 .message-command{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:5px 10px;font-size:12.5px;border-radius:9px}
 .message-command .message-command-args{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Folded model groups inside the quick switch: a toggle row with a count. */
+.model-group-toggle{display:flex;align-items:center;gap:6px;width:100%;text-align:left;background:transparent;color:var(--muted);padding:7px 10px 3px 28px;font-size:10px;letter-spacing:.4px}
+.model-group-toggle:hover{color:var(--text)}
+.model-group-arrow{display:inline-block;width:10px}
+.model-group-count{margin-left:auto;font-variant-numeric:tabular-nums;opacity:.7}
+
+/* Header chips hierarchy: model/effort actions read stronger than the info chips. */
+.chip-action{border-color:var(--line-strong);color:var(--text);font-weight:500}

@@ -14,6 +14,7 @@ export function QuickSwitch({ api, sessionId, provider = 'claude', model = '', t
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [place, setPlace] = useState({ left: target.anchor.left, top: target.anchor.bottom + 4 });
+  const [folded, setFolded] = useState<Record<string, boolean>>(() => ({ [t('Aliases', '别名')]: true, [t('Recently used', '最近使用')]: true }));
   const menu = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
   async function load(refresh = false) {
@@ -45,7 +46,11 @@ export function QuickSwitch({ api, sessionId, provider = 'claude', model = '', t
     </> : <>
       <div className="quick-switch-head"><span>{t('Switch model', '切换模型')}</span><button type="button" className="model-button" aria-label={t('Refresh model list', '刷新模型列表')} disabled={loading} onClick={() => void load(true)}><span className={loading ? 'spinning' : ''}><RefreshIcon size={13} /></span></button></div>
       {inherit !== undefined && option('', t(`Use default (${inherit || `${providerName(provider)} settings`})`, `跟随默认（${inherit || `${providerName(provider)} 配置`}）`))}
-      {MODEL_GROUPS.map(([name, sources]) => { const items = (list?.models || []).filter(model => sources.includes(model.source)); return items.length ? <div key={name}><span className="model-group">{name}</span>{items.map(model => option(model.id, model.label, model.description))}</div> : null; })}
+      {/* The host's real catalog first; aliases and recents fold away into submenus. */}
+      {MODEL_GROUPS.filter(([name]) => !folded[name] || folded[name] === undefined).map(([name, sources]) => { const items = (list?.models || []).filter(model => sources.includes(model.source)); return items.length ? <div key={name}><span className="model-group">{name}</span>{items.map(model => option(model.id, model.label, model.description))}</div> : null; })}
+      {MODEL_GROUPS.filter(([name]) => folded[name] !== undefined).map(([name, sources]) => { const items = (list?.models || []).filter(model => sources.includes(model.source)); if (!items.length) return null; const open = !folded[name];
+        return <div key={name}><button type="button" className="model-group model-group-toggle" aria-expanded={!folded[name]} onClick={() => setFolded(old => ({ ...old, [name]: !old[name] }))}><span className="model-group-arrow">{open ? '▾' : '▸'}</span>{name}<span className="model-group-count">{items.length}</span></button>
+          {open && items.map(model => option(model.id, model.label, model.description))}</div>; })}
       {!list && loading && <span className="model-group">{t('Loading…', '正在读取…')}</span>}
       {list?.warnings?.map(warning => <span key={warning} className="model-group">{warning}</span>)}
       {error && <span className="model-group">{error}</span>}
