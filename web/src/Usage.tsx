@@ -100,7 +100,7 @@ export function UsageBar({ api, open, provider = 'claude', sessionId = '' }: { a
   if (!usage || (!usage.available && !usage.error)) return null;
   // An old host ignores provider=codex and answers with Claude's quota; without
   // native windows the reading is not Codex's, so showing it would be wrong.
-  if (provider === 'codex' && !(usage as { windows?: unknown }).windows) return null;
+  if (provider === 'codex' && !(usage as { usage?: { windows?: unknown } }).usage?.windows) return null;
   const windows = quotaWindows(usage, provider);
   const valid = (w?: Window): w is Window => !!w && Number.isFinite(w.percent) && w.percent >= 0 && w.percent <= 100;
   const fresh = !!usage?.available && !usage.stale && !usage.error;
