@@ -951,9 +951,9 @@ export default function App() {
         const clock = conversationTime(item, Date.now(), lang);
         return <div key={item.id} className={`session-row ${selected === item.id ? 'selected' : ''} ${state.cached ? 'cached' : ''}`}>
           <button className="session-item" aria-current={selected === item.id ? 'page' : undefined} onClick={() => choose(item.id)}>
-            <div><span className={`dot ${state.status}`} /><strong>{item.title || t('Untitled session', '未命名会话')}</strong></div>
+            <div><span className={`dot ${state.status}`} /><strong>{item.title || t('Untitled session', '未命名会话')}</strong><time className="session-time" dateTime={clock.iso} title={clock.title} aria-label={clock.title}>{clock.label}</time></div>
             <small title={item.cwd}>{item.cwd}</small>
-            <span className="session-meta"><span className={`session-state ${state.status}`}>{providerName(providerOf(item))} · {!native && `${modeLabel(item.mode)} · `}{state.label}</span>{state.cached && <span className="cache-marker" title={t('Switching sessions keeps this page\'s messages, drafts and scroll position', '切换会话时保留当前页面的消息、草稿和阅读位置')}>{state.cached.loaded ? t('Cached', '已缓存') : t('Loading', '加载中')}</span>}<time className="session-time" dateTime={clock.iso} title={clock.title} aria-label={clock.title}>{clock.label}</time></span>
+            <span className="session-meta"><span className={`session-state ${state.status}`}>{providerName(providerOf(item))} · {!native && `${modeLabel(item.mode)} · `}{state.label}</span>{state.cached && <span className="cache-marker" title={t('Switching sessions keeps this page\'s messages, drafts and scroll position', '切换会话时保留当前页面的消息、草稿和阅读位置')}>{state.cached.loaded ? t('Cached', '已缓存') : t('Loading', '加载中')}</span>}</span>
           </button>
           <SessionMenu title={item.title || t('Untitled session', '未命名会话')} actions={[
             ...(state.cached ? [{ key: 'release', icon: <CloseIcon size={15} />, label: t('Release page cache', '释放页面缓存'), hint: t('Unsent drafts are cleared; the host task keeps running', '未发送的草稿会清除，宿主任务继续运行'), onClick: () => closeTab(state.cached!.key) }] : []),
