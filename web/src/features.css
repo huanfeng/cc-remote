@@ -43,7 +43,7 @@ select{font:inherit;color:inherit;background:#fff;border:1px solid var(--line-st
 .danger-zone strong{font-size:13px;font-weight:600;color:#8f3b2a}.modal .danger-zone small{margin-top:2px}
 .danger-button{background:#fff;border:1px solid #e3b1a5;color:var(--danger);border-radius:9px;padding:9px 14px;font-size:12px;white-space:nowrap}.danger-button:hover{background:var(--danger-soft)}
 .danger-button.solid{background:var(--danger);border-color:var(--danger);color:#fff}.danger-button.solid:hover{background:#963523}
-.modal-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}.modal-actions .reset{margin-right:auto}.modal-actions button{min-height:40px;font-size:13px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:18px}.modal-actions .reset{margin-right:auto}.modal-actions button{min-height:34px;font-size:12.5px}
 .modal.confirm-modal{width:440px}.confirm-backdrop{z-index:30}
 .modal .confirm-target{display:flex;flex-direction:column;gap:2px;padding:10px 12px;background:var(--bg-inset);border:1px solid var(--line);border-radius:10px;margin:14px 0 4px;color:inherit}
 .confirm-target strong{font-weight:600;overflow-wrap:anywhere}.modal .confirm-target small{overflow-wrap:anywhere;line-height:1.5}
@@ -273,3 +273,8 @@ img.host-swatch{display:block;background:none}
 
 /* Header chips hierarchy: model/effort actions read stronger than the info chips. */
 .chip-action{border-color:var(--line-strong);color:var(--text);font-weight:500}
+
+/* Quick-switch submenus: a row opens a side panel instead of unfolding in place. */
+.model-group-toggle{justify-content:flex-start}
+.model-group-toggle .model-group-arrow{margin-left:auto;color:var(--muted)}
+.quick-switch-sub{position:fixed;z-index:66;min-width:210px;max-width:min(320px,calc(100vw - 16px));max-height:min(420px,60vh)}
