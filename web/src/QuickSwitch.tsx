@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CheckIcon, RefreshIcon } from './icons';
-import { EFFORT_NOTES, MODEL_GROUPS, loadModels, type Api, type ModelList } from './ModelPicker';
+import { EFFORT_NOTES, MODEL_GROUPS, loadModels, modelEfforts, type Api, type ModelList } from './ModelPicker';
 import { t } from './i18n';
-import { providerEfforts, providerName, type Provider } from './providers';
+import { providerName, type Provider } from './providers';
 
 export type QuickKind = 'model' | 'effort';
 export type QuickTarget = { kind: QuickKind; anchor: DOMRect };
 
 /** A list under a model or effort chip: picking an item switches at once. */
-export function QuickSwitch({ api, sessionId, provider = 'claude', target, current, inherit, close, pick }: { api: Api; sessionId: string; provider?: Provider; target: QuickTarget; current: string; inherit?: string; close: () => void; pick: (value: string) => void }) {
+export function QuickSwitch({ api, sessionId, provider = 'claude', model = '', target, current, inherit, close, pick }: { api: Api; sessionId: string; provider?: Provider; model?: string; target: QuickTarget; current: string; inherit?: string; close: () => void; pick: (value: string) => void }) {
   const [loaded, setLoaded] = useState<{ api: Api; sessionId: string; provider: Provider; data: ModelList }>();
   const list = loaded?.api === api && loaded.sessionId === (sessionId || '') && loaded.provider === provider ? loaded.data : undefined;
   const [loading, setLoading] = useState(false);
@@ -21,7 +21,7 @@ export function QuickSwitch({ api, sessionId, provider = 'claude', target, curre
     setLoading(true); setError('');
     try { const data = await loadModels(api, sessionId, refresh, provider); if (generation.current === requestGeneration) setLoaded({ api, sessionId, provider, data }); } catch (err) { if (generation.current === requestGeneration) setError((err as Error).message); } finally { if (generation.current === requestGeneration) setLoading(false); }
   }
-  useEffect(() => { setLoaded(undefined); if (target.kind === 'model') void load(); return () => { generation.current++; }; }, [api, target.kind, sessionId, provider]);
+  useEffect(() => { setLoaded(undefined); if (target.kind === 'model' || provider === 'codex') void load(); return () => { generation.current++; }; }, [api, target.kind, sessionId, provider]);
   useEffect(() => {
     const away = (event: MouseEvent | TouchEvent) => { if (!menu.current?.contains(event.target as Node)) close(); };
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
@@ -41,7 +41,7 @@ export function QuickSwitch({ api, sessionId, provider = 'claude', target, curre
   return <div ref={menu} className="quick-switch popover-menu" role="listbox" aria-label={target.kind === 'model' ? t('Switch model', '切换模型') : t('Switch effort', '切换推理强度')} style={{ left: place.left, top: place.top }}>
     {target.kind === 'effort' ? <>
       {inherit !== undefined && option('', t(`Use default (${inherit || `${providerName(provider)} settings`})`, `跟随默认（${inherit || `${providerName(provider)} 配置`}）`))}
-      {providerEfforts(provider).map(level => option(level, level, EFFORT_NOTES[level]))}
+      {modelEfforts(list, model, provider).map(level => option(level, level, EFFORT_NOTES[level]))}
     </> : <>
       <div className="quick-switch-head"><span>{t('Switch model', '切换模型')}</span><button type="button" className="model-button" aria-label={t('Refresh model list', '刷新模型列表')} disabled={loading} onClick={() => void load(true)}><span className={loading ? 'spinning' : ''}><RefreshIcon size={13} /></span></button></div>
       {inherit !== undefined && option('', t(`Use default (${inherit || `${providerName(provider)} settings`})`, `跟随默认（${inherit || `${providerName(provider)} 配置`}）`))}

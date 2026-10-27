@@ -1,0 +1,13 @@
+.context-usage-button{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:2px;border:0;border-radius:8px;background:transparent;color:#6b8257}
+.context-usage-button:hover{background:#edf1e4}
+.context-usage-button.warn{color:#a07830}
+.context-usage-track,.context-usage-fill{fill:none;stroke:currentColor;stroke-width:3}
+.context-usage-track{stroke-opacity:.2}
+.context-usage-button text{fill:currentColor;font-size:8px;font-variant-numeric:tabular-nums}
+.context-usage-panel{position:fixed;z-index:65;width:300px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 100px);overflow:auto;padding:15px;font-size:12px}
+.context-usage-panel strong{font-weight:600}
+.context-usage-panel dl{margin:9px 0}
+.context-usage-panel dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:6px 0}
+.context-usage-panel dt{color:var(--muted)}
+.context-usage-panel dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.context-usage-panel small{display:block;font-size:10px;color:var(--muted);line-height:1.7}

@@ -115,3 +115,59 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .modal .settings-tabs small{font-size:10px;font-weight:400;line-height:1.4}
 .settings-panel{min-width:0}.settings-panel h3{font-size:14px;margin:2px 0 0}.settings-panel label,.settings-panel .field{margin:16px 0}
 @media(max-width:640px){.settings-layout{grid-template-columns:minmax(0,1fr);gap:8px}.settings-tabs{flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:0 0 6px;overflow-x:auto}.settings-tabs button{flex:1}}
+.mode-choice.provider-choice{grid-template-columns:1fr}
+
+/* Composer controls share a single row; secondary details open on demand. */
+.composer-bottom{display:flex;flex-wrap:nowrap;align-items:center;gap:6px}
+.composer-space{flex:1;min-width:4px}
+.composer .slash-button,.composer .attach-button{width:30px;min-width:30px;height:32px;padding:4px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:7px}
+.composer-permission{display:flex;align-items:center;position:relative;min-width:0;max-width:170px}
+.composer-permission>span{display:none;color:var(--muted)}
+.composer-permission .select-trigger{border:1px solid var(--line);background:transparent;min-height:32px;padding:4px 7px;font-size:11px;box-shadow:none}
+.composer .composer-actions{display:flex;align-items:center;flex-wrap:nowrap;gap:6px;margin-left:0;flex-shrink:0}
+.composer-send{display:flex;align-items:stretch;border-radius:9px;background:#293c2e;flex-shrink:0}
+.composer-send>.primary{border-radius:9px 0 0 9px;padding:8px 10px;font-size:12px;min-height:34px;white-space:nowrap}
+.composer-actions>.secondary{padding:5px;font-size:10px;max-width:110px}
+.composer .stop{padding:5px;font-size:11px;min-width:0}
+.topbar .desktop-badge{cursor:pointer}
+@media(max-width:600px){
+.composer-permission{width:30px;height:32px;flex-shrink:0}
+.composer-permission>span{display:flex;position:absolute;inset:0;align-items:center;justify-content:center;pointer-events:none}
+.composer-permission .permission-select{width:30px}
+.composer-permission .select-trigger{width:30px;padding:0;color:transparent}
+.composer-permission .select-trigger .select-value,.composer-permission .select-trigger svg{visibility:hidden}
+.composer-bottom{gap:3px}
+.composer .composer-actions{gap:3px}
+.composer-send>.primary{padding:8px;font-size:11px}
+.topbar{gap:8px}
+}
+
+.composer-send{position:relative}
+.send-settings-trigger{display:flex;align-items:center;justify-content:center;border-left:1px solid #ffffff30;background:transparent;color:white;border-radius:0 9px 9px 0;width:25px;padding:5px}
+.send-settings-trigger:hover{background:#415441}
+.send-settings-menu{position:absolute;right:0;bottom:calc(100% + 8px);width:260px;max-width:calc(100vw - 32px);z-index:40;padding:10px;color:#28332d;font-size:12px;text-align:left}
+.send-settings-menu small{display:block;line-height:1.6;font-size:10px;white-space:normal}
+.send-settings-menu>.eyebrow{display:block;padding:4px 6px 8px}
+.send-settings-menu>.send-settings-extra{padding:8px 0;margin:4px 0;border-top:1px solid var(--line)}
+.send-settings-extra>.secondary{width:100%;font-size:12px;padding:8px}
+.topbar>.stop{font-size:11px;padding:6px 8px;white-space:nowrap;background:#eeeade;border-radius:7px;color:#746344}
+
+.pending-queue{width:calc(100% - 40px);max-width:1000px;align-self:center;margin:8px 0 0;padding:0 10px;font-size:12px}
+.pending-heading{font-size:10px;color:var(--muted);padding:0 0 5px}
+.pending-heading>span{margin-left:6px}
+.pending-items{max-height:180px;overflow:auto;overscroll-behavior:contain}
+.pending-item{display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
+.pending-content{flex:1;min-width:0;overflow-wrap:anywhere}
+.pending-content>p{margin:0;white-space:pre-wrap;max-height:80px;overflow:auto;line-height:1.65}
+.pending-content>small{font-size:10px;color:var(--muted)}
+.pending-content textarea{font-size:12px;min-height:65px;padding:8px}
+.pending-content .attachments{padding:5px 0}
+.pending-content .image-attachment{width:70px}
+.pending-content .image-preview img{height:42px}
+.pending-actions{display:flex;align-items:center;flex-shrink:0;gap:3px}
+.pending-actions button{font-size:11px;padding:4px 5px;background:transparent;color:#68795d;border-radius:5px;white-space:nowrap}
+.pending-actions button:hover{background:#e9eedf}
+.pending-error{color:#a3321f;font-size:11px;margin:6px 0}
+@media(max-width:600px){.pending-queue{width:calc(100% - 24px);padding:0 5px}.pending-actions{gap:0}.pending-actions button{padding:4px;font-size:10px}}
+
+@media(max-width:760px){.topbar>.stop{display:none}.topbar .header-title{min-width:0}.topbar .usage-bar{margin-left:auto}}

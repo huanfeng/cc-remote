@@ -4,6 +4,7 @@ import './status.css';
 import { CloseIcon } from './icons';
 import { locale, t } from './i18n';
 import { UsageDetails } from './Usage';
+import { providerName, type Provider } from './providers';
 
 export type Stats = { sessionId: string; turns: number; results: number; costUSD: number; costKnown: boolean; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; durationMs: number; toolCalls: number; errors: number; lastActivityAt: string };
 type SessionRow = Stats & { id: string; title: string; mode: string; status: string; online: boolean; cwd: string };
@@ -63,7 +64,8 @@ function Chart({ daily }: { daily: Daily[] }) {
   </figure>;
 }
 
-export function StatusPanel({ api, close, select, providerStatus }: { api: Api; close: () => void; select: (id: string) => void; providerStatus?: { codexAvailable?: boolean; codexVersion?: string } }) {
+export function StatusPanel({ api, close, select, providerStatus, provider = 'claude', sessionId }: { provider?: Provider; sessionId?: string; api: Api; close: () => void; select: (id: string) => void; providerStatus?: { codexAvailable?: boolean; codexVersion?: string } }) {
+  const [usageProvider, setUsageProvider] = useState<Provider>(provider);
   const [data, setData] = useState<HostStatus>();
   const [error, setError] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'lastActivityAt', desc: true });
@@ -118,7 +120,7 @@ export function StatusPanel({ api, close, select, providerStatus }: { api: Api; 
             <div><dt>{t('Database', '数据库')}</dt><dd>{bytes(data.storage.databaseBytes)}</dd></div><div><dt>{t('Uploads', '上传附件')}</dt><dd>{bytes(data.storage.uploadsBytes)}</dd></div><div><dt>{t('Logs', '日志')}</dt><dd>{bytes(data.storage.logBytes)}</dd></div>
           </dl><small className="status-path" title={data.dataDir}>{data.dataDir}</small></div>
         </div>
-        <UsageDetails api={api} />
+        <div className="usage-provider-tabs" role="group" aria-label={t('Subscription provider', '订阅提供方')}>{(['claude', 'codex'] as Provider[]).filter(p => p === 'claude' || typeof providerStatus?.codexAvailable === 'boolean').map(p => <button key={p} type="button" aria-pressed={usageProvider === p} className={usageProvider === p ? 'active' : ''} onClick={() => setUsageProvider(p)}>{providerName(p)}</button>)}</div><UsageDetails api={api} provider={usageProvider} sessionId={usageProvider === provider ? sessionId : undefined} />
         <Chart daily={data.daily} />
         <div className="status-table-wrap"><table className="status-table">
           <thead><tr>{header('title', L.title)}{header('mode', L.mode)}{header('status', L.status)}{header('turns', L.turns)}{header('tokens', 'Tokens')}{header('costUSD', L.cost)}{header('durationMs', L.time)}{header('lastActivityAt', L.last)}</tr></thead>

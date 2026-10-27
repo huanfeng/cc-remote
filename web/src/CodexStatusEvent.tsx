@@ -14,6 +14,23 @@ export function CodexStatusEvent({ event }: { event: CodexEvent }) {
   if (!status || status.type === 'usage') return null;
   if (status.type === 'unavailable') return <p className="codex-status-note">{status.subject === 'plan' ? t('Plan details unavailable', '计划详情暂不可用') : t('Change details unavailable', '变更详情暂不可用')}</p>;
   const truncated = event.truncated && <p className="codex-status-note">{t('This update was truncated by the server; details may be incomplete.', '此更新已被服务端截断，详情可能不完整。')}</p>;
+  if (status.type === 'activity') {
+    const title = {
+      reasoning: t('Thinking summary', '思考摘要'), command: t('Command output', '命令输出'),
+      file: t('File operation output', '文件操作输出'), mcp: t('Tool progress', '工具进度'),
+    }[status.category];
+    // Details stay collapsed by default; a short latest line gives useful
+    // progress while a tool is running without dumping its entire output.
+    const preview = status.text.trim().split(/\r?\n/).filter(Boolean).at(-1)?.slice(0, 140);
+    return <details className="codex-status-card codex-activity-card">
+      <summary>{title}<span className="codex-activity-preview">{preview}</span></summary>
+      <div className="codex-status-body">
+        <pre className="codex-activity-output" tabIndex={0} aria-label={title}>{status.text}</pre>
+        {status.clipped && <p className="codex-status-note">{t('Showing the latest output; earlier content was omitted.', '仅显示最近的输出，较早内容已省略。')}</p>}
+        {truncated}
+      </div>
+    </details>;
+  }
   if (status.type === 'plan') {
     const completed = status.steps.filter(step => step.status === 'completed').length;
     return <details className="codex-status-card">

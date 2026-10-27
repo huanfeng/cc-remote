@@ -31,7 +31,7 @@ export const useLayoutEffect = useEffect;
 export const useId = () => useRef('test-id').current;
 `;
 
-let createRenderer, SessionSettings, SessionStatus, ClaudeSettings, bundleURL;
+let createRenderer, SessionSettings, SessionStatus, ClaudeSettings, ComposerSend, PendingQueue, bundleURL;
 before(async () => {
   const { build } = await import('esbuild');
   const web = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,7 +39,7 @@ before(async () => {
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, 'state.mjs');
   await build({
-    stdin: { contents: "export { createRenderer } from 'react'; export { SessionSettings } from './SessionSettings'; export { SessionStatus } from './SessionStatus'; export { ClaudeSettings } from './ClaudeSettings';", resolveDir: join(web, 'src'), loader: 'ts' },
+    stdin: { contents: "export { createRenderer } from 'react'; export { SessionSettings } from './SessionSettings'; export { SessionStatus } from './SessionStatus'; export { ClaudeSettings } from './ClaudeSettings'; export { ComposerSend } from './ComposerSend'; export { PendingQueue } from './PendingQueue';", resolveDir: join(web, 'src'), loader: 'ts' },
     outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' },
     plugins: [{ name: 'effect-harness', setup(build) {
       build.onResolve({ filter: /^react$/ }, () => ({ path: 'hooks', namespace: 'test' }));
@@ -47,7 +47,7 @@ before(async () => {
     } }],
   });
   bundleURL = pathToFileURL(outfile).href;
-  ({ createRenderer, SessionSettings, SessionStatus, ClaudeSettings } = await import(bundleURL));
+  ({ createRenderer, SessionSettings, SessionStatus, ClaudeSettings, ComposerSend, PendingQueue } = await import(bundleURL));
   globalThis.document = { addEventListener() {}, removeEventListener() {}, activeElement: null, getElementById() {} };
   globalThis.window = { addEventListener() {}, removeEventListener() {}, confirm: () => true };
 });
@@ -68,7 +68,7 @@ test('details are read-only by default, disclose estimated times and keep token 
   assert.equal(nodes(tree).some(node => node.type === 'form'), false);
   assert.match(content(tree), /Estimated from history metadata/);
   assert.match(content(tree), /Current ·  reported-current/);
-  assert.match(content(tree), /Configured \/ next process ·  configured-old/);
+  assert.match(content(tree), /Configured \/ next turn ·  configured-old/);
   const rows = nodes(tree).filter(node => node.type === 'div');
   assert.match(content(rows.find(node => content(node).startsWith('Tokens '))), /15/);
   assert.match(content(rows.find(node => content(node).startsWith('Cost \(estimated\) '))), /Not provided/);
@@ -212,12 +212,21 @@ test('quick summary keeps model/effort switch, attach and details callback contr
   const props = { session, label: 'Running', anchor: { left: 0, bottom: 0 }, close() { calls.push('close'); }, quick(kind) { calls.push(kind); }, settings() { calls.push('details'); }, attach() { calls.push('attach'); } };
   const tree = renderer.render(SessionStatus, props);
   const switches = nodes(tree).filter(node => node.type === 'button' && content(node) === 'Switch');
-  switches[0].props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 1 }) } });
+  assert.equal(switches.length, 3);
   switches[1].props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 1 }) } });
+  switches[2].props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 1 }) } });
+  switches[0].props.onClick();
+  const expanded = renderer.render(SessionStatus, props);
+  const supplier = find(expanded, node => node.props?.showEmpty === true);
+  assert.equal(supplier.props.session, session);
+  assert.equal(supplier.props.app, 'codex');
   find(tree, node => node.type === 'button' && content(node).includes('Session details')).props.onClick();
   find(tree, node => node.type === 'button' && content(node).includes('Attach from a local terminal')).props.onClick();
   assert.deepEqual(calls, ['close', 'model', 'close', 'effort', 'close', 'details', 'close', 'attach']);
-  assert.doesNotMatch(content(tree), /Directory|Cost|Permission mode/);
+  assert.doesNotMatch(content(tree), /Directory|Cost/);
+  assert.match(content(tree), /Permission mode/);
+  assert.match(content(tree), /Next model configured-old/);
+  assert.match(content(tree), /Queued messages 1/);
 });
 
 
@@ -310,4 +319,73 @@ test('missing native settings API leaves Claude defaults usable', async () => {
   assert.match(content(tree), /Not found/);
   assert.equal(control(tree, 'CC Remote default model').props.value, 'sonnet');
   renderer.dispose();
+});
+
+
+test('send settings change shortcut without submitting and leave the pending-send action compact', () => {
+  const renderer = createRenderer(); const choices = [];
+  const props = { disabled: false, uploading: false, running: true, sendKey: 'enter', onSendKey: value => choices.push(value) };
+  let tree = renderer.render(ComposerSend, props);
+  const send = find(tree, node => node.type === 'button' && node.props.type === 'submit');
+  assert.equal(send.props.title, 'Send after the current task');
+  assert.equal(send.props.disabled, false);
+  find(tree, node => node.props?.['aria-label'] === 'Send settings').props.onClick();
+  tree = renderer.render(ComposerSend, props);
+  const options = nodes(tree).filter(node => node.props?.role === 'radio');
+  assert.equal(options[0].props['aria-checked'], true);
+  assert.equal(options[1].props.type, 'button');
+  options[1].props.onClick();
+  assert.deepEqual(choices, ['ctrl-enter']);
+  tree = renderer.render(ComposerSend, { ...props, sendKey: 'ctrl-enter', disabled: true });
+  assert.equal(nodes(tree).some(node => node.props?.role === 'dialog'), false);
+  assert.equal(find(tree, node => node.type === 'button' && node.props.type === 'submit').props.disabled, true);
+  renderer.dispose();
+});
+
+
+test('pending edits preserve item identity and attachments; failed save retains editable text', async () => {
+  const renderer = createRenderer(); const calls = [];
+  const item = { id: 'pending-2', text: 'Original', editable: true, canSendNow: true, payload: { attachments: [{ id: 'image-1', name: 'image.png' }] } };
+  let reject = true;
+  const props = { items: [item], token: 'test', perform: async (...args) => { calls.push(args); if (reject) throw new Error('Message already consumed'); } };
+  let tree = renderer.render(PendingQueue, props);
+  button(tree, 'Edit').props.onClick();
+  tree = renderer.render(PendingQueue, props);
+  find(tree, node => node.type === 'textarea').props.onChange({ target: { value: 'Changed' } });
+  tree = renderer.render(PendingQueue, props);
+  button(tree, 'Save').props.onClick(); await settle();
+  tree = renderer.render(PendingQueue, props);
+  assert.equal(calls[0][0], item); assert.equal(calls[0][1], 'edit'); assert.equal(calls[0][2], 'Changed');
+  assert.equal(find(tree, node => node.type === 'textarea').props.value, 'Changed');
+  assert.match(content(tree), /Message already consumed/);
+  reject = false; button(tree, 'Save').props.onClick(); await settle();
+  tree = renderer.render(PendingQueue, props);
+  assert.equal(nodes(tree).some(node => node.type === 'textarea'), false);
+  renderer.dispose();
+});
+
+test('pending send waits for confirmation and legacy delivered messages cannot be modified', async () => {
+  const renderer = createRenderer(); let accept; let count = 0;
+  const item = { id: 'pending-1', text: 'Next task', editable: true, canSendNow: true };
+  const props = { items: [item, { text: 'Already delivered' }], token: 'test', perform: () => { count++; return new Promise(resolve => { accept = resolve; }); } };
+  let tree = renderer.render(PendingQueue, props);
+  assert.equal(nodes(tree).filter(node => node.type === 'button' && content(node) === 'Edit').length, 1);
+  button(tree, 'Send now').props.onClick();
+  tree = renderer.render(PendingQueue, props);
+  assert.match(content(tree), /Next task/);
+  assert.equal(button(tree, 'Send now').props.disabled, true);
+  assert.equal(count, 1);
+  accept(); await settle(); renderer.dispose();
+});
+
+
+test('unknown delivery can be dismissed without permitting duplicate submission or edits', async () => {
+  const renderer = createRenderer(); const calls = [];
+  const item = { id: 'uncertain-1', text: 'Possibly delivered', delivery: 'unknown' };
+  const props = { items: [item], token: 'test', perform: async (...args) => { calls.push(args); } };
+  const tree = renderer.render(PendingQueue, props);
+  assert.match(content(tree), /will not be sent again automatically/);
+  assert.equal(nodes(tree).some(node => node.type === 'button' && ['Edit', 'Send now'].includes(content(node))), false);
+  find(tree, node => node.props?.['aria-label'] === 'Dismiss delivery notice').props.onClick(); await settle();
+  assert.equal(calls[0][0], item); assert.equal(calls[0][1], 'remove'); renderer.dispose();
 });

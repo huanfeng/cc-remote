@@ -20,3 +20,13 @@ test('recent projects: typing filters, a picked path shows them all', () => {
   assert.equal(matchProjects(list, '').length, 2);
   assert.equal(matchProjects(recentProjects([{ cwd: 'C:\\', updatedAt: '' }]), '')[0].path, 'C:\\');
 });
+
+test('recent projects share Claude and Codex paths and deduplicate across providers', () => {
+  const list = recentProjects([
+    { provider: 'claude', cwd: 'D:/projects/shared', updatedAt: '2026-10-25T00:00:00Z' },
+    { provider: 'codex', cwd: 'd:\\projects\\shared', updatedAt: '2026-10-27T00:00:00Z' },
+    { provider: 'claude', cwd: '/srv/claude', updatedAt: '2026-10-26T00:00:00Z' },
+    { provider: 'codex', cwd: '/srv/codex', updatedAt: '2026-10-24T00:00:00Z' },
+  ]);
+  assert.deepEqual(list.map(item => item.path), ['d:\\projects\\shared', '/srv/claude', '/srv/codex']);
+});

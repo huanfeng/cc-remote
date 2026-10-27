@@ -19,3 +19,6 @@
 .codex-usage-row{display:flex;gap:12px;justify-content:space-between;padding:3px 0}
 .codex-usage-row dt{color:var(--muted,#6c7566)}
 .codex-usage-row dd{margin:0;font-variant-numeric:tabular-nums}
+.codex-activity-card>summary{display:list-item;white-space:normal}
+.codex-activity-preview{display:inline-block;max-width:100%;vertical-align:bottom;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px;color:var(--muted,#6c7566);font-size:12px;font-weight:400}
+.codex-activity-output{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;padding:10px;background:#eff0e9;border-radius:7px;font:12px/1.6 ui-monospace,Consolas,monospace}

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 
-let parseCodexStatus, readCodexUsage, CodexStatusEvent, CodexSessionUsage;
+let parseCodexStatus, readCodexUsage, foldCodexActivityEvents, CodexStatusEvent, CodexSessionUsage;
 before(async () => {
   const { build } = await import('esbuild');
   const web = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -17,12 +17,60 @@ before(async () => {
     stdin: { contents: "export * from './codexStatus'; export * from './CodexStatusEvent';", resolveDir: join(web, 'src'), loader: 'ts' },
     outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', jsx: 'automatic', loader: { '.css': 'empty' }, logLevel: 'silent',
   });
-  ({ parseCodexStatus, readCodexUsage, CodexStatusEvent, CodexSessionUsage } = await import(pathToFileURL(outfile).href));
+  ({ parseCodexStatus, readCodexUsage, foldCodexActivityEvents, CodexStatusEvent, CodexSessionUsage } = await import(pathToFileURL(outfile).href));
 });
 
 const event = (payload, seq = 1, kind = 'status') => ({ seq, kind, payload, createdAt: '2026-10-25T00:00:00Z' });
 const usage = (totalTokens, extra = {}) => ({ tokenUsage: { total: { totalTokens, inputTokens: 12, outputTokens: 8 }, last: { totalTokens: 10 }, modelContextWindow: 200, ...extra } });
 const html = (Component, props) => renderToStaticMarkup(createElement(Component, props));
+
+const activity = (subtype, delta, seq, extra = {}) => event({ subtype, threadId: 'thread-a', turnId: 'turn-a', itemId: 'item-a', delta, ...extra }, seq);
+
+test('streamed activity folds per item and turn without mutating source or duplicating repeated pages', () => {
+  const first = activity('item/commandExecution/outputDelta', 'one\n', 1);
+  const events = [first, activity('item/commandExecution/outputDelta', 'two', 2), first,
+    activity('item/commandExecution/outputDelta', 'another tool', 3, { itemId: 'item-b' }),
+    activity('item/commandExecution/outputDelta', 'another turn', 4, { turnId: 'turn-b' }),
+  ];
+  const folded = foldCodexActivityEvents(events);
+  assert.equal(folded.length, 3);
+  assert.deepEqual(folded.map(e => parseCodexStatus(e).text), ['one\ntwo', 'another tool', 'another turn']);
+  assert.equal(first.payload.delta, 'one\n');
+  assert.equal(first.payload.subtype, 'item/commandExecution/outputDelta');
+});
+
+test('public reasoning preserves ordered summary parts; MCP keeps latest human-readable progress', () => {
+  const folded = foldCodexActivityEvents([
+    activity('item/reasoning/summaryTextDelta', 'First ', 1, { summaryIndex: 0 }),
+    activity('item/reasoning/summaryPartAdded', undefined, 2, { summaryIndex: 1 }),
+    activity('item/reasoning/summaryTextDelta', 'read code', 3, { summaryIndex: 0 }),
+    activity('item/reasoning/summaryTextDelta', 'Then test', 4, { summaryIndex: 1 }),
+    activity('item/mcpToolCall/progress', undefined, 5, { message: 'Connecting' }),
+    activity('item/mcpToolCall/progress', undefined, 6, { message: 'Searching' }),
+  ]);
+  assert.equal(folded.length, 2);
+  assert.equal(parseCodexStatus(folded[0]).text, 'First read code\n\nThen test');
+  assert.equal(parseCodexStatus(folded[1]).text, 'Searching');
+  const rendered = html(CodexStatusEvent, { event: folded[0] });
+  assert.match(rendered, /Thinking summary/);
+  assert.doesNotMatch(rendered, /<details[^>]*\bopen(?:=|>)/);
+});
+
+test('legacy output events remain readable, bound preview size and escape supplied markup', () => {
+  const folded = foldCodexActivityEvents([
+    event({ subtype: 'item/commandExecution/outputDelta', item_id: 'legacy', delta: 'x'.repeat(25000) + '<script>bad</script>' }, 1),
+    { ...activity('item/fileChange/outputDelta', 'file output', 2), truncated: true },
+    { ...event({ itemId: 'mcp', message: 'legacy progress' }, 3), text: 'item/mcpToolCall/progress' },
+  ]);
+  assert.equal(parseCodexStatus(folded[0]).text.length, 24000);
+  assert.equal(parseCodexStatus(folded[0]).clipped, true);
+  const rendered = html(CodexStatusEvent, { event: folded[0] });
+  assert.match(rendered, /earlier content was omitted/);
+  assert.match(rendered, /&lt;script&gt;/);
+  assert.doesNotMatch(rendered, /<script>/);
+  assert.match(html(CodexStatusEvent, { event: folded[1] }), /truncated/);
+  assert.equal(parseCodexStatus(folded[2]).text, 'legacy progress');
+});
 
 test('recognizes raw plan payloads without subtype and retains valid steps in mixed data', () => {
   const parsed = parseCodexStatus(event({ threadId: 't', turnId: 'r', explanation: 'First inspect the code', plan: [

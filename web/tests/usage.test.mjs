@@ -31,7 +31,7 @@ export function useEffect(effect, deps) {
 export const useLayoutEffect = useEffect;
 `;
 
-let createRenderer, UsageBar, useUsage;
+let createRenderer, UsageBar, useUsage, resetCountdown;
 before(async () => {
   const { build } = await import('esbuild');
   const web = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,7 +39,7 @@ before(async () => {
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, 'usage.mjs');
   await build({
-    stdin: { contents: "export { createRenderer } from 'react'; export { UsageBar, useUsage } from './Usage';", resolveDir: join(web, 'src'), loader: 'ts' },
+    stdin: { contents: "export { createRenderer } from 'react'; export { UsageBar, useUsage, resetCountdown } from './Usage';", resolveDir: join(web, 'src'), loader: 'ts' },
     outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', jsx: 'automatic', logLevel: 'silent',
     plugins: [{ name: 'effect-harness', setup(build) {
       build.onResolve({ filter: /^react$/ }, () => ({ path: 'hooks', namespace: 'test' }));
@@ -47,7 +47,7 @@ before(async () => {
       build.onLoad({ filter: /\.css$/ }, () => ({ contents: '', loader: 'js' }));
     } }],
   });
-  ({ createRenderer, UsageBar, useUsage } = await import(pathToFileURL(outfile).href));
+  ({ createRenderer, UsageBar, useUsage, resetCountdown } = await import(pathToFileURL(outfile).href));
 });
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -64,15 +64,16 @@ function environment() {
   return { visibility() { for (const fn of listeners) fn(); }, restore() { assert.equal(listeners.size, 0); for (const id of timers) clearInterval(id); globalThis.document = oldDocument; globalThis.window = oldWindow; } };
 }
 
-test('rings show used endpoints, severity, Claude ownership and the existing details action', async () => {
+test('compact text shows used endpoints, Claude ownership and the existing details action', async () => {
   const env = environment(), renderer = createRenderer(); let opened = 0;
   const props = { api: async () => reply(), open: () => opened++ };
   try {
     renderer.render(UsageBar, props); renderer.effects(); await settle();
     const tree = renderer.render(UsageBar, props);
     assert.deepEqual(byClass(tree, 'usage-value').map(node => node.props.children), ['0%', '100%']);
-    assert.deepEqual(byClass(tree, 'usage-ring-fill').map(node => node.props.strokeDasharray), ['0 100', '100 100']);
-    assert.equal(byClass(tree, 'usage-ring-fill')[1].props.className, 'usage-ring-fill high');
+    assert.equal(byClass(tree, 'usage-track').length, 0);
+    assert.equal(byClass(tree, 'usage-fill').length, 0);
+    assert.deepEqual(byClass(tree, 'usage-label').map(node => node.props.children), ['5h', '7d']);
     assert.match(tree.props['aria-label'], /Claude subscription usage/);
     assert.match(tree.props.title, /100% used/);
     assert.match(tree.props.title, /Updated/);
@@ -80,17 +81,22 @@ test('rings show used endpoints, severity, Claude ownership and the existing det
   } finally { renderer.dispose(); env.restore(); }
 });
 
-test('loading, unavailable, stale, errors and invalid windows stay neutral', async () => {
+test('loading and unsupported sessions are hidden; stale, errors and invalid windows stay neutral', async () => {
   const env = environment(), renderer = createRenderer();
   const neutral = tree => {
-    assert.equal(byClass(tree, 'usage-ring').length, 2);
-    assert.equal(byClass(tree, 'usage-ring-fill').length, 0);
+    assert.equal(byClass(tree, 'usage-track').length, 0);
+    assert.equal(byClass(tree, 'usage-fill').length, 0);
     assert.deepEqual(byClass(tree, 'usage-value').map(node => node.props.children), ['—', '—']);
   };
   try {
     const initial = renderer.render(UsageBar, { api: () => new Promise(() => {}), open() {} });
-    neutral(initial); assert.match(initial.props.title, /Loading/);
-    for (const data of [{ available: false, reason: 'api-key' }, { ...reply(), stale: true }, { ...reply(), error: 'rate-limited' }, reply(NaN, 101), { available: true }]) {
+    assert.equal(initial, null);
+    for (const reason of ['api-key', 'third-party', 'no-login']) {
+      const props = { api: async () => ({ available: false, reason }), open() {} };
+      renderer.render(UsageBar, props); renderer.effects(); await settle();
+      assert.equal(renderer.render(UsageBar, props), null);
+    }
+    for (const data of [{ ...reply(), stale: true }, { ...reply(), error: 'rate-limited' }, reply(NaN, 101), { available: true }]) {
       const props = { api: async () => data, open() {} };
       renderer.render(UsageBar, props); renderer.effects(); await settle();
       neutral(renderer.render(UsageBar, props));
@@ -105,7 +111,6 @@ test('partial readings keep the known window and include full reset and update t
     renderer.render(UsageBar, props); renderer.effects(); await settle();
     const tree = renderer.render(UsageBar, props);
     assert.deepEqual(byClass(tree, 'usage-value').map(node => node.props.children), ['78%', '—']);
-    assert.equal(byClass(tree, 'usage-ring-fill')[0].props.className, 'usage-ring-fill warn');
     assert.match(tree.props.title, /resets in/);
     assert.match(tree.props.title, /Weekly limit: unknown/);
     assert.match(tree.props.title, /Usage unknown/);
@@ -148,4 +153,45 @@ test('visible-page polling ignores out-of-order replies and marks rejected refre
     window.tick(); renderer.dispose(); requests[4].resolve(reply(90)); await settle();
     assert.equal(renderer.render(useUsage, api).usage.fiveHour.percent, 80);
   } finally { renderer.dispose(); env.restore(); }
+});
+
+test('provider and session changes hide cached quota and ignore late replies', async () => {
+  const env = environment(), renderer = createRenderer(), late = deferred();
+  const paths = [];
+  const api = path => { paths.push(path); return path.includes('provider=codex') ? Promise.resolve({ available: true, usage: { windows: [{ name: 'primary', percent: 12, windowMinutes: 180 }] } }) : late.promise; };
+  const scoped = props => useUsage(props.api, props.provider, props.sessionId);
+  const old = { api, provider: 'claude', sessionId: 'claude session' };
+  const next = { api, provider: 'codex', sessionId: 'codex session' };
+  try {
+    renderer.render(scoped, old); renderer.effects();
+    assert.equal(renderer.render(scoped, next), undefined);
+    late.resolve(reply(99)); await settle();
+    assert.equal(renderer.render(scoped, next), undefined);
+    renderer.effects(); await settle();
+    assert.equal(renderer.render(scoped, next).usage.windows[0].percent, 12);
+    assert.deepEqual(paths, ['/api/usage?sessionId=claude%20session', '/api/usage?sessionId=codex%20session&provider=codex']);
+    assert.equal(renderer.render(scoped, { ...next, sessionId: 'other' }), undefined);
+  } finally { renderer.dispose(); env.restore(); }
+});
+
+test('Codex quota shows native window durations, used percentages and Codex ownership', async () => {
+  const env = environment(), renderer = createRenderer();
+  const props = { api: async () => ({ available: true, usage: { windows: [{ name: 'primary', percent: 0, windowMinutes: 180 }, { name: 'secondary', percent: 45, windowMinutes: 1440 }] } }), provider: 'codex', open() {} };
+  try {
+    renderer.render(UsageBar, props); renderer.effects(); await settle();
+    const tree = renderer.render(UsageBar, props);
+    assert.deepEqual(byClass(tree, 'usage-label').map(node => node.props.children), ['3h', '1d']);
+    assert.deepEqual(byClass(tree, 'usage-value').map(node => node.props.children), ['0%', '45%']);
+    assert.match(tree.props.title, /Codex subscription usage/);
+    assert.doesNotMatch(tree.props.title, /Claude|5-hour|Weekly/);
+  } finally { renderer.dispose(); env.restore(); }
+});
+
+test('quota resets use compact countdowns and unknown values never become zero', () => {
+  const now = Date.parse('2026-10-27T00:00:00Z');
+  assert.equal(resetCountdown('2026-10-27T02:45:00Z', now), '2h 45m');
+  assert.equal(resetCountdown('2026-11-02T03:00:00Z', now), '6d 3h');
+  assert.equal(resetCountdown('2026-10-26T00:00:00Z', now), '0m');
+  assert.equal(resetCountdown(undefined, now), '—');
+  assert.equal(resetCountdown('invalid', now), '—');
 });

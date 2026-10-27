@@ -45,7 +45,7 @@ export function NewSessionProfile({ api, app, value, onChange, resuming = false 
   ]} onChange={onChange} /><small>{t('The selected configuration is kept for this session when defaults change.', '默认项改变后，此会话仍保留所选配置。')}</small>{catalog.found === false && <small>{t('CC-Switch database not found on this host. Set --cc-switch-db to its path.', '此宿主未找到 CC-Switch 数据库，可通过 --cc-switch-db 指定路径。')}</small>}{catalog.unavailable?.filter(p => p.app === app).map(p => <small key={p.id}>{p.name} · {p.reason}</small>)}</div>;
 }
 
-export function SessionProfile<T extends { id: string; profileId?: string; profileName?: string }>({ api, session, app, onUpdated, onBusy }: { api: Api; session: T; app: Provider; onUpdated: (session: T) => void; onBusy: (busy: boolean) => void }) {
+export function SessionProfile<T extends { id: string; profileId?: string; profileName?: string }>({ api, session, app, onUpdated, onBusy, showEmpty = false }: { api: Api; session: T; app: Provider; onUpdated: (session: T) => void; onBusy: (busy: boolean) => void; showEmpty?: boolean }) {
   const { catalog, error: catalogError, retry, unsupported } = useProfiles(api);
   const [selected, setSelected] = useState(session.profileId || '');
   const [saving, setSaving] = useState(false);
@@ -67,7 +67,8 @@ export function SessionProfile<T extends { id: string; profileId?: string; profi
   }
   if (catalogError) return <CatalogError error={catalogError} retry={retry} />;
   if (unsupported || catalog && !catalog.capabilities?.switchSupplier) return <p role="status">{t("Upgrade this host to switch CC-Switch suppliers.", "请升级此宿主以切换 CC-Switch 供应商。")}</p>;
-  if (!catalog || (!profilesFor(catalog, app).length && !session.profileId)) return null;
+  if (!catalog) return null;
+  if (!profilesFor(catalog, app).length && !session.profileId) return showEmpty ? <p role="status">{t('No supplier configurations are available for this provider.', '此平台没有可用的供应商配置。')}</p> : null;
   const available = profilesFor(catalog, app);
   const current = available.find(profile => profile.id === session.profileId);
   const options = [{ value: '', label: defaultLabel(catalog, app) }, { value: '@native', label: t('Native host configuration', '宿主原生配置') }, ...available.map(profile => ({ value: profile.id, label: profile.name }))];

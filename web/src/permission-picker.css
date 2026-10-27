@@ -1,0 +1,6 @@
+.permission-picker{position:relative;min-width:0}
+.permission-confirm{z-index:1100;padding:14px;box-sizing:border-box;white-space:normal}
+.permission-confirm strong{display:block;font-size:14px}
+.permission-confirm p{margin:8px 0;font-size:13px;line-height:1.45}
+.permission-confirm small{display:block;color:var(--muted);line-height:1.4}
+.permission-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}

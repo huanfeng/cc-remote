@@ -129,8 +129,9 @@ img.host-swatch{display:block;background:none}
 .topbar-more{position:relative;flex-shrink:0}
 .topbar-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:200px;display:flex;flex-direction:column}
 .topbar-menu button{display:flex;align-items:center;gap:10px;background:none;color:inherit;padding:11px 12px;border-radius:7px;font-size:13px;text-align:left;white-space:nowrap}
+.topbar-menu button.mobile{display:none}
 .topbar-menu button:hover,.topbar-menu button.active{background:#edf1e4}
-@media(max-width:760px){.topbar .topbar-extra,.topbar .desktop-badge{display:none}.header-sub .mobile-badge{display:inline-block;flex-shrink:0;font-size:9px;padding:0 7px;line-height:1.5}.topbar-more.mobile{display:block}}
+@media(max-width:760px){.topbar .topbar-extra,.topbar .desktop-badge{display:none}.header-sub .mobile-badge{display:inline-block;flex-shrink:0;font-size:9px;padding:0 7px;line-height:1.5}.topbar-more.mobile{display:block}.topbar-menu button.mobile{display:flex}}
 /* Phone top bar: title and actions on the first row; the status and chips get the
  * whole second row and scroll sideways instead of being cut short. */
 @media(max-width:760px){
@@ -159,6 +160,11 @@ img.host-swatch{display:block;background:none}
 .session-status-meter i{display:block;height:100%;background:#8aa66f}.session-status-meter i.warn{background:#d0a646}.session-status-meter i.danger{background:#c4624f}
 .session-status-settings{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:10px;padding:8px;border-radius:8px;background:#f1f2ea;color:inherit;font-size:12px}
 .session-status-settings:hover{background:#e6eadc}
+.session-status-supplier{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.session-status-supplier h3{font-size:12px;margin:0 0 6px}
+.session-status-supplier p{line-height:1.5;margin:6px 0}
+.session-status-supplier .select-trigger{width:100%}
+.session-status-supplier .profile-confirm{padding:8px;margin-top:8px;border:1px solid var(--line);border-radius:8px}
 .recap-label{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .recap-label .icon-button{background:none;color:var(--muted);padding:2px;border-radius:5px;display:inline-grid;place-items:center}
 .recap-label .icon-button:hover{background:#e6eadc}

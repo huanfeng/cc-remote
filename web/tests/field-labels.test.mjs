@@ -11,7 +11,7 @@ test('composite selectors are never wrapped in native labels', () => {
   for (const name of readdirSync(root).filter(name => name.endsWith('.tsx'))) {
     const file = ts.createSourceFile(name, readFileSync(new URL(name, root), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     function visit(node) {
-      if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && ['Select', 'ModelPicker'].includes(node.tagName.getText(file))) {
+      if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) && ['Select', 'ModelPicker', 'EffortPicker', 'PermissionPicker'].includes(node.tagName.getText(file))) {
         controls++;
         for (let parent = node.parent; parent; parent = parent.parent) {
           assert.ok(!ts.isJsxElement(parent) || parent.openingElement.tagName.getText(file) !== 'label', `${name}: selector nested inside label`);

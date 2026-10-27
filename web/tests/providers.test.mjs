@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-let P, M, S;
+let P, M, S, Status, Permission;
 before(async () => {
   const { build } = await import('esbuild');
   const web = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -14,11 +14,11 @@ before(async () => {
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, 'providers.mjs');
   await build({
-    stdin: { contents: "export * as P from './providers'; export * as M from './ModelPicker'; export * as S from './SessionSettings';", resolveDir: join(web, 'src'), loader: 'ts' },
+    stdin: { contents: "export * as P from './providers'; export * as M from './ModelPicker'; export * as S from './SessionSettings'; export { SessionStatus as Status } from './SessionStatus'; export * as Permission from './PermissionPicker';", resolveDir: join(web, 'src'), loader: 'ts' },
     outfile, bundle: true, format: 'esm', platform: 'node', packages: 'external', jsx: 'automatic',
     loader: { '.css': 'empty' }, define: { 'import.meta.env': '{}' }, logLevel: 'silent',
   });
-  ({ P, M, S } = await import(pathToFileURL(outfile).href));
+  ({ P, M, S, Status, Permission } = await import(pathToFileURL(outfile).href));
 });
 
 test('legacy sessions remain Claude; native identities separate identical thread IDs', () => {
@@ -76,7 +76,7 @@ test('an older failed model refresh cannot evict the newer provider cache', asyn
 
 test('permissions and effort choices stay within each provider contract', () => {
   assert.deepEqual(M.permissionOptions('Inherit', '', 'codex').map(x => x.value), ['', 'read-only', 'workspace-write', 'danger-full-access']);
-  assert.deepEqual(M.effortOptions('Inherit', 'codex').map(x => x.value), ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+  assert.deepEqual(M.effortOptions('Inherit', 'codex').map(x => x.value), ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
   assert.equal(M.effortOptions('Inherit').at(-1).value, 'max');
   assert.ok(M.permissionOptions('Inherit').some(x => x.value === 'acceptEdits'));
   assert.equal(M.dangerousMode('danger-full-access', 'codex'), true);
@@ -84,16 +84,28 @@ test('permissions and effort choices stay within each provider contract', () => 
   assert.equal(M.dangerousMode('bypassPermissions', 'codex'), false);
 });
 
-test('enabling Codex full access requires confirmation, retaining it does not', () => {
-  const previousWindow = globalThis.window;
-  let confirmations = 0;
-  globalThis.window = { confirm: message => { confirmations++; assert.match(message, /Codex/); return false; } };
-  try {
-    assert.equal(M.confirmMode('danger-full-access', '', 'codex'), false);
-    assert.equal(M.confirmMode('danger-full-access', 'danger-full-access', 'codex'), true);
-    assert.equal(M.confirmMode('workspace-write', '', 'codex'), true);
-    assert.equal(confirmations, 1);
-  } finally { globalThis.window = previousWindow; }
+test('Codex effort choices follow the selected model catalog', () => {
+  const list = { models: [{ id: 'native', isDefault: true, efforts: ['low', 'high'] }, { id: 'other', efforts: ['medium', 'ultra'] }] };
+  assert.deepEqual(M.modelEfforts(list, '', 'codex'), ['low', 'high']);
+  assert.deepEqual(M.modelEfforts(list, 'other', 'codex'), ['medium', 'ultra']);
+  assert.deepEqual(M.modelEfforts(list, 'other', 'claude'), P.providerEfforts('claude'));
+});
+
+test('running Codex summary shows reported settings and retains model and effort actions', () => {
+  const html = renderToStaticMarkup(createElement(Status, { anchor: { left: 0, bottom: 0 }, label: 'Running', close() {}, quick() {}, settings() {}, session: { id: 'codex', provider: 'codex', model: 'next-model', effort: 'high', live: { model: 'active-model', modelId: 'active-model', effort: 'medium', permissionMode: 'danger-full-access', contextPercent: 25, contextTokens: 1000, contextSize: 4000 } } }));
+  assert.match(html, /active-model/);
+  assert.match(html, /medium/);
+  assert.match(html, /Full Access/);
+  assert.match(html, /Next model<\/dt><dd>next-model/);
+});
+
+test('permission confirmation follows selected or inherited provider mode', () => {
+  assert.equal(Permission.permissionNeedsConfirmation('danger-full-access', '', 'codex'), true);
+  assert.equal(Permission.permissionNeedsConfirmation('workspace-write', 'danger-full-access', 'codex'), false);
+  assert.equal(Permission.permissionNeedsConfirmation('', 'danger-full-access', 'codex'), true);
+  assert.equal(Permission.permissionNeedsConfirmation('bypassPermissions', '', 'claude'), true);
+  assert.equal(M.permissionLabel('bypassPermissions', 'claude'), 'Bypass approvals');
+  assert.equal(M.permissionLabel('danger-full-access', 'codex'), 'Full Access');
 });
 
 test('model caches isolate provider, session and host API; refresh preserves query parameters', async () => {
@@ -120,14 +132,14 @@ test('failed model discovery can retry; manual model IDs remain independent', as
   assert.match(html, /value="custom-model"/);
 });
 
-test('Codex session settings and chips identify the thread and inherit Codex configuration', () => {
+test('Codex session settings and summary identify the thread and inherit Codex configuration', () => {
   const session = { id: 'remote', provider: 'codex', title: 'Task', cwd: '/project', mode: 'managed', claudeSessionId: 'thread-id' };
   const html = renderToStaticMarkup(createElement(S.SessionSettings, { session, api: async () => ({}), close() {}, onUpdated() {}, onDelete() {} }));
   assert.match(html, /Codex thread ID/);
   assert.match(html, /thread-id/);
   assert.match(html, /Codex settings/);
   assert.doesNotMatch(html, /Claude|acceptEdits|bypassPermissions/);
-  const chips = renderToStaticMarkup(createElement(S.SessionChips, { session, open() {} }));
+  const chips = renderToStaticMarkup(createElement(Status, { session, anchor: { left: 0, bottom: 0 }, label: 'Ready', close() {}, quick() {}, settings() {} }));
   assert.match(chips, /Codex settings/);
   assert.doesNotMatch(chips, /Claude/);
 });

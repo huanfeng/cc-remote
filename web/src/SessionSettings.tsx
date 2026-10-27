@@ -1,10 +1,11 @@
+import { EffortPicker } from './EffortPicker';
 import { providerName, providerOf, type Provider } from './providers';
 import { readCodexUsage, type CodexEvent } from './codexStatus';
 import { CodexSessionUsage } from './CodexStatusEvent';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ClockIcon, CloseIcon, GaugeIcon, ShieldIcon, SparkIcon } from './icons';
-import { ModelPicker, confirmMode, dangerousMode, effortOptions, permissionOptions, type Api } from './ModelPicker';
-import { Select } from './Select';
+import { CloseIcon } from './icons';
+import { ModelPicker, dangerousMode, type Api } from './ModelPicker';
+import { PermissionPicker } from './PermissionPicker';
 import { SessionProfile } from './SupplierProfile';
 import { duration, money, number, type Stats } from './StatusPanel';
 import { locale, t } from './i18n';
@@ -12,12 +13,12 @@ import { copyText } from './clipboard';
 import './session-details.css';
 
 export type SessionInfo = { id: string; provider?: Provider; profileId?: string; profileName?: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; lastConversationAt?: string; conversationTimeEstimated?: boolean; queued?: { text: string; payload?: any }[]; activeTasks?: number; readOnly?: boolean; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
-// What Claude Code reports to a terminal session's status line.
+// Runtime settings and context reported by the provider CLI.
 export type LiveStatus = { model?: string; modelId?: string; effort?: string; costUSD: number; durationMs: number; contextTokens: number; contextSize: number; contextPercent: number; activity?: string; suggestion?: string; permissionMode?: string };
 
 export type Defaults = { provider?: Provider; permissionMode: string; model: string; effort: string };
 
-const permTone = (mode: string) => ['bypassPermissions', 'danger-full-access'].includes(mode) ? ' danger' : dangerousMode(mode) ? ' warn' : '';
+
 
 /** Closes a dialog on Escape; the latest callback is used without re-subscribing. */
 function useEscape(close: () => void) {
@@ -27,42 +28,6 @@ function useEscape(close: () => void) {
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
   }, []);
-}
-
-/** How full the context window is, as a ring that fills clockwise from the top. */
-export function ContextRing({ percent, size = 12 }: { percent: number; size?: number }) {
-  const r = 5, around = 2 * Math.PI * r;
-  const filled = Math.max(0, Math.min(100, percent)) / 100 * around;
-  return <svg className="context-ring" viewBox="0 0 14 14" width={size} height={size} aria-hidden="true" focusable="false">
-    <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeOpacity=".22" strokeWidth="2.2" />
-    {filled > 0 && <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeDasharray={`${filled} ${around}`} transform="rotate(-90 7 7)" />}
-  </svg>;
-}
-
-/** Reported terminal values or configured defaults; each chip opens the quick summary. */
-export function SessionChips({ session, defaults, open }: { session: SessionInfo; defaults?: Defaults; open: (anchor: DOMRect) => void }) {
-  const show = (event: { currentTarget: Element }) => open(event.currentTarget.getBoundingClientRect());
-  const button = (className: string, title: string, text: ReactNode, icon?: ReactNode) => <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={show}>{icon}<span>{text}</span></button>;
-  const chip = (label: string, value: string | undefined, inherited: string | undefined, icon: ReactNode, tone = '') => {
-    const shown = value || t(`Default(${inherited || `${providerName(providerOf(session))} settings`})`, `默认(${inherited || `${providerName(providerOf(session))} 配置`})`);
-    return button(`chip${value ? '' : ' inherited'}${tone}`, t(`Configured ${label}: ${shown}`, `配置${label}：${shown}`), shown, icon);
-  };
-  const live = session.mode === 'terminal' ? session.live : undefined;
-  if (live?.model) {
-    const effort = live.effort;
-    const pct = Math.round(live.contextPercent);
-    return <div className="session-chips">
-      {button('chip', t(`Model: ${live.model}${live.modelId ? ` (${live.modelId})` : ''}`, `模型：${live.model}${live.modelId ? `（${live.modelId}）` : ''}`), live.model, <SparkIcon size={11} />)}
-      {effort && button('chip', t(`Effort: ${effort}`, `推理强度：${effort}`), effort, <GaugeIcon size={11} />)}
-      {live.contextSize > 0 && button(`chip context-chip${pct >= 80 ? ' danger' : pct >= 60 ? ' warn' : ''}`, t(`Context: ${pct}% · ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`, `上下文：${pct}% · ${live.contextTokens.toLocaleString(locale)} / ${live.contextSize.toLocaleString(locale)} tokens`), `${pct}%`, <ContextRing percent={pct} />)}
-      {live.durationMs > 0 && button('chip inherited', t('Session duration', '会话时长'), duration(live.durationMs / 1000), <ClockIcon size={11} />)}
-      {live.costUSD > 0 && button('chip inherited', t('Cost of this run (estimated at API prices)', '本次运行的费用（按 API 价格估算）'), `$${live.costUSD.toFixed(2)}`)}
-    </div>;
-  }
-  const perm = session.permissionMode || defaults?.permissionMode || '';
-  return <div className="session-chips">
-    {chip(t('Model', '模型'), session.model, defaults?.model, <SparkIcon size={11} />)}{chip(t('Effort', '推理强度'), session.effort, defaults?.effort, <GaugeIcon size={11} />)}{chip(t('Permission mode', '权限模式'), session.permissionMode, defaults?.permissionMode, <ShieldIcon size={11} />, permTone(perm))}
-  </div>;
 }
 
 export function SessionSettings<T extends SessionInfo>({ api, session, defaults, events, close, onUpdated, onDelete, onImport }: { api: Api; session: T; defaults?: Defaults; events?: readonly CodexEvent[]; close: () => void; onUpdated: (session: T) => void; onDelete: () => void; onImport?: () => void }) {
@@ -103,11 +68,11 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
   }, [api, session.id, nativeHistory]);
   const inherit = (value?: string) => t(`Use default (${value || `${providerName(provider)} native configuration`})`, `跟随默认（${value || `${providerName(provider)} 原生配置`}）`);
   async function save() {
-    if (saving || !confirmMode(draft.permissionMode, saved.permissionMode, provider)) return;
+    if (saving) return;
     setSaving(true); setError('');
     try {
       onUpdated(await api<T>(`/api/sessions/${encodeURIComponent(session.id)}`, { method: 'PATCH', body: JSON.stringify({ ...draft, model: draft.model.trim(), confirmDangerous: dangerousMode(draft.permissionMode, provider) }) }));
-      setEditing(false); setNotice(t('Saved. Configuration applies on the next send after current work and background tasks finish.', '已保存，配置在当前工作及后台任务结束后，下次发送时生效。'));
+      setEditing(false); setNotice(provider === 'codex' ? t('Saved. Model and effort apply next turn; permission changes apply after a safe process restart.', '已保存。模型和推理强度在下一轮生效；权限变更在进程可安全重启时生效。') : t('Saved. Configuration applies on the next send after current work and background tasks finish.', '已保存，配置在当前工作及后台任务结束后，下次发送时生效。'));
     } catch (err) { setError((err as Error).message); } finally { setSaving(false); }
   }
   const unknown = t('Not provided', '未提供');
@@ -122,7 +87,7 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
     const override = session[key], fallback = nativeHistory ? undefined : defaults?.[key];
     const source = override ? t('Session override', '本会话覆盖') : fallback ? t('CC Remote default', 'CC Remote 默认') : t(`Provider native configuration (${providerName(provider)} settings)`, `提供方原生配置（${providerName(provider)} 配置）`);
     if (nativeHistory) return <div key={key}><dt>{label}</dt><dd>{override || unknown}<small>{t('Native history metadata', '原生历史元数据')}</small></dd></div>;
-    return <div className="session-configuration-row" key={key}><dt>{label}</dt><dd>{reportedConfiguration && <span>{t('Current · ', '当前 · ')}{reported || t('Not reported', '未报告')}{reported && <small>{t('CLI reported', 'CLI 实际报告')}</small>}</span>}<span>{t('Configured / next process · ', '配置 / 下次启动 · ')}{override || fallback || t('Inherit native configuration (value unknown)', '继承原生配置（值未知）')}<small>{source}</small></span></dd></div>;
+    return <div className="session-configuration-row" key={key}><dt>{label}</dt><dd>{reportedConfiguration && <span>{t('Current · ', '当前 · ')}{reported || t('Not reported', '未报告')}{reported && <small>{t('CLI reported', 'CLI 实际报告')}</small>}</span>}<span>{provider === 'codex' && key !== 'permissionMode' ? t('Configured / next turn · ', '配置 / 下一轮 · ') : t('Configured / next process · ', '配置 / 下次启动 · ')}{override || fallback || t('Inherit native configuration (value unknown)', '继承原生配置（值未知）')}<small>{source}</small></span></dd></div>;
   };
   const tokenFields = [currentStats?.inputTokens, currentStats?.outputTokens, currentStats?.cacheReadTokens, currentStats?.cacheCreationTokens];
   const reportedTokens = provider === 'codex' ? readCodexUsage(events || [])?.total?.totalTokens : undefined;
@@ -164,11 +129,11 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
       <dl className="session-detail-list">{configuration('model', t('Model', '模型'), live?.model || live?.modelId)}{configuration('effort', t('Effort', '推理强度'), live?.effort)}{configuration('permissionMode', t('Permission / sandbox', '权限 / 沙箱'), live?.permissionMode)}</dl>
       {!nativeHistory && !editing && <button type="button" className="secondary" disabled={profileBusy} onClick={() => { setDraft(saved); setEditing(true); setNotice(''); }}>{t('Edit session overrides', '修改本会话覆盖')}</button>}
       {editing && <form onSubmit={event => { event.preventDefault(); if (changed) void save(); }}>
-        <p>{t('Changes apply on the next send after current work and background tasks finish. Empty fields inherit defaults; current execution values remain as reported.', '修改在当前工作及后台任务结束后，下次发送时生效；留空继承默认值，当前执行值仍以实际报告为准。')}</p>
+        <p>{provider === 'codex' ? t('Model and effort changes apply next turn; permission changes wait for a safe process restart. Empty fields inherit defaults.', '模型与推理强度修改在下一轮生效；权限修改等待进程可安全重启。留空继承默认值。') : t('Changes apply on the next send after current work and background tasks finish. Empty fields inherit defaults; current execution values remain as reported.', '修改在当前工作及后台任务结束后，下次发送时生效；留空继承默认值，当前执行值仍以实际报告为准。')}</p>
         <fieldset disabled={saving}>
           <div className="field">{t('Model', '模型')}<ModelPicker api={api} provider={provider} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></div>
-          <div className="field">{t('Effort', '推理强度')}<Select label={t('Session effort', '会话推理强度')} value={draft.effort} options={effortOptions(inherit(defaults?.effort), provider)} onChange={effort => setDraft(old => ({ ...old, effort }))} /></div>
-          <div className="field">{t('Permission mode', '权限模式')}<Select label={t('Session permission mode', '会话权限模式')} value={draft.permissionMode} options={permissionOptions(inherit(defaults?.permissionMode), draft.permissionMode, provider)} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></div>
+          <div className="field">{t('Effort', '推理强度')}<EffortPicker api={api} provider={provider} model={draft.model || defaults?.model || ''} sessionId={session.id} inheritLabel={inherit(defaults?.effort)} label={t('Session effort', '会话推理强度')} value={draft.effort} onChange={effort => setDraft(old => ({ ...old, effort }))} /></div>
+          <div className="field">{t('Permission mode', '权限模式')}<PermissionPicker provider={provider} label={t('Session permission mode', '会话权限模式')} value={draft.permissionMode} inheritLabel={inherit(defaults?.permissionMode)} inheritMode={defaults?.permissionMode} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></div>
           <div className="modal-actions"><button type="button" className="secondary" onClick={() => setDraft({ permissionMode: '', model: '', effort: '' })}>{t('Restore inheritance', '恢复继承')}</button><button type="button" className="secondary" onClick={() => { if (mayLeave()) { setDraft(saved); setEditing(false); } }}>{t('Cancel', '取消')}</button><button className="primary" disabled={!changed}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button></div>
         </fieldset>
       </form>}

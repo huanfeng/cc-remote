@@ -7,7 +7,7 @@ export const providerOf = (value?: { provider?: Provider }): Provider => value?.
 export const providerName = (provider: Provider) => provider === 'codex' ? 'Codex' : 'Claude';
 export const providerQuery = (path: string, provider: Provider) => provider === 'codex' ? `${path}${path.includes('?') ? '&' : '?'}provider=codex` : path;
 export const nativeListPath = (provider: Provider) => providerQuery('/api/native/sessions', provider);
-export const providerEfforts = (provider: Provider) => provider === 'codex' ? ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high', 'xhigh', 'max'];
+export const providerEfforts = (provider: Provider) => provider === 'codex' ? ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] : ['low', 'medium', 'high', 'xhigh', 'max'];
 export const codexPermissions = ['read-only', 'workspace-write', 'danger-full-access'];
 export const dangerousPermission = (mode: string, provider: Provider = 'claude') => provider === 'codex' ? mode === 'danger-full-access' : ['bypassPermissions', 'dontAsk', 'auto'].includes(mode);
 export const sessionKey = (id: string, native: boolean, provider: Provider = 'claude') => `${native ? provider === 'codex' ? 'native-codex' : 'native' : 'session'}:${id}`;

@@ -5,8 +5,14 @@ import { locale, t } from './i18n';
 import { codexPermissions, dangerousPermission, providerEfforts, providerName, providerQuery, type Provider } from './providers';
 
 export type Api = <T>(path: string, options?: RequestInit) => Promise<T>;
-export type ModelOption = { id: string; label: string; source: string; description?: string };
+export type ModelOption = { id: string; label: string; source: string; description?: string; efforts?: string[]; defaultEffort?: string; isDefault?: boolean };
 export type ModelList = { models: ModelOption[]; fetchedAt: string; restricted: boolean; warnings?: string[] };
+
+/** Prefer the selected model's advertised capabilities over a generic list. */
+export function modelEfforts(list: ModelList | undefined, model: string, provider: Provider) {
+  const selected = list?.models.find(item => item.id === model) || (!model ? list?.models.find(item => item.isDefault) : undefined);
+  return provider === 'codex' && selected?.efforts?.length ? selected.efforts : providerEfforts(provider);
+}
 
 export const PERMISSION_MODES: [string, string][] = [
   ['default', t('default · ask for each approval', 'default · 每次审批')],
@@ -25,20 +31,16 @@ export const MODEL_GROUPS: [string, string[]][] = [[t('Aliases', '别名'), ['al
 
 /** Options for the custom Select; the empty value means "inherit". Unknown saved modes stay selectable. */
 export function permissionOptions(inheritLabel: string, current = '', provider: Provider = 'claude'): SelectOption[] {
-  if (provider === 'codex') return [{ value: '', label: inheritLabel }, ...codexPermissions.map(value => ({ value, label: ({ 'read-only': t('Read only', '只读'), 'workspace-write': t('Workspace write', '工作区可写'), 'danger-full-access': t('Full access', '完全访问') } as Record<string, string>)[value], ...(dangerousMode(value, provider) ? { tag: t('Dangerous', '危险'), tone: 'danger' as const } : {}) }))];
-  const options: SelectOption[] = [{ value: '', label: inheritLabel }, ...PERMISSION_MODES.map(([mode, text]) => ({ value: mode, label: mode, description: text.split(' · ')[1],
+  if (provider === 'codex') return [{ value: '', label: inheritLabel }, ...codexPermissions.map(value => ({ value, label: ({ 'read-only': t('Read only', '只读'), 'workspace-write': t('Workspace write', '工作区可写'), 'danger-full-access': t('Full Access', '完全访问') } as Record<string, string>)[value], ...(dangerousMode(value, provider) ? { tag: t('Dangerous', '危险'), tone: 'danger' as const } : {}) }))];
+  const options: SelectOption[] = [{ value: '', label: inheritLabel }, ...PERMISSION_MODES.map(([mode, text]) => ({ value: mode, label: ({ default: t('Default', '默认审批'), plan: t('Plan', '规划模式'), acceptEdits: t('Accept edits', '自动接受编辑'), dontAsk: t('Do not ask', '不再询问'), auto: t('Automatic', '自动审批'), bypassPermissions: t('Bypass approvals', '跳过审批') } as Record<string, string>)[mode], description: text.split(' · ')[1],
     ...(mode === 'bypassPermissions' ? { tag: t('Dangerous', '危险'), tone: 'danger' as const } : dangerousMode(mode) ? { tag: t('Caution', '谨慎'), tone: 'warn' as const } : {}) }))];
   if (current && !options.some(option => option.value === current)) options.push({ value: current, label: current, description: t('Existing native setting', '现有原生配置') });
   return options;
 }
-export const effortOptions = (inheritLabel: string, provider: Provider = 'claude'): SelectOption[] => [{ value: '', label: inheritLabel }, ...providerEfforts(provider).map(x => ({ value: x, label: x, description: EFFORT_NOTES[x] }))];
-
-/** Asks before newly enabling a mode that skips or auto-answers approvals. */
-export function confirmMode(mode: string, previous: string, provider: Provider = 'claude') {
-  if (!dangerousMode(mode, provider) || mode === previous) return true;
-  const detail = provider === 'codex' ? t('Codex can access files and run commands without sandbox restrictions.', 'Codex 可不受沙箱限制访问文件和执行命令。') : mode === 'bypassPermissions' ? t('Claude will no longer ask for any tool approval and can edit files and run commands directly.', 'Claude 将不再请求任何工具审批，可直接修改文件、执行命令。') : mode === 'auto' ? t('Claude will decide on and approve some tool calls by itself.', 'Claude 将自动判断并批准部分工具调用。') : t('Tools not allowed in advance are denied without asking.', '未预先允许的工具会被直接拒绝，不再询问。');
-  return window.confirm(t(`Enable ${mode}?\n${detail}\nUse it only in trusted projects.`, `确认启用 ${mode}？\n${detail}\n仅在可信项目中使用。`));
+export function permissionLabel(mode: string, provider: Provider = 'claude') {
+  return permissionOptions('', mode, provider).find(option => option.value === mode)?.label || mode;
 }
+export const effortOptions = (inheritLabel: string, provider: Provider = 'claude'): SelectOption[] => [{ value: '', label: inheritLabel }, ...providerEfforts(provider).map(x => ({ value: x, label: x, description: EFFORT_NOTES[x] }))];
 
 const caches = new WeakMap<Api, Map<string, Promise<ModelList>>>();
 
