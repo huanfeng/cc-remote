@@ -171,6 +171,11 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	launch := split.launch || len(split.claude) > 0
 	var target remoteSession
 	switch {
+	case len(split.words) >= 1 && split.words[0] == "claude":
+		// Plain Claude Code in this terminal with a supplier applied; the words
+		// after "claude" are its arguments (flags must come after a "--").
+		return RunClaudeDirect(split.words[1:], *profile, *dataDir, ensureHost)
+
 	case resume.set:
 		target, err = api.resume(resume, *title, options)
 	case *create || launch || *profile != "":
@@ -512,9 +517,10 @@ func (c *client) create(title string, options map[string]any) (remoteSession, er
 }
 
 type supplierProfile struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	App  string `json:"app"`
+	ID   string            `json:"id"`
+	Name string            `json:"name"`
+	App  string            `json:"app"`
+	Env  map[string]string `json:"env,omitempty"`
 }
 
 // Creation follows the CC-Switch default; resume keeps its saved supplier.

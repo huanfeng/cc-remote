@@ -166,7 +166,36 @@ func run() error {
 			return terminal.Attach(os.Args[2:], config.DefaultDataDir())
 		case "ccr":
 			return runCCR(os.Args[2:])
+		case "claude":
+			return terminal.RunClaudeDirect(os.Args[2:], "", config.DefaultDataDir(), channel.EnsureHost)
 		}
+	}
+	if len(os.Args) <= 1 {
+		// The host runs as a service or in another terminal; a bare command
+		// should orient, not silently occupy the port.
+		fs, _ := hostFlags()
+		fs.SetOutput(os.Stdout)
+		fmt.Fprint(os.Stdout, i18n.T(`cc-remote runs the host; subcommands do the rest:
+
+  cc-remote service install   register and start the background host
+  ccr                         use Claude Code here; "ccr claude" runs it plain
+  cc-remote claude            native Claude Code with a supplier applied
+  cc-remote attach            connect this terminal to a held session
+  cc-remote update            update to the latest release
+
+Run with --listen and flags to hold the host in this terminal.
+`, `cc-remote 运行宿主；其余功能走子命令：
+
+  cc-remote service install   注册并启动后台宿主服务
+  ccr                         在终端使用 Claude Code；"ccr claude" 直连原生
+  cc-remote claude            直连原生 Claude Code（应用供应商配置）
+  cc-remote attach            把当前终端接入宿主持有的会话
+  cc-remote update            更新到最新版本
+
+带 --listen 等参数运行即可在当前终端持有宿主。
+`))
+		fs.Usage()
+		return nil
 	}
 	for i, arg := range os.Args[1:] {
 		if arg == "--" {
