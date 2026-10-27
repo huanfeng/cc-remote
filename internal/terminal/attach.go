@@ -44,6 +44,8 @@ type remoteSession struct {
 	Attached int `json:"attached"`
 	// UpdatedAt is the last activity (RFC 3339).
 	UpdatedAt string `json:"updatedAt"`
+	// ProfileID is the saved supplier configuration, offered on a resume.
+	ProfileID string `json:"profileId,omitempty"`
 }
 
 // Attach is `cc-remote attach`: it connects this terminal to a terminal
@@ -73,6 +75,14 @@ func Attach(args []string, defaultDataDir string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// An offline terminal session relaunches Claude Code on attach; its saved
+	// supplier may no longer work (renamed, deleted, logged out), so offer the
+	// list with the saved configuration as the default.
+	if target.ID != "" && target.Status != "running" && target.Status != "waiting" {
+		if err = api.offerResumeProfile(&target); err != nil {
+			return err
+		}
 	}
 	if !confirmAttached(target) {
 		return errors.New(i18n.T("not attached", "未接入"))
@@ -174,6 +184,14 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	}
 	if err != nil {
 		return err
+	}
+	// An offline terminal session relaunches Claude Code on attach; its saved
+	// supplier may no longer work (renamed, deleted, logged out), so offer the
+	// list with the saved configuration as the default.
+	if !resume.set && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
+		if err = api.offerResumeProfile(&target); err != nil {
+			return err
+		}
 	}
 	if !confirmAttached(target) {
 		return errors.New(i18n.T("not attached; ccr --new starts another session in this directory", "未接入；ccr --new 可以在当前目录另开一个会话"))
@@ -327,6 +345,26 @@ func (c *client) resume(r resumeArgs, title string, options map[string]any) (rem
 		}
 	}
 	return c.start(body, target.Cwd)
+}
+
+// offerResumeProfile asks for a supplier before an offline session relaunches;
+// Enter keeps the session's saved configuration.
+func (c *client) offerResumeProfile(x *remoteSession) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return nil
+	}
+	profile, err := c.selectResumeProfile("", true)
+	if err != nil || profile == "" {
+		return err
+	}
+	var updated remoteSession
+	if err := c.do("POST", "/api/sessions/"+x.ID+"/profile", map[string]any{"profileId": profile, "force": true}, &updated); err != nil {
+		return err
+	}
+	if updated.ProfileID != "" {
+		x.ProfileID = updated.ProfileID
+	}
+	return nil
 }
 
 // checkHost refuses a host the token must not go to: the token runs code on
