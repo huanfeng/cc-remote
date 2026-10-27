@@ -103,35 +103,36 @@ type pending struct {
 	dialogGone time.Time
 }
 type Server struct {
-	store          *store.Store
-	cfg            Config
-	mu             sync.Mutex
-	switching      map[string]bool
-	downloads      downloadTickets          // links the browser downloads files with (downloads.go)
-	sent           sends                    // messages taken, by the page's send ID (sends.go)
-	mentionIndex   mentionIndex             // files offered after @ in the message box (mentions.go)
-	streamTickets  downloadTickets          // the web's terminal streams, once each (terminal.go)
-	streamPing     time.Duration            // tests: ping terminal streams this often instead
-	origins        atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
-	reloadMu       sync.Mutex               // one reload at a time, so listen ends up current
-	files          fileRoots
-	runs           map[string]*execution
-	procs          map[string]*sessionRuntime
-	terminals      map[string]*terminalSession // running terminal sessions by session ID
-	startProcess   ProcessStarter
-	stopReaper     chan struct{}
-	closers        sync.WaitGroup // detached processes being closed
-	reaperStopped  bool
-	idleTimeout    time.Duration // guarded by mu
-	requests       map[string]*pending
-	closing        bool
-	restartPending bool   // a restart waits for busy sessions (update installed)
-	listen         string // bound addresses, guarded by mu; changed by a reload
-	closedOnce     bool   // Close saved the running terminal sessions
-	channels       map[string]*channelConnection
-	modelCache     modelsCache
-	statusCache    statusCache
-	usageCache     usageCache
+	store           *store.Store
+	cfg             Config
+	mu              sync.Mutex
+	switching       map[string]bool
+	downloads       downloadTickets          // links the browser downloads files with (downloads.go)
+	sent            sends                    // messages taken, by the page's send ID (sends.go)
+	mentionIndex    mentionIndex             // files offered after @ in the message box (mentions.go)
+	streamTickets   downloadTickets          // the web's terminal streams, once each (terminal.go)
+	streamPing      time.Duration            // tests: ping terminal streams this often instead
+	origins         atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
+	reloadMu        sync.Mutex               // one reload at a time, so listen ends up current
+	files           fileRoots
+	runs            map[string]*execution
+	procs           map[string]*sessionRuntime
+	terminals       map[string]*terminalSession // running terminal sessions by session ID
+	startProcess    ProcessStarter
+	stopReaper      chan struct{}
+	closers         sync.WaitGroup // detached processes being closed
+	reaperStopped   bool
+	idleTimeout     time.Duration // guarded by mu
+	requests        map[string]*pending
+	closing         bool
+	restartPending  bool   // a restart waits for busy sessions (update installed)
+	listen          string // bound addresses, guarded by mu; changed by a reload
+	closedOnce      bool   // Close saved the running terminal sessions
+	channels        map[string]*channelConnection
+	modelCache      modelsCache
+	statusCache     statusCache
+	usageCache      usageCache
+	codexUsageCache codexUsageCache
 	// configMu serializes writers of preferences.json, Claude settings.json and
 	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.
 	configMu sync.Mutex
@@ -195,6 +196,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/commands", s.commands)
 	mux.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
 	mux.HandleFunc("POST /api/sessions/{id}/queue/withdraw", s.withdrawQueue)
+	mux.HandleFunc("POST /api/sessions/{id}/queue/{messageId}/withdraw", s.withdrawQueueMessage)
+	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{messageId}", s.withdrawQueueMessage)
+	mux.HandleFunc("PATCH /api/sessions/{id}/queue/{messageId}", s.updateQueueMessage)
+	mux.HandleFunc("POST /api/sessions/{id}/queue/{messageId}/send", s.sendQueueMessage)
 	mux.HandleFunc("GET /api/requests", s.pending)
 	mux.HandleFunc("POST /api/requests/{id}", s.resolve)
 	mux.HandleFunc("GET /api/native/sessions", s.nativeList)
@@ -678,6 +683,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Text          string   `json:"text"`
 		AttachmentIDs []string `json:"attachmentIds"`
+		Defer         bool     `json:"defer"`
 		SendID        string   `json:"sendId"` // the same on a resend (sends.go)
 	}
 	if !decode(w, r, &req) {
@@ -729,7 +735,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, e.Error())
 			return
 		}
-		if status, ok := s.terminalMessageLocked(w, r, x, prompt, store.QueuedMessage{Text: req.Text, Payload: payload}); ok {
+		if status, ok := s.terminalMessageLocked(w, r, x, prompt, queueMessage(req.Text, payload, req.SendID, req.Defer)); ok {
 			s.sent.remember(id, req.SendID, status)
 		}
 		s.mu.Unlock()
@@ -802,7 +808,7 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		payload = nil
 	}
 	rt := s.runtimeLocked(x)
-	queued := s.enqueueLocked(rt, outgoing{QueuedMessage: store.QueuedMessage{Text: req.Text, Payload: payload}, prompt: prompt})
+	queued := s.enqueueLocked(rt, outgoing{QueuedMessage: queueMessage(req.Text, payload, req.SendID, req.Defer), prompt: prompt, deferred: req.Defer})
 	status := "running"
 	if queued {
 		status = "queued"

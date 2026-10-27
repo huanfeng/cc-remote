@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"cc-remote/internal/claude"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/prefs"
 	"cc-remote/internal/store"
@@ -129,6 +130,15 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if rt := s.procs[id]; rt != nil && x.Provider == "codex" {
+		if proc, ok := rt.proc.(interface{ Configure(string, string) }); ok {
+			p := s.effectivePreferences(x)
+			o := claude.Options{Model: p.Model, Effort: p.Effort}
+			if profileOptions(x, &o) == nil {
+				proc.Configure(o.Model, o.Effort)
+			}
+		}
+	}
 	s.decorate(&x)
 	s.mu.Unlock()
 	respond(w, 200, x)

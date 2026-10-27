@@ -39,6 +39,10 @@ func (s *Server) channelLive(c *channelConnection) bool {
 	return c != nil && time.Since(c.seen) < channelTTL
 }
 func (s *Server) decorate(x *store.Session) {
+	if rt := s.procs[x.ID]; rt != nil && rt.live != nil && x.Provider == "codex" {
+		live := *rt.live
+		x.Live = &live
+	}
 	if rt := s.procs[x.ID]; rt != nil && len(rt.sent) > 0 {
 		x.Queued = rt.queuedMessages()
 	}

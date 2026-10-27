@@ -69,6 +69,7 @@ type terminalSession struct {
 type terminalQueued struct {
 	text    string // as written to the terminal
 	message store.QueuedMessage
+	held    bool // not pasted yet, editable in the host queue
 }
 
 // terminalConfig is read by `cc-remote terminal-hook` (CC_REMOTE_TERMINAL_FILE).
@@ -323,7 +324,9 @@ func (s *Server) withdrawQueued(ts *terminalSession) []string {
 	lines := 0
 	for _, q := range ts.queued {
 		texts = append(texts, q.text)
-		lines += strings.Count(q.text, "\n") + 1
+		if !q.held {
+			lines += strings.Count(q.text, "\n") + 1
+		}
 	}
 	ts.queued = nil
 	s.mu.Unlock()
@@ -597,11 +600,23 @@ func (s *Server) syncTerminal(ts *terminalSession) {
 	// too, even if their text does not match (it must not hold up the rest).
 	for i := ts.scan; i < len(users) && len(ts.queued) > 0; i++ {
 		for j, q := range ts.queued {
-			if users[i] == normalizePrompt(q.text) {
-				ts.queued, ts.scan = ts.queued[j+1:], i+1
+			if !q.held && users[i] == normalizePrompt(q.text) {
+				// Older native pastes are consumed too, but host-held
+				// messages before an explicitly promoted item have not run.
+				remaining := make([]terminalQueued, 0, len(ts.queued))
+				for _, before := range ts.queued[:j] {
+					if before.held {
+						remaining = append(remaining, before)
+					}
+				}
+				ts.queued = append(remaining, ts.queued[j+1:]...)
+				ts.scan = i + 1
 				break
 			}
 		}
+	}
+	if x, err := s.store.Get(ts.id); err == nil && x.Status != "running" && x.Status != "waiting" {
+		s.drainTerminalQueueLocked(ts)
 	}
 }
 
@@ -628,7 +643,7 @@ func isDone(c <-chan struct{}) bool {
 func (ts *terminalSession) popQueuedLocked(prompt string) (store.QueuedMessage, bool) {
 	want := normalizePrompt(prompt)
 	for i, q := range ts.queued {
-		if normalizePrompt(q.text) == want {
+		if !q.held && normalizePrompt(q.text) == want {
 			ts.queued = append(ts.queued[:i:i], ts.queued[i+1:]...)
 			return q.message, true
 		}
@@ -640,7 +655,7 @@ func (ts *terminalSession) popQueuedLocked(prompt string) (store.QueuedMessage, 
 func (ts *terminalSession) queuedLocked(prompt string) bool {
 	want := normalizePrompt(prompt)
 	for _, q := range ts.queued {
-		if normalizePrompt(q.text) == want {
+		if !q.held && normalizePrompt(q.text) == want {
 			return true
 		}
 	}
@@ -674,6 +689,18 @@ func (s *Server) terminalExited(ts *terminalSession) {
 		}
 	}
 	if x, err := s.store.Get(ts.id); err == nil {
+		// These messages never left the host. Preserve text and attachments
+		// on crashes and normal shutdown alike; do not replay them on resume.
+		held := 0
+		for _, q := range ts.queued {
+			if q.held {
+				_, _ = s.store.Append(ts.id, "user", q.message.Text, q.message.Payload)
+				held++
+			}
+		}
+		if held > 0 {
+			_, _ = s.store.Append(ts.id, "error", i18n.T("The queued messages above were not executed because the terminal closed. They were preserved and will not be resent automatically.", "终端已关闭，以上待发送消息未执行。内容已保留，不会自动重复发送。"), nil)
+		}
 		if !ts.closing {
 			note := i18n.T("Claude Code exited", "Claude Code 已退出")
 			if len(ts.queued) > 0 {
@@ -718,6 +745,12 @@ func (s *Server) terminalMessageLocked(w http.ResponseWriter, r *http.Request, x
 		status = "running"
 	}
 	prompt = terminal.CleanText(prompt)
+	if message.ID != "" && status == "queued" && !strings.HasPrefix(prompt, "/") {
+		message.Editable, message.CanSendNow = true, true
+		ts.queued = append(ts.queued, terminalQueued{text: prompt, message: message, held: true})
+		respond(w, 202, map[string]string{"status": status})
+		return status, true
+	}
 	select {
 	case ts.send <- prompt:
 	default:
@@ -755,6 +788,7 @@ func (s *Server) terminalStopLocked(w http.ResponseWriter, r *http.Request, id s
 	// effect at once; the next prompt's hook marks the session running again.
 	if x, e := s.store.Get(id); e == nil && (x.Status == "running" || x.Status == "waiting") {
 		_ = s.store.SetStatus(id, "interrupted")
+		s.drainTerminalQueueLocked(ts)
 	}
 	respond(w, 200, map[string]string{"status": "stopping"})
 }
@@ -830,6 +864,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 			}()
 		}
 		_ = s.store.SetStatus(id, "completed")
+		s.drainTerminalQueueLocked(ts)
 	case "Notification":
 		if req.Type == "permission_prompt" || strings.Contains(strings.ToLower(req.Message), "permission") {
 			_ = s.store.SetStatus(id, "waiting")

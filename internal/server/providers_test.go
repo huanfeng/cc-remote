@@ -40,13 +40,13 @@ func TestCodexSessionValidation(t *testing.T) {
 		{"provider": "codex", "cwd": t.TempDir(), "mode": "terminal"},
 		{"provider": "codex", "cwd": t.TempDir(), "permissionMode": "bypassPermissions"},
 		{"provider": "codex", "cwd": t.TempDir(), "permissionMode": "danger-full-access"},
-		{"provider": "codex", "cwd": t.TempDir(), "effort": "max"},
+		{"provider": "codex", "cwd": t.TempDir(), "effort": "invalid"},
 	} {
 		if code, b := request(t, ts, "POST", "/api/sessions", body, testToken); code != 400 {
 			t.Fatalf("accepted invalid %+v: %d %s", body, code, b)
 		}
 	}
-	for _, body := range []map[string]any{{"permissionMode": "workspace-write", "effort": "xhigh"}, {"permissionMode": "danger-full-access", "confirmDangerous": true}} {
+	for _, body := range []map[string]any{{"permissionMode": "workspace-write", "effort": "xhigh"}, {"effort": "max"}, {"effort": "ultra"}, {"permissionMode": "danger-full-access", "confirmDangerous": true}} {
 		if code, b := request(t, ts, "PATCH", "/api/sessions/"+x.ID, body, testToken); code != 200 {
 			t.Fatalf("settings: %d %s", code, b)
 		}

@@ -52,6 +52,7 @@ type Session struct {
 // LiveStatus is what Claude Code reports to its status line, and the spinner
 // line while it works.
 type LiveStatus struct {
+	PermissionMode string  `json:"permissionMode,omitempty"`
 	Model          string  `json:"model,omitempty"`
 	ModelID        string  `json:"modelId,omitempty"`
 	Effort         string  `json:"effort,omitempty"`
@@ -67,8 +68,12 @@ type LiveStatus struct {
 // QueuedMessage is a sent message Claude has not started yet; it becomes a
 // "user" event with the same text and payload when its turn starts.
 type QueuedMessage struct {
-	Text    string          `json:"text"`
-	Payload json.RawMessage `json:"payload,omitempty"`
+	ID         string          `json:"id,omitempty"`
+	Editable   bool            `json:"editable,omitempty"`
+	CanSendNow bool            `json:"canSendNow,omitempty"`
+	Delivery   string          `json:"delivery,omitempty"`
+	Text       string          `json:"text"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
 }
 
 type Event struct {

@@ -58,7 +58,8 @@ type launchKey struct {
 // outgoing is a web message waiting to be written to Claude.
 type outgoing struct {
 	store.QueuedMessage
-	prompt string
+	prompt   string
+	deferred bool // hold at the host until the preceding task ends
 }
 
 type sessionRuntime struct {
@@ -69,13 +70,14 @@ type sessionRuntime struct {
 	proc     claudeProcess // nil while starting; set before ready is closed
 	ready    chan struct{}
 
-	sent      []outgoing // accepted, not yet echoed by Claude (oldest first)
-	unwritten int        // trailing entries of sent the writer has not written
-	writing   bool       // the writer goroutine runs
-	turn      bool       // Claude is in a turn
-	steering  bool       // a Codex turn/steer acknowledgement is pending
-	early     *outgoing  // recorded on a turn's first output, before its echo (slash commands)
-	approvals int        // open bridge requests
+	uncertain []store.QueuedMessage // delivery warnings, never scheduled or counted as busy
+	sent      []outgoing            // accepted, not yet echoed by Claude (oldest first)
+	unwritten int                   // trailing entries of sent the writer has not written
+	writing   bool                  // the writer goroutine runs
+	turn      bool                  // Claude is in a turn
+	steering  bool                  // a Codex turn/steer acknowledgement is pending
+	early     *outgoing             // recorded on a turn's first output, before its echo (slash commands)
+	approvals int                   // open bridge requests
 
 	run     *execution
 	release context.CancelFunc // cancels run.ctx without ending the process
@@ -84,6 +86,7 @@ type sessionRuntime struct {
 	interrupting bool
 	stopping     bool // detached and being closed; its exit is expected
 	idleSince    time.Time
+	live         *store.LiveStatus
 }
 
 func defaultProcessStarter(cfg Config) ProcessStarter {
@@ -120,6 +123,12 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	}
 	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort, x.ProfileJSON}
 	if rt := s.procs[x.ID]; rt != nil {
+		if x.Provider == "codex" && rt.key.claudeID == key.claudeID && rt.key.permissionMode == key.permissionMode && rt.key.profile == key.profile {
+			if proc, ok := rt.proc.(interface{ Configure(string, string) }); ok {
+				proc.Configure(opts.Model, opts.Effort)
+				rt.key.model, rt.key.effort = key.model, key.effort
+			}
+		}
 		if rt.key == key || rt.run != nil || rt.proc == nil || rt.proc.BackgroundTasks() > 0 {
 			return rt
 		}
@@ -148,6 +157,19 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 		}
 		detached := rt.stopping
 		if !detached {
+			// Overrides may have been saved while the CLI was still starting.
+			// Apply the latest next-turn settings before draining queued messages.
+			if x.Provider == "codex" {
+				if configurable, ok := proc.(interface{ Configure(string, string) }); ok {
+					if latest, getErr := s.store.Get(x.ID); getErr == nil && latest.ProfileJSON == x.ProfileJSON {
+						p := s.effectivePreferences(latest)
+						o := claude.Options{Model: p.Model, Effort: p.Effort}
+						if profileOptions(latest, &o) == nil {
+							configurable.Configure(o.Model, o.Effort)
+						}
+					}
+				}
+			}
 			s.writeLocked(rt)
 		}
 		s.mu.Unlock()
@@ -159,6 +181,45 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 }
 
 func (s *Server) processEvent(rt *sessionRuntime, e claude.Event) error {
+	if rt.provider == "codex" && (e.Kind == "session" || e.Kind == "status") {
+		s.mu.Lock()
+		if s.procs[rt.id] != rt || rt.stopping {
+			s.mu.Unlock()
+			return nil
+		}
+		var state struct {
+			Subtype        string `json:"subtype"`
+			Model          string `json:"model"`
+			ModelID        string `json:"modelId"`
+			Effort         string `json:"effort"`
+			PermissionMode string `json:"permissionMode"`
+			TokenUsage     *struct {
+				Last struct {
+					TotalTokens int `json:"totalTokens"`
+				} `json:"last"`
+				ModelContextWindow int `json:"modelContextWindow"`
+			} `json:"tokenUsage"`
+		}
+		if json.Unmarshal(e.Payload, &state) == nil {
+			if rt.live == nil {
+				rt.live = &store.LiveStatus{}
+			}
+			if e.Kind == "session" || state.Subtype == "configuration" {
+				rt.live.Model, rt.live.ModelID, rt.live.Effort = state.Model, state.ModelID, state.Effort
+				if state.PermissionMode != "" {
+					rt.live.PermissionMode = state.PermissionMode
+				}
+			}
+			if usage := state.TokenUsage; usage != nil {
+				rt.live.ContextTokens, rt.live.ContextSize = usage.Last.TotalTokens, usage.ModelContextWindow
+				rt.live.ContextPercent = 0
+				if usage.ModelContextWindow > 0 {
+					rt.live.ContextPercent = float64(usage.Last.TotalTokens) / float64(usage.ModelContextWindow) * 100
+				}
+			}
+		}
+		s.mu.Unlock()
+	}
 	if e.Kind == "session" {
 		var native struct {
 			SessionID string `json:"session_id"`
@@ -227,8 +288,10 @@ func (rt *sessionRuntime) queuedMessages() []store.QueuedMessage {
 	out := make([]store.QueuedMessage, len(rt.sent))
 	for i, m := range rt.sent {
 		out[i] = m.QueuedMessage
+		out[i].Editable = m.deferred && i >= len(rt.sent)-rt.unwritten && m.Delivery == ""
+		out[i].CanSendNow = out[i].Editable && rt.turn && rt.approvals == 0 && !rt.steering && (rt.provider != "codex" || len(m.Payload) == 0)
 	}
-	return out
+	return append(out, rt.uncertain...)
 }
 
 // enqueueLocked accepts a web message; it reports whether it waits behind other work.
@@ -259,6 +322,11 @@ func (s *Server) writeLocked(rt *sessionRuntime) {
 				return
 			}
 			m := rt.sent[len(rt.sent)-rt.unwritten]
+			if m.deferred && (rt.turn || len(rt.sent)-rt.unwritten > 0 || rt.steering || m.Delivery != "") {
+				rt.writing = false
+				s.mu.Unlock()
+				return
+			}
 			rt.unwritten--
 			s.mu.Unlock()
 			if err := proc.Send(m.prompt); err != nil {
@@ -326,6 +394,7 @@ func (s *Server) result(rt *sessionRuntime, err error) {
 	defer s.mu.Unlock()
 	rt.turn, rt.early = false, nil
 	s.recordOutcomeLocked(rt, err)
+	s.writeLocked(rt)
 	s.settleLocked(rt)
 }
 
@@ -411,6 +480,8 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 	if s.procs[rt.id] == rt {
 		delete(s.procs, rt.id)
 	}
+	// Idle runtimes can still carry an uncertain-delivery notice.
+	s.preserveQueueWarningsLocked(rt)
 	if rt.run == nil {
 		return
 	}
@@ -423,16 +494,29 @@ func (s *Server) processExit(rt *sessionRuntime, err error) {
 	if rt.stopping {
 		rt.outcome = "interrupted"
 	}
-	for _, m := range unsent { // keep them in the history, marked as not run
-		if _, e := s.store.Append(rt.id, "user", m.Text, m.Payload); e != nil {
+	notRun, unknown := 0, 0
+	for _, m := range unsent { // preserve without scheduling again
+		payload := m.Payload
+		if m.Delivery != "" {
+			payload = queueDeliveryPayload(payload, "unknown")
+			unknown++
+		} else {
+			notRun++
+		}
+		if _, e := s.store.Append(rt.id, "user", m.Text, payload); e != nil {
 			log.Printf("save message: %v", e)
 		}
 	}
-	if len(unsent) > 0 && !rt.stopping {
+
+	if notRun > 0 {
 		if _, e := s.store.Append(rt.id, "error", i18n.Current().F("%s exited; the queued messages above did not run, send them again.", "%s 已退出，以上排队消息未执行，请重新发送。", providerName(rt.provider)), nil); e != nil {
 			log.Printf("save execution error: %v", e)
 		}
 	}
+	if unknown > 0 {
+		_, _ = s.store.Append(rt.id, "error", i18n.T("An additional instruction's delivery is unknown after the process exited; it will not be resent automatically.", "进程退出，一条追加指令的送达状态未知，不会自动重复发送。"), nil)
+	}
+
 	rt.turn, rt.early, rt.approvals, rt.stopping = false, nil, 0, true
 	s.settleLocked(rt)
 }

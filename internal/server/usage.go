@@ -201,6 +201,25 @@ func (s *Server) sampleUsage(stop <-chan struct{}, every time.Duration) {
 }
 
 func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
+	provider, ok := requestProvider(w, r)
+	if !ok {
+		return
+	}
+	if provider == "codex" {
+		s.codexUsage(w, r)
+		return
+	}
+	if id := r.URL.Query().Get("sessionId"); id != "" {
+		x, err := s.store.Get(id)
+		if err != nil || x.Provider == "codex" {
+			fail(w, 404, "Claude session not found")
+			return
+		}
+		if x.ProfileID != "" {
+			respond(w, 200, usageReply{Reason: "third-party", Provider: x.ProfileName})
+			return
+		}
+	}
 	respond(w, 200, s.readUsage(usageFresh))
 }
 

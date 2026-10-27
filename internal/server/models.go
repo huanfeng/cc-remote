@@ -24,10 +24,13 @@ import (
 )
 
 type modelOption struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Source      string `json:"source"`
-	Description string `json:"description,omitempty"`
+	ID            string   `json:"id"`
+	Label         string   `json:"label"`
+	Source        string   `json:"source"`
+	Description   string   `json:"description,omitempty"`
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+	IsDefault     bool     `json:"isDefault,omitempty"`
 }
 
 type modelList struct {
@@ -60,15 +63,15 @@ const modelsTTL = 10 * time.Minute
 // Aliases documented at https://code.claude.com/docs/en/model-config (checked against Claude Code 2.1.300).
 func modelAliases(l i18n.Lang) []modelOption {
 	return []modelOption{
-		{"default", "default", "alias", l.T("Claude Code's default alias: the recommended model for your account type", "Claude Code 的 default 别名：按账户类型使用推荐模型")},
-		{"best", "best", "alias", l.T("Fable when available, otherwise the same as opus", "可用时使用 Fable，否则与 opus 相同")},
-		{"fable", "fable", "alias", l.T("The hardest, longest tasks", "最难、最长的任务")},
-		{"opus", "opus", "alias", l.T("Latest Opus, complex reasoning", "最新 Opus，复杂推理")},
-		{"sonnet", "sonnet", "alias", l.T("Latest Sonnet, everyday coding", "最新 Sonnet，日常编码")},
-		{"haiku", "haiku", "alias", l.T("Fast and efficient for simple tasks", "快速高效的简单任务")},
-		{"opus[1m]", "opus[1m]", "alias", l.T("Opus with a 1M-token context", "Opus 100 万 token 上下文")},
-		{"sonnet[1m]", "sonnet[1m]", "alias", l.T("Sonnet with a 1M-token context", "Sonnet 100 万 token 上下文")},
-		{"opusplan", "opusplan", "alias", l.T("opus in plan mode, sonnet when executing", "规划模式用 opus，执行时切换到 sonnet")},
+		{ID: "default", Label: "default", Source: "alias", Description: l.T("Claude Code's default alias: the recommended model for your account type", "Claude Code 的 default 别名：按账户类型使用推荐模型")},
+		{ID: "best", Label: "best", Source: "alias", Description: l.T("Fable when available, otherwise the same as opus", "可用时使用 Fable，否则与 opus 相同")},
+		{ID: "fable", Label: "fable", Source: "alias", Description: l.T("The hardest, longest tasks", "最难、最长的任务")},
+		{ID: "opus", Label: "opus", Source: "alias", Description: l.T("Latest Opus, complex reasoning", "最新 Opus，复杂推理")},
+		{ID: "sonnet", Label: "sonnet", Source: "alias", Description: l.T("Latest Sonnet, everyday coding", "最新 Sonnet，日常编码")},
+		{ID: "haiku", Label: "haiku", Source: "alias", Description: l.T("Fast and efficient for simple tasks", "快速高效的简单任务")},
+		{ID: "opus[1m]", Label: "opus[1m]", Source: "alias", Description: l.T("Opus with a 1M-token context", "Opus 100 万 token 上下文")},
+		{ID: "sonnet[1m]", Label: "sonnet[1m]", Source: "alias", Description: l.T("Sonnet with a 1M-token context", "Sonnet 100 万 token 上下文")},
+		{ID: "opusplan", Label: "opusplan", Source: "alias", Description: l.T("opus in plan mode, sonnet when executing", "规划模式用 opus，执行时切换到 sonnet")},
 	}
 }
 
@@ -190,7 +193,7 @@ func (s *Server) collectCodexModels(l i18n.Lang, cwd string) modelList {
 	}
 	for _, m := range models {
 		if prefs.ValidModel(m.ID) && m.ID != "" {
-			list.Models = append(list.Models, modelOption{ID: m.ID, Label: m.Label, Description: m.Description, Source: "codex"})
+			list.Models = append(list.Models, modelOption{ID: m.ID, Label: m.Label, Description: m.Description, Source: "codex", Efforts: m.Efforts, DefaultEffort: m.DefaultEffort, IsDefault: m.IsDefault})
 		}
 	}
 	return list
