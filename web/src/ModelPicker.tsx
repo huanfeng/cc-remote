@@ -75,6 +75,12 @@ export function ModelPicker({ api, value, onChange, onCommit, sessionId, provide
     try { const data = await loadModels(api, sessionId, refresh, provider); if (generation.current === requestGeneration) setLoaded({ api, sessionId: sessionId || '', provider, data }); } catch (err) { if (generation.current === requestGeneration) setError((err as Error).message); } finally { if (generation.current === requestGeneration) setLoading(false); }
   }
   useEffect(() => { setLoaded(undefined); void load(); return () => { generation.current++; }; }, [api, sessionId, provider]);
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return;
+    const away = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) { setOpen(false); onCommit?.(value); } };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [open, onCommit, value]);
   const pick = (id: string) => { onChange(id); onCommit?.(id); setOpen(false); };
   const filter = value.trim().toLowerCase();
   const matches = (list?.models || []).filter(model => !filter || model.id.toLowerCase().includes(filter) || list?.models.some(item => item.id === value));

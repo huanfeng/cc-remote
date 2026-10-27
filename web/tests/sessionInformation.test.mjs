@@ -31,7 +31,7 @@ export const useLayoutEffect = useEffect;
 export const useId = () => useRef('test-id').current;
 `;
 
-let createRenderer, SessionSettings, SessionStatus, ClaudeSettings, ComposerSend, PendingQueue, bundleURL;
+let createRenderer, SessionSettings, SessionStatus, ClaudeSettings, ComposerSend, PendingQueue, extractTurns, pickActiveTurn, bundleURL;
 before(async () => {
   const { build } = await import('esbuild');
   const web = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,7 +39,7 @@ before(async () => {
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, 'state.mjs');
   await build({
-    stdin: { contents: "export { createRenderer } from 'react'; export { SessionSettings } from './SessionSettings'; export { SessionStatus } from './SessionStatus'; export { ClaudeSettings } from './ClaudeSettings'; export { ComposerSend } from './ComposerSend'; export { PendingQueue } from './PendingQueue';", resolveDir: join(web, 'src'), loader: 'ts' },
+    stdin: { contents: "export { createRenderer } from 'react'; export { SessionSettings } from './SessionSettings'; export { SessionStatus } from './SessionStatus'; export { ClaudeSettings } from './ClaudeSettings'; export { ComposerSend } from './ComposerSend'; export { PendingQueue } from './PendingQueue'; export { extractTurns, pickActiveTurn } from './TurnRail';", resolveDir: join(web, 'src'), loader: 'ts' },
     outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' },
     plugins: [{ name: 'effect-harness', setup(build) {
       build.onResolve({ filter: /^react$/ }, () => ({ path: 'hooks', namespace: 'test' }));
@@ -47,7 +47,7 @@ before(async () => {
     } }],
   });
   bundleURL = pathToFileURL(outfile).href;
-  ({ createRenderer, SessionSettings, SessionStatus, ClaudeSettings, ComposerSend, PendingQueue } = await import(bundleURL));
+  ({ createRenderer, SessionSettings, SessionStatus, ClaudeSettings, ComposerSend, PendingQueue, extractTurns, pickActiveTurn } = await import(bundleURL));
   globalThis.document = { addEventListener() {}, removeEventListener() {}, activeElement: null, getElementById() {} };
   globalThis.window = { addEventListener() {}, removeEventListener() {}, confirm: () => true };
 });
@@ -207,7 +207,7 @@ test('known zero costs do not imply token reporting; explicitly reported zero to
   }
 });
 
-test('quick summary keeps model/effort switch, attach and details callback contracts', () => {
+test('quick summary keeps session status open on model/effort switch and closes on details/attach', () => {
   const renderer = createRenderer(); const calls = [];
   const props = { session, label: 'Running', anchor: { left: 0, bottom: 0 }, close() { calls.push('close'); }, quick(kind) { calls.push(kind); }, settings() { calls.push('details'); }, attach() { calls.push('attach'); } };
   const tree = renderer.render(SessionStatus, props);
@@ -222,11 +222,31 @@ test('quick summary keeps model/effort switch, attach and details callback contr
   assert.equal(supplier.props.app, 'codex');
   find(tree, node => node.type === 'button' && content(node).includes('Session details')).props.onClick();
   find(tree, node => node.type === 'button' && content(node).includes('Attach from a local terminal')).props.onClick();
-  assert.deepEqual(calls, ['close', 'model', 'close', 'effort', 'close', 'details', 'close', 'attach']);
+  assert.deepEqual(calls, ['model', 'effort', 'close', 'details', 'close', 'attach']);
   assert.doesNotMatch(content(tree), /Directory|Cost/);
   assert.match(content(tree), /Permission mode/);
   assert.match(content(tree), /Next model configured-old/);
   assert.match(content(tree), /Queued messages 1/);
+});
+
+test('turn navigation rail extracts user turns, skips internal notifications and tracks viewport position', () => {
+  const turns = extractTurns([
+    { seq: 1, kind: 'user', text: 'First prompt\nwith second line' },
+    { seq: 2, kind: 'assistant', text: 'Reply 1' },
+    { seq: 3, kind: 'user', text: '<task-notification>internal</task-notification>' },
+    { seq: 4, kind: 'user', text: 'Another Claude session sent a message: teammate' },
+    { seq: 5, kind: 'user', text: '', payload: { attachments: [{ id: 'a1' }, { id: 'a2' }] } },
+    { seq: 6, kind: 'user', text: 'Third prompt' },
+  ]);
+  assert.deepEqual(turns.map(t => ({ seq: t.seq, index: t.index, summary: t.summary })), [
+    { seq: 1, index: 1, summary: 'First prompt with second line' },
+    { seq: 5, index: 2, summary: '[2 attachment(s)]' },
+    { seq: 6, index: 3, summary: 'Third prompt' },
+  ]);
+  const offsets = [{ seq: 1, top: 20 }, { seq: 5, top: 420 }, { seq: 6, top: 900 }];
+  assert.equal(pickActiveTurn(turns, offsets, 0, 500, 1400), 1);
+  assert.equal(pickActiveTurn(turns, offsets, 350, 500, 1400), 5);
+  assert.equal(pickActiveTurn(turns, offsets, 880, 500, 1400), 6);
 });
 
 
@@ -322,22 +342,15 @@ test('missing native settings API leaves Claude defaults usable', async () => {
 });
 
 
-test('send settings change shortcut without submitting and leave the pending-send action compact', () => {
-  const renderer = createRenderer(); const choices = [];
-  const props = { disabled: false, uploading: false, running: true, sendKey: 'enter', onSendKey: value => choices.push(value) };
+test('primary send button reflects task state and renders inline extra action without split arrow', () => {
+  const renderer = createRenderer();
+  const props = { disabled: false, uploading: false, running: true };
   let tree = renderer.render(ComposerSend, props);
   const send = find(tree, node => node.type === 'button' && node.props.type === 'submit');
   assert.equal(send.props.title, 'Send after the current task');
   assert.equal(send.props.disabled, false);
-  find(tree, node => node.props?.['aria-label'] === 'Send settings').props.onClick();
-  tree = renderer.render(ComposerSend, props);
-  const options = nodes(tree).filter(node => node.props?.role === 'radio');
-  assert.equal(options[0].props['aria-checked'], true);
-  assert.equal(options[1].props.type, 'button');
-  options[1].props.onClick();
-  assert.deepEqual(choices, ['ctrl-enter']);
-  tree = renderer.render(ComposerSend, { ...props, sendKey: 'ctrl-enter', disabled: true });
-  assert.equal(nodes(tree).some(node => node.props?.role === 'dialog'), false);
+  assert.equal(nodes(tree).some(node => node.props?.['aria-label'] === 'Send settings'), false);
+  tree = renderer.render(ComposerSend, { ...props, disabled: true });
   assert.equal(find(tree, node => node.type === 'button' && node.props.type === 'submit').props.disabled, true);
   renderer.dispose();
 });

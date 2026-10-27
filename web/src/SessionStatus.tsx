@@ -14,14 +14,19 @@ import { SessionProfile } from './SupplierProfile';
 export function SessionStatus<T extends SessionInfo>({ session, defaults, label, anchor, close, quick, settings, attach, events, api, onUpdated }: { session: T; defaults?: Defaults; label: string; anchor: DOMRect; close: () => void; quick: (kind: QuickKind, anchor: DOMRect) => void; settings: () => void; attach?: () => void; events?: readonly CodexEvent[]; api: Api; onUpdated: (session: T) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [showSupplier, setShowSupplier] = useState(false);
+  const [supplierAnchor, setSupplierAnchor] = useState<DOMRect>(anchor);
   const [supplierBusy, setSupplierBusy] = useState(false);
   const [place, setPlace] = useState({ left: anchor.left, top: anchor.bottom + 6 });
   useEffect(() => {
-    const away = (event: MouseEvent | TouchEvent) => { if (!supplierBusy && !box.current?.contains(event.target as Node) && !(event.target as Element).closest?.('.mobile-badge,.desktop-badge,.select-menu')) close(); };
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    const away = (event: MouseEvent | TouchEvent) => { if (!supplierBusy && !box.current?.contains(event.target as Node) && !(event.target as Element).closest?.('.mobile-badge,.desktop-badge,.select-menu,.quick-switch,.permission-confirm')) close(); };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || document.querySelector('.quick-switch,.select-menu,.permission-confirm')) return;
+      if (showSupplier) { event.stopPropagation(); setShowSupplier(false); return; }
+      close();
+    };
     document.addEventListener('mousedown', away); document.addEventListener('touchstart', away); document.addEventListener('keydown', key);
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('touchstart', away); document.removeEventListener('keydown', key); };
-  }, [close, supplierBusy]);
+  }, [close, supplierBusy, showSupplier]);
   useLayoutEffect(() => {
     const position = () => {
       const rect = box.current?.getBoundingClientRect();
@@ -37,13 +42,13 @@ export function SessionStatus<T extends SessionInfo>({ session, defaults, label,
   const effort = live?.effort || inherited(session.effort, defaults?.effort);
   const context = contextReading(providerOf(session), live, events);
   const permission = (value: string | undefined) => value ? permissionOptions('', value, providerOf(session)).find(option => option.value === value)?.label || value : inherited(value, defaults?.permissionMode);
-  const switcher = (kind: QuickKind) => <button type="button" className="session-status-switch" onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); close(); quick(kind, rect); }}>{t('Switch', '切换')}</button>;
+  const switcher = (kind: QuickKind) => <button type="button" className="session-status-switch" data-quick-switch={kind} aria-haspopup="listbox" onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setShowSupplier(false); quick(kind, rect); }}>{t('Switch', '切换')}</button>;
   const row = (name: string, value: ReactNode, extra?: ReactNode) => <div className="session-status-row"><dt>{name}</dt><dd>{value}</dd>{extra}</div>;
   return <div ref={box} className="session-status popover-menu" role="dialog" aria-label={t('Session status', '会话状态')} style={{ left: place.left, top: place.top, maxHeight: `calc(100dvh - ${place.top + 8}px)` }}>
     <dl>
       {row(t('Provider', '提供方'), providerName(providerOf(session)))}
       {row(t('Session type', '会话类型'), session.mode === 'terminal' ? t('Terminal', '终端') : t('Managed', '托管'))}
-      {row(t('Supplier', '供应商'), session.profileName || (session.profileId ? t('Configured supplier', '已配置供应商') : t('Host configuration', '宿主配置')), <button type="button" className="session-status-switch" aria-expanded={showSupplier} onClick={() => setShowSupplier(value => !value)}>{showSupplier ? t('Close', '收起') : t('Switch', '切换')}</button>)}
+      {row(t('Supplier', '供应商'), session.profileName || (session.profileId ? t('Configured supplier', '已配置供应商') : t('Host configuration', '宿主配置')), <button type="button" className="session-status-switch" aria-haspopup="dialog" aria-expanded={showSupplier} onClick={event => { const rect = event?.currentTarget?.getBoundingClientRect?.(); if (rect) setSupplierAnchor(rect); setShowSupplier(value => !value); }}>{showSupplier ? t('Close', '收起') : t('Switch', '切换')}</button>)}
       {row(t('Status', '状态'), <><span className={`dot ${session.status || 'idle'}`} />{label}</>)}
       {live?.activity && row(t('Activity', '当前活动'), live.activity)}
       {row(live?.model ? t('Reported model', '已报告模型') : t('Configured model', '配置模型'), model, switcher('model'))}
@@ -57,7 +62,7 @@ export function SessionStatus<T extends SessionInfo>({ session, defaults, label,
       {context.percent !== undefined && row(t('Context', '上下文'), `${Math.round(context.percent)}% · ${context.tokens?.toLocaleString()} / ${context.capacity?.toLocaleString()}`)}
       {context.total?.totalTokens !== undefined && row(t('Session tokens', '会话累计 Token'), context.total.totalTokens.toLocaleString())}
     </dl>
-    {showSupplier && <div className="session-status-supplier"><SessionProfile api={api} app={providerOf(session)} session={session} onUpdated={onUpdated} onBusy={setSupplierBusy} showEmpty /></div>}
+    {showSupplier && <div className="session-status-supplier popover-menu" style={{ left: Math.max(8, Math.min(supplierAnchor.left || place.left, (typeof window !== 'undefined' ? window.innerWidth : 400) - 316)), top: (supplierAnchor.bottom || place.top) + 6 }}><SessionProfile api={api} app={providerOf(session)} session={session} onUpdated={item => { onUpdated(item); setShowSupplier(false); }} onBusy={setSupplierBusy} showEmpty /></div>}
     {attach && <button type="button" className="session-status-settings" onClick={() => { close(); attach(); }}><TerminalIcon size={14} />{t('Attach from a local terminal', '在本地终端接入')}</button>}
     <button type="button" className="session-status-settings" onClick={() => { close(); settings(); }}><GearIcon size={14} />{t('Session details', '会话详情')}</button>
   </div>;

@@ -89,9 +89,13 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .select-placeholder{color:var(--muted)}
 .select-tag{flex-shrink:0;font-size:10px;font-weight:500;line-height:1.5;padding:0 6px;border-radius:20px;border:1px solid #dce4d0;background:#edf1e4;color:#5b6e4e}
 .select-tag.warn{background:#fbf1dc;border-color:#ecd8a8;color:#7a5b16}.select-tag.danger{background:#fbe3df;border-color:#efb7ad;color:#a3321f}
-.popover-menu{background:#fcfbf6;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px #27372c26;padding:4px;overflow:auto;overscroll-behavior:contain}
+.popover-menu{background:#fcfbf6;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px -4px #27372c24,0 2px 6px #27372c0f;padding:6px;overflow:auto;overscroll-behavior:contain}
 .select-menu{z-index:60;margin:0;list-style:none;width:max-content;box-sizing:border-box}
-.select-menu.popover-menu{padding:6px}
+.select-menu.popover-menu,.quick-switch.popover-menu,.topbar-menu.popover-menu,.session-menu.popover-menu{padding:6px}
+.session-status.popover-menu{padding:14px 16px;width:min(356px,calc(100vw - 16px))}
+.session-status-supplier.popover-menu{padding:14px 16px}
+.context-usage-panel.popover-menu{padding:14px 16px}
+.permission-confirm.popover-menu{padding:14px 16px}
 .select-menu .popover-option{min-height:42px;padding:10px 12px;gap:10px;align-items:center}
 .select-menu .popover-option+.popover-option{margin-top:2px}
 .sidebar .select-trigger{min-height:40px;margin:0 0 10px;padding:9px 12px;font-size:13px}
@@ -117,40 +121,54 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 @media(max-width:640px){.settings-layout{grid-template-columns:minmax(0,1fr);gap:8px}.settings-tabs{flex-direction:row;border-right:0;border-bottom:1px solid var(--line);padding:0 0 6px;overflow-x:auto}.settings-tabs button{flex:1}}
 .mode-choice.provider-choice{grid-template-columns:1fr}
 
-/* Composer controls share a single row; secondary details open on demand. */
-.composer-bottom{display:flex;flex-wrap:nowrap;align-items:center;gap:6px}
-.composer-space{flex:1;min-width:4px}
-.composer .slash-button,.composer .attach-button{width:30px;min-width:30px;height:32px;padding:4px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:7px}
-.composer-permission{display:flex;align-items:center;position:relative;min-width:0;max-width:170px}
-.composer-permission>span{display:none;color:var(--muted)}
-.composer-permission .select-trigger{border:1px solid var(--line);background:transparent;min-height:32px;padding:4px 7px;font-size:11px;box-shadow:none}
-.composer .composer-actions{display:flex;align-items:center;flex-wrap:nowrap;gap:6px;margin-left:0;flex-shrink:0}
-.composer-send{display:flex;align-items:stretch;border-radius:9px;background:#293c2e;flex-shrink:0}
-.composer-send>.primary{border-radius:9px 0 0 9px;padding:8px 10px;font-size:12px;min-height:34px;white-space:nowrap}
-.composer-actions>.secondary{padding:5px;font-size:10px;max-width:110px}
-.composer .stop{padding:5px;font-size:11px;min-width:0}
+/* Composer controls share a single 32px-tall aligned row; secondary details open on demand. */
+.composer textarea{background:transparent}
+.composer.compact textarea{border-radius:inherit}
+.composer-bottom{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:4px 12px 10px 12px}
+.composer-space{flex:1 1 auto;min-width:4px;max-width:none!important}
+.composer .slash-button,.composer .attach-button{width:32px;min-width:32px;height:32px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;background:#f8f9f3;border:1px solid var(--line);color:#52634c;border-radius:8px;font-size:13px;font-weight:600;line-height:1;flex-shrink:0;transition:background .15s,border-color .15s}
+.composer .slash-button:hover:not(:disabled),.composer .attach-button:hover:not(:disabled){background:#edf1e4;border-color:#c6d0b8;color:#2f402b}
+.composer-permission{display:inline-flex;align-items:center;position:relative;height:32px;min-width:0;max-width:190px;flex-shrink:0}
+.composer-permission>span{display:inline-flex;align-items:center;justify-content:center;position:absolute;left:9px;top:50%;transform:translateY(-50%);color:#52634c;pointer-events:none;z-index:1}
+.composer-permission .permission-picker{display:inline-flex;align-items:center;height:32px;min-width:0}
+.composer-permission .select-trigger{margin:0;height:32px;min-height:32px;padding:0 9px 0 28px;font-size:12px;line-height:1;border-radius:8px;border:1px solid var(--line);background:#f8f9f3;color:#384734;gap:5px;box-shadow:none;width:auto}
+.composer-permission .select-trigger:hover:not(:disabled){background:#edf1e4;border-color:#c6d0b8}
+.composer .composer-actions{display:inline-flex;align-items:center;flex-wrap:nowrap;gap:6px;margin:0;flex-shrink:0;height:32px}
+.composer-send{position:relative;display:inline-flex;align-items:center;gap:6px;height:32px;flex-shrink:0}
+.composer-send>.primary{height:32px;min-height:32px;margin:0;border-radius:8px;padding:0 14px;font-size:12px;line-height:1;white-space:nowrap}
+.composer-send>.secondary,.composer-actions>.secondary{height:32px;padding:0 10px;font-size:11.5px;border-radius:8px;white-space:nowrap}
+.composer .stop{height:32px;padding:0 8px;font-size:11px;min-width:0}
 .topbar .desktop-badge{cursor:pointer}
 @media(max-width:600px){
-.composer-permission{width:30px;height:32px;flex-shrink:0}
-.composer-permission>span{display:flex;position:absolute;inset:0;align-items:center;justify-content:center;pointer-events:none}
-.composer-permission .permission-select{width:30px}
-.composer-permission .select-trigger{width:30px;padding:0;color:transparent}
+.composer-permission{width:32px;height:32px;flex-shrink:0}
+.composer-permission>span{left:0;right:0;top:0;bottom:0;transform:none}
+.composer-permission .permission-select{width:32px;height:32px}
+.composer-permission .select-trigger{width:32px;height:32px;padding:0;color:transparent}
 .composer-permission .select-trigger .select-value,.composer-permission .select-trigger svg{visibility:hidden}
-.composer-bottom{gap:3px}
-.composer .composer-actions{gap:3px}
-.composer-send>.primary{padding:8px;font-size:11px}
+.composer-bottom{gap:4px;padding:4px 10px 9px 10px}
+.composer .composer-actions{gap:4px}
+.composer-send>.primary{padding:0 12px;font-size:11.5px}
 .topbar{gap:8px}
 }
 
-.composer-send{position:relative}
-.send-settings-trigger{display:flex;align-items:center;justify-content:center;border-left:1px solid #ffffff30;background:transparent;color:white;border-radius:0 9px 9px 0;width:25px;padding:5px}
-.send-settings-trigger:hover{background:#415441}
-.send-settings-menu{position:absolute;right:0;bottom:calc(100% + 8px);width:260px;max-width:calc(100vw - 32px);z-index:40;padding:10px;color:#28332d;font-size:12px;text-align:left}
-.send-settings-menu small{display:block;line-height:1.6;font-size:10px;white-space:normal}
-.send-settings-menu>.eyebrow{display:block;padding:4px 6px 8px}
-.send-settings-menu>.send-settings-extra{padding:8px 0;margin:4px 0;border-top:1px solid var(--line)}
-.send-settings-extra>.secondary{width:100%;font-size:12px;padding:8px}
 .topbar>.stop{font-size:11px;padding:6px 8px;white-space:nowrap;background:#eeeade;border-radius:7px;color:#746344}
+
+/* Conversation stage and left-side turn navigation rail. */
+.conversation-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.turn-rail{position:absolute;left:8px;top:50%;transform:translateY(-50%);z-index:9;max-height:min(68vh,calc(100% - 32px));display:flex; flex-direction:column;pointer-events:auto}
+.turn-rail-list{display:flex;flex-direction:column;gap:3px;padding:6px 4px;border-radius:10px;background:#fcfbf7cc;backdrop-filter:blur(4px);overflow-y:auto;scrollbar-width:none;max-height:100%}
+.turn-rail-list::-webkit-scrollbar{display:none}
+.turn-rail-tick{position:relative;display:flex;align-items:center;justify-content:flex-start;width:22px;height:11px;padding:0 2px;background:transparent;border:0;border-radius:4px}
+.turn-rail-bar{display:block;width:9px;height:2.5px;border-radius:999px;background:#c3cbb9;transition:width .16s ease,background-color .16s ease,height .16s ease}
+.turn-rail-tick.past .turn-rail-bar{background:#95a884;width:11px}
+.turn-rail-tick.active .turn-rail-bar{width:17px;height:3px;background:#293c2e}
+.turn-rail-tick:hover .turn-rail-bar,.turn-rail-tick:focus-visible .turn-rail-bar{width:17px;height:3px;background:#4d6b3c}
+.turn-rail-tooltip{position:fixed;margin-left:24px;padding:5px 9px;border-radius:8px;background:#293c2e;color:#f6f8f2;font-size:11.5px;line-height:1.4;white-space:nowrap;max-width:min(320px,calc(100vw - 56px));overflow:hidden;text-overflow:ellipsis;box-shadow:0 6px 18px #1823192e;pointer-events:none;z-index:40;display:inline-flex;align-items:center;gap:6px}
+.turn-rail-tooltip strong{color:#cde2b5;font-weight:600;font-variant-numeric:tabular-nums}
+.turn-rail-tooltip span{overflow:hidden;text-overflow:ellipsis}
+@keyframes turnFlash{0%{box-shadow:0 0 0 3px #87a56866}100%{box-shadow:0 0 0 0 transparent}}
+.message.user.turn-flash{animation:turnFlash 1.1s ease-out}
+@media(max-width:760px){.turn-rail{left:2px}.turn-rail-tick{width:16px;height:10px}.turn-rail-bar{width:7px}.turn-rail-tick.active .turn-rail-bar{width:13px}.turn-rail-tooltip{display:none}}
 
 .pending-queue{width:calc(100% - 40px);max-width:1000px;align-self:center;margin:8px 0 0;padding:0 10px;font-size:12px}
 .pending-heading{font-size:10px;color:var(--muted);padding:0 0 5px}

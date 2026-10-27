@@ -23,10 +23,10 @@ export function QuickSwitch({ api, sessionId, provider = 'claude', model = '', t
   }
   useEffect(() => { setLoaded(undefined); if (target.kind === 'model' || provider === 'codex') void load(); return () => { generation.current++; }; }, [api, target.kind, sessionId, provider]);
   useEffect(() => {
-    const away = (event: MouseEvent | TouchEvent) => { if (!menu.current?.contains(event.target as Node)) close(); };
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
-    document.addEventListener('mousedown', away); document.addEventListener('touchstart', away); document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('touchstart', away); document.removeEventListener('keydown', key); };
+    const away = (event: MouseEvent | TouchEvent) => { if (!menu.current?.contains(event.target as Node) && !(event.target as Element).closest?.('[data-quick-switch]')) close(); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); close(); } };
+    document.addEventListener('mousedown', away); document.addEventListener('touchstart', away); document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('touchstart', away); document.removeEventListener('keydown', key, true); };
   }, [close]);
   // Keep the menu inside the window (phones, chips near the right edge).
   useLayoutEffect(() => {

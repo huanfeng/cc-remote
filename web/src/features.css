@@ -145,8 +145,8 @@ img.host-swatch{display:block;background:none}
 .topbar .header-sub .mobile-badge{font-size:10.5px;padding:1px 8px;font-family:inherit;cursor:pointer}
 }
 /* Session status box: opened from a chip or the status badge. */
-.session-status{position:fixed;z-index:45;width:min(340px,calc(100vw - 16px));padding:10px 12px;font-size:12.5px}
-.session-status dl{margin:0;display:grid;grid-template-columns:auto 1fr auto;gap:7px 12px;align-items:center}
+.session-status{position:fixed;z-index:45;width:min(356px,calc(100vw - 16px));padding:14px 16px;font-size:12.5px}
+.session-status dl{margin:0;display:grid;grid-template-columns:auto 1fr auto;gap:9px 14px;align-items:center}
 .session-status-row{display:contents}
 .session-status dt{color:var(--muted);white-space:nowrap}
 .session-status dd{margin:0;min-width:0;overflow-wrap:anywhere;display:flex;align-items:center;gap:6px}
@@ -158,12 +158,13 @@ img.host-swatch{display:block;background:none}
 .session-status-context{display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:100%}
 .session-status-meter{display:block;width:100%;height:5px;border-radius:3px;background:#e8eadf;overflow:hidden}
 .session-status-meter i{display:block;height:100%;background:#8aa66f}.session-status-meter i.warn{background:#d0a646}.session-status-meter i.danger{background:#c4624f}
-.session-status-settings{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:10px;padding:8px;border-radius:8px;background:#f1f2ea;color:inherit;font-size:12px}
+.session-status-settings{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:12px;padding:8px 10px;border-radius:8px;background:#f1f2ea;color:inherit;font-size:12px}
+.session-status-settings+.session-status-settings{margin-top:6px}
 .session-status-settings:hover{background:#e6eadc}
-.session-status-supplier{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.session-status-supplier{position:fixed;z-index:52;width:min(308px,calc(100vw - 16px));padding:12px;font-size:12px}
 .session-status-supplier h3{font-size:12px;margin:0 0 6px}
 .session-status-supplier p{line-height:1.5;margin:6px 0}
-.session-status-supplier .select-trigger{width:100%}
+.session-status-supplier .select-trigger{width:100%;min-height:38px;padding:8px 11px;font-size:12.5px}
 .session-status-supplier .profile-confirm{padding:8px;margin-top:8px;border:1px solid var(--line);border-radius:8px}
 .recap-label{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .recap-label .icon-button{background:none;color:var(--muted);padding:2px;border-radius:5px;display:inline-grid;place-items:center}
