@@ -27,7 +27,7 @@ import { SidebarResizer, useSidebarWidth } from './SidebarResizer';
 import { ModelPicker, dangerousMode, permissionLabel } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
 import { Select } from './Select';
-import { AgentIcon, ArrowDownIcon, CheckIcon, CloseIcon, CollapseAllIcon, ExpandAllIcon, GearIcon, LogoutIcon, MenuIcon, PlusIcon, RefreshIcon, StatusIcon, TerminalIcon, TrashIcon, ChatIcon, ShieldIcon } from './icons';
+import { AgentIcon, ArrowDownIcon, CheckIcon, ChevronDownIcon, CloseIcon, CollapseAllIcon, ExpandAllIcon, GearIcon, LogoutIcon, MenuIcon, PlusIcon, RefreshIcon, StatusIcon, TerminalIcon, TrashIcon, ChatIcon, ShieldIcon } from './icons';
 import { ToolGroup } from './ToolGroup';
 import { FileProvider } from './FileViewer';
 import { AgentCard, TaskPanel, TeammateMessage, type NestedProps, type TaskInfo } from './AgentCard';
@@ -707,8 +707,8 @@ export default function App() {
   const topbarActions: TopbarAction[] = [
     ...(running && !native ? [{ key: 'stop', label: t('Stop current task', '停止当前任务'), icon: <span aria-hidden="true">■</span>, onClick: stopTurn }] : []),
     ...(selected ? [{ key: 'tools', label: toolsExpanded ? t('Collapse all tool calls', '折叠全部工具调用') : t('Expand all tool calls', '展开全部工具调用'), icon: toolsExpanded ? <CollapseAllIcon size={15} /> : <ExpandAllIcon size={15} />, onClick: toggleAllTools, active: toolsExpanded, desktop: true }] : []),
-    { key: 'key-enter', label: t('Enter sends · Shift + Enter adds a line', 'Enter 发送 · Shift + Enter 换行'), icon: sendKey === 'enter' ? <CheckIcon size={15} /> : <span aria-hidden="true" />, onClick: () => { setSendKey('enter'); try { localStorage.setItem('cc-send-key', 'enter'); } catch {} }, active: sendKey === 'enter', desktop: true },
-    { key: 'key-ctrl', label: 'Ctrl / ⌘ + Enter', icon: sendKey === 'ctrl-enter' ? <CheckIcon size={15} /> : <span aria-hidden="true" />, onClick: () => { setSendKey('ctrl-enter'); try { localStorage.setItem('cc-send-key', 'ctrl-enter'); } catch {} }, active: sendKey === 'ctrl-enter', desktop: true },
+    { key: 'key-enter', label: t('Enter to send', 'Enter 发送'), icon: sendKey === 'enter' ? <CheckIcon size={15} /> : <span aria-hidden="true" />, onClick: () => { setSendKey('enter'); try { localStorage.setItem('cc-send-key', 'enter'); } catch {} }, active: sendKey === 'enter', desktop: true },
+    { key: 'key-ctrl', label: t('Ctrl+Enter to send', 'Ctrl+Enter 发送'), icon: sendKey === 'ctrl-enter' ? <CheckIcon size={15} /> : <span aria-hidden="true" />, onClick: () => { setSendKey('ctrl-enter'); try { localStorage.setItem('cc-send-key', 'ctrl-enter'); } catch {} }, active: sendKey === 'ctrl-enter', desktop: true },
     { key: 'refresh', label: t('Refresh sessions', '刷新会话'), icon: <RefreshIcon size={15} />, onClick: () => action(list) },
     ...(current ? [{ key: 'settings', label: t('Session details', '会话详情'), icon: <GearIcon size={15} />, onClick: () => setSessionSettingsOpen(true) }] : []),
   ];
@@ -957,6 +957,7 @@ export default function App() {
           </button>
           <SessionMenu title={item.title || t('Untitled session', '未命名会话')} actions={[
             ...(state.cached ? [{ key: 'release', icon: <CloseIcon size={15} />, label: t('Release page cache', '释放页面缓存'), hint: t('Unsent drafts are cleared; the host task keeps running', '未发送的草稿会清除，宿主任务继续运行'), onClick: () => closeTab(state.cached!.key) }] : []),
+            ...(!native ? [{ key: 'exit', icon: <LogoutIcon size={15} />, label: t('Exit session', '退出会话'), hint: t('Closes the background process; records stay and the next send relaunches it', '关闭后台进程；记录保留，下次发送时自动重启'), onClick: () => { setDrawer(false); void action(async () => { await api(`/api/sessions/${encodeURIComponent(item.id)}/exit`, { method: 'POST' }); setRouteNotice(t('Session exited. Records are kept; the next send relaunches it.', '会话已退出，记录保留；下次发送时自动重启。')); await list(); }); } }] : []),
             ...(!native ? [{ key: 'delete', icon: <TrashIcon size={15} />, label: t('Delete session…', '删除会话…'), hint: t('Its CC Remote records; asks first', '删除 CC Remote 记录，会先确认'), danger: true, onClick: () => { setDeleting(item); setDrawer(false); } }] : []),
           ]} />
         </div>;
@@ -996,7 +997,18 @@ export default function App() {
             }
             if (event.kind === 'teammate') return <TeammateMessage key={`${event.seq}:${event.payload?.part ?? 0}`} name={event.payload?.teammate_id} color={event.payload?.color} summary={event.payload?.summary} text={event.text || ''} />;
             if (event.kind === 'compact') return <div className="compact-divider" role="separator" key={event.seq}><span>{compactSummary(event.payload)}</span></div>;
-            return <article className={`message ${event.kind}`} key={event.seq} data-turn-seq={event.kind === 'user' ? event.seq : undefined}><div className="message-label">{event.kind === 'user' ? t('YOU', '你') : event.kind === 'error' ? t('Error', '执行错误') : providerName(activeProvider).toUpperCase()}</div><Markdown text={event.text || ''} />{event.payload?.attachments?.length > 0 && <AttachmentList items={event.payload.attachments} token={token} />}</article>;
+            return <article className={`message ${event.kind}`} key={event.seq} data-turn-seq={event.kind === 'user' ? event.seq : undefined}><div className="message-label">{event.kind === 'user' ? t('YOU', '你') : event.kind === 'error' ? t('Error', '执行错误') : providerName(activeProvider).toUpperCase()}</div>{(() => {
+              const first = event.kind === 'user' ? (event.text || '').split('\n', 1)[0].trim() : '';
+              const match = first && /^\/([a-z-]+)/.exec(first);
+              const command = match && commands.find(item => item.name === match[1]);
+              if (!command) return <Markdown text={event.text || ''} />;
+              const rest = first.slice(command.name.length + 1).trim();
+              return <button type="button" className="chip chip-action message-command" title={event.text || ''} onClick={() => {
+                if (command.name === 'model' || command.name === 'effort') { const box = document.querySelector('.composer')?.getBoundingClientRect(); if (box) setQuick({ kind: command.name, anchor: new DOMRect(box.left + 12, box.top, 0, 0) }); return; }
+                setDraft(event.text || '');
+                (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus();
+              }}>{match![0]}{rest && <span className="message-command-args">{rest}</span>}{command.name === 'model' || command.name === 'effort' ? <ChevronDownIcon size={12} /> : null}</button>;
+            })()}{event.payload?.attachments?.length > 0 && <AttachmentList items={event.payload.attachments} token={token} />}</article>;
           }),
           // A request whose call already shows a terminal result is about to be withdrawn; don't show it twice.
           ...(native ? [] : requests.filter(request => !linkedIds.has(request.id) && !(shared && requestSettled(request, transcript))).map(request => shared && (request.kind === 'question' || request.kind === 'plan') ? sharedCard(undefined, request) : <RequestCard key={request.id} request={request} busy={busy} answers={activeTab?.answers[request.id] || {}} setAnswers={update => updateTab(activeKey, tab => ({ ...tab, answers: { ...tab.answers, [request.id]: update(tab.answers[request.id] || {}) } }))} shared={shared} onAnswer={(decision, answers, message) => action(async () => { await api(`/api/requests/${request.id}`, { method: 'POST', body: JSON.stringify({ decision, answers, message }) }); updateTab(activeKey, tab => ({ ...tab, requests: tab.requests.filter(item => item.id !== request.id) })); })} />))]}

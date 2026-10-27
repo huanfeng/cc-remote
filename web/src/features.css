@@ -257,3 +257,10 @@ img.host-swatch{display:block;background:none}
 /* Header model/effort chips open the quick switch. */
 .chip-action{cursor:pointer;transition:border-color .15s,background .15s}
 .chip-action:hover{border-color:var(--ok);background:var(--accent-soft)}
+
+/* The / command menu floats clear of the textarea instead of overlapping it. */
+.command-menu{bottom:calc(100% + 6px);z-index:30;border-radius:12px;box-shadow:0 -8px 28px #27372c1f,0 2px 6px #27372c0d}
+
+/* A sent /command renders as a tappable chip; /model and /effort reopen their switcher. */
+.message-command{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:5px 10px;font-size:12.5px;border-radius:9px}
+.message-command .message-command-args{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

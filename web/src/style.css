@@ -192,3 +192,7 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 @media(max-width:600px){.pending-queue{width:calc(100% - 24px);padding:0 5px}.pending-actions{gap:0}.pending-actions button{padding:4px;font-size:10px}}
 
 @media(max-width:760px){.topbar>.stop{display:none}.topbar .header-title{min-width:0}.topbar .usage-bar{margin-left:auto}}
+
+/* Dialog primary actions stay reachable: pinned above the scroll edge. */
+.settings-modal form>.primary,.settings-modal form>.secondary,.modal .modal-actions{position:sticky;bottom:-12px;z-index:5;background:var(--bg-card);padding-top:12px;margin-bottom:-12px;box-shadow:0 -10px 14px -12px #10231140}
+.settings-modal form>.primary{bottom:-24px}

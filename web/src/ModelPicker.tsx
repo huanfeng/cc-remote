@@ -18,8 +18,6 @@ export const PERMISSION_MODES: [string, string][] = [
   ['default', t('default · ask for each approval', 'default · 每次审批')],
   ['plan', t('plan · plan only, no changes', 'plan · 只规划不修改')],
   ['acceptEdits', t('acceptEdits · auto-accept file edits', 'acceptEdits · 自动接受文件修改')],
-  ['dontAsk', t('dontAsk · deny tools not allowed in advance', 'dontAsk · 未预先允许的工具直接拒绝')],
-  ['auto', t('auto · auto mode (approvals decided automatically)', 'auto · 自动模式（自动判断审批）')],
   ['bypassPermissions', t('bypassPermissions · skip all approvals', 'bypassPermissions · 跳过所有审批')],
 ];
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
