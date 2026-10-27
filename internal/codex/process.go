@@ -27,6 +27,9 @@ type Process struct {
 	queued           int
 	tasks            map[string]bool
 	requests         map[string]context.CancelFunc
+	baseModel        string
+	baseEffort       string
+	modelEfforts     map[string]string
 }
 
 // StartProcess ignores Message and the legacy SessionID placeholder for new threads.
@@ -66,6 +69,28 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 		r.close()
 		return nil, fmt.Errorf("initialize Codex: %w", err)
 	}
+	var native struct {
+		Config struct {
+			Model  string `json:"model"`
+			Effort string `json:"model_reasoning_effort"`
+		} `json:"config"`
+	}
+	if err = r.call(ctx, "config/read", map[string]any{"includeLayers": false, "cwd": o.Cwd}, &native); err != nil {
+		r.close()
+		return nil, fmt.Errorf("read Codex configuration: %w", err)
+	}
+	p.baseModel, p.baseEffort = native.Config.Model, native.Config.Effort
+	p.modelEfforts = map[string]string{}
+	// Resolve inheritance before applying per-session overrides. Otherwise clearing
+	// an override would leave the previous turn's sticky settings in effect.
+	if models, catalogErr := readModels(ctx, r); catalogErr == nil {
+		for _, m := range models {
+			p.modelEfforts[m.ID] = m.DefaultEffort
+			if p.baseModel == "" && m.IsDefault {
+				p.baseModel = m.ID
+			}
+		}
+	}
 	params := map[string]any{}
 	if o.ModelProvider != "" {
 		params["modelProvider"] = o.ModelProvider
@@ -82,6 +107,9 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 	if o.Model != "" {
 		params["model"] = o.Model
 	}
+	if o.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": o.Effort}
+	}
 	// Keep the adapter's approvals on the explicit human bridge.
 	params["approvalsReviewer"] = "user"
 	params["approvalPolicy"] = "on-request"
@@ -92,6 +120,11 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 		params["approvalPolicy"] = "never"
 	}
 	var response struct {
+		Model   string `json:"model"`
+		Effort  string `json:"reasoningEffort"`
+		Sandbox struct {
+			Type string `json:"type"`
+		} `json:"sandbox"`
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
@@ -104,16 +137,31 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 		r.close()
 		return nil, errors.New("Codex returned an empty thread ID")
 	}
+	if p.baseModel == "" && o.Model == "" {
+		p.baseModel = response.Model
+	}
+	if p.baseEffort == "" && o.Effort == "" && o.Model == "" && p.modelEfforts[response.Model] == "" {
+		p.baseEffort = response.Effort
+	}
 	p.mu.Lock()
 	p.threadID = response.Thread.ID
 	p.mu.Unlock()
-	if err = p.emit("session", "", map[string]any{"session_id": response.Thread.ID, "provider": "codex"}); err != nil {
+	permission := map[string]string{"readOnly": "read-only", "workspaceWrite": "workspace-write", "dangerFullAccess": "danger-full-access", "externalSandbox": "external-sandbox"}[response.Sandbox.Type]
+	if err = p.emit("session", "", map[string]any{"session_id": response.Thread.ID, "provider": "codex", "model": response.Model, "modelId": response.Model, "effort": response.Effort, "permissionMode": permission}); err != nil {
 		r.close()
 		return nil, err
 	}
 	go p.runQueue()
 	ready = true
 	return p, nil
+}
+
+// Configure changes the next turn without interrupting active work. Native
+// defaults captured at launch restore inheritance when an override is cleared.
+func (p *Process) Configure(model, effort string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.options.Model, p.options.Effort = model, effort
 }
 
 func (p *Process) emit(kind, text string, payload any) error {
@@ -175,6 +223,16 @@ func (p *Process) runQueue() {
 		p.compacting = strings.TrimSpace(text) == "/compact"
 		p.queued--
 		threadID := p.threadID
+		model, effort := p.options.Model, p.options.Effort
+		if model == "" {
+			model = p.baseModel
+		}
+		if effort == "" {
+			effort = p.baseEffort
+		}
+		if effort == "" {
+			effort = p.modelEfforts[model]
+		}
 		p.mu.Unlock()
 		p.callbackMu.Lock()
 		if p.hooks.Replay != nil {
@@ -183,8 +241,13 @@ func (p *Process) runQueue() {
 		p.callbackMu.Unlock()
 		method := "turn/start"
 		params := map[string]any{"threadId": threadID, "input": turnInput(text)}
-		if p.options.Effort != "" {
-			params["effort"] = p.options.Effort
+		if model != "" {
+			params["model"] = model
+		}
+		// Send the resolved effort explicitly: turn overrides are sticky.
+		params["effort"] = nil
+		if effort != "" {
+			params["effort"] = effort
 		}
 		if strings.TrimSpace(text) == "/compact" {
 			method = "thread/compact/start"
@@ -213,6 +276,12 @@ func (p *Process) runQueue() {
 				return
 			}
 			continue
+		}
+		if method == "turn/start" {
+			if err = p.emit("status", "configuration", map[string]any{"subtype": "configuration", "provider": "codex", "model": model, "modelId": model, "effort": effort}); err != nil {
+				p.rpc.kill()
+				return
+			}
 		}
 		p.mu.Lock()
 		if p.turnDone == done && p.turnID == "" {
@@ -349,8 +418,17 @@ func (p *Process) handle(m rpcMessage) error {
 	case "item/started", "item/completed":
 		return p.itemEvent(v.Item, m.Method == "item/completed")
 	case "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
-		return p.emit("status", v.Delta, map[string]any{"subtype": m.Method, "item_id": v.ItemID, "delta": v.Delta})
-	case "item/mcpToolCall/progress", "thread/tokenUsage/updated", "turn/diff/updated", "turn/plan/updated":
+		return p.emit("status", v.Delta, map[string]any{"subtype": m.Method, "threadId": v.ThreadID, "turnId": v.TurnID, "itemId": v.ItemID, "item_id": v.ItemID, "delta": v.Delta})
+	case "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/mcpToolCall/progress":
+		// Only public summaries are surfaced. Raw reasoning/textDelta is not a
+		// user-facing activity summary. Keep the protocol identity for grouping.
+		var payload map[string]any
+		if err := json.Unmarshal(m.Params, &payload); err != nil {
+			return err
+		}
+		payload["subtype"] = m.Method
+		return p.emit("status", "", payload)
+	case "thread/tokenUsage/updated", "turn/diff/updated", "turn/plan/updated":
 		return p.emit("status", m.Method, m.Params)
 	case "serverRequest/resolved":
 		p.mu.Lock()

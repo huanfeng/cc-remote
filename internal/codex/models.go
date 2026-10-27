@@ -6,9 +6,12 @@ import (
 )
 
 type Model struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
+	ID            string   `json:"id"`
+	Label         string   `json:"label"`
+	Description   string   `json:"description"`
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+	IsDefault     bool     `json:"isDefault,omitempty"`
 }
 
 // Models reads the native catalog without starting a thread or inference turn.
@@ -23,6 +26,10 @@ func Models(ctx context.Context, executable, configDir, cwd string) ([]Model, er
 	if err = r.initialize(ctx); err != nil {
 		return nil, err
 	}
+	return readModels(ctx, r)
+}
+
+func readModels(ctx context.Context, r *rpcClient) ([]Model, error) {
 	var models []Model
 	cursor := ""
 	seen := map[string]bool{}
@@ -33,15 +40,20 @@ func Models(ctx context.Context, executable, configDir, cwd string) ([]Model, er
 		}
 		var page struct {
 			Data []struct {
-				ID          string `json:"id"`
-				Model       string `json:"model"`
-				DisplayName string `json:"displayName"`
-				Description string `json:"description"`
-				Hidden      bool   `json:"hidden"`
+				ID               string `json:"id"`
+				Model            string `json:"model"`
+				DisplayName      string `json:"displayName"`
+				Description      string `json:"description"`
+				Hidden           bool   `json:"hidden"`
+				DefaultEffort    string `json:"defaultReasoningEffort"`
+				IsDefault        bool   `json:"isDefault"`
+				SupportedEfforts []struct {
+					Effort string `json:"reasoningEffort"`
+				} `json:"supportedReasoningEfforts"`
 			} `json:"data"`
 			NextCursor *string `json:"nextCursor"`
 		}
-		if err = r.call(ctx, "model/list", params, &page); err != nil {
+		if err := r.call(ctx, "model/list", params, &page); err != nil {
 			return nil, err
 		}
 		for _, m := range page.Data {
@@ -53,7 +65,13 @@ func Models(ctx context.Context, executable, configDir, cwd string) ([]Model, er
 				id = m.ID
 			}
 			if id != "" {
-				models = append(models, Model{ID: id, Label: m.DisplayName, Description: m.Description})
+				efforts := []string{}
+				for _, e := range m.SupportedEfforts {
+					if e.Effort != "" {
+						efforts = append(efforts, e.Effort)
+					}
+				}
+				models = append(models, Model{ID: id, Label: m.DisplayName, Description: m.Description, Efforts: efforts, DefaultEffort: m.DefaultEffort, IsDefault: m.IsDefault})
 			}
 		}
 		if page.NextCursor == nil || *page.NextCursor == "" {

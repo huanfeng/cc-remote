@@ -5,10 +5,13 @@ import (
 	"bufio"
 	"bytes"
 	"container/list"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,12 +21,14 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	_ "modernc.org/sqlite"
 )
 
 const nativeHistoryLimit int64 = 64 << 20
 const nativeFileLimit = 5000
 
 var nativeUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var nativeStateDatabase = regexp.MustCompile(`^state_[0-9]+\.sqlite$`)
 
 type nativeMetadataKey struct {
 	home, path string
@@ -207,7 +212,70 @@ func openNative(root *os.Root, path string) (*os.File, error) {
 	return f, nil
 }
 
-// ListNative lists Codex sessions without reading any other local history.
+// nativeTitles reads the Codex-maintained session index. An index entry is only
+// used after its UUID has been matched to a discovered rollout.
+func nativeTitles(root *os.Root) map[string]string {
+	titles := make(map[string]string)
+	// Codex also maintains titles in its versioned state database. Open it
+	// read-only (including its WAL), and tolerate absent or older schemas.
+	entries, _ := os.ReadDir(root.Name())
+	var database string
+	var version int
+	for _, entry := range entries {
+		var n int
+		if entry.Type().IsRegular() && nativeStateDatabase.MatchString(entry.Name()) {
+			_, _ = fmt.Sscanf(entry.Name(), "state_%d.sqlite", &n)
+			if n > version {
+				version, database = n, entry.Name()
+			}
+		}
+	}
+	if database != "" {
+		path := filepath.Join(root.Name(), database)
+		u := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+		if !strings.HasPrefix(u.Path, "/") {
+			u.Path = "/" + u.Path
+		}
+		u.RawQuery = url.Values{"mode": {"ro"}, "_pragma": {"query_only(1)", "busy_timeout(1000)"}}.Encode()
+		if db, err := sql.Open("sqlite", u.String()); err == nil {
+			rows, err := db.Query("SELECT id, COALESCE(NULLIF(name, ''), title) FROM threads")
+			if err != nil {
+				rows, err = db.Query("SELECT id, title FROM threads")
+			}
+			if err == nil {
+				for rows.Next() {
+					var id, title string
+					if rows.Scan(&id, &title) == nil && nativeUUID.MatchString(id) && strings.TrimSpace(title) != "" {
+						titles[strings.ToLower(id)] = strings.TrimSpace(title)
+					}
+				}
+				rows.Close()
+			}
+			db.Close()
+		}
+	}
+	f, err := openNative(root, "session_index.jsonl")
+	if err != nil {
+		return titles
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(io.LimitReader(f, nativeHistoryLimit))
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	for scanner.Scan() {
+		var record struct {
+			ID    string `json:"id"`
+			Title string `json:"thread_name"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &record) == nil && nativeUUID.MatchString(record.ID) {
+			if title := strings.TrimSpace(record.Title); title != "" {
+				titles[strings.ToLower(record.ID)] = title
+			}
+		}
+	}
+	return titles
+}
+
+// ListNative lists Codex sessions and their titles from the local session index.
 func ListNative(configDir string) ([]claude.NativeSession, error) {
 	root, err := nativeRoot(configDir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -222,6 +290,7 @@ func ListNative(configDir string) ([]claude.NativeSession, error) {
 		return nil, err
 	}
 	out := make([]claude.NativeSession, 0, len(files))
+	titles := nativeTitles(root)
 	seen := make(map[string]int)
 	for _, path := range files {
 		s, err := nativeMetadataCache.metadata(root, path)
@@ -229,6 +298,9 @@ func ListNative(configDir string) ([]claude.NativeSession, error) {
 			continue
 		}
 		key := strings.ToLower(s.ID)
+		if title := titles[key]; title != "" {
+			s.Title = title
+		}
 		if i, ok := seen[key]; ok {
 			if nativeSessionTime(s).After(nativeSessionTime(out[i])) {
 				out[i] = s
@@ -275,7 +347,13 @@ func NativeHistory(configDir, id string) (claude.NativeSession, []claude.Event, 
 			if err != nil || !strings.EqualFold(s.ID, id) {
 				continue
 			}
-			return nativeHistoryCache.read(root, path, true)
+			s, events, err := nativeHistoryCache.read(root, path, true)
+			if err == nil {
+				if title := nativeTitles(root)[strings.ToLower(s.ID)]; title != "" {
+					s.Title = title
+				}
+			}
+			return s, events, err
 		}
 	}
 	return claude.NativeSession{}, nil, os.ErrNotExist

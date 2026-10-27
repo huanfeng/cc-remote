@@ -79,7 +79,7 @@ func (p Preferences) Validate() error {
 			return i18n.NewError("invalid Codex sandbox mode: %s", "无效的 Codex 沙箱模式：%s", p.PermissionMode)
 		}
 		switch p.Effort {
-		case "", "none", "minimal", "low", "medium", "high", "xhigh":
+		case "", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
 		default:
 			return i18n.NewError("invalid Codex reasoning effort: %s", "无效的 Codex 推理强度：%s", p.Effort)
 		}

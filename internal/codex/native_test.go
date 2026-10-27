@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,6 +109,63 @@ func TestNativeListTitlesAndEnvironment(t *testing.T) {
 	list, err = ListNative(t.TempDir())
 	if err != nil || len(list) != 0 {
 		t.Fatalf("explicit home: %+v %v", list, err)
+	}
+}
+
+func TestNativeSessionIndexTitles(t *testing.T) {
+	home := t.TempDir()
+	writeRollout(t, home, testNativeID, nativeMeta(testNativeID)+nativeMessage("user", "Prompt fallback"))
+	index := filepath.Join(home, "session_index.jsonl")
+	writeIndex := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(index, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeIndex(`{"id":"12345678-abcd-4321-9876-123456789abc","thread_name":"First name"}` + "\n" +
+		`not json` + "\n" +
+		`{"id":"12345678-ABCD-4321-9876-123456789ABC","thread_name":"Renamed session"}` + "\n" +
+		`{"id":"invalid","thread_name":"Unrelated"}` + "\n")
+	check := func(want string) {
+		t.Helper()
+		list, err := ListNative(home)
+		if err != nil || len(list) != 1 || list[0].Title != want {
+			t.Fatalf("list=%+v err=%v; want %q", list, err, want)
+		}
+		s, _, err := NativeHistory(home, testNativeID)
+		if err != nil || s.Title != want {
+			t.Fatalf("history=%+v err=%v; want %q", s, err, want)
+		}
+	}
+	check("Renamed session")
+	// Index changes must be visible even when rollout metadata is cached.
+	writeIndex(`{"id":"12345678-abcd-4321-9876-123456789abc","thread_name":"Updated name"}` + "\n")
+	check("Updated name")
+	writeIndex(`{"id":"22345678-abcd-4321-9876-123456789abc","thread_name":"Another session"}` + "\n")
+	check("Prompt fallback")
+}
+
+func TestNativeStateDatabaseTitles(t *testing.T) {
+	home := t.TempDir()
+	writeRollout(t, home, testNativeID, nativeMeta(testNativeID)+nativeMessage("user", "Prompt fallback"))
+	db, err := sql.Open("sqlite", filepath.Join(home, "state_5.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("CREATE TABLE threads (id TEXT, title TEXT, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO threads VALUES (?, ?, ?)", testNativeID, "Original", "Named thread"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := ListNative(home)
+	if err != nil || len(list) != 1 || list[0].Title != "Named thread" {
+		t.Fatalf("list=%+v err=%v", list, err)
+	}
+	s, _, err := NativeHistory(home, testNativeID)
+	if err != nil || s.Title != "Named thread" {
+		t.Fatalf("history=%+v err=%v", s, err)
 	}
 }
 

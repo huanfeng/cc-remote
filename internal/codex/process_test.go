@@ -89,15 +89,32 @@ func fakeAppServer() {
 			if os.Getenv("CODEX_ADAPTER_TEST_MODE") == "blocked-pipe" {
 				time.Sleep(time.Hour)
 			}
+		case "config/read":
+			if !ack {
+				fail("configuration before handshake")
+			}
+			reply(map[string]any{"config": map[string]any{"model": "model-a", "model_reasoning_effort": "medium", "model_provider": os.Getenv("CODEX_ADAPTER_TEST_PROVIDER")}})
+		case "account/read":
+			kind := os.Getenv("CODEX_ADAPTER_TEST_ACCOUNT")
+			if kind == "none" {
+				reply(map[string]any{"account": nil})
+			} else {
+				if kind == "" {
+					kind = "chatgpt"
+				}
+				reply(map[string]any{"account": map[string]any{"type": kind, "planType": "plus", "email": "private@example.com"}})
+			}
+		case "account/rateLimits/read":
+			if os.Getenv("CODEX_ADAPTER_TEST_ACCOUNT") != "" {
+				fail("quota requested without subscription")
+			}
+			reply(map[string]any{"rateLimits": map[string]any{"primary": map[string]any{"usedPercent": 99}}, "rateLimitsByLimitId": map[string]any{"codex": map[string]any{"primary": map[string]any{"usedPercent": 23.5, "windowDurationMins": 300, "resetsAt": 1800000000}, "secondary": map[string]any{"usedPercent": 0, "windowDurationMins": 10080}}}})
 		case "model/list":
 			if !ack {
 				fail("model/list before handshake")
 			}
-			if os.Getenv("CODEX_ADAPTER_TEST_MODE") != "models" {
-				fail("unexpected model discovery")
-			}
 			if params["cursor"] == nil {
-				reply(map[string]any{"data": []any{map[string]any{"id": "picker-a", "model": "model-a", "displayName": "Model A", "description": "first"}}, "nextCursor": "page2"})
+				reply(map[string]any{"data": []any{map[string]any{"id": "picker-a", "model": "model-a", "displayName": "Model A", "description": "first", "isDefault": true, "defaultReasoningEffort": "medium", "supportedReasoningEfforts": []any{map[string]any{"reasoningEffort": "medium"}, map[string]any{"reasoningEffort": "high"}}}}, "nextCursor": "page2"})
 			} else {
 				reply(map[string]any{"data": []any{map[string]any{"id": "model-b", "displayName": "Model B", "description": "second"}}, "nextCursor": nil})
 			}
@@ -105,7 +122,7 @@ func fakeAppServer() {
 			if !ack {
 				fail("thread before handshake")
 			}
-			if os.Getenv("CODEX_ADAPTER_TEST_MODE") == "models" {
+			if os.Getenv("CODEX_ADAPTER_TEST_MODE") == "models" || os.Getenv("CODEX_ADAPTER_TEST_MODE") == "usage" {
 				fail("model discovery started thread")
 			}
 			mode := os.Getenv("CODEX_ADAPTER_TEST_SANDBOX")
@@ -129,7 +146,16 @@ func fakeAppServer() {
 			if msg.Method == "thread/resume" && params["threadId"] != "saved-thread" {
 				fail("resume lost thread ID")
 			}
-			reply(map[string]any{"thread": map[string]any{"id": "actual-thread"}})
+			model := stringValue(params["model"])
+			if model == "" {
+				model = "model-a"
+			}
+			effort := "medium"
+			if config, ok := params["config"].(map[string]any); ok {
+				effort = stringValue(config["model_reasoning_effort"])
+			}
+			sandbox := map[string]string{"read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess"}[mode]
+			reply(map[string]any{"thread": map[string]any{"id": "actual-thread"}, "model": model, "reasoningEffort": effort, "sandbox": map[string]any{"type": sandbox}})
 		case "turn/start", "thread/compact/start":
 			if active != "" {
 				fail("overlapping turns")
@@ -138,6 +164,15 @@ func fakeAppServer() {
 				fail("wrong actual thread")
 			}
 			turn++
+			if os.Getenv("CODEX_ADAPTER_TEST_MODE") == "configure" {
+				model, effort := "model-a", "medium"
+				if turn == 2 {
+					model, effort = "model-b", "high"
+				}
+				if params["model"] != model || params["effort"] != effort {
+					fail(fmt.Sprintf("wrong turn %d configuration: %v", turn, params))
+				}
+			}
 			active = "compact"
 			if msg.Method == "turn/start" {
 				input, _ := params["input"].([]any)
@@ -542,6 +577,31 @@ func TestAdapterInstalledModelsSmoke(t *testing.T) {
 	if len(models) == 0 {
 		t.Fatal("empty native catalog")
 	}
+}
+
+func TestAdapterInstalledConfigurationSmoke(t *testing.T) {
+	if os.Getenv("CODEX_ADAPTER_REAL_SMOKE") != "1" {
+		t.Skip("opt-in local configuration smoke; no inference")
+	}
+	var session json.RawMessage
+	p, err := StartProcess(claude.Options{Executable: "codex", ConfigDir: t.TempDir(), Cwd: t.TempDir(), BridgeURL: "http://127.0.0.1:1/bridge", BridgeToken: "smoke-token", PermissionMode: "read-only"}, claude.ProcessHooks{Event: func(e claude.Event) error {
+		if e.Kind == "session" {
+			session = append(json.RawMessage{}, e.Payload...)
+		}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	var reported struct {
+		Model      string `json:"model"`
+		Permission string `json:"permissionMode"`
+	}
+	if err := json.Unmarshal(session, &reported); err != nil || reported.Model == "" || reported.Permission != "read-only" {
+		t.Fatalf("configuration not reported: %s", session)
+	}
+	t.Log("native CLI reported model and read-only permission without starting a turn")
 }
 
 func TestAdapterImageAttachments(t *testing.T) {
