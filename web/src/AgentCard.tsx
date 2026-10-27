@@ -110,18 +110,30 @@ export function TeammateMessage({ name, color, summary, text }: { name?: string;
   </details>;
 }
 
-/** Panel of the session's subagents and background tasks; picking one jumps to its card. */
+/** Panel of the session's background work, grouped by kind: subagents can be
+ * opened to read their transcript, commands to their output. Claude Code offers
+ * no per-task stop, so there is deliberately no stop button here. */
 export function TaskPanel({ tasks, close, locate }: { tasks: TaskInfo[]; close: () => void; locate: (task: TaskInfo) => void }) {
   const ordered = [...tasks].sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running') || Date.parse(b.startedAt) - Date.parse(a.startedAt));
+  const groups = [
+    { label: t('Subagents', '子 agent'), items: ordered.filter(task => task.taskType !== 'local_bash' && task.taskType !== 'in_process_teammate') },
+    { label: t('Background commands', '后台命令'), items: ordered.filter(task => task.taskType === 'local_bash') },
+    { label: t('Teammates', '队友'), items: ordered.filter(task => task.taskType === 'in_process_teammate') },
+  ].filter(group => group.items.length);
   return <div className="modal-backdrop" onClick={close}><div className="modal task-panel" onClick={event => event.stopPropagation()}>
     <div className="modal-heading"><h2>{t('Subagents and background tasks', '子 agent 与后台任务')}</h2><button className="icon" aria-label={t('Close task panel', '关闭任务面板')} onClick={close}><CloseIcon size={18} /></button></div>
-    {ordered.length === 0 ? <p>{t('This session has no subagents or background tasks yet.', '这个会话还没有子 agent 或后台任务。')}</p> : <ul className="task-list">{ordered.map(task => {
-      const meta = [task.toolUses ? toolCount(task.toolUses) : '', task.tokens ? `${compact(task.tokens)} tokens` : '', task.durationMs ? formatDuration(task.durationMs) : ''].filter(Boolean).join(' · ');
-      return <li key={task.id}><button type="button" className={`task-row is-${task.status}`} disabled={!task.toolUseId} onClick={() => locate(task)}>
-        <span className="task-row-head"><span className={`agent-icon is-${task.status}`}><StatusIcon status={task.status} shell={task.taskType === 'local_bash'} /></span><strong>{task.description || task.id}</strong><span className={`tool-badge agent-status is-${task.status}`}>{STATUS[task.status] || task.status}{task.status === 'running' && <> · <Elapsed since={task.startedAt} /></>}</span></span>
-        <small>{[task.subagentType, taskKind(task), meta].filter(Boolean).join(' · ')}</small>
-        {task.status === 'running' && task.progress && <small className="task-progress">{t('Now: ', '正在：')}{task.progress}</small>}
-      </button></li>;
-    })}</ul>}
+    {ordered.length === 0 ? <p>{t('This session has no subagents or background tasks yet.', '这个会话还没有子 agent 或后台任务。')}</p> : groups.map(group => <section key={group.label} className="task-group">
+      <h3>{group.label}<span>{group.items.length}</span></h3>
+      <ul className="task-list">{group.items.map(task => {
+        const meta = [task.toolUses ? toolCount(task.toolUses) : '', task.tokens ? `${compact(task.tokens)} tokens` : '', task.durationMs ? formatDuration(task.durationMs) : ''].filter(Boolean).join(' · ');
+        const shell = task.taskType === 'local_bash';
+        return <li key={task.id}><button type="button" className={`task-row is-${task.status}`} disabled={!task.toolUseId} title={task.toolUseId ? t('Open it in the conversation', '在对话中打开它的内容') : undefined} onClick={() => locate(task)}>
+          <span className="task-row-head"><span className={`agent-icon is-${task.status}`}><StatusIcon status={task.status} shell={shell} /></span><strong>{task.description || task.id}</strong><span className={`tool-badge agent-status is-${task.status}`}>{STATUS[task.status] || task.status}{task.status === 'running' && <> · <Elapsed since={task.startedAt} /></>}</span>{task.toolUseId && <span className="task-view-hint">{shell ? t('View output', '查看输出') : t('View transcript', '查看会话')} ›</span>}</span>
+          <small>{[task.subagentType, taskKind(task), meta].filter(Boolean).join(' · ')}</small>
+          {task.status === 'running' && task.progress && <small className="task-progress">{t('Now: ', '正在：')}{task.progress}</small>}
+        </button></li>;
+      })}</ul>
+    </section>)}
+    <p className="task-panel-note">{t('A single task cannot be stopped on its own (Claude Code has no such control); stopping the turn stops the work it is waiting on.', '单个任务无法单独停止（Claude Code 没有这个控制）；停止当前轮次即可中断其等待的工作。')}</p>
   </div></div>;
 }
