@@ -105,7 +105,7 @@ test('Codex details prefer the latest cumulative token report without requiring 
   renderer.dispose();
 });
 
-test('dirty details close and cancel require discard confirmation; native history has no editing or management controls', () => {
+test('dirty details close and cancel require discard confirmation; native history has no editing or management controls', async () => {
   const renderer = createRenderer(); let closed = 0;
   const props = { api: async () => ({}), session, close() { closed++; }, onUpdated() {}, onDelete() {} };
   let tree = renderer.render(SessionSettings, props);
@@ -115,7 +115,7 @@ test('dirty details close and cancel require discard confirmation; native histor
   find(tree, node => node.props?.['aria-label'] === 'Close session details').props.onClick();
   button(tree, 'Cancel').props.onClick();
   assert.equal(closed, 0); assert.ok(nodes(renderer.render(SessionSettings, props)).some(node => node.type === 'form'));
-  window.confirm = () => true; button(tree, 'Cancel').props.onClick();
+  window.confirm = () => true; button(tree, 'Cancel').props.onClick(); await settle();
   assert.equal(nodes(renderer.render(SessionSettings, props)).some(node => node.type === 'form'), false);
   const native = createRenderer(); const nativeTree = native.render(SessionSettings, { ...props, session: { ...session, readOnly: true } });
   assert.doesNotMatch(content(nativeTree), /Edit session overrides|Delete session/);
@@ -128,17 +128,19 @@ test('global sections are fixed, provider selection stays in defaults and preser
   let tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
   tree = renderer.render(ClaudeSettings, props);
   assert.deepEqual(nodes(tree).filter(node => node.props?.role === 'tab').map(node => content(node).split(' ')[0]), ['Session', 'This', 'This']);
-  control(tree, 'Settings provider').props.onChange('codex'); tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
+  control(tree, 'Settings provider').props.onChange('codex'); await settle();
+  tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
   tree = renderer.render(ClaudeSettings, props);
   assert.equal(nodes(tree).filter(node => node.props?.role === 'tab').length, 3);
   assert.doesNotMatch(content(tree), /Native configuration/);
-  find(tree, node => node.props?.id === 'settings-tab-host').props.onClick(); tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
+  find(tree, node => node.props?.id === 'settings-tab-host').props.onClick(); await settle();
+  tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
   tree = renderer.render(ClaudeSettings, props);
   assert.equal(nodes(tree).some(node => node.props?.label === 'Settings provider'), false);
   assert.ok(nodes(tree).some(node => node.type === 'input' && node.props.value === 'My host'));
   find(tree, node => node.type === 'input' && node.props.value === 'My host').props.onChange({ target: { value: 'Unsaved host' } });
   tree = renderer.render(ClaudeSettings, props); window.confirm = () => false;
-  find(tree, node => node.props?.id === 'settings-tab-remote').props.onClick();
+  find(tree, node => node.props?.id === 'settings-tab-remote').props.onClick(); await settle();
   assert.ok(nodes(renderer.render(ClaudeSettings, props)).some(node => node.type === 'input' && node.props.value === 'Unsaved host'));
   window.confirm = () => true;
   renderer.dispose();
@@ -165,7 +167,7 @@ test('late defaults replies cannot overwrite the selected provider', async () =>
   const codex = new Promise(resolve => { finishCodex = resolve; });
   const props = { providers: ['claude', 'codex'], api: path => path.includes('codex') ? codex : claude, close() {} };
   let tree = renderer.render(ClaudeSettings, props); renderer.effects();
-  control(tree, 'Settings provider').props.onChange('codex');
+  control(tree, 'Settings provider').props.onChange('codex'); await settle();
   renderer.render(ClaudeSettings, props); renderer.effects();
   finishCodex({ provider: 'codex', model: 'codex-new', permissionMode: '', effort: '', revision: 'c2' }); await settle();
   finishClaude({ provider: 'claude', model: 'claude-late', permissionMode: '', effort: '', revision: 'c1' }); await settle();
@@ -347,7 +349,7 @@ test('primary send button reflects task state and renders inline extra action wi
   const props = { disabled: false, uploading: false, running: true };
   let tree = renderer.render(ComposerSend, props);
   const send = find(tree, node => node.type === 'button' && node.props.type === 'submit');
-  assert.equal(send.props.title, 'Send after the current task');
+  assert.equal(send.props['data-tip'], 'Send after the current task');
   assert.equal(send.props.disabled, false);
   assert.equal(nodes(tree).some(node => node.props?.['aria-label'] === 'Send settings'), false);
   tree = renderer.render(ComposerSend, { ...props, disabled: true });

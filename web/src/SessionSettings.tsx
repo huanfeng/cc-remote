@@ -10,6 +10,7 @@ import { SessionProfile } from './SupplierProfile';
 import { duration, money, number, type Stats } from './StatusPanel';
 import { locale, t } from './i18n';
 import { copyText } from './clipboard';
+import { confirmDialog } from './ConfirmDialog';
 import './session-details.css';
 
 export type SessionInfo = { id: string; provider?: Provider; profileId?: string; profileName?: string; title: string; cwd: string; status?: string; mode?: string; online?: boolean; claudeSessionId?: string; createdAt?: string; lastConversationAt?: string; conversationTimeEstimated?: boolean; queued?: { text: string; payload?: any }[]; activeTasks?: number; readOnly?: boolean; permissionMode?: string; model?: string; effort?: string; live?: LiveStatus };
@@ -46,8 +47,8 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
   const [profileBusy, setProfileBusy] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const changed = editing && (draft.permissionMode !== saved.permissionMode || draft.model.trim() !== saved.model || draft.effort !== saved.effort);
-  const mayLeave = () => !saving && !profileBusy && (!changed || window.confirm(t('Discard unsaved session changes?', '放弃未保存的会话修改？')));
-  const requestClose = () => { if (mayLeave()) close(); };
+  const mayLeave = async () => !saving && !profileBusy && (!changed || confirmDialog(t('Discard unsaved session changes?', '放弃未保存的会话修改？')));
+  const requestClose = async () => { if (await mayLeave()) close(); };
   useEscape(requestClose);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -134,7 +135,7 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
           <div className="field">{t('Model', '模型')}<ModelPicker api={api} provider={provider} sessionId={session.id} label={t('Session model', '会话模型')} inheritLabel={inherit(defaults?.model)} value={draft.model} onChange={model => setDraft(old => ({ ...old, model }))} /></div>
           <div className="field">{t('Effort', '推理强度')}<EffortPicker api={api} provider={provider} model={draft.model || defaults?.model || ''} sessionId={session.id} inheritLabel={inherit(defaults?.effort)} label={t('Session effort', '会话推理强度')} value={draft.effort} onChange={effort => setDraft(old => ({ ...old, effort }))} /></div>
           <div className="field">{t('Permission mode', '权限模式')}<PermissionPicker provider={provider} label={t('Session permission mode', '会话权限模式')} value={draft.permissionMode} inheritLabel={inherit(defaults?.permissionMode)} inheritMode={defaults?.permissionMode} onChange={permissionMode => setDraft(old => ({ ...old, permissionMode }))} /></div>
-          <div className="modal-actions"><button type="button" className="secondary" onClick={() => setDraft({ permissionMode: '', model: '', effort: '' })}>{t('Restore inheritance', '恢复继承')}</button><button type="button" className="secondary" onClick={() => { if (mayLeave()) { setDraft(saved); setEditing(false); } }}>{t('Cancel', '取消')}</button><button className="primary" disabled={!changed}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button></div>
+          <div className="modal-actions"><button type="button" className="secondary" onClick={() => setDraft({ permissionMode: '', model: '', effort: '' })}>{t('Restore inheritance', '恢复继承')}</button><button type="button" className="secondary" onClick={() => { void mayLeave().then(ok => { if (ok) { setDraft(saved); setEditing(false); } }); }}>{t('Cancel', '取消')}</button><button className="primary" disabled={!changed}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button></div>
         </fieldset>
       </form>}
       <h3>{t('Statistics', '统计')}</h3>
@@ -151,7 +152,7 @@ export function SessionSettings<T extends SessionInfo>({ api, session, defaults,
       </dl>
       {provider === 'codex' && events && <CodexSessionUsage events={events} />}
       {nativeHistory && onImport && <button type="button" className="primary" onClick={onImport}>{t('Import session…', '导入会话…')}</button>}
-      {!nativeHistory && <details><summary>{t('Management', '管理')}</summary><button type="button" className="danger-button" disabled={saving} onClick={() => { if (mayLeave()) onDelete(); }}>{t('Delete session…', '删除会话…')}</button></details>}
+      {!nativeHistory && <details><summary>{t('Management', '管理')}</summary><button type="button" className="danger-button" disabled={saving} onClick={() => { void mayLeave().then(ok => { if (ok) onDelete(); }); }}>{t('Delete session…', '删除会话…')}</button></details>}
       {notice && <p role="status">{notice}</p>}{error && <div className="error" role="alert">{error}</div>}
     </div>
   </div>;
