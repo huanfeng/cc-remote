@@ -156,6 +156,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+hostauth.Path, s.hello)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/profiles", s.profilesAPI)
+	mux.HandleFunc("GET /api/profiles/{id}/env", s.supplierEnvAPI)
 	mux.HandleFunc("POST /api/sessions/{id}/profile", s.switchProfile)
 	mux.HandleFunc("GET /api/identity", s.identityAPI)
 	mux.HandleFunc("PUT /api/identity", s.identityAPI)

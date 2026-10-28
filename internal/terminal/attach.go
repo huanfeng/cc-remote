@@ -206,6 +206,8 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 			return err
 		}
 	}
+	// Mode banner before the Claude Code TUI takes over the screen.
+	fmt.Println(i18n.F("⏺ ccr managed session · %s · Ctrl+] detaches (the task keeps running on the host)", "⏺ ccr 托管会话 · %s · Ctrl+] 断开（任务在宿主继续）", printable(target.Title)))
 	return api.attach(target)
 }
 

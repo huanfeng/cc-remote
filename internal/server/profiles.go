@@ -104,6 +104,26 @@ func (s *Server) profilesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
 }
+// supplierEnvAPI returns one supplier's connection variables so the terminal
+// can launch native Claude with it (GET /api/profiles/{id}/env). The catalog
+// endpoint deliberately omits them; this one hands them only to a caller that
+// already holds the access token.
+func (s *Server) supplierEnvAPI(w http.ResponseWriter, r *http.Request) {
+	f, e := s.profileCatalog()
+	if e != nil {
+		fail(w, 400, e.Error())
+		return
+	}
+	id := r.PathValue("id")
+	for _, p := range f.Profiles {
+		if p.ID == id && p.App == "claude" {
+			respond(w, 200, map[string]any{"id": p.ID, "name": p.Name, "env": p.Settings.Env})
+			return
+		}
+	}
+	fail(w, 404, s.lang(r).T("Supplier configuration not found", "未找到该供应商配置"))
+}
+
 func sessionProfile(x store.Session) (supplierProfile, error) {
 	var p supplierProfile
 	if x.ProfileJSON == "" {
