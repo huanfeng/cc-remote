@@ -79,7 +79,7 @@ func Attach(args []string, defaultDataDir string) error {
 	// An offline terminal session relaunches Claude Code on attach; its saved
 	// supplier may no longer work (renamed, deleted, logged out), so offer the
 	// list with the saved configuration as the default.
-	if target.ID != "" && target.Status != "running" && target.Status != "waiting" {
+	if !*create && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
 		if err = api.offerResumeProfile(&target); err != nil {
 			return err
 		}
@@ -170,6 +170,7 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	// does: the words are then its first message, not a session to attach.
 	launch := split.launch || len(split.claude) > 0
 	var target remoteSession
+	var created bool
 	switch {
 	case len(split.words) >= 1 && split.words[0] == "claude":
 		// Plain Claude Code in this terminal with a supplier applied; the words
@@ -179,6 +180,7 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	case resume.set:
 		target, err = api.resume(resume, *title, options)
 	case *create || launch || *profile != "":
+		created = true
 		target, err = api.create(*title, options)
 	case len(split.words) == 1 && (split.words[0] == "ls" || split.words[0] == "list"):
 		target, err = api.recent(*title, options)
@@ -192,8 +194,9 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	}
 	// An offline terminal session relaunches Claude Code on attach; its saved
 	// supplier may no longer work (renamed, deleted, logged out), so offer the
-	// list with the saved configuration as the default.
-	if !resume.set && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
+	// list with the saved configuration as the default. A session created above
+	// already picked its supplier inside create.
+	if !resume.set && !created && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
 		if err = api.offerResumeProfile(&target); err != nil {
 			return err
 		}
