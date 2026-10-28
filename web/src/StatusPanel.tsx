@@ -14,8 +14,8 @@ export type HostStatus = {
   dataDir: string; claudeConfigDir: string; logFile: string; goVersion: string; os: string; arch: string;
   claude: { executable: string; path: string; version: string; error?: string }; service: { managed: boolean; manager: string };
   sessions: Record<'total' | 'managed' | 'terminal' | 'running' | 'waiting' | 'idle', number>;
-  pendingRequests: number; activeRuns: number; storage: { databaseBytes: number; uploadsBytes: number; logBytes: number };
-  totals: Stats; daily: Daily[]; sessionStats: SessionRow[]; logTail: string[];
+  pendingRequests: number; activeRuns: number; storage?: { databaseBytes: number; uploadsBytes: number; logBytes: number };
+  totals?: Stats; daily?: Daily[]; sessionStats?: SessionRow[]; logTail?: string[];
 };
 type SortKey = 'title' | 'mode' | 'status' | 'turns' | 'tokens' | 'costUSD' | 'durationMs' | 'lastActivityAt';
 
@@ -67,6 +67,9 @@ function Chart({ daily }: { daily: Daily[] }) {
 export function StatusPanel({ api, close, select, providerStatus, provider = 'claude', sessionId }: { provider?: Provider; sessionId?: string; api: Api; close: () => void; select: (id: string) => void; providerStatus?: { codexAvailable?: boolean; codexVersion?: string } }) {
   const [usageProvider, setUsageProvider] = useState<Provider>(provider);
   const [data, setData] = useState<HostStatus>();
+  // The summary endpoint answers in milliseconds; the aggregated statistics
+  // fill in right after, so opening the panel never shows an empty shell.
+  const [quick, setQuick] = useState<HostStatus>();
   const [error, setError] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'lastActivityAt', desc: true });
   const [logOpen, setLogOpen] = useState(false);
@@ -79,7 +82,11 @@ export function StatusPanel({ api, close, select, providerStatus, provider = 'cl
     const load = async () => {
       if (document.hidden || inFlight) return;
       inFlight = true;
-      try { const next = await api<HostStatus>('/api/status', { signal: controller.signal }); if (!controller.signal.aborted) { setData(next); setError(''); } } catch (err) { if (!controller.signal.aborted) setError((err as Error).message); } finally { inFlight = false; }
+      try {
+        if (!quick && !data) { const q = await api<HostStatus>('/api/status/summary', { signal: controller.signal }); if (!controller.signal.aborted) setQuick(q); }
+        const next = await api<HostStatus>('/api/status', { signal: controller.signal });
+        if (!controller.signal.aborted) { setData(next); setQuick(undefined); setError(''); }
+      } catch (err) { if (!controller.signal.aborted) setError((err as Error).message); } finally { inFlight = false; }
     };
     void load(); const timer = window.setInterval(load, 5000);
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') closeRef.current(); };
@@ -88,7 +95,8 @@ export function StatusPanel({ api, close, select, providerStatus, provider = 'cl
   }, [api]);
   useLayoutEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [data?.logTail, logOpen]);
   const value = (x: SessionRow) => sort.key === 'tokens' ? tokens(x) : x[sort.key];
-  const rows = [...data?.sessionStats || []].sort((a, b) => { const x = value(a), y = value(b); const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), locale); return sort.desc ? -c : c; });
+  const view = data || quick;
+  const rows = [...(view?.sessionStats || [])].sort((a, b) => { const x = value(a), y = value(b); const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), locale); return sort.desc ? -c : c; });
   const header = (key: SortKey, label: string) => <th aria-sort={sort.key === key ? sort.desc ? 'descending' : 'ascending' : undefined}><button onClick={() => setSort(old => ({ key, desc: old.key === key ? !old.desc : key !== 'title' && key !== 'mode' && key !== 'status' }))}>{label}{sort.key === key ? sort.desc ? ' ↓' : ' ↑' : ''}</button></th>;
   const totals = data?.totals;
   const L = { title: t('Title', '标题'), mode: t('Mode', '模式'), status: t('Status', '状态'), turns: t('Turns', '轮次'), cost: t('Cost', '费用'), time: t('Run time', '耗时'), last: t('Last activity', '最后活动') };
@@ -96,17 +104,17 @@ export function StatusPanel({ api, close, select, providerStatus, provider = 'cl
     <section className="modal status-panel" role="dialog" aria-modal="true" aria-label={t('Host status', '服务状态')}>
       <div className="modal-heading"><h2>{t('Host status', '服务状态')}</h2><span className="status-refresh">{data ? t('Refreshes every 5 s', '每 5 秒刷新') : t('Loading…', '读取中…')}</span><button type="button" className="icon" aria-label={t('Close host status', '关闭服务状态')} onClick={close}><CloseIcon size={18} /></button></div>
       {error && <div className="error" role="alert">{error}</div>}
-      {data && totals && <>
-        {data.listeners.some(x => x.insecure) && <div className="status-insecure" role="alert">{t(`⚠ The host listens over plain HTTP on non-local addresses (${data.listeners.filter(x => x.insecure).map(x => x.address).join(', ')}); the access token and session content travel the network unencrypted. Use it only on a trusted LAN, or access it through an HTTPS reverse proxy / VPN.`, `⚠ 宿主在非本机地址（${data.listeners.filter(x => x.insecure).map(x => x.address).join('、')}）以明文 HTTP 监听，访问令牌和会话内容会在网络中明文传输。仅在可信局域网使用，或通过 HTTPS 反向代理 / VPN 访问。`)}</div>}
-        <div className="status-cards">
-          <div className="status-card"><small>{L.status}</small><strong><span className="dot idle" />{t('Running', '运行中')}</strong><span>PID {data.pid}</span></div>
-          <div className="status-card"><small>{t('Version', '版本')}</small><strong>{data.version || 'dev'}</strong><span>{data.goVersion} · {data.os}/{data.arch}</span></div>
-          <div className="status-card"><small>{t('Uptime', '运行时长')}</small><strong>{duration(data.uptimeSeconds)}</strong><span title={data.startedAt}>{data.startedAt ? new Date(data.startedAt).toLocaleString(locale) : '—'}</span></div>
-          <div className="status-card"><small>{t('Service', '服务托管')}</small><strong>{data.service.managed ? managerText[data.service.manager] || data.service.manager : t('Foreground / started manually', '前台 / 手动启动')}</strong><span>{data.service.managed ? t('Starts at boot', '开机自动运行') : t('Not registered as a system service', '未注册为系统服务')}</span></div>
-          <div className="status-card"><small>Claude Code</small><strong className={data.claude.error ? 'warn' : ''}>{data.claude.version || t('Unavailable', '不可用')}</strong><span title={data.claude.path || data.claude.error}>{data.claude.path || data.claude.error}</span></div>
+      {view && view.listeners.some(x => x.insecure) && <div className="status-insecure" role="alert">{t(`⚠ The host listens over plain HTTP on non-local addresses (${view.listeners.filter(x => x.insecure).map(x => x.address).join(', ')}); the access token and session content travel the network unencrypted. Use it only on a trusted LAN, or access it through an HTTPS reverse proxy / VPN.`, `⚠ 宿主在非本机地址（${view.listeners.filter(x => x.insecure).map(x => x.address).join('、')}）以明文 HTTP 监听，访问令牌和会话内容会在网络中明文传输。仅在可信局域网使用，或通过 HTTPS 反向代理 / VPN 访问。`)}</div>}
+        {view && <div className="status-cards">
+          <div className="status-card"><small>{L.status}</small><strong><span className="dot idle" />{t('Running', '运行中')}</strong><span>PID {view.pid}</span></div>
+          <div className="status-card"><small>{t('Version', '版本')}</small><strong>{view.version || 'dev'}</strong><span>{view.goVersion} · {view.os}/{view.arch}</span></div>
+          <div className="status-card"><small>{t('Uptime', '运行时长')}</small><strong>{duration(view.uptimeSeconds)}</strong><span title={view.startedAt}>{view.startedAt ? new Date(view.startedAt).toLocaleString(locale) : '—'}</span></div>
+          <div className="status-card"><small>{t('Service', '服务托管')}</small><strong>{view.service.managed ? managerText[view.service.manager] || view.service.manager : t('Foreground / started manually', '前台 / 手动启动')}</strong><span>{view.service.managed ? t('Starts at boot', '开机自动运行') : t('Not registered as a system service', '未注册为系统服务')}</span></div>
+          <div className="status-card"><small>Claude Code</small><strong className={view.claude.error ? 'warn' : ''}>{view.claude.version || t('Unavailable', '不可用')}</strong><span title={view.claude.path || view.claude.error}>{view.claude.path || view.claude.error}</span></div>
           {providerStatus?.codexAvailable !== undefined && <div className="status-card"><small>Codex</small><strong className={providerStatus.codexAvailable ? '' : 'warn'}>{providerStatus.codexVersion || (providerStatus.codexAvailable ? t('Available', '可用') : t('Unavailable', '不可用'))}</strong></div>}
-          <div className="status-card"><small>{t('Listening on', '监听地址')}</small>{(data.listeners.length ? data.listeners : [{ address: data.listen || '—', loopback: true }]).map(x => <span key={x.address} className="status-listener"><code>{x.address}</code>{!x.loopback && <em>{x.insecure ? t('Reachable from LAN · plain HTTP', '局域网可访问 · 明文 HTTP') : t('Reachable from LAN', '局域网可访问')}</em>}</span>)}</div>
-        </div>
+          <div className="status-card"><small>{t('Listening on', '监听地址')}</small>{(view.listeners.length ? view.listeners : [{ address: view.listen || '—', loopback: true }]).map(x => <span key={x.address} className="status-listener"><code>{x.address}</code>{!x.loopback && <em>{x.insecure ? t('Reachable from LAN · plain HTTP', '局域网可访问 · 明文 HTTP') : t('Reachable from LAN', '局域网可访问')}</em>}</span>)}</div>
+        </div>}
+        {data && totals && data.storage && data.daily && data.sessionStats && data.logTail && <>
         <div className="status-grid">
           <div className="status-block"><h3>{t('Sessions', '会话')}</h3><dl>
             <div><dt>{t('All', '全部')}</dt><dd>{data.sessions.total}</dd></div><div><dt>{t('Managed', '托管')}</dt><dd>{data.sessions.managed}</dd></div><div><dt>{t('Terminal', '终端')}</dt><dd>{data.sessions.terminal}</dd></div>
@@ -117,7 +125,7 @@ export function StatusPanel({ api, close, select, providerStatus, provider = 'cl
             <div><dt>{t('Run time', '执行耗时')}</dt><dd>{duration(totals.durationMs / 1000)}</dd></div><div><dt>{t('Tool calls', '工具调用')}</dt><dd>{number(totals.toolCalls)}</dd></div><div><dt>{t('Errors', '错误')}</dt><dd>{totals.errors}</dd></div>
           </dl></div>
           <div className="status-block"><h3>{t('Storage', '存储')}</h3><dl>
-            <div><dt>{t('Database', '数据库')}</dt><dd>{bytes(data.storage.databaseBytes)}</dd></div><div><dt>{t('Uploads', '上传附件')}</dt><dd>{bytes(data.storage.uploadsBytes)}</dd></div><div><dt>{t('Logs', '日志')}</dt><dd>{bytes(data.storage.logBytes)}</dd></div>
+            <div><dt>{t('Database', '数据库')}</dt><dd>{bytes(data.storage.databaseBytes)}</dd></div><div><dt>{t('Uploads', '上传附件')}</dt><dd>{data.storage.uploadsBytes ? bytes(data.storage.uploadsBytes) : '…'}</dd></div><div><dt>{t('Logs', '日志')}</dt><dd>{bytes(data.storage.logBytes)}</dd></div>
           </dl><small className="status-path" title={data.dataDir}>{data.dataDir}</small></div>
         </div>
         <div className="usage-provider-tabs" role="group" aria-label={t('Subscription provider', '订阅提供方')}>{(['claude', 'codex'] as Provider[]).filter(p => p === 'claude' || typeof providerStatus?.codexAvailable === 'boolean').map(p => <button key={p} type="button" aria-pressed={usageProvider === p} className={usageProvider === p ? 'active' : ''} onClick={() => setUsageProvider(p)}>{providerName(p)}</button>)}</div><UsageDetails api={api} provider={usageProvider} sessionId={usageProvider === provider ? sessionId : undefined} />

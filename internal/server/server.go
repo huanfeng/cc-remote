@@ -161,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/identity", s.identityAPI)
 	mux.HandleFunc("PUT /api/identity", s.identityAPI)
 	mux.HandleFunc("GET /api/status", s.status)
+	mux.HandleFunc("GET /api/status/summary", s.statusSummary)
 	mux.HandleFunc("GET /api/usage", s.usage)
 	mux.HandleFunc("GET /api/usage/history", s.usageHistory)
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)

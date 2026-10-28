@@ -57,6 +57,22 @@ func (s *Server) claudeVersion() claudeVersion {
 	return v
 }
 
+// peekClaudeVersion returns the cached reading without ever spawning a process:
+// a cold or stale cache only kicks off the background refresh, so the summary
+// endpoint answers in milliseconds even right after the host starts.
+func (s *Server) peekClaudeVersion() claudeVersion {
+	versionCache.Lock()
+	v := versionCache.value
+	sameExe := v.Executable == s.cfg.ClaudeExecutable
+	needs := !sameExe || v.checked.IsZero()
+	stale := sameExe && !needs && time.Since(v.checked) >= 5*time.Minute
+	if (needs || stale) && !versionCache.refreshing {
+		s.startVersionRefresh()
+	}
+	versionCache.Unlock()
+	return v
+}
+
 // startVersionRefresh marks a background refresh as running; caller keeps the lock.
 func (s *Server) startVersionRefresh() bool {
 	versionCache.refreshing = true
@@ -228,12 +244,66 @@ func (s *Server) cachedStatus() ([]store.SessionStats, []store.DailyStats, int64
 	return c.stats, c.daily, c.uploadsBytes, nil
 }
 
-func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+// statusSummary serves the fast half of the panel: everything from memory and
+// file stats, with no SQLite aggregation, directory walks or CLI spawns, so
+// opening the panel paints at once and the heavy part fills in after.
+func (s *Server) statusSummary(w http.ResponseWriter, r *http.Request) {
+	sessions, counts, pendingRequests, activeRuns := s.statusCounts()
+	light := s.statusLight(r, sessions, counts, pendingRequests, activeRuns)
+	light["claude"] = s.peekClaudeVersion()
+	respond(w, 200, light)
+}
+
+// statusCounts lists sessions with live decorations and request counters.
+func (s *Server) statusCounts() ([]store.Session, map[string]int, int, int) {
 	sessions, err := s.store.List()
 	if err != nil {
-		fail(w, 500, s.lang(r).T("Could not read sessions", "无法读取会话"))
-		return
+		sessions = nil
 	}
+	counts := map[string]int{"total": len(sessions), "managed": 0, "terminal": 0, "running": 0, "waiting": 0, "idle": 0}
+	s.mu.Lock()
+	pendingRequests, activeRuns := len(s.requests), len(s.runs)
+	for i := range sessions {
+		s.decorate(&sessions[i])
+	}
+	s.mu.Unlock()
+	return sessions, counts, pendingRequests, activeRuns
+}
+
+// statusLight builds everything except the aggregated statistics.
+func (s *Server) statusLight(r *http.Request, sessions []store.Session, counts map[string]int, pendingRequests, activeRuns int) map[string]any {
+	db := filepath.Join(s.cfg.DataDir, "cc-remote.sqlite")
+	dbBytes := int64(0)
+	if s.cfg.DataDir != "" {
+		dbBytes = fileSize(db) + fileSize(db+"-wal") + fileSize(db+"-shm")
+	}
+	logFile := s.logPath()
+	s.mu.Lock()
+	bound := s.listen
+	s.mu.Unlock()
+	addrs, ls := listeners(bound)
+	manager := os.Getenv("CC_REMOTE_SERVICE_MANAGER")
+	uptime := int64(0)
+	startedAt := ""
+	if !s.cfg.StartedAt.IsZero() {
+		uptime = int64(time.Since(s.cfg.StartedAt).Seconds())
+		startedAt = s.cfg.StartedAt.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"version": s.cfg.Version, "pid": os.Getpid(), "startedAt": startedAt, "uptimeSeconds": uptime,
+		"listen": bound, "listenAddresses": addrs, "listeners": ls,
+		"dataDir": s.cfg.DataDir, "claudeConfigDir": s.cfg.ClaudeConfigDir, "logFile": logFile,
+		"goVersion": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
+		"claude":          s.claudeVersion(),
+		"service":         map[string]any{"managed": manager != "", "manager": manager},
+		"sessions":        counts,
+		"pendingRequests": pendingRequests, "activeRuns": activeRuns,
+		"storage": map[string]int64{"databaseBytes": dbBytes, "logBytes": fileSize(logFile)},
+	}
+}
+
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	sessions, counts, pendingRequests, activeRuns := s.statusCounts()
 	stats, daily, uploadsBytes, err := s.cachedStatus()
 	if err != nil {
 		fail(w, 500, s.lang(r).T("Could not count sessions", "无法统计会话"))
@@ -243,15 +313,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	for _, x := range stats {
 		byID[x.SessionID] = x
 	}
-	counts := map[string]int{"total": len(sessions), "managed": 0, "terminal": 0, "running": 0, "waiting": 0, "idle": 0}
 	rows := make([]sessionStatus, 0, len(sessions))
 	totals := store.SessionStats{}
-	s.mu.Lock()
-	pendingRequests, activeRuns := len(s.requests), len(s.runs)
-	for i := range sessions {
-		s.decorate(&sessions[i])
-	}
-	s.mu.Unlock()
 	for _, x := range sessions {
 		if x.Mode == "terminal" {
 			counts["terminal"]++
@@ -288,36 +351,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastActivityAt > rows[j].LastActivityAt })
-	db := filepath.Join(s.cfg.DataDir, "cc-remote.sqlite")
-	dbBytes := int64(0)
-	if s.cfg.DataDir != "" {
-		dbBytes = fileSize(db) + fileSize(db+"-wal") + fileSize(db+"-shm")
-	}
 	logFile := s.logPath()
-	s.mu.Lock()
-	bound := s.listen
-	s.mu.Unlock()
-	addrs, ls := listeners(bound)
-	manager := os.Getenv("CC_REMOTE_SERVICE_MANAGER")
-	uptime := int64(0)
-	startedAt := ""
-	if !s.cfg.StartedAt.IsZero() {
-		uptime = int64(time.Since(s.cfg.StartedAt).Seconds())
-		startedAt = s.cfg.StartedAt.UTC().Format(time.RFC3339)
-	}
-	respond(w, 200, map[string]any{
-		"version": s.cfg.Version, "pid": os.Getpid(), "startedAt": startedAt, "uptimeSeconds": uptime,
-		"listen": bound, "listenAddresses": addrs, "listeners": ls,
-		"dataDir": s.cfg.DataDir, "claudeConfigDir": s.cfg.ClaudeConfigDir, "logFile": logFile,
-		"goVersion": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
-		"claude":          s.claudeVersion(),
-		"service":         map[string]any{"managed": manager != "", "manager": manager},
-		"sessions":        counts,
-		"pendingRequests": pendingRequests, "activeRuns": activeRuns,
-		"storage": map[string]int64{"databaseBytes": dbBytes, "uploadsBytes": uploadsBytes, "logBytes": fileSize(logFile)},
-		"totals":  totals, "daily": daily, "sessionStats": rows,
-		"logTail": logTail(logFile, s.cfg.Token, 80),
-	})
+	light := s.statusLight(r, sessions, counts, pendingRequests, activeRuns)
+	light["storage"].(map[string]int64)["uploadsBytes"] = uploadsBytes
+	light["totals"], light["daily"], light["sessionStats"] = totals, daily, rows
+	light["logTail"] = logTail(logFile, s.cfg.Token, 80)
+	respond(w, 200, light)
 }
 
 func (s *Server) sessionStats(w http.ResponseWriter, r *http.Request) {
