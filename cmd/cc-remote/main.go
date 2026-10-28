@@ -42,20 +42,20 @@ var version = "dev"
 const usageEN = `CC Remote: remote web UI for Claude Code.
 
 usage:
-  cc-remote [host flags]                  run the host (web UI and API)
-  ccr [--new] [ls | session]              attach to this directory's terminal session (or start one)
-  ccr [claude options] [prompt]           start a terminal session with Claude Code options
-  ccr -r [id] | -c                        continue a Claude Code session as a terminal session
-  cc-remote [--data-dir D] -- claude ...  same as ccr -- [claude options]
+  cc-remote [host flags]       hold the host here (the service usually does this)
+  ccr [args] [-- claude ...]   the terminal side: use Claude Code held by the host
+  cc-remote claude [args]      native Claude Code here, with a supplier applied
 
 commands:
-  service    install/config/uninstall/start/stop/restart/status/logs the background service
-  alias      install/uninstall/status the ccr launcher
-  attach, a  connect this terminal to a terminal session the host holds (--new starts one here)
-  ccr        the ccr launcher: see "ccr --help"
-  update     update cc-remote to the latest release
-  version    print version information
-  help       show this help
+  status / start / stop / restart / logs / config
+                               host service operations (same as "service <op>")
+  service                      full service management (also install/uninstall)
+  alias                        install/uninstall/status the ccr launcher
+  attach, a                    the old name of ccr: connect to a held session
+  ccr                          the launcher above; "ccr claude" runs plain claude
+  claude                       native Claude Code, bypassing the host
+  update                       update cc-remote to the latest release
+  version / help               version information / this help
 
 host flags:
 `
@@ -63,22 +63,21 @@ host flags:
 const usageZH = `CC Remote：Claude Code 的远程 Web 界面。
 
 用法：
-  cc-remote [宿主参数]                    运行宿主（Web 界面和 API）
-  ccr [--new] [ls | 会话]                 接入当前目录的终端会话（没有则新建）
-  ccr [claude 参数] [提示词]              带 Claude Code 参数新建终端会话
-  ccr -r [ID] | -c                        以终端会话继续 Claude Code 会话
-  cc-remote [--data-dir D] -- claude ...  等同于 ccr -- [claude 参数]
+  cc-remote [宿主参数]         在当前终端持有宿主（通常由服务代持）
+  ccr [参数] [-- claude 参数]  终端侧入口：使用宿主持有的 Claude Code
+  cc-remote claude [参数]      原生 Claude Code，应用供应商配置后直连
 
 命令：
-  service    安装/配置/卸载/启动/停止/重启/查看状态/查看日志（后台服务）
-  alias      安装/卸载/查看 ccr 启动器
-  attach, a  把当前终端接入宿主上的终端会话（--new 在此新建一个）
-  ccr        ccr 启动器：见 "ccr --help"
-  update     把 cc-remote 更新到最新版本
-  version    显示版本信息
-  help       显示本帮助
+  status / start / stop / restart / logs / config
+                               宿主服务操作（等同 "service <操作>"）
+  service                      完整服务管理（含 install/uninstall）
+  alias                        安装/卸载/查看 ccr 启动器
+  attach, a                    ccr 的旧名：接入宿主持有的会话
+  ccr                          上述启动器；"ccr claude" 直连原生 claude
+  claude                       原生 Claude Code，不经宿主
+  update                       把 cc-remote 更新到最新版本
+  version / help               显示版本信息 / 本帮助
 
-宿主参数：
 `
 
 type stringList []string
@@ -158,6 +157,9 @@ func run() error {
 			return nil
 		case "service":
 			return service.Main(os.Args[2:], version)
+		case "status", "start", "stop", "restart", "logs", "config":
+			// The frequent service operations are worth one shorter path.
+			return service.Main(append([]string{os.Args[1]}, os.Args[2:]...), version)
 		case "alias":
 			return service.AliasMain(os.Args[2:])
 		case "update":
