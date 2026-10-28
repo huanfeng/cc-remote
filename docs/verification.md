@@ -5,6 +5,7 @@
 - 自 v0.23.0 起 21 个提交：Codex 原生标题/推理强度/订阅额度/活动解析，服务端实时配置与可编辑待发队列（`queueControls`），前端双主题（Codex 中性为默认、森林暖绿可选，localStorage 持久化）、行式设置布局、对话轮次导航条、任务面板按类型分组、会话退出（`POST /api/sessions/{id}/exit`）、应用内确认框、`ccr` 恢复离线会话时的供应商选择。
 - 全量 `go test ./... -count=1`、`go vet ./...` 通过；前端 TypeScript、Vite 生产构建、独立前端构建、154 项测试通过；`git diff --check` 干净。
 - 新接口在全局访问令牌包装内鉴权；旧宿主降级：退出菜单仅在宿主声明 `queueControls` 时显示，其余新增界面按能力标志与可选事件隐藏。
+- 命令行整理：`cc-remote` 无参数改为显示入口导航（宿主由 `service supervise` 显式驱动，注册服务不受影响）；新增 `cc-remote claude` / `ccr claude` 直连原生 Claude CLI（宿主仅提供供应商目录，环境注入后当前终端运行，退出码透传，非交互跳过选择）；`status/start/stop/restart/logs/config` 提升为顶层快捷；`ccr claude` 与 `ccr --` 的参数分隔经冒烟验证（原生 `claude --version` 直连输出 2.1.312）。
 - 已知限制：Claude Code 协议无单独停止 subagent/后台命令的控制，任务面板只提供整轮次停止说明；退出接口在旧宿主上因能力标志不会出现。
 - 发版前独立代码审查（隔离审查通道）：修复版本缓存冷启动分支不写回（旧实现每次状态轮询仍同步执行 `claude --version`）、旧宿主对 `provider=codex` 的用量请求返回 Claude 额度时前端不再显示、队列警告消息补齐 i18n、应用内确认框在卸载与并发提问时对未决 Promise 兜底。已知限制：Codex `nativeTitles` 在单会话历史请求时重复读取本地索引（低频操作，未加缓存）。
 - 界面经隔离宿主（127.0.0.1:18795 独立数据目录）与 Playwright 截图自查：设置行式布局、模型侧边子菜单、对话轮次条、新建会话密度均验证；未对正式宿主做真实模型端到端对话，未验证深色系统偏好下的主题表现（仅手动切换）。
