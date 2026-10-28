@@ -37,4 +37,11 @@
 .usage-label.weekly{background:#dcfce7;color:#15803d}
 .usage-value{color:var(--muted)}
 .usage-reset{color:var(--muted)}
-@media(max-width:760px){.usage-item{gap:3px;font-size:10px}.usage-bar,.topbar .usage-bar{padding:2px;gap:6px}}
+@media(max-width:760px){
+.usage-item{gap:3px;font-size:10px}
+.usage-bar,.topbar .usage-bar{padding:2px 4px;gap:5px;margin-left:auto}
+/* The reset countdown is the widest part; the details panel keeps it on tap. */
+.topbar .usage-reset{display:none}
+.usage-label{padding:0 5px}
+.usage-value{min-width:26px;text-align:right}
+}
