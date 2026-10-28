@@ -138,7 +138,10 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
       </div>
       <fieldset disabled={saving} className="settings-panel" role="tabpanel" id={`settings-panel-${section}`} aria-labelledby={`settings-tab-${section}`}>
         {section === 'remote' && <div>
+          <section className="settings-card">
           <div className="field">{t('Provider', '提供方')}<Select label={t('Settings provider', '设置提供方')} value={provider} options={providers.map(value => ({ value, label: providerName(value) }))} disabled={saving} onChange={value => { if (providers.includes(value as Provider) && value !== provider) void mayLeave().then(ok => { if (ok) { setNativeOpen(false); setPrefs(undefined); setSavedPrefs(undefined); setProvider(value as Provider); } }); }} /></div>
+          </section>
+          <section className="settings-card">
           <form onSubmit={event => { event.preventDefault(); if (!prefs || !savedPrefs || !providers.includes(provider)) return; void save(async () => { const result = await api<RemotePreferences>(providerQuery('/api/preferences', provider), { method: 'PUT', body: JSON.stringify({ permissionMode: prefs.permissionMode, model: prefs.model, effort: prefs.effort, revision: prefs.revision, confirmDangerous: dangerousMode(prefs.permissionMode, provider) }) }); if (providerOf(result) !== provider) throw new Error(t('This host does not support these provider defaults.', '此主机不支持该提供方的默认设置。')); setPrefs(result); setSavedPrefs(result); setNotice(t('CC Remote defaults saved; managed sessions use them on the next send after current work and background tasks finish.', 'CC Remote 默认值已保存，托管会话在当前工作及后台任务结束后，下次发送时生效。')); }); }}>
           <h3>{t(`${providerName(provider)} · CC Remote defaults`, `${providerName(provider)} · CC Remote 默认`)}</h3>
           <p>{t(`Defaults for ${providerName(provider)} sessions only. Each session can override them; empty fields follow the provider configuration.`, `仅用于 ${providerName(provider)} 会话。会话可单独覆盖；留空跟随该提供方配置。`)}</p>
@@ -150,6 +153,7 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
             <button className="primary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Save CC Remote defaults', '保存 CC Remote 默认')}</button>
           </> : <p>{t('Loading settings…', '正在读取设置…')}</p>}
         </form>
+        </section>
         {provider === 'claude' && <details open={nativeOpen} onToggle={event => setNativeOpen(event.currentTarget.open)}>
           <summary>{t('Native configuration · Advanced', '原生配置 · 高级')}</summary>
           <h3>{t('Claude user settings (~/.claude/settings.json)', 'Claude 用户配置（~/.claude/settings.json）')}</h3>
@@ -165,13 +169,16 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
         </details>}
         </div>}
         {section === 'host' && <form onSubmit={event => { event.preventDefault(); void save(async () => { showIdentity(await api<IdentitySettings>('/api/identity', { method: 'PUT', body: JSON.stringify({ name: hostName.trim(), color: hostColor, icon: hostIcon }) })); setNotice(t('Saved: the tab title, icon and logo of every page on this host change.', '已保存：此主机所有页面的标签页标题、图标和标志都会更新。')); }); }}>
+          <section className="settings-card">
           <h3>{t('Providers and service', '提供方与服务')}</h3>
           <dl className="session-detail-list">
             <div><dt>CC Remote</dt><dd>{hostInfo?.version || t('Not reported', '未报告')}</dd></div>
             {(['claude', 'codex'] as const).map(name => <div key={name}><dt>{providerName(name)}</dt><dd>{hostInfo?.[`${name}Available`] === undefined ? t('Not reported', '未报告') : hostInfo[`${name}Available`] ? t('Installed', '已安装') : t('Unavailable', '不可用')} · {hostInfo?.[`${name}Version`] || t('Version not reported', '版本未报告')}</dd></div>)}
           </dl>
           <p>{t('Configuration sources: CC Remote session defaults and provider native configuration; CLI reports determine actual execution values.', '配置来源：CC Remote 会话默认值与提供方原生配置；实际执行值以 CLI 报告为准。')}</p>
-          {onStatus && <button type="button" className="secondary" onClick={() => { void mayLeave().then(ok => { if (ok) { close(); onStatus(); } }); }}>{t('Service status, diagnostics and subscription', '服务状态、诊断与订阅')}</button>}
+          </section>
+          <section className="settings-card">
+          <div className="field field-action"><span>{t('Service status, diagnostics and subscription', '服务状态、诊断与订阅')}<small>{t('Runtime state, storage, logs and quota details', '运行状态、存储、日志与订阅详情')}</small></span>{onStatus && <button type="button" className="secondary" onClick={() => { void mayLeave().then(ok => { if (ok) { close(); onStatus(); } }); }}>{t('Open', '打开')}</button>}</div>
           <h3>{t('Host name, color and icon', '主机名称、颜色与图标')}</h3>
           <p>{t('Tell several hosts apart in the browser: the name is in the tab title, the sidebar and the login page, the color and icon make the tab icon and logo. Leave them empty for the defaults: the machine name, a color picked by the name, and the CC Remote logo. Also: ', '在浏览器里区分多台宿主：名称显示在标签页标题、侧栏和登录页，颜色和图标组成标签页图标和标志。留空使用默认值：机器名、按名称挑选的颜色，以及 CC Remote 标志。也可以用命令：')}<code>cc-remote service config --name NAME --color COLOR --icon ICON</code></p>
           {identity ? <>
@@ -180,16 +187,21 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
             <div className="field field-tall">{t('Icon', '图标')}<IconChoices value={hostIcon} onChange={setHostIcon} color={hostColor || paletteHex(identity, identity.defaultColor)} auto={{ label: t('Logo', '标志'), title: t('The CC Remote logo', 'CC Remote 标志'), color: hostColor || paletteHex(identity, identity.defaultColor) }} /></div>
             <button className="primary" disabled={saving}>{saving ? t('Saving…', '保存中…') : t('Save', '保存')}</button>
           </> : <p>{t('Loading…', '加载中…')}</p>}
+          </section>
         </form>}
         {section === 'browser' && <div>
+          <section className="settings-card">
           <h3>{t('Language', '语言')}</h3>
           <p>{t('Saved in this browser only; by default the page follows the language configured on the host. Changing it reloads the page.', '只保存在此浏览器；默认跟随宿主配置的语言。切换后页面会重新加载。')}</p>
           <div className="field">{t('Interface language', '界面语言')}<Select label={t('Interface language', '界面语言')} value={langOverride()} options={[{ value: '', label: STANDALONE ? t(`Follow the browser (${LANG_NAMES[hostLang]})`, `跟随浏览器（${LANG_NAMES[hostLang]}）`) : t(`Follow host (${LANG_NAMES[hostLang]})`, `跟随宿主（${LANG_NAMES[hostLang]}）`) }, { value: 'zh', label: LANG_NAMES.zh }, { value: 'en', label: LANG_NAMES.en }]} onChange={value => { void mayLeave().then(ok => { if (ok) setLang(value as Lang | ''); }); }} /></div>
           <div className="field">{t('Theme', '主题')}<Select label={t('Interface theme', '界面主题')} value={currentTheme()} options={[{ value: 'codex', label: t('Codex · neutral light', 'Codex · 中性黑白灰') }, { value: 'forest', label: t('Forest · warm green', '森林 · 暖绿') }]} onChange={value => setTheme(value as Theme)} /></div>
           {onSendKey && <div className="field">{t('Send shortcut', '发送快捷键')}<Select label={t('Send shortcut', '发送快捷键')} value={sendKey || 'ctrl-enter'} options={[{ value: 'ctrl-enter', label: t('Ctrl+Enter to send', 'Ctrl+Enter 发送') }, { value: 'enter', label: t('Enter to send', 'Enter 发送') }]} onChange={onSendKey} /></div>}
+          </section>
+          <section className="settings-card">
           <h3>{t('Notifications', '通知')}</h3>
           <p>{t('Saved in this browser only. They come while this page is open, also in a background tab or minimized; a phone may pause a page in the background, and then they wait until you open it. A notification is not shown for the session you are looking at. The tab title also counts the sessions waiting for you.', '只保存在此浏览器。页面打开时（包括后台标签页、最小化）才会收到；手机浏览器切到后台后可能暂停页面，通知会推迟到再次打开时。正在查看的会话不提醒。标签页标题也会显示等待你操作的会话数。')}</p>
           <NotifySettings />
+          </section>
         </div>}
         {notice && <p role="status">{notice}</p>}
         {error && <div className="error" role="alert">{error}<button type="button" className="secondary" disabled={saving} onClick={() => { void mayLeave().then(ok => { if (!ok) return; void load(); if (nativeOpen || value) void loadClaude(); }); }}>{t('Reload', '重新加载')}</button></div>}

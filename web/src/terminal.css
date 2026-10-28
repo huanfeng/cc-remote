@@ -21,3 +21,8 @@
 .term-input .primary{padding:10px 14px;font-size:13px}
 @media(max-width:760px){.view-switch span{display:none}.view-switch button{padding:6px 7px}}
 .term-notice{padding:7px 12px;font-size:12px;line-height:1.6;color:var(--warn);background:var(--text);border-bottom:1px solid var(--text);overflow-wrap:anywhere}
+
+/* Segmented view switch aligned with the pill system: flat track, raised active. */
+.view-switch{gap:2px;background:var(--bg-inset);border-radius:8px;padding:2px;overflow:visible}
+.view-switch button{border-radius:6px;padding:4px 10px}
+.view-switch button.active{background:var(--bg-card);border:1px solid var(--line);color:var(--text)}
