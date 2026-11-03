@@ -169,7 +169,7 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .turn-rail-tooltip{position:fixed;margin-left:26px;padding:9px 12px;border-radius:10px;background:var(--bg-card);border:1px solid var(--line);box-shadow:0 8px 24px #10231124;color:var(--text);font-size:12px;line-height:1.5;pointer-events:none;z-index:80;width:max-content;max-width:min(300px,calc(100vw - 60px));display:flex;flex-direction:column;gap:3px}
 .turn-rail-tooltip strong{font-size:10.5px;letter-spacing:.6px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
 .turn-rail-tooltip span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
-@media(max-width:760px){.turn-rail{left:2px}.turn-rail-tick{width:16px;height:10px}.turn-rail-bar{width:7px}.turn-rail-tick.active .turn-rail-bar{width:13px}.turn-rail-tooltip{display:none}}
+@media(max-width:760px){.turn-rail{left:2px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .25s,visibility .25s!important}.turn-rail.show{opacity:1;visibility:visible;pointer-events:auto}.turn-rail-tick{width:16px;height:10px}.turn-rail-bar{width:7px}.turn-rail-tick.active .turn-rail-bar{width:13px}.turn-rail-tooltip{display:none}}
 
 .pending-queue{width:calc(100% - 40px);max-width:1000px;align-self:center;margin:8px 0 0;padding:0 10px;font-size:12px}
 .pending-heading{font-size:10px;color:var(--muted);padding:0 0 5px}
@@ -384,7 +384,7 @@ textarea.terminal-command{display:block;width:100%;margin:16px 0 0;min-height:11
 .turn-rail-tooltip{position:fixed;margin-left:26px;padding:9px 12px;border-radius:10px;background:var(--bg-card);border:1px solid var(--line);box-shadow:0 8px 24px #10231124;color:var(--text);font-size:12px;line-height:1.5;pointer-events:none;z-index:80;width:max-content;max-width:min(300px,calc(100vw - 60px));display:flex;flex-direction:column;gap:3px}
 .turn-rail-tooltip strong{font-size:10.5px;letter-spacing:.6px;color:var(--muted);font-weight:600;font-variant-numeric:tabular-nums}
 .turn-rail-tooltip span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
-@media(max-width:760px){.turn-rail{left:2px}.turn-rail-tick{width:16px;height:10px}.turn-rail-bar{width:7px}.turn-rail-tick.active .turn-rail-bar{width:13px}.turn-rail-tooltip{display:none}}
+@media(max-width:760px){.turn-rail{left:2px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .25s,visibility .25s!important}.turn-rail.show{opacity:1;visibility:visible;pointer-events:auto}.turn-rail-tick{width:16px;height:10px}.turn-rail-bar{width:7px}.turn-rail-tick.active .turn-rail-bar{width:13px}.turn-rail-tooltip{display:none}}
 
 .pending-queue{width:calc(100% - 40px);max-width:1000px;align-self:center;margin:8px 0 0;padding:0 10px;font-size:12px}
 .pending-heading{font-size:10px;color:var(--muted);padding:0 0 5px}

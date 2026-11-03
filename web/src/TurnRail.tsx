@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { t } from './i18n';
 
 export type TurnEntry = {
@@ -41,6 +41,16 @@ export function pickActiveTurn(turns: readonly TurnEntry[], offsets: readonly { 
 export function TurnRail({ turns, container }: { turns: readonly TurnEntry[]; container: RefObject<HTMLDivElement | null> }) {
   const [activeSeq, setActiveSeq] = useState<number | undefined>(() => turns[turns.length - 1]?.seq);
   const [hovered, setHovered] = useState<number | null>(null);
+  // At phone width the rail sits over the messages, so it hides itself and
+  // comes back for a moment while the conversation scrolls or the rail is used.
+  const [awake, setAwake] = useState(false);
+  const hideAt = useRef(0);
+  const wake = () => {
+    setAwake(true);
+    clearTimeout(hideAt.current);
+    hideAt.current = window.setTimeout(() => setAwake(false), 1800);
+  };
+  useEffect(() => () => clearTimeout(hideAt.current), []);
 
   useEffect(() => {
     const el = container.current;
@@ -57,11 +67,12 @@ export function TurnRail({ turns, container }: { turns: readonly TurnEntry[]; co
       })).filter(item => Number.isFinite(item.seq));
       setActiveSeq(pickActiveTurn(turns, offsets, el.scrollTop, el.clientHeight, el.scrollHeight));
     };
+    const onScroll = () => { wake(); update(); };
     update();
-    el.addEventListener('scroll', update, { passive: true });
+    el.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', update);
     return () => {
-      el.removeEventListener('scroll', update);
+      el.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', update);
     };
   }, [container, turns]);
@@ -69,6 +80,7 @@ export function TurnRail({ turns, container }: { turns: readonly TurnEntry[]; co
   if (!turns.length) return null;
 
   const jumpTo = (seq: number) => {
+    wake();
     const el = container.current;
     const target = el?.querySelector<HTMLElement>(`[data-turn-seq="${seq}"]`);
     if (!el || !target) return;
@@ -84,7 +96,8 @@ export function TurnRail({ turns, container }: { turns: readonly TurnEntry[]; co
   const activeIndex = turns.findIndex(turn => turn.seq === activeSeq);
 
   return (
-    <nav className="turn-rail" aria-label={t('Conversation turns', '对话轮次导航')}>
+    <nav className={`turn-rail${awake ? ' show' : ''}`} aria-label={t('Conversation turns', '对话轮次导航')}
+      onPointerDown={wake}>
       <div className="turn-rail-list" role="list">
         {turns.map((turn, idx) => {
           const isActive = turn.seq === activeSeq;
