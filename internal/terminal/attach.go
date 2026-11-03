@@ -194,9 +194,10 @@ ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；
 	}
 	// An offline terminal session relaunches Claude Code on attach; its saved
 	// supplier may no longer work (renamed, deleted, logged out), so offer the
-	// list with the saved configuration as the default. A session created above
-	// already picked its supplier inside create.
-	if !resume.set && !created && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
+	// list with the saved configuration as the default. A session created above,
+	// directly or through here/recent falling back to create, already picked its
+	// supplier inside create.
+	if !resume.set && !created && !api.created && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
 		if err = api.offerResumeProfile(&target); err != nil {
 			return err
 		}
@@ -460,7 +461,13 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
-type client struct{ host, token string }
+type client struct {
+	host, token string
+	// created marks that create already ran in this command, and with it the
+	// supplier prompt: here and recent fall back to create, and the caller
+	// cannot see that from the outside.
+	created bool
+}
 
 func (c *client) http() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}
@@ -498,6 +505,9 @@ func (c *client) do(method, path string, body any, out any) error {
 }
 
 func (c *client) create(title string, options map[string]any) (remoteSession, error) {
+	// create asks for the supplier itself, so callers must not offer the list
+	// again for the session it returns.
+	c.created = true
 	cwd, err := os.Getwd()
 	if err != nil {
 		return remoteSession{}, err

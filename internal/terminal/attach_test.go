@@ -135,6 +135,28 @@ func TestCreateSendsSelectedProfile(t *testing.T) {
 	}
 }
 
+// here and recent start a session through create when the directory has none;
+// the client must remember that, so the caller does not offer the supplier
+// list a second time before attaching.
+func TestHereMarksCreated(t *testing.T) {
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/sessions" && r.Method == http.MethodGet {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":"new"}`))
+	}))
+	defer host.Close()
+	c := &client{host: host.URL, token: "t"}
+	if x, err := c.here("test", map[string]any{}); err != nil || x.ID != "new" {
+		t.Fatalf("here created: %+v %v", x, err)
+	}
+	if !c.created {
+		t.Fatal("here via create did not mark the client as created")
+	}
+}
+
 // ccr in a directory with sessions asks which; Enter takes the most recent one
 // no terminal is attached to, and attaching to a busy one needs a yes.
 func TestChoose(t *testing.T) {
