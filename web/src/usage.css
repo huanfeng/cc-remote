@@ -37,11 +37,25 @@
 .usage-label.weekly{background:#dcfce7;color:#15803d}
 .usage-value{color:var(--muted)}
 .usage-reset{color:var(--muted)}
+/* Hidden outside phones; the media query below brings it back. Keep this rule ahead of that one: same specificity, source order decides. */
+.usage-orb{display:none}
 @media(max-width:760px){
-.usage-item{gap:3px;font-size:10px}
-.usage-bar,.topbar .usage-bar{padding:2px 4px;gap:5px;margin-left:auto}
-/* The reset countdown is the widest part; the details panel keeps it on tap. */
-.topbar .usage-reset{display:none}
-.usage-label{padding:0 5px}
-.usage-value{min-width:26px;text-align:right}
+/* The pill gives way to the orb: one ring, 5h on the top half, the weekly window on the bottom. */
+.usage-bar,.topbar .usage-bar{display:none}
+/* The orb matches the context-usage button: a small framed square in the top bar. */
+.usage-orb{display:grid;place-items:center;margin-left:auto;width:32px;height:32px;padding:1px;border:1px solid var(--line);border-radius:8px;background:var(--bg-inset)}
+.usage-orb:hover,.usage-orb:active{background:var(--accent-soft);border-color:var(--line-strong)}
 }
+/* Phone quota orb popover, styled after the context-usage panel: it opens below the orb. */
+.usage-orb-track{fill:none;stroke:var(--line-strong);stroke-width:3.5}
+.usage-orb-fill{fill:none;stroke-width:3.5;stroke-linecap:round;transition:stroke-dasharray .3s}
+.usage-orb-fill.ok{stroke:var(--ok)}
+.usage-orb-fill.warn{stroke:var(--warn)}
+.usage-orb-fill.high{stroke:var(--danger)}
+.usage-orb-dot{fill:var(--muted)}
+.usage-orb-panel{position:fixed;z-index:70;width:min(300px,calc(100vw - 16px));max-height:calc(100dvh - 100px);overflow:auto;padding:15px;display:flex;flex-direction:column;gap:8px;font-size:12px}
+.usage-orb-panel strong{font-size:13px;font-weight:600}
+.usage-orb-panel .usage-rows{margin:0}
+.usage-orb-panel .usage-row{grid-template-columns:minmax(30px,auto) minmax(0,1fr) 34px}
+.usage-orb-meta{font-size:10px;color:var(--muted);line-height:1.5}
+.usage-orb-open{align-self:flex-start;padding:6px 12px;border-radius:7px;background:var(--bg-inset);font-size:12px}

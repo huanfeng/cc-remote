@@ -74,10 +74,12 @@ test('compact text shows used endpoints, Claude ownership and the existing detai
     assert.equal(byClass(tree, 'usage-track').length, 0);
     assert.equal(byClass(tree, 'usage-fill').length, 0);
     assert.deepEqual(byClass(tree, 'usage-label').map(node => node.props.children), ['5h', '7d']);
-    assert.match(tree.props['aria-label'], /Claude subscription usage/);
-    assert.match(tree.props.title, /100% used/);
-    assert.match(tree.props.title, /Updated/);
-    tree.props.onClick(); assert.equal(opened, 1);
+    // The pill and the phone orb ride together now; assert on the pill node.
+    const bar = byClass(tree, 'usage-bar')[0];
+    assert.match(bar.props['aria-label'], /Claude subscription usage/);
+    assert.match(bar.props.title, /100% used/);
+    assert.match(bar.props.title, /Updated/);
+    bar.props.onClick(); assert.equal(opened, 1);
   } finally { renderer.dispose(); env.restore(); }
 });
 
@@ -111,9 +113,10 @@ test('partial readings keep the known window and include full reset and update t
     renderer.render(UsageBar, props); renderer.effects(); await settle();
     const tree = renderer.render(UsageBar, props);
     assert.deepEqual(byClass(tree, 'usage-value').map(node => node.props.children), ['78%', '—']);
-    assert.match(tree.props.title, /resets in/);
-    assert.match(tree.props.title, /Weekly limit: unknown/);
-    assert.match(tree.props.title, /Usage unknown/);
+    const bar = byClass(tree, 'usage-bar')[0];
+    assert.match(bar.props.title, /resets in/);
+    assert.match(bar.props.title, /Weekly limit: unknown/);
+    assert.match(bar.props.title, /Usage unknown/);
   } finally { renderer.dispose(); env.restore(); }
 });
 
@@ -182,8 +185,9 @@ test('Codex quota shows native window durations, used percentages and Codex owne
     const tree = renderer.render(UsageBar, props);
     assert.deepEqual(byClass(tree, 'usage-label').map(node => node.props.children), ['3h', '1d']);
     assert.deepEqual(byClass(tree, 'usage-value').map(node => node.props.children), ['0%', '45%']);
-    assert.match(tree.props.title, /Codex subscription usage/);
-    assert.doesNotMatch(tree.props.title, /Claude|5-hour|Weekly/);
+    const bar = byClass(tree, 'usage-bar')[0];
+    assert.match(bar.props.title, /Codex subscription usage/);
+    assert.doesNotMatch(bar.props.title, /Claude|5-hour|Weekly/);
   } finally { renderer.dispose(); env.restore(); }
 });
 

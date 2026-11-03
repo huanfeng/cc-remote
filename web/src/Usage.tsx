@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Api } from './ClaudeSettings';
 import { providerName, providerQuery, type Provider } from './providers';
 import { locale, t } from './i18n';
@@ -48,6 +49,7 @@ export function useUsage(api: Api, provider: Provider = 'claude', sessionId = ''
 
 const level = (w: Window) => w.severity && w.severity !== 'normal' ? (w.severity === 'warning' ? 'warn' : 'high') : w.percent >= 90 ? 'high' : w.percent >= 75 ? 'warn' : 'ok';
 const percent = (w: Window) => `${Math.round(w.percent)}%`;
+const valid = (w?: Window): w is Window => !!w && Number.isFinite(w.percent) && w.percent >= 0 && w.percent <= 100;
 
 function until(iso?: string) {
   const at = iso ? Date.parse(iso) : NaN;
@@ -102,7 +104,6 @@ export function UsageBar({ api, open, provider = 'claude', sessionId = '' }: { a
   // native windows the reading is not Codex's, so showing it would be wrong.
   if (provider === 'codex' && !(usage as { usage?: { windows?: unknown } }).usage?.windows) return null;
   const windows = quotaWindows(usage, provider);
-  const valid = (w?: Window): w is Window => !!w && Number.isFinite(w.percent) && w.percent >= 0 && w.percent <= 100;
   const fresh = !!usage?.available && !usage.stale && !usage.error;
   const state = !usage ? t('Loading usage', '正在加载用量')
     : usage.error ? staleText(usage, provider)
@@ -128,9 +129,76 @@ export function UsageBar({ api, open, provider = 'claude', sessionId = '' }: { a
     (!fresh || windows.some(w => !valid(w.window))) && state,
     t('Open service status details', '打开服务状态详情'),
   ].filter(Boolean).join('\n');
-  return <button type="button" className="usage-bar" aria-label={title} title={title} onClick={open}>
-    {windows.slice(0, 2).map((w, i) => item(w.label, w.window, i))}
-  </button>;
+  return <>
+    <button type="button" className="usage-bar" aria-label={title} title={title} onClick={open}>
+      {windows.slice(0, 2).map((w, i) => item(w.label, w.window, i))}
+    </button>
+    <UsageOrb windows={windows.slice(0, 2)} title={title} state={(!fresh || windows.some(w => !valid(w.window))) ? state : ''} fetchedAt={usage.fetchedAt} fresh={fresh} open={open} provider={provider} sessionId={sessionId} />
+  </>;
+}
+
+/** Phone quota orb: the 5-hour window fills the top half of the ring, the weekly one the bottom; tapping opens the details popover instead of the settings. */
+function UsageOrb({ windows, title, state, fetchedAt, fresh, open, provider, sessionId }: {
+  windows: { label: string; title: string; window?: Window }[]; title: string; state: string; fetchedAt?: string; fresh: boolean;
+  open: () => void; provider: Provider; sessionId: string;
+}) {
+  const [show, setShow] = useState(false);
+  const [position, setPosition] = useState({ left: 8, top: 8 });
+  const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
+  useEffect(() => { setShow(false); }, [provider, sessionId]);
+  useEffect(() => {
+    if (!show) return;
+    const outside = (event: PointerEvent) => { if (!trigger.current?.contains(event.target as Node) && !panel.current?.contains(event.target as Node)) setShow(false); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setShow(false); trigger.current?.focus(); } };
+    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); };
+  }, [show]);
+  useLayoutEffect(() => {
+    if (!show) return;
+    // The orb sits in the top bar: the panel opens below it, clamped to the
+    // viewport when the screen is too short for that.
+    const place = () => {
+      const rect = trigger.current?.getBoundingClientRect(), box = panel.current?.getBoundingClientRect();
+      if (!rect || !box) return;
+      setPosition({
+        left: Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8)),
+        top: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - box.height - 8)),
+      });
+    };
+    place(); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+  }, [show]);
+  // Each half of the ring is its own arc: the top runs left→right over the
+  // top, the bottom right→left under it, both drawn from their start point.
+  const arc = (w: Window | undefined, d: string) => !valid(w) ? null
+    : <path d={d} className={`usage-orb-fill ${level(w)}`} pathLength={100} strokeDasharray={`${Math.max(2, w.percent)} 100`} />;
+  const updated = fetchedAt && Number.isFinite(Date.parse(fetchedAt))
+    ? t(`Updated ${ago(fetchedAt)}`, `更新于${ago(fetchedAt)}`) : t('Update time unknown', '更新时间未知');
+  return <>
+    <button ref={trigger} type="button" className="usage-orb" aria-label={title} aria-haspopup="dialog" aria-expanded={show} onClick={() => setShow(value => !value)}>
+      <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+        <path d="M4 16 A12 12 0 0 1 28 16" className="usage-orb-track" pathLength={100} />
+        <path d="M28 16 A12 12 0 0 1 4 16" className="usage-orb-track" pathLength={100} />
+        {arc(windows[0]?.window, 'M4 16 A12 12 0 0 1 28 16')}
+        {arc(windows[1]?.window, 'M28 16 A12 12 0 0 1 4 16')}
+        <circle cx="16" cy="16" r="1.6" className="usage-orb-dot" />
+      </svg>
+    </button>
+    {show && createPortal(<div ref={panel} className="usage-orb-panel popover-menu" role="dialog" aria-label={title} style={position}>
+      <strong>{providerName(provider)} · {t('Subscription usage', '订阅用量')}</strong>
+      <div className="usage-rows">{windows.map(w => {
+        const win = w.window;
+        return <div className="usage-row" key={w.label}>
+          <span className="usage-row-label">{w.label}</span>
+          <span className="usage-track wide">{valid(win) && <span className={`usage-fill ${level(win)}`} style={{ width: `${win.percent}%` }} />}</span>
+          <strong>{valid(win) ? percent(win) : '—'}</strong>
+          <small>{valid(win) && fresh ? t(`resets in ${until(win.resetsAt)}`, `${until(win.resetsAt)}后重置`) : ''}</small>
+        </div>;
+      })}</div>
+      <small className="usage-orb-meta">{updated}{state ? ` · ${state}` : ''}</small>
+      <button type="button" className="usage-orb-open" onClick={() => { setShow(false); open(); }}>{t('Usage details', '用量详情')}</button>
+    </div>, document.body)}
+  </>;
 }
 
 function HistoryChart({ api }: { api: Api }) {
