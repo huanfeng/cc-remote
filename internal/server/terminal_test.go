@@ -142,6 +142,11 @@ func fakeTerminal() {
 				if text == "/clear" {
 					id = "00000000-0000-4000-8000-00000000c1ea"
 					hook("SessionStart", map[string]string{"source": "clear"})
+				} else if text == "/resume" {
+					// As /resume does: attach to the chosen conversation, whose
+					// transcript then receives the turns.
+					id = os.Getenv("CC_REMOTE_FAKE_RESUME_ID")
+					hook("SessionStart", map[string]string{"source": "resume"})
 				} else {
 					turn(text)
 				}
@@ -361,6 +366,128 @@ func TestTerminalRestartsWithoutTranscript(t *testing.T) {
 	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool {
 		return strings.Join(eventTexts(st, x.ID), "|") == "user:again|assistant:echo: again"
 	})
+}
+
+// /resume inside the terminal follows the chosen conversation. An idle session
+// holding it yields it: this session continues it, and the one that held it
+// gets a fresh Claude conversation the next time it continues.
+func TestTerminalSessionTakesOverResumedSession(t *testing.T) {
+	_, base, st, _ := setupTerminal(t)
+	target := "00000000-0000-4000-8000-00000000c2ea"
+	idle := createTerminal(t, base)
+	if err := st.SetClaudeID(idle.ID, target); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_REMOTE_FAKE_RESUME_ID", target)
+	x := createTerminal(t, base)
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "hi"})
+	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool { return len(eventTexts(st, x.ID)) == 2 })
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "/resume"})
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.ClaudeSessionID == target })
+	y, _ := st.Get(idle.ID)
+	if y.ClaudeSessionID == target || y.ClaudeSessionID == "" {
+		t.Fatalf("idle session kept or lost its id: %q", y.ClaudeSessionID)
+	}
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "next"})
+	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool {
+		return strings.Join(eventTexts(st, x.ID), "|") == "user:hi|assistant:echo: hi|user:next|assistant:echo: next"
+	})
+	// The displaced session keeps its history, marked where the conversation moved on.
+	note, divider := false, false
+	if events, err := st.Events(idle.ID, 0); err == nil {
+		for _, e := range events {
+			if e.Kind == "error" && (strings.Contains(e.Text, "接管") || strings.Contains(e.Text, "took over")) {
+				note = true
+			}
+			if e.Kind == "compact" && strings.Contains(string(e.Payload), "clear") {
+				divider = true
+			}
+		}
+	}
+	if !note || !divider {
+		t.Fatalf("idle session not told about the takeover (note=%v divider=%v)", note, divider)
+	}
+}
+
+// A session whose Claude Code still runs keeps its conversation: /resume from
+// another terminal does not follow it, and the web says so.
+func TestTerminalSessionRefusesBusyResume(t *testing.T) {
+	_, base, st, _ := setupTerminal(t)
+	busy := createTerminal(t, base)
+	call(t, base, "POST", "/api/sessions/"+busy.ID+"/messages", map[string]string{"text": "busy"})
+	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, busy.ID)) }, func() bool { return len(eventTexts(st, busy.ID)) == 2 })
+	target, _ := st.Get(busy.ID)
+	t.Setenv("CC_REMOTE_FAKE_RESUME_ID", target.ClaudeSessionID)
+	x := createTerminal(t, base)
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "hi"})
+	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool { return len(eventTexts(st, x.ID)) == 2 })
+	before, _ := st.Get(x.ID)
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "/resume"})
+	// The refusal is an event in the web conversation; wait for it, then the
+	// ids must be unchanged.
+	awaitLong(t, func() string { return "refusal note in " + x.ID }, func() bool {
+		if events, err := st.Events(x.ID, 0); err == nil {
+			for _, e := range events {
+				if e.Kind == "error" && (strings.Contains(e.Text, "不会跟随") || strings.Contains(e.Text, "does not follow")) {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	after, _ := st.Get(x.ID)
+	if after.ClaudeSessionID != before.ClaudeSessionID {
+		t.Fatalf("followed a busy conversation: %q", after.ClaudeSessionID)
+	}
+	if y, _ := st.Get(busy.ID); y.ClaudeSessionID != target.ClaudeSessionID {
+		t.Fatalf("busy session lost its conversation: %q", y.ClaudeSessionID)
+	}
+	said := false
+	if events, err := st.Events(x.ID, 0); err == nil {
+		for _, e := range events {
+			if e.Kind == "error" && (strings.Contains(e.Text, "不会跟随") || strings.Contains(e.Text, "does not follow")) {
+				said = true
+			}
+		}
+	}
+	if !said {
+		t.Fatal("the web was not told the switch was refused")
+	}
+}
+
+// A managed session holding the conversation yields it too: the terminal takes
+// it over, and the managed session continues with a fresh Claude conversation.
+func TestTerminalSessionTakesOverManagedSession(t *testing.T) {
+	_, base, st, _ := setupTerminal(t)
+	target := "00000000-0000-4000-8000-00000000c3ea"
+	managed, err := st.Create("managed-holder", t.TempDir(), target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CC_REMOTE_FAKE_RESUME_ID", target)
+	x := createTerminal(t, base)
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "hi"})
+	awaitLong(t, func() string { return fmt.Sprintf("%q", eventTexts(st, x.ID)) }, func() bool { return len(eventTexts(st, x.ID)) == 2 })
+	call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]string{"text": "/resume"})
+	await(t, func() bool { y, _ := st.Get(x.ID); return y.ClaudeSessionID == target })
+	y, _ := st.Get(managed.ID)
+	if y.ClaudeSessionID == target || y.Resume || y.Status != "idle" {
+		t.Fatalf("managed session not reset for a fresh conversation: %+v", y)
+	}
+	note, divider := false, false
+	if events, err := st.Events(managed.ID, 0); err == nil {
+		for _, e := range events {
+			if e.Kind == "error" && (strings.Contains(e.Text, "接管") || strings.Contains(e.Text, "took over")) {
+				note = true
+			}
+			if e.Kind == "compact" && strings.Contains(string(e.Payload), "clear") {
+				divider = true
+			}
+		}
+	}
+	if !note || !divider {
+		t.Fatalf("managed session not told about the takeover (note=%v divider=%v)", note, divider)
+	}
 }
 
 // A terminal front end streams the screen and sends keys; leaving does not

@@ -819,26 +819,30 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, s.lang(r).T("The terminal session is not running", "终端会话没有运行"))
 		return
 	}
+	var closeAfter *sessionRuntime
 	switch req.Event {
 	case "SessionStart":
 		ts.runner.MarkStarted()
 		// /clear and /resume switch Claude's session; follow it.
-		if next := strings.ToLower(req.SessionID); next != "" && next != ts.claudeID && channelUUID.MatchString(next) && s.rebindFreeLocked(id, next, ts) {
-			if s.channels[ts.claudeID] == ts.conn {
-				delete(s.channels, ts.claudeID)
-			}
-			ts.claudeID, ts.scan = next, -1
-			// /clear leaves no mark in either transcript: show where the context restarted.
-			if req.Source == "clear" {
-				_, _ = s.store.Append(id, "compact", "", json.RawMessage(`{"clear":true}`))
-			}
-			ts.conn.keyPrefix = next + ":"
-			s.channels[next] = ts.conn
-			if err := s.store.SetClaudeID(id, next); err != nil {
-				log.Printf("terminal %s: rebind: %v", id, err)
-			}
-			if err := s.writeTerminalConfig(ts); err != nil {
-				log.Printf("terminal %s: config: %v", id, err)
+		if next := strings.ToLower(req.SessionID); next != "" && next != ts.claudeID && channelUUID.MatchString(next) {
+			if free, rt := s.rebindFreeLocked(id, next, ts); free {
+				if s.channels[ts.claudeID] == ts.conn {
+					delete(s.channels, ts.claudeID)
+				}
+				ts.claudeID, ts.scan = next, -1
+				// /clear leaves no mark in either transcript: show where the context restarted.
+				if req.Source == "clear" {
+					_, _ = s.store.Append(id, "compact", "", json.RawMessage(`{"clear":true}`))
+				}
+				ts.conn.keyPrefix = next + ":"
+				s.channels[next] = ts.conn
+				if err := s.store.SetClaudeID(id, next); err != nil {
+					log.Printf("terminal %s: rebind: %v", id, err)
+				}
+				if err := s.writeTerminalConfig(ts); err != nil {
+					log.Printf("terminal %s: config: %v", id, err)
+				}
+				closeAfter = rt
 			}
 		}
 	case "UserPromptSubmit":
@@ -871,6 +875,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mu.Unlock()
+	closeRuntime(closeAfter) // the displaced session's idle process, if any
 	select {
 	case ts.wake <- struct{}{}:
 	default:
@@ -879,16 +884,48 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 }
 
 // rebindFreeLocked reports whether a terminal session may follow Claude Code
-// to another Claude session id (/resume): not one another session owns.
-func (s *Server) rebindFreeLocked(id, next string, ts *terminalSession) bool {
+// to another Claude session id (/resume). An idle session holding the id
+// yields it: this session takes the conversation over, and the one that held
+// it starts a fresh Claude conversation the next time it continues. A session
+// still running the conversation keeps it. The returned runtime, if any, is
+// the displaced session's idle process; close it outside s.mu.
+func (s *Server) rebindFreeLocked(id, next string, ts *terminalSession) (bool, *sessionRuntime) {
 	if other, err := s.store.FindClaude(next); err == nil && other.ID != id {
-		_, _ = s.store.Append(id, "error", i18n.T("The terminal switched to a Claude session another web session is using; the web does not follow it. Go back to the original session or continue in that one.", "终端里切换到了另一个网页会话正在使用的 Claude 会话，网页不会跟随；请回到原会话或在该会话中继续。"), nil)
-		return false
+		if s.terminals[other.ID] != nil || s.runs[other.ID] != nil || s.switching[other.ID] || other.Status == "running" || other.Status == "waiting" {
+			_, _ = s.store.Append(id, "error", i18n.T("The terminal switched to a Claude session another web session is using; the web does not follow it. Go back to the original session or continue in that one.", "终端里切换到了另一个网页会话正在使用的 Claude 会话，网页不会跟随；请回到原会话或在该会话中继续。"), nil)
+			return false, nil
+		}
+		// An idle managed process still holds the conversation in memory, and
+		// background tasks keep it busy: leave both alone.
+		if rt := s.procs[other.ID]; rt != nil && rt.proc.BackgroundTasks() > 0 {
+			_, _ = s.store.Append(id, "error", i18n.T("The Claude session is still running background tasks in another session; the web does not follow it.", "该 Claude 会话正在另一个会话中运行后台任务，网页不会跟随。"), nil)
+			return false, nil
+		}
+		// The conversation moves here. The session that held it continues with
+		// a fresh Claude conversation next time; its recorded history stays.
+		var err error
+		if other.Mode == "managed" {
+			err = s.store.ResetContext(other.ID)
+		} else {
+			err = s.store.SetClaudeID(other.ID, store.ID())
+		}
+		if err != nil {
+			log.Printf("terminal %s: takeover of %s: %v", id, next, err)
+			_, _ = s.store.Append(id, "error", i18n.T("The Claude session is in use by another web session; the web does not follow it.", "该 Claude 会话正被另一个网页会话使用，网页无法跟随。"), nil)
+			return false, nil
+		}
+		title := other.Title
+		if x, err := s.store.Get(id); err == nil {
+			title = x.Title
+		}
+		_, _ = s.store.Append(other.ID, "compact", "", json.RawMessage(`{"clear":true}`))
+		_, _ = s.store.Append(other.ID, "error", i18n.F("The terminal session “%s” took over this Claude conversation; this session starts a fresh one the next time it continues.", "终端会话「%s」接管了这个 Claude 会话继续对话；本会话下次继续时将开始新的对话。", title), nil)
+		return true, s.detachLocked(other.ID)
 	}
 	if c := s.channels[next]; c != nil && c != ts.conn {
-		return false
+		return false, nil
 	}
-	return true
+	return true, nil
 }
 
 // terminalStatus receives Claude Code's status line data from
