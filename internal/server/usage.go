@@ -31,6 +31,9 @@ const (
 	usageTimeout      = 10 * time.Second
 	usageMaxBackoff   = 30 * time.Minute
 	usageExpiryMargin = 30 * time.Second
+	// A token the usage endpoint refuses is read through a one-token inference
+	// call instead; that costs a request, so it is made rarely.
+	usageProbeEvery = 5 * time.Minute
 )
 
 // usageClient follows no redirects: the login token goes to the usage endpoint only.
@@ -50,6 +53,8 @@ type usageCache struct {
 	err       string    // why the latest attempt failed: "expired", "rate-limited" or a message
 	retryAt   time.Time
 	backoff   time.Duration
+	probe     bool   // the token lacks the usage scope: read the rate limit headers
+	tokenKey  string // fingerprint of the token the state above belongs to
 }
 
 type usageReply struct {
@@ -138,6 +143,13 @@ func (s *Server) readUsageOf(source string, c *usageCache, token claude.OAuthTok
 		}
 	}
 	now := time.Now()
+	if key := tokenFingerprint(token.AccessToken, nil); key != c.tokenKey {
+		// A replaced token starts over: it may have the scope the old one lacked.
+		c.tokenKey, c.probe, c.err, c.retryAt, c.backoff, c.fetchedAt = key, false, "", time.Time{}, 0, time.Time{}
+	}
+	if c.probe {
+		maxAge = max(maxAge, usageProbeEvery)
+	}
 	if (c.last == nil || now.Sub(c.fetchedAt) >= maxAge) && !now.Before(c.retryAt) {
 		s.fetchUsageLocked(source, c, token, now)
 	}
@@ -162,8 +174,25 @@ func (s *Server) fetchUsageLocked(source string, c *usageCache, token claude.OAu
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
 	defer cancel()
-	u, err := claude.FetchUsage(ctx, usageClient, token.AccessToken, agent)
+	var u claude.Usage
+	var err error
+	if !c.probe {
+		u, err = claude.FetchUsage(ctx, usageClient, token.AccessToken, agent)
+	}
 	var status claude.UsageStatusError
+	if refused := errors.As(err, &status); c.probe || refused && (status.Status == http.StatusForbidden || status.Status == http.StatusTooManyRequests) {
+		// A setup-token has no user:profile scope: 403 here, but its limits
+		// are in the headers of an inference reply. That endpoint also answers
+		// 429 for long stretches (its limit is separate from the account's), so
+		// the headers stand in then too; only a 403 means "always use them".
+		forbidden := c.probe || refused && status.Status == http.StatusForbidden
+		fromHeaders, headerErr := claude.FetchUsageFromHeaders(ctx, usageClient, token.AccessToken, agent)
+		if headerErr == nil {
+			u, err, c.probe = fromHeaders, nil, forbidden
+		} else if forbidden {
+			err = headerErr
+		}
+	}
 	switch {
 	case err == nil:
 		c.err, c.backoff, c.retryAt = "", 0, time.Time{}

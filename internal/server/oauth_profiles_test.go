@@ -172,3 +172,101 @@ func TestOAuthUsageIsReadPerAccount(t *testing.T) {
 		t.Fatalf("a removed profile has no usage: %+v", r)
 	}
 }
+
+// A setup-token lacks the usage scope (403); its limits come from the headers
+// of an inference reply, read through the same account cache and rarely.
+func TestOAuthUsageFallsBackToRateLimitHeaders(t *testing.T) {
+	clearProviderEnv(t)
+	var usageCalls, probeCalls atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/messages" {
+			probeCalls.Add(1)
+			if r.Header.Get("Authorization") != "Bearer sk-ant-oat01-setup" || r.Method != "POST" {
+				w.WriteHeader(401)
+				return
+			}
+			w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "0.12")
+			w.Header().Set("anthropic-ratelimit-unified-5h-reset", "1793980800")
+			w.Header().Set("anthropic-ratelimit-unified-7d-utilization", "0.61")
+			w.Header().Set("anthropic-ratelimit-unified-7d-reset", "1794326400")
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		usageCalls.Add(1)
+		w.WriteHeader(403)
+	}))
+	defer api.Close()
+	oldUsage, oldMessages := claude.UsageURL, claude.MessagesURL
+	claude.UsageURL, claude.MessagesURL = api.URL+"/usage", api.URL+"/messages"
+	defer func() { claude.UsageURL, claude.MessagesURL = oldUsage, oldMessages }()
+
+	s, ts, _ := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	_, b := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Team", "token": "sk-ant-oat01-setup"}, testToken)
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+
+	read := func() usageReply {
+		code, b := request(t, ts, "GET", "/api/usage?profile="+created.ID, nil, testToken)
+		var r usageReply
+		if code != 200 || json.Unmarshal(b, &r) != nil {
+			t.Fatalf("usage %d %s", code, b)
+		}
+		return r
+	}
+	r := read()
+	if !r.Available || r.Stale || r.Usage == nil || r.Usage.FiveHour.Percent != 12 || r.Usage.Weekly.Percent != 61 || r.Usage.FiveHour.ResetsAt != "2026-11-06T16:00:00Z" {
+		t.Fatalf("header usage %+v %+v", r, r.Usage)
+	}
+	// The scope is learned once: later reads go straight to the probe, and within
+	// five minutes not at all.
+	s.accountUsage.get(created.ID).fetchedAt = time.Now().Add(-2 * time.Minute)
+	read()
+	if usageCalls.Load() != 1 || probeCalls.Load() != 1 {
+		t.Fatalf("usage=%d probe=%d", usageCalls.Load(), probeCalls.Load())
+	}
+	s.accountUsage.get(created.ID).fetchedAt = time.Now().Add(-6 * time.Minute)
+	read()
+	if usageCalls.Load() != 1 || probeCalls.Load() != 2 {
+		t.Fatalf("usage=%d probe=%d", usageCalls.Load(), probeCalls.Load())
+	}
+	// A replaced token starts over (it may carry the scope).
+	request(t, ts, "PATCH", "/api/profiles/oauth/"+strings.TrimPrefix(created.ID, "oauth:"), map[string]string{"token": "sk-ant-oat01-other"}, testToken)
+	read()
+	if usageCalls.Load() != 2 {
+		t.Fatalf("a new token must try the usage endpoint again: %d", usageCalls.Load())
+	}
+}
+
+// The usage endpoint rate limits on its own: a 429 there must not hide the
+// limits the account's headers give.
+func TestOAuthUsageUsesHeadersWhileUsageEndpointIsRateLimited(t *testing.T) {
+	clearProviderEnv(t)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/messages" {
+			w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "0.06")
+			w.Header().Set("anthropic-ratelimit-unified-7d-utilization", "0.02")
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(429)
+	}))
+	defer api.Close()
+	oldUsage, oldMessages := claude.UsageURL, claude.MessagesURL
+	claude.UsageURL, claude.MessagesURL = api.URL+"/usage", api.URL+"/messages"
+	defer func() { claude.UsageURL, claude.MessagesURL = oldUsage, oldMessages }()
+
+	s, ts, _ := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	_, b := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Team", "token": "sk-ant-oat01-setup"}, testToken)
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+	code, b := request(t, ts, "GET", "/api/usage?profile="+created.ID, nil, testToken)
+	var r usageReply
+	if code != 200 || json.Unmarshal(b, &r) != nil || r.Stale || r.Usage == nil || r.Usage.FiveHour.Percent != 6 || r.Usage.Weekly.Percent != 2 {
+		t.Fatalf("%d %s", code, b)
+	}
+	if s.accountUsage.get(created.ID).probe {
+		t.Fatal("a 429 must not make the header probe permanent")
+	}
+}

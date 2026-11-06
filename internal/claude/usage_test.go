@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -51,5 +52,24 @@ func TestReadOAuthToken(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-token")
 	if tok, err = ReadOAuthToken(dir); err != nil || tok.AccessToken != "env-token" || !tok.ExpiresAt.IsZero() {
 		t.Fatalf("env: %+v %v", tok, err)
+	}
+}
+
+func TestUsageFromHeaders(t *testing.T) {
+	h := http.Header{}
+	h.Set("anthropic-ratelimit-unified-5h-utilization", "0.125")
+	h.Set("anthropic-ratelimit-unified-5h-reset", "1793980800")
+	h.Set("anthropic-ratelimit-unified-7d-utilization", "1.7") // clamped
+	u, ok := usageFromHeaders(h)
+	if !ok || u.FiveHour.Percent != 12.5 || u.FiveHour.ResetsAt != "2026-11-06T16:00:00Z" || u.Weekly.Percent != 100 || u.Weekly.ResetsAt != "" {
+		t.Fatalf("%+v %v", u, ok)
+	}
+	if _, ok = usageFromHeaders(http.Header{}); ok {
+		t.Fatal("no headers, no usage")
+	}
+	h = http.Header{}
+	h.Set("anthropic-ratelimit-unified-5h-utilization", "NaN")
+	if _, ok = usageFromHeaders(h); ok {
+		t.Fatal("a non-number is not a reading")
 	}
 }

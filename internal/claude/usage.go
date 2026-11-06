@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -195,3 +196,61 @@ func ParseUsage(body []byte) (Usage, error) {
 }
 
 func clampPercent(p float64) float64 { return math.Max(0, math.Min(100, p)) }
+
+// MessagesURL and ProbeModel are the inference call UsageFromHeaders makes
+// (variables for tests). The model only needs to exist and be cheap.
+var (
+	MessagesURL = "https://api.anthropic.com/v1/messages"
+	ProbeModel  = "claude-haiku-4-5-20251001"
+)
+
+// FetchUsageFromHeaders reads the 5-hour and weekly limits of a token that the
+// usage endpoint refuses. Tokens from `claude setup-token` lack the
+// user:profile scope that endpoint needs (it answers 403), but every inference
+// reply carries the account's limits in anthropic-ratelimit-unified-* headers.
+// It sends a one-token request, so callers keep it infrequent. Per-model weekly
+// limits exist only in the usage endpoint and are not available here.
+func FetchUsageFromHeaders(ctx context.Context, client *http.Client, token, userAgent string) (Usage, error) {
+	body, _ := json.Marshal(map[string]any{"model": ProbeModel, "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "."}}})
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, MessagesURL, strings.NewReader(string(body)))
+	if err != nil {
+		return Usage{}, err
+	}
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	r.Header.Set("anthropic-version", "2023-06-01")
+	r.Header.Set("Content-Type", "application/json")
+	if userAgent != "" {
+		r.Header.Set("User-Agent", userAgent)
+	}
+	resp, err := client.Do(r)
+	if err != nil {
+		return Usage{}, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	// A refused request (429 at the limit) still carries the headers.
+	if u, ok := usageFromHeaders(resp.Header); ok {
+		return u, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return Usage{}, UsageStatusError{resp.StatusCode}
+	}
+	return Usage{}, errors.New("the reply has no rate limit headers")
+}
+
+func usageFromHeaders(h http.Header) (Usage, bool) {
+	window := func(name string) *UsageWindow {
+		v, err := strconv.ParseFloat(strings.TrimSpace(h.Get("anthropic-ratelimit-unified-"+name+"-utilization")), 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil
+		}
+		w := &UsageWindow{Percent: clampPercent(v * 100)}
+		if secs, err := strconv.ParseInt(strings.TrimSpace(h.Get("anthropic-ratelimit-unified-"+name+"-reset")), 10, 64); err == nil && secs > 0 {
+			w.ResetsAt = time.Unix(secs, 0).UTC().Format(time.RFC3339)
+		}
+		return w
+	}
+	u := Usage{FiveHour: window("5h"), Weekly: window("7d")}
+	return u, u.FiveHour != nil || u.Weekly != nil
+}
