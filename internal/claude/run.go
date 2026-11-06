@@ -364,15 +364,32 @@ func contentEvents(raw json.RawMessage, role string) []Event {
 	return out
 }
 
+// OAuthEnvKey marks an overlay profile: it carries a Claude Code OAuth token
+// and nothing else, so the rest of the native configuration stays in force.
+const OAuthEnvKey = "CLAUDE_CODE_OAUTH_TOKEN"
+
+// Credentials that outrank an OAuth token, or send it to the wrong endpoint.
+var oauthConflicts = []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"}
+
+// An overlay carries a non-empty token. SupplierEnv blanks the key for every
+// other supplier, so its mere presence must not count.
+func isOverlay(values map[string]string) bool {
+	return values[OAuthEnvKey] != ""
+}
+
 // ProfileEnvironment applies only child-scoped supplier settings.
 func ProfileEnvironment(env []string, values map[string]string) []string {
 	if values == nil {
 		return env
 	}
+	overlay := isOverlay(values)
 	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
 		k = strings.ToUpper(k)
-		return strings.HasPrefix(k, "ANTHROPIC_") || k == "CLAUDE_CODE_OAUTH_TOKEN" || k == "OPENAI_API_KEY"
+		if overlay {
+			return k == OAuthEnvKey || slices.Contains(oauthConflicts, k)
+		}
+		return strings.HasPrefix(k, "ANTHROPIC_") || k == OAuthEnvKey || k == "OPENAI_API_KEY"
 	})
 	for k, v := range values {
 		env = replaceEnv(env, k, v, runtime.GOOS == "windows")
@@ -382,12 +399,18 @@ func ProfileEnvironment(env []string, values map[string]string) []string {
 
 // --settings merges env objects with global settings. Explicit empty values
 // prevent old auth/model fields from another supplier surviving that merge.
+// An OAuth overlay blanks only the conflicting credentials: models, plugins
+// and the rest of the native configuration are left alone.
 func SupplierEnv(values map[string]string) map[string]string {
 	if values == nil {
 		return nil
 	}
 	env := map[string]string{}
-	for _, k := range []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"} {
+	keys := []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", OAuthEnvKey, "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"}
+	if isOverlay(values) {
+		keys = oauthConflicts
+	}
+	for _, k := range keys {
 		env[k] = ""
 	}
 	for k, v := range values {

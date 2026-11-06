@@ -17,6 +17,7 @@ type supplierProfile struct {
 	Name     string `json:"name"`
 	App      string `json:"app"`
 	Settings struct {
+		Kind            string            `json:"kind,omitempty"` // "oauth": overlay on the native configuration
 		Env             map[string]string `json:"env,omitempty"`
 		Auth            map[string]string `json:"auth,omitempty"`
 		ConfigOverrides map[string]any    `json:"configOverrides,omitempty"`
@@ -35,13 +36,33 @@ func (p supplierProfile) snapshot() string {
 	if p.ID == "" {
 		return ""
 	}
+	if p.Settings.Kind == oauthKind {
+		p.Settings.Env = nil // the token is looked up at launch, never copied into the session
+	}
 	b, _ := json.Marshal(p)
 	return string(b)
 }
 func (s *Server) profileCatalog() (profileFile, error) {
-	return s.ccSwitchProfiles()
+	f, err := s.ccSwitchProfiles()
+	if err != nil {
+		return f, err
+	}
+	entries, err := loadOAuthEntries(s.cfg.DataDir)
+	if err != nil {
+		f.Unavailable = append(f.Unavailable, unavailableProfile{"oauth", "OAuth", "claude", "无法读取 OAuth 令牌配置"})
+	}
+	for _, e := range entries {
+		f.Profiles = append(f.Profiles, e.profile())
+	}
+	return f, nil
 }
 func (p supplierProfile) validate() error {
+	if p.Settings.Kind == oauthKind {
+		if p.App != "claude" || !strings.HasPrefix(p.ID, oauthIDPrefix) || len(p.Settings.Env) != 1 || p.Settings.Env[claude.OAuthEnvKey] == "" {
+			return errors.New("OAuth 供应商配置无效")
+		}
+		return nil
+	}
 	if p.App == "claude" {
 		for k := range p.Settings.Env {
 			if !(strings.HasPrefix(k, "ANTHROPIC_") || k == "API_TIMEOUT_MS" || strings.HasPrefix(k, "CLAUDE_CODE_") && strings.Contains(k, "MODEL")) {
@@ -100,9 +121,9 @@ func (s *Server) profilesAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []map[string]string{}
 	for _, p := range f.Profiles {
-		items = append(items, map[string]string{"id": p.ID, "name": p.Name, "app": p.App})
+		items = append(items, map[string]string{"id": p.ID, "name": p.Name, "app": p.App, "kind": p.Settings.Kind})
 	}
-	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
+	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
 }
 // supplierEnvAPI returns one supplier's connection variables so the terminal
 // can launch native Claude with it (GET /api/profiles/{id}/env). The catalog
@@ -124,7 +145,7 @@ func (s *Server) supplierEnvAPI(w http.ResponseWriter, r *http.Request) {
 	fail(w, 404, s.lang(r).T("Supplier configuration not found", "未找到该供应商配置"))
 }
 
-func sessionProfile(x store.Session) (supplierProfile, error) {
+func (s *Server) sessionProfile(x store.Session) (supplierProfile, error) {
 	var p supplierProfile
 	if x.ProfileJSON == "" {
 		if x.ProfileID != "" {
@@ -135,10 +156,19 @@ func sessionProfile(x store.Session) (supplierProfile, error) {
 	if json.Unmarshal([]byte(x.ProfileJSON), &p) != nil || p.ID != x.ProfileID || p.App != x.Provider {
 		return p, errors.New("会话供应商配置无效")
 	}
+	if p.Settings.Kind == oauthKind {
+		// Snapshots carry no token: the entry is read now, so a replaced token
+		// applies from the next launch and a deleted entry fails loudly.
+		entry, ok, err := findOAuthEntry(s.cfg.DataDir, strings.TrimPrefix(p.ID, oauthIDPrefix))
+		if err != nil || !ok || !strings.HasPrefix(p.ID, oauthIDPrefix) {
+			return p, errors.New("OAuth 令牌配置已删除，请为会话重新选择供应商")
+		}
+		p.Settings.Env = map[string]string{claude.OAuthEnvKey: entry.Token}
+	}
 	return p, p.validate()
 }
-func profileOptions(x store.Session, o *claude.Options) error {
-	p, e := sessionProfile(x)
+func (s *Server) profileOptions(x store.Session, o *claude.Options) error {
+	p, e := s.sessionProfile(x)
 	if e != nil {
 		return e
 	}
@@ -147,8 +177,8 @@ func profileOptions(x store.Session, o *claude.Options) error {
 	}
 	if p.App == "claude" {
 		o.ProfileEnv = claude.SupplierEnv(p.Settings.Env)
-		if x.Model == "" {
-			o.Model = ""
+		if x.Model == "" && p.Settings.Kind != oauthKind {
+			o.Model = "" // a relay decides its own model; an OAuth overlay keeps the host default
 		}
 	} else {
 		o.ProfileEnv = map[string]string{"OPENAI_API_KEY": p.Settings.Auth["OPENAI_API_KEY"]}

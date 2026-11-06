@@ -174,3 +174,11 @@ test('resume is hidden when the selected host lacks resume selection capability'
  const r=createRenderer();const props={api:async()=>({...catalog,capabilities:{}}),app:'claude',value:'',onChange(){},resuming:true};
  r.render(NewSessionProfile,props);r.effects();await settle();assert.match(content(r.render(NewSessionProfile,props)), /Upgrade this host|请升级此宿主/);r.dispose();
 });
+
+test('OAuth entries are labelled and listed apart from CC-Switch suppliers', () => {
+  const mixed = { ...catalog, profiles: [...catalog.profiles, { id: 'oauth:ab12', name: 'Team', app: 'claude', kind: 'oauth' }] };
+  assert.deepEqual(P.oauthProfiles(mixed).map(p => p.id), ['oauth:ab12']);
+  assert.equal(P.profileLabel(mixed.profiles.at(-1)), 'Team · OAuth');
+  assert.equal(P.profileLabel(mixed.profiles[0]), 'First relay');
+  assert.equal(P.supportsProfileCatalog(mixed), true);
+});

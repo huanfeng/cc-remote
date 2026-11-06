@@ -55,7 +55,7 @@ func TestProfileCatalogRedactedAndDefaultPinned(t *testing.T) {
 	if fresh.ProfileName != "one" {
 		t.Fatal("supplier display must use the session snapshot")
 	}
-	p, e := sessionProfile(fresh)
+	p, e := s.sessionProfile(fresh)
 	if e != nil || p.Settings.Env["ANTHROPIC_AUTH_TOKEN"] != "secret-one" {
 		t.Fatal("existing selection did not retain snapshot", e)
 	}
@@ -165,13 +165,13 @@ func TestProfileSharedRustFixtureAndCodexOptions(t *testing.T) {
 	_ = json.Unmarshal(b, &x)
 	x, _ = st.Get(x.ID)
 	o := claude.Options{ConfigDir: "original-codex-history"}
-	if e = profileOptions(x, &o); e != nil {
+	if e = s.profileOptions(x, &o); e != nil {
 		t.Fatal(e)
 	}
 	if o.ConfigDir != "original-codex-history" || o.ModelProvider != "custom" || o.ProfileEnv["OPENAI_API_KEY"] != "fixture-key-not-real" {
 		t.Fatal("Codex profile failed to preserve home or inject options")
 	}
-	p, e := sessionProfile(x)
+	p, e := s.sessionProfile(x)
 	if e != nil {
 		t.Fatal(e)
 	}

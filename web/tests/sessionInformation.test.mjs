@@ -127,11 +127,11 @@ test('global sections are fixed, provider selection stays in defaults and preser
   const props = { providers: ['claude', 'codex'], api: async path => path === '/api/identity' ? identity : path === '/api/info' ? { codexAvailable: true, codexVersion: '1' } : { provider: path.includes('codex') ? 'codex' : 'claude', model: '', effort: '', permissionMode: '', revision: 'r1' }, close() {} };
   let tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
   tree = renderer.render(ClaudeSettings, props);
-  assert.deepEqual(nodes(tree).filter(node => node.props?.role === 'tab').map(node => content(node).split(' ')[0]), ['Session', 'This', 'This']);
+  assert.deepEqual(nodes(tree).filter(node => node.props?.role === 'tab').map(node => content(node).split(' ')[0]), ['Session', 'OAuth', 'This', 'This']);
   control(tree, 'Settings provider').props.onChange('codex'); await settle();
   tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();
   tree = renderer.render(ClaudeSettings, props);
-  assert.equal(nodes(tree).filter(node => node.props?.role === 'tab').length, 3);
+  assert.equal(nodes(tree).filter(node => node.props?.role === 'tab').length, 4);
   assert.doesNotMatch(content(tree), /Native configuration/);
   find(tree, node => node.props?.id === 'settings-tab-host').props.onClick(); await settle();
   tree = renderer.render(ClaudeSettings, props); renderer.effects(); await settle();

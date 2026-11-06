@@ -535,6 +535,7 @@ type supplierProfile struct {
 	ID   string            `json:"id"`
 	Name string            `json:"name"`
 	App  string            `json:"app"`
+	Kind string            `json:"kind,omitempty"`
 	Env  map[string]string `json:"env,omitempty"`
 }
 
@@ -601,7 +602,11 @@ func chooseProfile(list []supplierProfile, defaultID string) (string, error) {
 	fmt.Println(i18n.T("Supplier configuration:", "供应商配置："))
 	fmt.Printf("  0. %s (%s)\n", i18n.T("Default", "默认"), printable(label))
 	for i, p := range list {
-		fmt.Printf("  %d. %s (%s)\n", i+1, printable(p.Name), printable(p.ID))
+		name := printable(p.Name)
+		if p.Kind == "oauth" {
+			name += " · OAuth"
+		}
+		fmt.Printf("  %d. %s (%s)\n", i+1, name, printable(p.ID))
 	}
 	fmt.Print(i18n.T("Configuration number (Enter: default): ", "选择配置编号（回车 = 默认）："))
 	line, err := stdin.ReadString('\n')

@@ -12,6 +12,7 @@ import { ColorChoices, IconChoices } from './HostLook';
 import { notifyPrefs, notifySupported, saveNotifyPrefs, type NotifyEvent, type NotifyPrefs } from './notify';
 import { confirmDialog } from './ConfirmDialog';
 import { currentTheme, setTheme, type Theme } from './theme';
+import { OAuthProfiles } from './OAuthProfiles';
 
 export type { Api } from './ModelPicker';
 export type ClaudePreferences = { model: string; effortLevel: string; permissionMode: string; revision: string; path?: string };
@@ -21,6 +22,7 @@ type IdentitySettings = { name: string; color: string; icon?: string; shownName:
 // Settings sections; add an entry here and a matching panel below to extend the dialog.
 const SECTIONS = [
   { id: 'remote', label: t('Session defaults', '会话默认'), hint: t('Model, effort and permissions', '模型、推理与权限') },
+  { id: 'oauth', label: t('OAuth tokens', 'OAuth 令牌'), hint: t('Official login for sessions', '会话使用的官方登录') },
   { id: 'host', label: t('This host', '此主机'), hint: t('Name, color and icon', '名称、颜色与图标') },
   { id: 'browser', label: t('This browser', '此浏览器'), hint: t('Language, notifications', '语言、通知') },
 ] as const;
@@ -189,6 +191,7 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
           </> : <p>{t('Loading…', '加载中…')}</p>}
           </section>
         </form>}
+        {section === 'oauth' && <OAuthProfiles api={api} />}
         {section === 'browser' && <div>
           <section className="settings-card">
           <h3>{t('Language', '语言')}</h3>

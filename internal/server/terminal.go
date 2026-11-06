@@ -127,7 +127,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	}
 	p := s.effectivePreferences(x)
 	opts := claude.Options{PermissionMode: p.PermissionMode, Model: p.Model, Effort: p.Effort}
-	if err := profileOptions(x, &opts); err != nil {
+	if err := s.profileOptions(x, &opts); err != nil {
 		return nil, err
 	}
 	args = append(args, claude.LaunchFlags(opts.PermissionMode, opts.Model, opts.Effort)...)
@@ -224,7 +224,7 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 	if e != nil {
 		return e
 	}
-	p, e := sessionProfile(x)
+	p, e := s.sessionProfile(x)
 	if e != nil {
 		return e
 	}

@@ -54,6 +54,7 @@ commands:
   attach, a                    the old name of ccr: connect to a held session
   ccr                          the launcher above; "ccr claude" runs plain claude
   claude                       native Claude Code, bypassing the host
+  oauth                        manage OAuth tokens kept on the host (ls/add/token/rename/rm)
   update                       update cc-remote to the latest release
   version / help               version information / this help
 
@@ -75,6 +76,7 @@ const usageZH = `CC Remote：Claude Code 的远程 Web 界面。
   attach, a                    ccr 的旧名：接入宿主持有的会话
   ccr                          上述启动器；"ccr claude" 直连原生 claude
   claude                       原生 Claude Code，不经宿主
+  oauth                        管理宿主上的 OAuth 令牌（ls/add/token/rename/rm）
   update                       把 cc-remote 更新到最新版本
   version / help               显示版本信息 / 本帮助
 
@@ -170,6 +172,8 @@ func run() error {
 			return runCCR(os.Args[2:])
 		case "claude":
 			return terminal.RunClaudeDirect(os.Args[2:], "", config.DefaultDataDir(), channel.EnsureHost)
+		case "oauth":
+			return terminal.RunOAuth(os.Args[2:], config.DefaultDataDir(), channel.EnsureHost)
 		}
 	}
 	if len(os.Args) <= 1 {

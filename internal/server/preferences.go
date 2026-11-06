@@ -134,7 +134,7 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		if proc, ok := rt.proc.(interface{ Configure(string, string) }); ok {
 			p := s.effectivePreferences(x)
 			o := claude.Options{Model: p.Model, Effort: p.Effort}
-			if profileOptions(x, &o) == nil {
+			if s.profileOptions(x, &o) == nil {
 				proc.Configure(o.Model, o.Effort)
 			}
 		}

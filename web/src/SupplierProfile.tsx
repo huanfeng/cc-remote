@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Api } from './ModelPicker';
 import type { Provider } from './providers';
-import { defaultProfile, profileBody, profilesFor, supportsProfileCatalog, type ProfileCatalog } from './profiles';
+import { defaultProfile, profileBody, profileLabel, profilesFor, supportsProfileCatalog, type ProfileCatalog } from './profiles';
 import { Select } from './Select';
 
 export function SupplierBadge({ session }: { session: { profileId?: string; profileName?: string } }) {
@@ -41,7 +41,7 @@ export function NewSessionProfile({ api, app, value, onChange, resuming = false 
   return <div className="field">{t('Supplier configuration', '供应商配置')}<Select label={resuming ? t('Resume session supplier configuration', '恢复会话供应商配置') : t('New session supplier configuration', '新会话供应商配置')} value={value} options={[
     { value: '', label: resuming ? t('Keep session configuration', '沿用原会话配置') : defaultLabel(catalog, app) },
     { value: '@native', label: t('Native host configuration', '宿主原生配置') },
-    ...profilesFor(catalog, app).map(profile => ({ value: profile.id, label: profile.name })),
+    ...profilesFor(catalog, app).map(profile => ({ value: profile.id, label: profileLabel(profile) })),
   ]} onChange={onChange} /><small>{t('The selected configuration is kept for this session when defaults change.', '默认项改变后，此会话仍保留所选配置。')}</small>{catalog.found === false && <small>{t('CC-Switch database not found on this host. Set --cc-switch-db to its path.', '此宿主未找到 CC-Switch 数据库，可通过 --cc-switch-db 指定路径。')}</small>}{catalog.unavailable?.filter(p => p.app === app).map(p => <small key={p.id}>{p.name} · {p.reason}</small>)}</div>;
 }
 
@@ -71,7 +71,7 @@ export function SessionProfile<T extends { id: string; profileId?: string; profi
   if (!profilesFor(catalog, app).length && !session.profileId) return showEmpty ? <p role="status">{t('No supplier configurations are available for this provider.', '此平台没有可用的供应商配置。')}</p> : null;
   const available = profilesFor(catalog, app);
   const current = available.find(profile => profile.id === session.profileId);
-  const options = [{ value: '', label: defaultLabel(catalog, app) }, { value: '@native', label: t('Native host configuration', '宿主原生配置') }, ...available.map(profile => ({ value: profile.id, label: profile.name }))];
+  const options = [{ value: '', label: defaultLabel(catalog, app) }, { value: '@native', label: t('Native host configuration', '宿主原生配置') }, ...available.map(profile => ({ value: profile.id, label: profileLabel(profile) }))];
   if (session.profileId && !current) options.push({ value: session.profileId, label: t(`Unavailable · ${session.profileId}`, `配置不可用 · ${session.profileId}`) });
   return <section className="session-profile">
     <h3>{t('Supplier configuration', '供应商配置')}</h3>

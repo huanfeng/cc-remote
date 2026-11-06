@@ -26,6 +26,20 @@ cc-remote service config --env "CC_REMOTE_CC_SWITCH_DB=D:\Config\cc-switch.db"
 - 已运行会话：设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。
 - 会话标题下方持续显示所选供应商，新建后尚未发送消息也会显示；名称来自会话保存的配置快照，刷新后保留。
 
+## OAuth 令牌配置
+
+CC-Switch 的供应商是「整体替换」：端点、密钥、模型变量都换成供应商的。OAuth 令牌配置是另一种东西，它**叠加在宿主原生配置之上**：会话照常使用宿主自己的 Claude Code 配置（模型、插件、hooks、MCP、权限），只是把登录令牌换成你保存的 `CLAUDE_CODE_OAUTH_TOKEN`。适合给不同的官方账号分别建一项。
+
+- 生成令牌：在能登录的机器上运行 `claude setup-token`，得到 `sk-ant-oat…`。
+- 添加：网页「设置 → OAuth 令牌」。令牌只保存在宿主数据目录的 `oauth-profiles.json`（权限 0600），添加后不会再显示，也不出现在任何列表接口里；请保护该目录。可更换令牌或删除。
+- 选择：与 CC-Switch 供应商出现在同一个选择器里，名称后带「· OAuth」；`ccr` 的供应商列表同样带标记，`--profile oauth:<ID>` 可直接指定。
+- 冲突处理：启动时清空 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`（它们优先于 OAuth 令牌，或会把令牌发到别的端点），其余 `ANTHROPIC_*`（包括模型变量）保持原生设置。
+- 会话只记引用（`oauth:<ID>`），**每次启动现取令牌**：更换令牌后，使用它的会话下次启动即生效；条目被删除后，这些会话启动时会提示重新选择供应商。
+- 命令行：`cc-remote oauth ls | add 名称 | token 名称 | rename 名称 新名称 | rm 名称`（名称也可写 `ls` 显示的 id）。`add` 和 `token` 的令牌从环境变量 `CC_REMOTE_OAUTH_TOKEN`、标准输入或隐藏输入读取，也可用 `--token`（会留在 shell 历史里，不推荐）。命令经由运行中的宿主完成，宿主没运行时会先启动。
+- 接口：`POST /api/profiles/oauth`、`PATCH|DELETE /api/profiles/oauth/{ID}`，都需要访问令牌。
+
+限制：顶栏/状态页的订阅用量读取的是宿主自己的登录，不会随会话切换到所选 OAuth 账号；模型列表按宿主配置生成，不随供应商变化。
+
 ## 数据与兼容性
 
 每次读取列表和明确选择供应商时重新查询 CC-Switch。会话保存私有配置快照，之后 CC-Switch 默认供应商变化不影响已有会话。API 只返回名称、ID、应用和不可用原因，不返回密钥；快照存于宿主私有数据库，请保护该数据目录。

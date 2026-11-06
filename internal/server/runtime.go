@@ -117,11 +117,13 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	}
 	p := s.effectivePreferences(x)
 	opts.PermissionMode, opts.Model, opts.Effort = p.PermissionMode, p.Model, p.Effort
-	profileErr := profileOptions(x, &opts)
+	profileErr := s.profileOptions(x, &opts)
 	if profileErr != nil {
 		starter = func(claude.Options, claude.ProcessHooks) (claudeProcess, error) { return nil, profileErr }
 	}
-	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort, x.ProfileJSON}
+	// An OAuth snapshot holds no token, so a replaced or removed token must
+	// still change the key or the old process keeps running with the old one.
+	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort, x.ProfileJSON + tokenFingerprint(opts.ProfileEnv[claude.OAuthEnvKey], profileErr)}
 	if rt := s.procs[x.ID]; rt != nil {
 		if x.Provider == "codex" && rt.key.claudeID == key.claudeID && rt.key.permissionMode == key.permissionMode && rt.key.profile == key.profile {
 			if proc, ok := rt.proc.(interface{ Configure(string, string) }); ok {
@@ -164,7 +166,7 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 					if latest, getErr := s.store.Get(x.ID); getErr == nil && latest.ProfileJSON == x.ProfileJSON {
 						p := s.effectivePreferences(latest)
 						o := claude.Options{Model: p.Model, Effort: p.Effort}
-						if profileOptions(latest, &o) == nil {
+						if s.profileOptions(latest, &o) == nil {
 							configurable.Configure(o.Model, o.Effort)
 						}
 					}
