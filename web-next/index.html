@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f8f8f8" />
+    <title>CC Remote</title>
+    <script>
+      // Apply the theme before first paint so the page never flashes the wrong one.
+      (function () {
+        try {
+          var pref = localStorage.getItem('ccn-theme') || 'system';
+          var dark = pref === 'dark' || (pref === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          root.classList.toggle('dark', dark);
+          root.dataset.palette = localStorage.getItem('ccn-palette') || 'graphite';
+        } catch (e) { document.documentElement.dataset.palette = 'graphite'; }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

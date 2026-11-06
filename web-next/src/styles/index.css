@@ -1,0 +1,164 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "tailwind-scrollbar-hide/v4";
+@import "./shadcn-variants.css";
+@import "@xterm/xterm/css/xterm.css";
+@import "./tokens.css";
+
+/* streamdown renders its own utility classes; let Tailwind see them. */
+@source "../../node_modules/streamdown/dist/*.js";
+
+@plugin "@tailwindcss/typography";
+
+/* shadcn names used by the borrowed primitives, mapped onto ZCode's semantic
+ * tokens. `inline` keeps them following the active theme. */
+@theme inline {
+  --color-muted: var(--color-surface);
+  --color-muted-foreground: var(--color-foreground-subtle);
+  --color-ring: var(--color-border-hover);
+  --color-secondary-foreground: var(--color-foreground);
+}
+
+/* One display size for empty-state headings; everything else uses the text-ui-* scale. */
+@theme {
+  --text-ui-display: calc(var(--ui-font-size) + 12px);
+  --text-ui-display--line-height: 1.25;
+}
+
+/* Desktop shell platforms (set on <html> by the Tauri bootstrap). */
+@custom-variant platform-mac-desktop (&:where(.platform-mac-desktop, .platform-mac-desktop *));
+@custom-variant platform-windows-desktop (&:where(.platform-windows-desktop, .platform-windows-desktop *));
+@custom-variant platform-linux-desktop (&:where(.platform-linux-desktop, .platform-linux-desktop *));
+@custom-variant desktop (&:where(.desktop-shell, .desktop-shell *));
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --ui-font-size: 14px;
+  --shadow-composer-soft: 0 0 #0000;
+  /* Height of the visual viewport, kept current by lib/viewport.ts so the
+   * soft keyboard never covers the composer on phones. */
+  --app-height: 100dvh;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-size: var(--text-ui-base);
+}
+
+#root {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--app-top, 0px);
+  height: var(--app-height);
+  overflow: hidden;
+}
+
+/* A visible ring only for keyboard focus; pointer focus stays quiet. */
+:where(button, a, [role="button"], [role="menuitem"], [role="option"], [role="tab"], input, textarea, select, [tabindex]):focus-visible {
+  outline: 1.5px solid color-mix(in srgb, var(--color-foreground) 22%, transparent);
+  outline-offset: 0;
+}
+:where(input, textarea, [contenteditable]):focus-visible {
+  outline: none;
+}
+
+/* Derived from ZCode styles.css: one scrollbar style across every panel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: var(--color-border);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.terminal-xterm-shell .xterm-viewport {
+  scrollbar-width: none;
+}
+.terminal-xterm-shell .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.text-wrap-phrase {
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-break: strict;
+  text-wrap: pretty;
+}
+
+@layer utilities {
+  /* The "working…" shimmer, derived from ZCode. */
+  .animated-gradient-text {
+    display: inline-block;
+    background: linear-gradient(
+      90deg,
+      var(--animated-gradient-text-strong) 0%,
+      var(--animated-gradient-text-strong) 34%,
+      var(--animated-gradient-text-soft) 50%,
+      var(--animated-gradient-text-strong) 66%,
+      var(--animated-gradient-text-strong) 100%
+    );
+    background-size: 300% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation: gradient-flow 4s linear infinite;
+  }
+  @keyframes gradient-flow {
+    0% { background-position: 100% 0; }
+    50% { background-position: 0% 0; }
+    100% { background-position: 0% 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animated-gradient-text { animation: none; }
+  }
+
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+}
+
+.tool-call-progress-indeterminate {
+  animation: tool-call-progress-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes tool-call-progress-indeterminate {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}
+
+/* Hide everything that animates while the page is hidden (ZCode: the document
+ * timeline otherwise holds removed nodes during background streaming). */
+html[data-document-hidden] *,
+html[data-document-hidden] *::before,
+html[data-document-hidden] *::after {
+  transition: none !important;
+  animation: none !important;
+}
