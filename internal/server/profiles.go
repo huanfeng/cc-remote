@@ -24,12 +24,15 @@ type supplierProfile struct {
 	} `json:"settings"`
 }
 type profileFile struct {
-	Version         int                  `json:"version"`
-	DefaultProfiles map[string]string    `json:"defaultProfiles"`
-	Profiles        []supplierProfile    `json:"profiles"`
-	Source          string               `json:"source"`
-	Found           bool                 `json:"found"`
-	Unavailable     []unavailableProfile `json:"unavailable"`
+	Version         int               `json:"version"`
+	DefaultProfiles map[string]string `json:"defaultProfiles"`
+	// ConfiguredDefaults is the user's own choice per app; it wins over the
+	// CC-Switch current provider in DefaultProfiles.
+	ConfiguredDefaults map[string]string    `json:"configuredDefaults"`
+	Profiles           []supplierProfile    `json:"profiles"`
+	Source             string               `json:"source"`
+	Found              bool                 `json:"found"`
+	Unavailable        []unavailableProfile `json:"unavailable"`
 }
 
 func (p supplierProfile) snapshot() string {
@@ -53,6 +56,15 @@ func (s *Server) profileCatalog() (profileFile, error) {
 	}
 	for _, e := range entries {
 		f.Profiles = append(f.Profiles, e.profile())
+	}
+	f.ConfiguredDefaults, err = loadDefaultProfiles(s.cfg.DataDir)
+	if err != nil {
+		f.Unavailable = append(f.Unavailable, unavailableProfile{"default", "default", "claude", "无法读取默认供应商设置"})
+	}
+	for app, id := range f.ConfiguredDefaults {
+		if id != "" {
+			f.DefaultProfiles[app] = id
+		}
 	}
 	return f, nil
 }
@@ -100,16 +112,20 @@ func (s *Server) selectProfile(app, id string) (supplierProfile, error) {
 	if e != nil {
 		return supplierProfile{}, e
 	}
-	if id == "" {
+	fromDefault := id == ""
+	if fromDefault {
 		id = f.DefaultProfiles[app]
 	}
-	if id == "" {
+	if id == "" || id == "@native" {
 		return supplierProfile{}, nil
 	}
 	for _, p := range f.Profiles {
 		if (p.ID == id || strings.TrimPrefix(p.ID, "ccswitch:") == id) && p.App == app {
 			return p, nil
 		}
+	}
+	if fromDefault {
+		return supplierProfile{}, errors.New("默认供应商已不存在，请在设置里重新选择")
 	}
 	return supplierProfile{}, errors.New("供应商不存在")
 }
@@ -123,8 +139,9 @@ func (s *Server) profilesAPI(w http.ResponseWriter, r *http.Request) {
 	for _, p := range f.Profiles {
 		items = append(items, map[string]string{"id": p.ID, "name": p.Name, "app": p.App, "kind": p.Settings.Kind})
 	}
-	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
+	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true, "defaultProfile": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "configuredDefaults": f.ConfiguredDefaults, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
 }
+
 // supplierEnvAPI returns one supplier's connection variables so the terminal
 // can launch native Claude with it (GET /api/profiles/{id}/env). The catalog
 // endpoint deliberately omits them; this one hands them only to a caller that

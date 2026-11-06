@@ -270,3 +270,65 @@ func TestOAuthUsageUsesHeadersWhileUsageEndpointIsRateLimited(t *testing.T) {
 		t.Fatal("a 429 must not make the header probe permanent")
 	}
 }
+
+// A chosen default wins over the CC-Switch current provider for new sessions,
+// on the web and in ccr alike, and never falls back silently.
+func TestConfiguredDefaultSupplier(t *testing.T) {
+	s, ts, _ := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	installProfiles(t, s) // CC-Switch current: ccswitch:one
+	_, b := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Team", "token": "sk-ant-oat01-x"}, testToken)
+	var oauth struct{ ID string }
+	_ = json.Unmarshal(b, &oauth)
+
+	newSession := func() (int, store.Session) {
+		code, b := request(t, ts, "POST", "/api/sessions", map[string]string{"cwd": t.TempDir()}, testToken)
+		var x store.Session
+		_ = json.Unmarshal(b, &x)
+		return code, x
+	}
+	if _, x := newSession(); x.ProfileID != "ccswitch:one" {
+		t.Fatal("unset: CC-Switch current is the default", x.ProfileID)
+	}
+	put := func(id string) int {
+		code, _ := request(t, ts, "PUT", "/api/profiles/default", map[string]string{"app": "claude", "profileId": id}, testToken)
+		return code
+	}
+	if put(oauth.ID) != 200 {
+		t.Fatal("set default")
+	}
+	if _, x := newSession(); x.ProfileID != oauth.ID {
+		t.Fatal("the chosen default must win:", x.ProfileID)
+	}
+	code, b := request(t, ts, "GET", "/api/profiles", nil, testToken)
+	if code != 200 || !strings.Contains(string(b), `"configuredDefaults":{"claude":"`+oauth.ID+`"}`) || !strings.Contains(string(b), `"defaultProfiles":{"claude":"`+oauth.ID+`"}`) {
+		t.Fatalf("catalog %d %s", code, b)
+	}
+	if put("two") != 200 {
+		t.Fatal("a CC-Switch supplier by its database id")
+	}
+	if _, x := newSession(); x.ProfileID != "ccswitch:two" {
+		t.Fatal(x.ProfileID)
+	}
+	if put("@native") != 200 {
+		t.Fatal("native default")
+	}
+	if _, x := newSession(); x.ProfileID != "" {
+		t.Fatal("native default must override CC-Switch current:", x.ProfileID)
+	}
+	if put("nope") != 404 || put("") != 200 {
+		t.Fatal("unknown id refused, empty clears")
+	}
+	if _, x := newSession(); x.ProfileID != "ccswitch:one" {
+		t.Fatal("cleared: back to CC-Switch current", x.ProfileID)
+	}
+	// A default that no longer exists fails loudly instead of using another supplier.
+	put(oauth.ID)
+	request(t, ts, "DELETE", "/api/profiles/oauth/"+strings.TrimPrefix(oauth.ID, "oauth:"), nil, testToken)
+	if code, _ := newSession(); code != 400 {
+		t.Fatal("a vanished default must not fall back:", code)
+	}
+	if code, _ = request(t, ts, "POST", "/api/sessions", map[string]string{"cwd": t.TempDir(), "profileId": "@native"}, testToken); code != 201 {
+		t.Fatal("an explicit choice still works", code)
+	}
+}

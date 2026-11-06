@@ -3,10 +3,20 @@ import type { Provider } from './providers';
 // A supplier profile is separate from Session.provider (the Claude/Codex engine).
 // This catalog intentionally contains no credentials or raw settings.
 export type SupplierProfile = { id: string; name: string; app: Provider; kind?: string };
-export type ProfileCatalog = { schemaVersion?: number; capabilities?: { resumeSelection?: boolean; switchSupplier?: boolean; oauthProfiles?: boolean }; source?: string; found?: boolean; unavailable?: {id: string; name: string; app: Provider; reason: string}[]; profiles: SupplierProfile[]; defaultProfiles: Partial<Record<Provider, string>> };
+export type ProfileCatalog = { schemaVersion?: number; capabilities?: { resumeSelection?: boolean; switchSupplier?: boolean; oauthProfiles?: boolean; defaultProfile?: boolean }; source?: string; found?: boolean; unavailable?: {id: string; name: string; app: Provider; reason: string}[]; profiles: SupplierProfile[]; defaultProfiles: Partial<Record<Provider, string>>; configuredDefaults?: Partial<Record<Provider, string>> };
 
 export function profilesFor(catalog: ProfileCatalog, app: Provider): SupplierProfile[] {
   return catalog.profiles.filter(profile => profile.app === app);
+}
+
+/** What a new session gets when no supplier is named: the user's own choice, else the CC-Switch current one. '@native' is the host configuration. */
+export type DefaultState = { kind: 'profile'; profile: SupplierProfile } | { kind: 'native' } | { kind: 'missing'; id: string };
+
+export function defaultState(catalog: ProfileCatalog, app: Provider): DefaultState {
+  const id = catalog.defaultProfiles[app];
+  if (!id || id === '@native') return { kind: 'native' };
+  const profile = profilesFor(catalog, app).find(item => item.id === id);
+  return profile ? { kind: 'profile', profile } : { kind: 'missing', id };
 }
 
 export function defaultProfile(catalog: ProfileCatalog, app: Provider): SupplierProfile | undefined {

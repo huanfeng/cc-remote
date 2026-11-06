@@ -120,6 +120,9 @@ func (c *client) supplierEnvironment(explicit string, interactive bool) ([]strin
 	if chosen == "" && interactive && len(list) > 0 {
 		list = append(list, supplierProfile{ID: "@native", Name: i18n.T("Native configuration", "宿主原生配置"), App: "claude"})
 		chosen, _ = chooseProfile(list, catalog.DefaultProfiles["claude"])
+		if chosen == "" {
+			chosen = catalog.DefaultProfiles["claude"] // Enter keeps the default
+		}
 	}
 	if chosen == "" || chosen == "@native" {
 		return os.Environ(), "", nil

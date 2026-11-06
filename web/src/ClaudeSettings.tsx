@@ -13,6 +13,7 @@ import { notifyPrefs, notifySupported, saveNotifyPrefs, type NotifyEvent, type N
 import { confirmDialog } from './ConfirmDialog';
 import { currentTheme, setTheme, type Theme } from './theme';
 import { OAuthProfiles } from './OAuthProfiles';
+import { DefaultSupplierSetting } from './SupplierProfile';
 
 export type { Api } from './ModelPicker';
 export type ClaudePreferences = { model: string; effortLevel: string; permissionMode: string; revision: string; path?: string };
@@ -142,6 +143,9 @@ export function ClaudeSettings({ api, close, provider: initialProvider = 'claude
         {section === 'remote' && <div>
           <section className="settings-card">
           <div className="field">{t('Provider', '提供方')}<Select label={t('Settings provider', '设置提供方')} value={provider} options={providers.map(value => ({ value, label: providerName(value) }))} disabled={saving} onChange={value => { if (providers.includes(value as Provider) && value !== provider) void mayLeave().then(ok => { if (ok) { setNativeOpen(false); setPrefs(undefined); setSavedPrefs(undefined); setProvider(value as Provider); } }); }} /></div>
+          </section>
+          <section className="settings-card">
+          <DefaultSupplierSetting api={api} app={provider} />
           </section>
           <section className="settings-card">
           <form onSubmit={event => { event.preventDefault(); if (!prefs || !savedPrefs || !providers.includes(provider)) return; void save(async () => { const result = await api<RemotePreferences>(providerQuery('/api/preferences', provider), { method: 'PUT', body: JSON.stringify({ permissionMode: prefs.permissionMode, model: prefs.model, effort: prefs.effort, revision: prefs.revision, confirmDangerous: dangerousMode(prefs.permissionMode, provider) }) }); if (providerOf(result) !== provider) throw new Error(t('This host does not support these provider defaults.', '此主机不支持该提供方的默认设置。')); setPrefs(result); setSavedPrefs(result); setNotice(t('CC Remote defaults saved; managed sessions use them on the next send after current work and background tasks finish.', 'CC Remote 默认值已保存，托管会话在当前工作及后台任务结束后，下次发送时生效。')); }); }}>

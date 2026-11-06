@@ -159,6 +159,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/profiles", s.profilesAPI)
 	mux.HandleFunc("GET /api/profiles/{id}/env", s.supplierEnvAPI)
 	mux.HandleFunc("GET /api/profiles/oauth", s.listOAuthAPI)
+	mux.HandleFunc("PUT /api/profiles/default", s.defaultProfileAPI)
 	mux.HandleFunc("POST /api/profiles/oauth", s.oauthAPI)
 	mux.HandleFunc("PATCH /api/profiles/oauth/{id}", s.oauthAPI)
 	mux.HandleFunc("DELETE /api/profiles/oauth/{id}", s.oauthAPI)

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Api } from './ModelPicker';
 import type { Provider } from './providers';
-import { defaultProfile, profileBody, profileLabel, profilesFor, supportsProfileCatalog, type ProfileCatalog } from './profiles';
+import { defaultState, profileBody, profileLabel, profilesFor, supportsProfileCatalog, type ProfileCatalog } from './profiles';
 import { Select } from './Select';
 
 export function SupplierBadge({ session }: { session: { profileId?: string; profileName?: string } }) {
@@ -25,8 +25,39 @@ function useProfiles(api: Api) {
 }
 
 function defaultLabel(catalog: ProfileCatalog, app: Provider) {
-  const profile = defaultProfile(catalog, app);
-  return profile ? t(`Default · ${profile.name}`, `默认 · ${profile.name}`) : t('Default · native configuration', '默认 · 原生配置');
+  const state = defaultState(catalog, app);
+  if (state.kind === 'profile') return t(`Default · ${profileLabel(state.profile)}`, `默认 · ${profileLabel(state.profile)}`);
+  if (state.kind === 'missing') return t('Default · unavailable, pick another in Settings', '默认 · 已不可用，请在设置里重选');
+  return t('Default · native configuration', '默认 · 原生配置');
+}
+
+/** Settings field: the supplier new sessions start with, on the web and in ccr. */
+export function DefaultSupplierSetting({ api, app }: { api: Api; app: Provider }) {
+  const { catalog, error, retry, unsupported } = useProfiles(api);
+  const [saved, setSaved] = useState<{ app: Provider; value: string }>();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  if (error) return <CatalogError error={error} retry={retry} />;
+  if (unsupported || catalog && !catalog.capabilities?.defaultProfile) return <p role="status">{t('Upgrade this host to choose the default supplier.', '请升级此宿主以指定默认供应商。')}</p>;
+  if (!catalog) return null;
+  const value = saved?.app === app ? saved.value : catalog.configuredDefaults?.[app] || '';
+  async function choose(next: string) {
+    if (busy) return;
+    setBusy(true); setProblem('');
+    try {
+      await api('/api/profiles/default', { method: 'PUT', body: JSON.stringify({ app, profileId: next }) });
+      setSaved({ app, value: next }); retry();
+    } catch (err) { setProblem((err as Error).message); } finally { setBusy(false); }
+  }
+  return <div className="field">{t('Supplier for new sessions', '新会话供应商')}<Select label={t('Default supplier for new sessions', '新会话的默认供应商')} value={value} disabled={busy} options={[
+    { value: '', label: t('Follow CC-Switch current provider', '跟随 CC-Switch 当前项') },
+    { value: '@native', label: t('Native host configuration', '宿主原生配置') },
+    ...profilesFor(catalog, app).map(profile => ({ value: profile.id, label: profileLabel(profile) })),
+  ]} onChange={id => void choose(id)} />
+    <small>{t('Used by the web and by ccr when no supplier is named. Existing sessions keep theirs.', '网页和 ccr 在未指定供应商时使用。已有会话保持原供应商。')}</small>
+    {value && defaultState(catalog, app).kind === 'missing' && <small className="error">{t('This supplier is gone; pick another.', '这个供应商已不存在，请重新选择。')}</small>}
+    {problem && <small className="error" role="alert">{problem}</small>}
+  </div>;
 }
 
 function CatalogError({ error, retry }: { error: string; retry: () => void }) {

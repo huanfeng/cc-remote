@@ -26,6 +26,25 @@ cc-remote service config --env "CC_REMOTE_CC_SWITCH_DB=D:\Config\cc-switch.db"
 - 已运行会话：设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。
 - 会话标题下方持续显示所选供应商，新建后尚未发送消息也会显示；名称来自会话保存的配置快照，刷新后保留。
 
+## 默认供应商
+
+新建会话时没指定供应商，用的就是「默认供应商」，网页的新建会话和 `ccr` 完全一致。优先级：明确指定（网页下拉、`--profile`）> 你设置的默认 > CC-Switch 当前选中的供应商 > 宿主原生配置。
+
+- 设置：网页「设置 → 会话默认 → 新会话供应商」，或命令行：
+
+  ```sh
+  cc-remote profile ls                 # 列出供应商，* 标记当前默认
+  cc-remote profile default            # 查看默认
+  cc-remote profile default 名称       # 指定默认（名称或 id，包括 OAuth 令牌配置）
+  cc-remote profile default @native    # 默认用宿主原生配置
+  cc-remote profile default follow     # 不单独指定，跟随 CC-Switch 当前项
+  ```
+
+  Codex 加 `--app codex`。设置保存在宿主数据目录的 `default-profiles.json`。
+- 只影响之后新建的会话；已有会话保持创建时的供应商，恢复时仍可「沿用原配置」。
+- 指定的默认供应商被删除或不可用时，新建会话会明确报错，提示重新选择，**不会悄悄换成别的供应商**。
+- `cc-remote claude` 交互选择时，回车同样采用默认供应商。
+
 ## OAuth 令牌配置
 
 CC-Switch 的供应商是「整体替换」：端点、密钥、模型变量都换成供应商的。OAuth 令牌配置是另一种东西，它**叠加在宿主原生配置之上**：会话照常使用宿主自己的 Claude Code 配置（模型、插件、hooks、MCP、权限），只是把登录令牌换成你保存的 `CLAUDE_CODE_OAUTH_TOKEN`。适合给不同的官方账号分别建一项。

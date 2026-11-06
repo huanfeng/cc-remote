@@ -182,3 +182,11 @@ test('OAuth entries are labelled and listed apart from CC-Switch suppliers', () 
   assert.equal(P.profileLabel(mixed.profiles[0]), 'First relay');
   assert.equal(P.supportsProfileCatalog(mixed), true);
 });
+
+test('the default state names a supplier, the native configuration or a vanished choice', () => {
+  const base = { ...catalog, profiles: [...catalog.profiles, { id: 'oauth:ab12', name: 'Team', app: 'claude', kind: 'oauth' }] };
+  assert.deepEqual(P.defaultState({ ...base, defaultProfiles: { claude: 'oauth:ab12' } }, 'claude'), { kind: 'profile', profile: base.profiles.at(-1) });
+  assert.deepEqual(P.defaultState({ ...base, defaultProfiles: { claude: '@native' } }, 'claude'), { kind: 'native' });
+  assert.deepEqual(P.defaultState({ ...base, defaultProfiles: {} }, 'claude'), { kind: 'native' });
+  assert.deepEqual(P.defaultState({ ...base, defaultProfiles: { claude: 'oauth:gone' } }, 'claude'), { kind: 'missing', id: 'oauth:gone' });
+});
