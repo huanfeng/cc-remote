@@ -1,0 +1,13 @@
+/* Shiki output carries both themes as CSS variables; pick one by the page theme. */
+.cc-code .shiki {
+  background: transparent !important;
+  margin: 0;
+}
+.cc-code .shiki,
+.cc-code .shiki span {
+  color: var(--shiki-light);
+}
+.dark .cc-code .shiki,
+.dark .cc-code .shiki span {
+  color: var(--shiki-dark);
+}

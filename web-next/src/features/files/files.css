@@ -1,0 +1,7 @@
+/* Shiki tokens carry both themes as CSS variables; pick one by the page theme. */
+.cc-file-code [data-tok] {
+  color: var(--shiki-light);
+}
+.dark .cc-file-code [data-tok] {
+  color: var(--shiki-dark);
+}

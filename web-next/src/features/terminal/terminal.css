@@ -1,0 +1,27 @@
+/* xterm 6 draws its own scrollbar (VS Code's, under .xterm-scrollable-element).
+   Show it only as a thin rounded slider while the pointer is over the terminal
+   or the slider is dragged: no track, no shadow, no permanent line. */
+.terminal-xterm-shell .xterm .xterm-scrollable-element > .scrollbar {
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: 0 !important;
+  transition: opacity 150ms linear;
+}
+.terminal-xterm-shell:hover .xterm .xterm-scrollable-element > .scrollbar.vertical,
+.terminal-xterm-shell .xterm .xterm-scrollable-element > .scrollbar.vertical:has(.slider.active) {
+  opacity: 1 !important;
+}
+.terminal-xterm-shell .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 10px !important;
+}
+.terminal-xterm-shell .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  left: 2px !important;
+  width: 6px !important;
+  border-radius: 9999px;
+  background: var(--color-border) !important;
+}
+.terminal-xterm-shell .xterm .xterm-scrollable-element > .scrollbar.horizontal,
+.terminal-xterm-shell .xterm .xterm-scrollable-element > .shadow,
+.terminal-xterm-shell .xterm-decoration-overview-ruler {
+  display: none !important;
+}
