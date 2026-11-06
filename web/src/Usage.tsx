@@ -9,7 +9,7 @@ import './usage.css';
 
 type Window = { percent: number; resetsAt?: string; severity?: string; name?: string; windowMinutes?: number };
 export type UsageReply = {
-  available: boolean; reason?: 'third-party' | 'api-key' | 'no-login'; provider?: string; plan?: string;
+  available: boolean; reason?: 'third-party' | 'api-key' | 'no-login'; provider?: string; plan?: string; profile?: string; account?: string;
   usage?: { windows?: Window[]; fiveHour?: Window; weekly?: Window; models?: (Window & { name: string })[] };
   fetchedAt?: string; stale?: boolean; error?: string;
 };
@@ -18,8 +18,8 @@ type Point = { at: string; fiveHour?: number; weekly?: number };
 const POLL = 60_000;
 
 /** Polls /api/usage while the page is visible; undefined until the first answer. */
-export function useUsage(api: Api, provider: Provider = 'claude', sessionId = '') {
-  const key = `${provider}:${sessionId}`;
+export function useUsage(api: Api, provider: Provider = 'claude', sessionId = '', profile = '') {
+  const key = `${provider}:${sessionId}:${profile}`;
   const [result, setResult] = useState<{ api: Api; key: string; usage: UsageReply }>();
   const source = useRef({ api, key });
   source.current = { api, key };
@@ -30,7 +30,7 @@ export function useUsage(api: Api, provider: Provider = 'claude', sessionId = ''
       if (document.hidden) return;
       const id = ++request;
       const current = () => active && source.current.api === api && source.current.key === key && id === request;
-      api<UsageReply>(providerQuery(`/api/usage${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, provider)).then(usage => {
+      api<UsageReply>(providerQuery(`/api/usage${profile ? `?profile=${encodeURIComponent(profile)}` : sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, provider)).then(usage => {
         if (current()) setResult({ api, key, usage });
       }).catch(() => {
         if (current()) setResult(previous => ({ api, key, usage: {
@@ -73,7 +73,8 @@ export function ago(iso?: string) {
   return s < 60 ? t('just now', '刚刚') : s < 3600 ? t(`${Math.floor(s / 60)} min ago`, `${Math.floor(s / 60)} 分钟前`) : s < 86400 ? t(`${Math.floor(s / 3600)} h ago`, `${Math.floor(s / 3600)} 小时前`) : new Date(at).toLocaleString(locale);
 }
 
-const staleText = (u: UsageReply, provider: Provider = 'claude') => provider === 'codex' && u.error === 'expired' ? t('Codex login expired; sign in again on the host.', 'Codex 登录已过期，请在宿主重新登录。') : u.error === 'expired' ? t('The Claude Code login expired; it is renewed the next time Claude Code runs', 'Claude Code 的登录令牌已过期，下次 Claude Code 运行时会自动续期')
+const staleText = (u: UsageReply, provider: Provider = 'claude') => provider === 'codex' && u.error === 'expired' ? t('Codex login expired; sign in again on the host.', 'Codex 登录已过期，请在宿主重新登录。') : u.error === 'expired' && u.profile ? t('This OAuth token is no longer accepted; replace it in Settings or with cc-remote oauth token.', '此 OAuth 令牌已失效；请在设置里或用 cc-remote oauth token 更换。')
+  : u.error === 'expired' ? t('The Claude Code login expired; it is renewed the next time Claude Code runs', 'Claude Code 的登录令牌已过期，下次 Claude Code 运行时会自动续期')
   : u.error === 'rate-limited' ? t('Too many requests; trying again later', '请求过于频繁，稍后重试') : u.error ? t(`Could not update: ${u.error}`, `更新失败：${u.error}`) : '';
 
 export const unavailableText = (u: UsageReply, provider: Provider = 'claude') => {
@@ -201,7 +202,7 @@ function UsageOrb({ windows, title, state, fetchedAt, fresh, open, provider, ses
   </>;
 }
 
-function HistoryChart({ api }: { api: Api }) {
+function HistoryChart({ api, profile = '' }: { api: Api; profile?: string }) {
   const [hours, setHours] = useState(24);
   const [points, setPoints] = useState<Point[]>();
   const box = useRef<HTMLElement>(null);
@@ -213,9 +214,9 @@ function HistoryChart({ api }: { api: Api }) {
   }, []);
   useEffect(() => {
     let active = true;
-    api<{ points: Point[] }>(`/api/usage/history?hours=${hours}`).then(x => { if (active) setPoints(x.points); }).catch(() => { if (active) setPoints([]); });
+    api<{ points: Point[] }>(`/api/usage/history?hours=${hours}${profile ? `&profile=${encodeURIComponent(profile)}` : ''}`).then(x => { if (active) setPoints(x.points); }).catch(() => { if (active) setPoints([]); });
     return () => { active = false; };
-  }, [api, hours]);
+  }, [api, hours, profile]);
   const h = 150, pad = 26, end = Date.now(), start = end - hours * 3600_000;
   const x = (at: string) => pad + (Date.parse(at) - start) / (end - start) * (w - pad * 2);
   const y = (v: number) => h - pad - v / 100 * (h - pad * 2);
@@ -248,8 +249,8 @@ function HistoryChart({ api }: { api: Api }) {
 }
 
 /** The status panel section: every limit with its reset, the update time and the history. */
-export function UsageDetails({ api, provider = 'claude', sessionId = '' }: { api: Api; provider?: Provider; sessionId?: string }) {
-  const usage = useUsage(api, provider, sessionId);
+export function UsageDetails({ api, provider = 'claude', sessionId = '', profile = '' }: { api: Api; provider?: Provider; sessionId?: string; profile?: string }) {
+  const usage = useUsage(api, provider, sessionId, profile);
   if (!usage) return <p className="usage-note">{t('Loading usage…', '正在加载用量…')}</p>;
   if (!usage.available && !usage.error) return <div className="status-block usage-details"><h3>{providerName(provider)} · {t('Subscription usage', '订阅用量')}</h3><p className="usage-note">{unavailableText(usage, provider)}</p></div>;
   const u = usage.usage;
@@ -260,10 +261,10 @@ export function UsageDetails({ api, provider = 'claude', sessionId = '' }: { api
     <small title={w.resetsAt ? new Date(w.resetsAt).toLocaleString(locale) : undefined}>{w.resetsAt ? t(`resets in ${until(w.resetsAt)}`, `${until(w.resetsAt)}后重置`) : ''}</small>
   </div>;
   return <div className="status-block usage-details">
-    <h3>{providerName(provider)} · {t('Subscription usage', '订阅用量')}{usage.plan && <span className="usage-plan">{usage.plan}</span>}
+    <h3>{providerName(provider)}{usage.account ? ` · ${usage.account}` : ''} · {t('Subscription usage', '订阅用量')}{usage.plan && <span className="usage-plan">{usage.plan}</span>}
       <span className="usage-updated" title={usage.fetchedAt ? new Date(usage.fetchedAt).toLocaleString(locale) : undefined}>{usage.fetchedAt ? t(`Updated ${ago(usage.fetchedAt)}`, `更新于${ago(usage.fetchedAt)}`) : t('Not read yet', '尚未读取')}</span></h3>
     {(usage.stale || usage.error) && <p className="usage-note warn">{staleText(usage, provider)}</p>}
     {u && <div className="usage-rows">{quotaWindows(usage, provider).map(w => row(w.title, w.window))}{u.models?.map(m => row(t(`Weekly · ${m.name}`, `每周 · ${m.name}`), m))}</div>}
-    {provider === 'claude' && <HistoryChart api={api} />}
+    {provider === 'claude' && <HistoryChart api={api} profile={usage.profile || ''} />}
   </div>;
 }

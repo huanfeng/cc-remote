@@ -185,6 +185,8 @@ func (s *Server) oauthAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		entries = append(entries[:at], entries[at+1:]...)
+		s.accountUsage.forget(oauthIDPrefix + id)
+		_ = s.store.DeleteAccountUsage(oauthIDPrefix + id)
 	case http.MethodPost, http.MethodPatch:
 		if r.Method == http.MethodPost {
 			if req.Name == nil || req.Token == nil {

@@ -17,6 +17,7 @@ import (
 
 	"cc-remote/internal/claude"
 	"cc-remote/internal/i18n"
+	"cc-remote/internal/store"
 )
 
 // Subscription usage (the 5-hour and weekly limits of a Claude plan), as
@@ -58,7 +59,11 @@ type usageReply struct {
 	Reason   string        `json:"reason,omitempty"`
 	Provider string        `json:"provider,omitempty"`
 	Plan     string        `json:"plan,omitempty"`
-	Usage    *claude.Usage `json:"usage,omitempty"`
+	// Profile and Account name the OAuth token profile the reading belongs to
+	// (empty for the host's own login).
+	Profile string        `json:"profile,omitempty"`
+	Account string        `json:"account,omitempty"`
+	Usage   *claude.Usage `json:"usage,omitempty"`
 	// FetchedAt is when Usage was read; Stale marks that the latest attempt
 	// failed (Error says why), so it may be out of date.
 	FetchedAt *time.Time `json:"fetchedAt,omitempty"`
@@ -114,12 +119,17 @@ func (s *Server) readUsage(maxAge time.Duration) usageReply {
 	if reason != "" {
 		return usageReply{Reason: reason, Provider: provider}
 	}
-	c := &s.usageCache
+	return s.readUsageOf("", &s.usageCache, token, maxAge)
+}
+
+// readUsageOf reads one login's usage through its own cache. source is empty
+// for the host's login, else the OAuth profile ID.
+func (s *Server) readUsageOf(source string, c *usageCache, token claude.OAuthToken, maxAge time.Duration) usageReply {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.loaded {
 		c.loaded = true
-		if samples, err := s.store.UsageSamples(time.Now().Add(-usageKeep)); err == nil && len(samples) > 0 {
+		if samples, err := s.usageSamples(source, time.Now().Add(-usageKeep)); err == nil && len(samples) > 0 {
 			last := samples[len(samples)-1]
 			var u claude.Usage
 			if json.Unmarshal(last.Data, &u) == nil {
@@ -129,7 +139,7 @@ func (s *Server) readUsage(maxAge time.Duration) usageReply {
 	}
 	now := time.Now()
 	if (c.last == nil || now.Sub(c.fetchedAt) >= maxAge) && !now.Before(c.retryAt) {
-		s.fetchUsageLocked(token, now)
+		s.fetchUsageLocked(source, c, token, now)
 	}
 	reply := usageReply{Available: true, Plan: token.Plan, Usage: c.last, Error: c.err, Stale: c.err != ""}
 	if c.last != nil {
@@ -139,8 +149,7 @@ func (s *Server) readUsage(maxAge time.Duration) usageReply {
 	return reply
 }
 
-func (s *Server) fetchUsageLocked(token claude.OAuthToken, now time.Time) {
-	c := &s.usageCache
+func (s *Server) fetchUsageLocked(source string, c *usageCache, token claude.OAuthToken, now time.Time) {
 	// An expired login is renewed by Claude Code when it next runs; the host
 	// never refreshes it (that would sign the running Claude Code out).
 	if !token.ExpiresAt.IsZero() && token.ExpiresAt.Before(now.Add(usageExpiryMargin)) {
@@ -162,7 +171,7 @@ func (s *Server) fetchUsageLocked(token claude.OAuthToken, now time.Time) {
 		c.last, c.fetchedAt = &u, now
 		if changed || now.Sub(c.recorded) >= usageSampleGap {
 			if data, e := json.Marshal(u); e == nil {
-				if e = s.store.AddUsageSample(now, data, usageKeep); e != nil {
+				if e = s.addUsageSample(source, now, data); e != nil {
 					log.Printf("usage history: %v", e)
 				} else {
 					c.recorded = now
@@ -197,6 +206,10 @@ func (s *Server) sampleUsage(stop <-chan struct{}, every time.Duration) {
 		case <-t.C:
 		}
 		s.readUsage(every - time.Minute)
+		entries, _ := loadOAuthEntries(s.cfg.DataDir)
+		for _, e := range entries {
+			s.readOAuthUsage(oauthIDPrefix+e.ID, every-time.Minute)
+		}
 	}
 }
 
@@ -215,10 +228,22 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 			fail(w, 404, "Claude session not found")
 			return
 		}
+		if strings.HasPrefix(x.ProfileID, oauthIDPrefix) {
+			respond(w, 200, s.readOAuthUsage(x.ProfileID, usageFresh))
+			return
+		}
 		if x.ProfileID != "" {
 			respond(w, 200, usageReply{Reason: "third-party", Provider: x.ProfileName})
 			return
 		}
+	}
+	if profile := r.URL.Query().Get("profile"); profile != "" {
+		if !strings.HasPrefix(profile, oauthIDPrefix) {
+			fail(w, 404, "OAuth profile not found")
+			return
+		}
+		respond(w, 200, s.readOAuthUsage(profile, usageFresh))
+		return
 	}
 	respond(w, 200, s.readUsage(usageFresh))
 }
@@ -236,7 +261,7 @@ func (s *Server) usageHistory(w http.ResponseWriter, r *http.Request) {
 		hours = 24
 	}
 	hours = min(hours, int(usageKeep/time.Hour))
-	samples, err := s.store.UsageSamples(time.Now().Add(-time.Duration(hours) * time.Hour))
+	samples, err := s.usageSamples(r.URL.Query().Get("profile"), time.Now().Add(-time.Duration(hours)*time.Hour))
 	if err != nil {
 		fail(w, 500, s.lang(r).T("Could not read the usage history", "无法读取用量历史"))
 		return
@@ -257,4 +282,56 @@ func (s *Server) usageHistory(w http.ResponseWriter, r *http.Request) {
 		points = append(points, p)
 	}
 	respond(w, 200, map[string]any{"hours": hours, "points": points})
+}
+
+// accountUsage holds one usageCache per OAuth profile. A profile's usage is
+// that of its own account, so it never shares a reading with the host's login.
+type accountUsage struct {
+	mu     sync.Mutex
+	caches map[string]*usageCache
+}
+
+func (a *accountUsage) get(id string) *usageCache {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.caches == nil {
+		a.caches = map[string]*usageCache{}
+	}
+	if a.caches[id] == nil {
+		a.caches[id] = &usageCache{}
+	}
+	return a.caches[id]
+}
+
+func (a *accountUsage) forget(id string) {
+	a.mu.Lock()
+	delete(a.caches, id)
+	a.mu.Unlock()
+}
+
+// readOAuthUsage reads the usage of an OAuth profile's account. The token is
+// a long-lived one from claude setup-token, so it has no expiry to check.
+func (s *Server) readOAuthUsage(id string, maxAge time.Duration) usageReply {
+	entry, ok, err := findOAuthEntry(s.cfg.DataDir, strings.TrimPrefix(id, oauthIDPrefix))
+	if err != nil || !ok {
+		s.accountUsage.forget(id)
+		return usageReply{Reason: "no-login"}
+	}
+	reply := s.readUsageOf(id, s.accountUsage.get(id), claude.OAuthToken{AccessToken: entry.Token}, maxAge)
+	reply.Profile, reply.Account = id, entry.Name
+	return reply
+}
+
+func (s *Server) usageSamples(source string, since time.Time) ([]store.UsageSample, error) {
+	if source == "" {
+		return s.store.UsageSamples(since)
+	}
+	return s.store.AccountUsageSamples(source, since)
+}
+
+func (s *Server) addUsageSample(source string, at time.Time, data json.RawMessage) error {
+	if source == "" {
+		return s.store.AddUsageSample(at, data, usageKeep)
+	}
+	return s.store.AddAccountUsageSample(source, at, data, usageKeep)
 }

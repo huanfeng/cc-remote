@@ -132,6 +132,7 @@ type Server struct {
 	modelCache      modelsCache
 	statusCache     statusCache
 	usageCache      usageCache
+	accountUsage    accountUsage
 	codexUsageCache codexUsageCache
 	// configMu serializes writers of preferences.json, Claude settings.json and
 	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.

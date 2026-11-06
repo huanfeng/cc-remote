@@ -2,11 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"cc-remote/internal/claude"
 	"cc-remote/internal/store"
@@ -99,5 +103,72 @@ func TestOAuthListSurvivesBrokenCatalogAndTokenChangeRekeysLaunch(t *testing.T) 
 	}
 	if tokenFingerprint("a", nil) == tokenFingerprint("b", nil) || tokenFingerprint("", nil) != "" || tokenFingerprint("a", os.ErrNotExist) == tokenFingerprint("a", nil) {
 		t.Fatal("fingerprint must follow the token and the launch error")
+	}
+}
+
+// An OAuth session shows its own account's usage, apart from the host's login.
+func TestOAuthUsageIsReadPerAccount(t *testing.T) {
+	clearProviderEnv(t)
+	var hostCalls, accountCalls atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer sk-ant-oat01-account" {
+			accountCalls.Add(1)
+			_, _ = w.Write([]byte(`{"limits":[{"kind":"session","percent":42,"resets_at":"2026-11-07T10:00:00Z"},{"kind":"weekly_all","percent":7,"resets_at":"2026-11-10T10:00:00Z"}]}`))
+			return
+		}
+		hostCalls.Add(1)
+		_, _ = w.Write([]byte(`{"limits":[{"kind":"session","percent":1,"resets_at":"2026-11-07T10:00:00Z"}]}`))
+	}))
+	defer api.Close()
+	old := claude.UsageURL
+	claude.UsageURL = api.URL
+	defer func() { claude.UsageURL = old }()
+
+	s, ts, st := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	writeLogin(t, s.cfg.ClaudeConfigDir, time.Now().Add(time.Hour))
+	_, b := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Team", "token": "sk-ant-oat01-account"}, testToken)
+	var created struct{ ID string }
+	_ = json.Unmarshal(b, &created)
+	code, b := request(t, ts, "POST", "/api/sessions", map[string]string{"cwd": t.TempDir(), "profileId": created.ID}, testToken)
+	var x store.Session
+	_ = json.Unmarshal(b, &x)
+	if code != 201 {
+		t.Fatal(code, string(b))
+	}
+
+	var r usageReply
+	code, b = request(t, ts, "GET", "/api/usage?sessionId="+x.ID, nil, testToken)
+	if code != 200 || json.Unmarshal(b, &r) != nil || !r.Available || r.Usage.FiveHour.Percent != 42 || r.Account != "Team" || r.Profile != created.ID || strings.Contains(string(b), "sk-ant") {
+		t.Fatalf("session usage %d %s", code, b)
+	}
+	if got := getUsage(t, ts); got.Usage.FiveHour.Percent != 1 {
+		t.Fatalf("the host login must keep its own reading: %+v", got.Usage)
+	}
+	if hostCalls.Load() != 1 || accountCalls.Load() != 1 {
+		t.Fatalf("calls host=%d account=%d", hostCalls.Load(), accountCalls.Load())
+	}
+	// Explicit profile query, and a history of its own.
+	if code, b = request(t, ts, "GET", "/api/usage?profile="+created.ID, nil, testToken); code != 200 || !strings.Contains(string(b), `"percent":42`) {
+		t.Fatalf("profile usage %d %s", code, b)
+	}
+	if samples, _ := st.AccountUsageSamples(created.ID, time.Now().Add(-time.Hour)); len(samples) != 1 {
+		t.Fatalf("%d account samples", len(samples))
+	}
+	code, b = request(t, ts, "GET", "/api/usage/history?hours=1&profile="+created.ID, nil, testToken)
+	if code != 200 || !strings.Contains(string(b), `"fiveHour":42`) {
+		t.Fatalf("history %d %s", code, b)
+	}
+	if code, b = request(t, ts, "GET", "/api/usage/history?hours=1", nil, testToken); strings.Contains(string(b), `"fiveHour":42`) {
+		t.Fatalf("the host history must not include the account %d %s", code, b)
+	}
+
+	// Removing the profile forgets its readings.
+	request(t, ts, "DELETE", "/api/profiles/oauth/"+strings.TrimPrefix(created.ID, "oauth:"), nil, testToken)
+	if samples, _ := st.AccountUsageSamples(created.ID, time.Now().Add(-time.Hour)); len(samples) != 0 {
+		t.Fatal("history of a removed account must go")
+	}
+	if r = s.readOAuthUsage(created.ID, 0); r.Available || r.Reason != "no-login" {
+		t.Fatalf("a removed profile has no usage: %+v", r)
 	}
 }

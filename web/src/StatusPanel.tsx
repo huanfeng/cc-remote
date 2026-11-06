@@ -66,6 +66,10 @@ function Chart({ daily }: { daily: Daily[] }) {
 
 export function StatusPanel({ api, close, select, providerStatus, provider = 'claude', sessionId }: { provider?: Provider; sessionId?: string; api: Api; close: () => void; select: (id: string) => void; providerStatus?: { codexAvailable?: boolean; codexVersion?: string } }) {
   const [usageProvider, setUsageProvider] = useState<Provider>(provider);
+  // OAuth token profiles have accounts of their own; '' follows the session, else the host login.
+  const [accounts, setAccounts] = useState<{ id: string; name: string }[]>([]);
+  const [usageAccount, setUsageAccount] = useState('');
+  useEffect(() => { let active = true; api<{ profiles: { id: string; name: string }[] }>('/api/profiles/oauth').then(x => { if (active) setAccounts(x.profiles); }).catch(() => {}); return () => { active = false; }; }, [api]);
   const [data, setData] = useState<HostStatus>();
   // The summary endpoint answers in milliseconds; the aggregated statistics
   // fill in right after, so opening the panel never shows an empty shell.
@@ -128,7 +132,7 @@ export function StatusPanel({ api, close, select, providerStatus, provider = 'cl
             <div><dt>{t('Database', '数据库')}</dt><dd>{bytes(data.storage.databaseBytes)}</dd></div><div><dt>{t('Uploads', '上传附件')}</dt><dd>{data.storage.uploadsBytes ? bytes(data.storage.uploadsBytes) : '…'}</dd></div><div><dt>{t('Logs', '日志')}</dt><dd>{bytes(data.storage.logBytes)}</dd></div>
           </dl><small className="status-path" title={data.dataDir}>{data.dataDir}</small></div>
         </div>
-        <div className="usage-provider-tabs" role="group" aria-label={t('Subscription provider', '订阅提供方')}>{(['claude', 'codex'] as Provider[]).filter(p => p === 'claude' || typeof providerStatus?.codexAvailable === 'boolean').map(p => <button key={p} type="button" aria-pressed={usageProvider === p} className={usageProvider === p ? 'active' : ''} onClick={() => setUsageProvider(p)}>{providerName(p)}</button>)}</div><UsageDetails api={api} provider={usageProvider} sessionId={usageProvider === provider ? sessionId : undefined} />
+        <div className="usage-provider-tabs" role="group" aria-label={t('Subscription provider', '订阅提供方')}>{(['claude', 'codex'] as Provider[]).filter(p => p === 'claude' || typeof providerStatus?.codexAvailable === 'boolean').map(p => <button key={p} type="button" aria-pressed={usageProvider === p} className={usageProvider === p ? 'active' : ''} onClick={() => setUsageProvider(p)}>{providerName(p)}</button>)}</div>{usageProvider === 'claude' && accounts.length > 0 && <div className="usage-provider-tabs" role="group" aria-label={t('Claude account', 'Claude 账号')}>{[{ id: '', name: t('Session / host login', '会话 / 宿主登录') }, ...accounts].map(a => <button key={a.id} type="button" aria-pressed={usageAccount === a.id} className={usageAccount === a.id ? 'active' : ''} onClick={() => setUsageAccount(a.id)}>{a.id ? `${a.name} · OAuth` : a.name}</button>)}</div>}<UsageDetails api={api} provider={usageProvider} sessionId={usageProvider === provider && !usageAccount ? sessionId : undefined} profile={usageProvider === 'claude' ? usageAccount : ''} />
         <Chart daily={data.daily} />
         <div className="status-table-wrap"><table className="status-table">
           <thead><tr>{header('title', L.title)}{header('mode', L.mode)}{header('status', L.status)}{header('turns', L.turns)}{header('tokens', 'Tokens')}{header('costUSD', L.cost)}{header('durationMs', L.time)}{header('lastActivityAt', L.last)}</tr></thead>

@@ -158,6 +158,9 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS account_usage_samples(source TEXT NOT NULL,at TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(source,at))`); err != nil {
+		return nil, err
+	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS usage_samples(at TEXT PRIMARY KEY,data TEXT NOT NULL)`); err != nil {
 		db.Close()
 		return nil, err
@@ -680,6 +683,42 @@ func (s *Store) UsageSamples(since time.Time) ([]UsageSample, error) {
 		out = append(out, UsageSample{At: t, Data: json.RawMessage(data)})
 	}
 	return out, rows.Err()
+}
+
+// AddAccountUsageSample is AddUsageSample for a login other than the host's
+// own (an OAuth token profile); source is its profile ID.
+func (s *Store) AddAccountUsageSample(source string, at time.Time, data json.RawMessage, keep time.Duration) error {
+	if _, err := s.db.Exec(`INSERT OR REPLACE INTO account_usage_samples(source,at,data) VALUES(?,?,?)`, source, at.UTC().Format(time.RFC3339Nano), string(data)); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM account_usage_samples WHERE source=? AND at<?`, source, at.Add(-keep).UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// AccountUsageSamples is UsageSamples for one such login.
+func (s *Store) AccountUsageSamples(source string, since time.Time) ([]UsageSample, error) {
+	rows, err := s.db.Query(`SELECT at,data FROM account_usage_samples WHERE source=? AND at>=? ORDER BY at`, source, since.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageSample
+	for rows.Next() {
+		var at, data string
+		if err := rows.Scan(&at, &data); err != nil {
+			return nil, err
+		}
+		if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+			out = append(out, UsageSample{At: t, Data: json.RawMessage(data)})
+		}
+	}
+	return out, rows.Err()
+}
+
+// DeleteAccountUsage forgets the readings of a removed login.
+func (s *Store) DeleteAccountUsage(source string) error {
+	_, err := s.db.Exec(`DELETE FROM account_usage_samples WHERE source=?`, source)
+	return err
 }
 
 func (s *Store) SetProfile(id, profileID, snapshot string) error {
