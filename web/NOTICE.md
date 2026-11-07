@@ -1,6 +1,6 @@
 # Notices
 
-This directory (`web-next/`) contains code derived from third-party projects.
+This directory (`web/`) contains code derived from third-party projects.
 
 ## ZCode
 - Source: https://github.com/zai-org/ZCode (commit `a9fe401eede6e6e5e01be9048679c206fe6f02d9`)

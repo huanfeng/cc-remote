@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { normalizeClaudeMarkdown, INSIGHT_LANG } from '../src/markdownPreprocess.ts';
+import { fileURLToPath } from 'node:url';
+import { normalizeClaudeMarkdown, INSIGHT_LANG } from '../src/domain/markdownPreprocess.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const web = join(here, '..');
@@ -62,32 +62,3 @@ test('bare and glued rules outside insights become thematic breaks, tables are k
   assert.equal(normalizeClaudeMarkdown('短线 ───'), '短线 ───');
 });
 
-test('rendered fixture contains tables, insight cards, code blocks and safe links', async () => {
-  const { build } = await import('esbuild');
-  const outdir = join(web, 'node_modules', '.cache', 'md-test');
-  mkdirSync(outdir, { recursive: true });
-  const outfile = join(outdir, 'Markdown.mjs');
-  await build({ entryPoints: [join(web, 'src', 'Markdown.tsx')], outfile, bundle: true, format: 'esm', platform: 'node', jsx: 'automatic', packages: 'external', loader: { '.css': 'empty' }, logLevel: 'silent' });
-  const { default: Markdown } = await import(pathToFileURL(outfile).href);
-  const { createElement } = await import('react');
-  const { renderToStaticMarkup } = await import('react-dom/server');
-  const html = renderToStaticMarkup(createElement(Markdown, { text: readFileSync(join(here, 'fixtures', 'claude-output.md'), 'utf8') }));
-  assert.equal((html.match(/<div class="md-table"><table>/g) || []).length, 2);
-  assert.match(html, /<th[^>]*>配万象模型时的推导值<\/th>/);
-  assert.match(html, /<th style="text-align:center">居中<\/th>/);
-  assert.equal((html.match(/class="md-insight"/g) || []).length, 2);
-  assert.match(html, /<div class="md-insight-body"><ul>/);
-  assert.match(html, /没有解决…对齐的问题。 beam_backtrack 用 \.\.\.<\/p>/);
-  assert.ok(!/<p>[^<]*─{10}/.test(html), 'no box-drawing rule glued into a paragraph');
-  assert.match(html, /│ host     │ 托管会话     │/);
-  assert.match(html, /★ Insight ─+  \(代码块里不应被转换\)/);
-  assert.match(html, /<div class="md-code-bar"><span>go<\/span><button type="button">Copy<\/button>/);
-  assert.match(html, /<input type="checkbox" disabled="" checked=""\/>/);
-  assert.match(html, /<del>删除线<\/del>/);
-  assert.match(html, /<a href="https:\/\/example.com\/docs" target="_blank" rel="noopener noreferrer">文档<\/a>/);
-  assert.ok(!html.includes('javascript:'), 'javascript: urls are stripped');
-  assert.match(html, /href="#user-content-fn-1"(?![^>]*target)/);
-  assert.match(html, /<img src="https:\/\/example.com\/wide-image.png" alt="图片" loading="lazy"\/>/);
-  assert.match(html, /推导结果如下（单换行应当保留，<br\/>/);
-  assert.ok((html.match(/<hr\/>/g) || []).length >= 2);
-});

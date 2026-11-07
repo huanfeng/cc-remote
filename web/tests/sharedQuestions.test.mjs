@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupTranscript, linkOutcomes, linkRequests, questionKey, requestCall, requestForCall, requestSettled } from '../src/toolGroups.ts';
+import { groupTranscript, linkOutcomes, linkRequests, questionKey, requestCall, requestForCall, requestSettled } from '../src/domain/toolGroups.ts';
 
 let seq = 0;
 const at = new Date(Date.UTC(2026, 0, 1)).toISOString();

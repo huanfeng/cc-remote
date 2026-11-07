@@ -1,1040 +1,175 @@
-import { EffortPicker } from './EffortPicker';
-import { conversationTime, conversationOrder } from './conversationTime';
-import { canSteer, needsSteerConfirmation, SteerButton } from './SteerButton';
-import { confirmDialog, ConfirmDialog } from './ConfirmDialog';
-import { CodexPermissionDetails } from './CodexPermissionDetails';
-import { foldCodexActivityEvents, parseCodexStatus } from './codexStatus';
-import { CodexStatusEvent, CodexSessionUsage } from './CodexStatusEvent';
-import { hostProviders, newSessionBody, nativeListPath, providerName, providerOf, providerQuery, sessionKey, type Provider } from './providers';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
-import Markdown from './Markdown';
-import { ClaudeSettings } from './ClaudeSettings';
-import { StatusPanel } from './StatusPanel';
-import { AttachButton, AttachmentList, uploadFiles, type Attachment } from './Attachments';
-import { SessionStatus } from './SessionStatus';
-import { FRONTEND_VERSION, STANDALONE, apiBase, apiUrl, clearToken, hostKey, loadToken, onLan, relocateHost, saveToken } from './hosts';
-import { iconURL } from './hostIcon';
-import { HostSwitcher, StandaloneHome, connectError, shownAddress, useHiddenAddresses } from './HostSwitcher';
-import { QuickSwitch, type QuickKind, type QuickTarget } from './QuickSwitch';
-import { ComposerInput } from './ComposerInput';
-import { ComposerSend } from './ComposerSend';
-import { PendingQueue, type PendingMessage, type QueueAction } from './PendingQueue';
-import { ContextUsage } from './ContextUsage';
-import { TurnRail, extractTurns } from './TurnRail';
-import { useMentions } from './MentionMenu';
-import { copyText } from './clipboard';
-import { DeleteSessionDialog, SessionSettings, type Defaults, type LiveStatus } from './SessionSettings';
-import { SidebarResizer, useSidebarWidth } from './SidebarResizer';
-import { ModelPicker, dangerousMode, permissionLabel } from './ModelPicker';
-import { PermissionPicker } from './PermissionPicker';
-import { Select } from './Select';
-import { AgentIcon, ArrowDownIcon, CheckIcon, ChevronDownIcon, CloseIcon, CollapseAllIcon, ExpandAllIcon, GearIcon, LogoutIcon, MenuIcon, PlusIcon, RefreshIcon, StatusIcon, TerminalIcon, TrashIcon, ChatIcon, ShieldIcon } from './icons';
-import { ToolGroup } from './ToolGroup';
-import { FileProvider } from './FileViewer';
-import { AgentCard, TaskPanel, TeammateMessage, type NestedProps, type TaskInfo } from './AgentCard';
-import { QuestionCard, clarifyMessage, type QuestionDraft } from './QuestionCard';
-import { compactSummary, groupTranscript, isCompacting, parentOf, linkOutcomes, linkRequests, requestCall, requestSettled, stabilize, type ToolCall, type TranscriptItem } from './toolGroups';
-import { MAX_UI_CHARS, UI_KEY, UI_PREFIX, VIEW_KEY, deserialize, draftEmpty, emptyUI, forget, formatHash, mergeUI, parseHash, parseKey, parseViews, serialize, serializeViews, type Route, type SessionDraft, type UIState, type ViewState } from './persist';
-import { lang, t } from './i18n';
-import { applyIdentity, initialIdentity, onIdentity, setTitleBadge } from './hostIdentity';
-import { notifyPrefs, notifying, sessionChanges, showNotification } from './notify';
-import { LangSwitch } from './LangSwitch';
-import { SafetyNotice, useSafetyAck } from './SafetyNotice';
-import { SessionMenu } from './SessionMenu';
-import { NewSessionProfile, SupplierBadge } from './SupplierProfile';
-import { TopbarMenu, type TopbarAction } from './TopbarMenu';
-import { TerminalView } from './TerminalView';
-import { UsageBar } from './Usage';
-import { matchProjects, projectKey, projectName, recentProjects, type RecentProject } from './recentProjects';
+// Picks the backend and gates the app on being signed in. `?mock` (dev server,
+// or a build with VITE_MOCK=1) runs the in-memory demo host. Otherwise the page
+// talks to a real host: the one that served it (same origin), or the current
+// host of the standalone page / desktop app. The token comes from storage;
+// a 401 at any time signs the page out (connection.ts).
+import { useEffect, useState } from 'react';
+import { Tooltip as TooltipPrimitive } from 'radix-ui';
+import { WifiOff } from 'lucide-react';
+import { BackendContext, type Backend } from '@/backend/backend';
+import { BackendError } from '@/backend/errors';
+import { HttpBackend } from '@/backend/http/httpBackend';
+import { useApp } from '@/store/app';
+import { releaseMissing } from '@/store/transcripts';
+import { STANDALONE, apiBase, connectError, hostKey, relocateHost, useHosts } from '@/lib/hosts';
+import { applyIdentity } from '@/lib/identity';
+import { useApplyTheme } from '@/lib/theme';
+import { useIsMobile } from '@/lib/hooks';
+import { lang, t } from '@/lib/i18n';
+import { trackVisualViewport } from '@/domain/viewport';
+import { toast } from '@/components/ui/toast';
+import { DesktopShell } from '@/app/DesktopShell';
+import { MobileShell } from '@/app/MobileShell';
+import { Surfaces } from '@/features/dialogs/Surfaces';
+import { useGlobalShortcuts } from '@/app/shortcuts';
+import { useDrafts } from '@/features/composer/drafts';
+import { useRequestDrafts } from '@/features/requests/drafts';
+import { syncDraftStore } from '@/lib/draftSync';
+import { useConnection } from '@/features/auth/connection';
+import { ConnectingScreen, LoginScreen } from '@/features/auth/LoginScreen';
+import { PlainHttpBanner } from '@/features/auth/PlainHttpBanner';
+import { StandaloneHome } from '@/features/standalone/StandaloneHome';
 
-type Session = { id: string; provider?: Provider; profileId?: string; profileName?: string; title: string; cwd: string; truncated?: boolean; claudeArgs?: string[]; status?: string; createdAt?: string; lastConversationAt?: string; conversationTimeEstimated?: boolean; updatedAt: string; mode?: string; online?: boolean; claudeSessionId?: string; permissionMode?: string; model?: string; effort?: string; queued?: PendingMessage[]; live?: LiveStatus; activeTasks?: number };
-type Event = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
-type Request = { id: string; kind: string; toolName: string; input: any; status: string; createdAt?: string };
-type Info = { version?: string; cwd: string; claudeAvailable: boolean; claudeVersion: string; codexAvailable?: boolean; codexVersion?: string; providers?: Provider[]; attachCommand?: string; features?: string[]; language?: string; name?: string; color?: string; icon?: string };
-type ConversationTab = { key: string; provider?: Provider; id: string; native: boolean; session?: Session; events: Event[]; requests: Request[]; draft: string; attachments: Attachment[]; notice?: string; scrollTop: number; nearBottom: boolean; loaded: boolean; hasOlder: boolean; loadingOlder: boolean; expandedTools: number[]; expandedGroups: Record<number, boolean>; answers: Record<string, Record<string, string>>; questionDrafts: Record<string, QuestionDraft> };
-type Command = { name: string; description: string; terminalOnly?: boolean };
+const env = import.meta.env;
+const mockMode = (env.DEV || env.VITE_MOCK === '1') && typeof location !== 'undefined' && new URLSearchParams(location.search).has('mock');
 
-const transcriptPath = (tab: { id: string; native: boolean }) => `/api/${tab.native ? 'native/sessions' : 'sessions'}/${encodeURIComponent(tab.id)}`;
-const tabKey = sessionKey;
-const transcriptURL = (tab: { id: string; native: boolean; provider?: Provider }, suffix = '') => providerQuery(transcriptPath(tab) + suffix, tab.native ? providerOf(tab) : 'claude');
-const STATUS_LABELS: Record<string, string> = { running: t('Running', '执行中'), waiting: t('Waiting for answer', '等待回答'), idle: t('Ready', '就绪'), completed: t('Completed', '已完成'), interrupted: t('Stopped', '已停止'), failed: t('Failed', '执行失败'), stopped: t('Stopped', '已停止'), error: t('Failed', '执行失败') };
-const statusLabel = (status?: string) => STATUS_LABELS[status || ''] || status || t('History', '历史');
-const baseLabel = (session?: Session) => ['running', 'waiting'].includes(session?.status || '') ? statusLabel(session?.status) : session?.mode === 'terminal' && !session.online ? t('Not running', '未运行') : statusLabel(session?.status || 'idle');
-// Subagents and background commands outlive the turn that started them: a finished turn is not a finished session.
-const sessionLabel = (session?: Session) => {
-  const n = session?.activeTasks || 0;
-  if (!n) return baseLabel(session);
-  return ['running', 'waiting'].includes(session?.status || '') ? `${baseLabel(session)} · ${t(`${n} in background`, `后台 ${n}`)}` : t(`${n} running in background`, `后台 ${n} 个运行中`);
-};
-const modeLabel = (mode?: string) => mode === 'terminal' ? t('Terminal', '终端') : t('Managed', '托管');
-// A message keeps its send ID until the host takes it, so sending it again after a
-// lost reply does not give Claude a second copy (internal/server/sends.go).
-const sendIds = new Map<string, { content: string; id: string }>();
-function sendIdFor(key: string, content: string) {
-  const held = sendIds.get(key);
-  if (held?.content === content) return held.id;
-  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
-  sendIds.set(key, { content, id });
-  return id;
+const RETRY_MS = 10_000;
+
+export function App() {
+  useApplyTheme();
+  useEffect(() => trackVisualViewport(), []);
+  useEffect(() => scopeDraftsToHost(), []);
+  return mockMode ? <MockApp /> : <HostApp />;
 }
-const COPY_FAILED = t('The browser did not allow automatic copying. Click the command box above, select all and copy; on a phone, long-press to copy.', '浏览器未允许自动复制，请点击上方命令框，全选后复制；手机可长按复制。');
 
-function blankTab(key: string, id: string, native: boolean, session?: Session, saved?: SessionDraft, view?: ViewState, provider: Provider = providerOf(session)): ConversationTab {
-  return { key, id, native, provider, session, events: [], requests: [], draft: saved?.draft || '', attachments: saved?.attachments || [], scrollTop: view?.scrollTop || 0, nearBottom: view?.nearBottom ?? true, loaded: false, hasOlder: false, loadingOlder: false, expandedTools: view?.expandedTools || [], expandedGroups: view?.expandedGroups || {}, answers: saved?.answers || {}, questionDrafts: saved?.questionDrafts || {} };
+/** The demo: MockBackend and its saved-host list, loaded on demand so builds without the flag leave them out. */
+function MockApp() {
+  const [backend, setBackend] = useState<Backend>();
+  useEffect(() => {
+    let live = true;
+    void Promise.all([import('@/backend/mock/mockBackend'), import('@/backend/mock/fixtures')]).then(([m, f]) => {
+      if (!live) return;
+      useHosts.getState().set({ hosts: f.demoHosts, currentId: f.demoHosts[0].id });
+      setBackend(new m.MockBackend());
+    });
+    return () => { live = false; };
+  }, []);
+  return backend ? <Connected backend={backend} /> : null;
 }
-const pickDraft = (tab: Pick<ConversationTab, 'draft' | 'attachments' | 'questionDrafts' | 'answers'>) => ({ draft: tab.draft, attachments: tab.attachments, questionDrafts: tab.questionDrafts, answers: tab.answers });
-const cleanURL = () => location.pathname + location.search;
-// Storage can be missing or throw (private mode, quota, blocked site data); UI state is a convenience.
-function loadUI(): UIState { try { return deserialize(localStorage.getItem(hostKey(UI_KEY)), Date.now()); } catch { return emptyUI(); } }
-function saveUI(state: UIState) { for (const max of [MAX_UI_CHARS, MAX_UI_CHARS / 8]) { try { localStorage.setItem(hostKey(UI_KEY), serialize(state, Date.now(), max)); return; } catch {} } }
-function loadViews(): Record<string, ViewState> { try { return parseViews(sessionStorage.getItem(hostKey(VIEW_KEY))); } catch { return {}; } }
-function saveViews(text: string) { try { sessionStorage.setItem(hostKey(VIEW_KEY), text); } catch {} }
-// Transcripts load from the end, PAGE events at a time; older pages load on scroll-up.
-const PAGE = 200;
-// Session lists render LIST_RENDER rows at a time and keep the newest LIST_CACHE in storage,
-// so the list shows at once after a reload and refreshes in the background.
-const LIST_RENDER = 200, LIST_CACHE = 300;
-const listKey = (native: boolean, provider: Provider = 'claude') => hostKey(`${UI_PREFIX}-list-${native ? provider === 'codex' ? 'native-codex' : 'native' : 'session'}`);
-function loadList(native: boolean, provider: Provider = 'claude'): Session[] { try { const items = JSON.parse(localStorage.getItem(listKey(native, provider)) || '[]'); return Array.isArray(items) ? items : []; } catch { return []; } }
-function saveList(native: boolean, items: Session[], provider: Provider = 'claude') { try { localStorage.setItem(listKey(native, provider), JSON.stringify(items.slice(0, LIST_CACHE))); } catch {} }
-function clearUI() { for (const name of ['localStorage', 'sessionStorage'] as const) { try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith(UI_PREFIX) && key.endsWith(hostKey(''))) storage.removeItem(key); } catch {} } }
 
-const NO_CALLS: number[] = [];
-const NO_DRAFT: QuestionDraft = {};
-type SharedQuestionProps = { request: Request; call?: ToolCall; busy: boolean; sessionMode?: string; draft?: QuestionDraft; onAnswer: (request: Request, body: object) => void; onDraft: (id: string, update: (old: QuestionDraft) => QuestionDraft) => void };
+function HostApp() {
+  const token = useConnection(s => s.token);
+  const phase = useConnection(s => s.phase);
+  const error = useConnection(s => s.error);
+  const attempt = useConnection(s => s.attempt);
+  const [backend, setBackend] = useState<HttpBackend>();
+
+  // One backend per token: a new sign-in starts from nothing cached.
+  useEffect(() => {
+    if (!token) { setBackend(undefined); return; }
+    const b = new HttpBackend({ baseUrl: apiBase, token, lang, onUnauthorized: () => useConnection.getState().unauthorized() });
+    setBackend(b);
+    return () => b.dispose();
+  }, [token]);
+
+  // Checks the token with /api/info. A host that does not answer (restarting, a
+  // tunnel moving) is tried again every 10 s; a refused token is not.
+  useEffect(() => {
+    if (!backend) return;
+    let live = true;
+    let timer = 0;
+    backend.info().then(info => {
+      if (!live) return;
+      useApp.getState().setInfo(info);
+      useConnection.getState().connected();
+    }, (e: unknown) => {
+      if (!live) return;
+      const status = e instanceof BackendError ? e.status : 0;
+      if (status === 401) { useConnection.getState().unauthorized(); return; }
+      // No answer, or a proxy in front of the host saying it is down: both pass, so try again.
+      const unreachable = !status || status === 502 || status === 503 || status === 504;
+      const show = (message: string) => useConnection.getState().failed(message, unreachable);
+      show(unreachable ? connectError() : e instanceof Error ? e.message : String(e));
+      if (!unreachable) return;
+      // A host found through an entry may have moved (a tunnel's port changed), or the LAN address
+      // may have stopped answering: ask again; the page reopens there when it moved.
+      if (STANDALONE) void relocateHost().then(moved => { if (live && typeof moved === 'string') show(moved); });
+      timer = window.setTimeout(() => useConnection.getState().retry(), RETRY_MS);
+    });
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [backend, attempt]);
+
+  if (phase === 'ready' && backend) return <Connected backend={backend} />;
+  if (STANDALONE) return <StandaloneHome />;
+  if (phase === 'connecting' && !error) return <ConnectingScreen />;
+  return <LoginScreen />;
+}
+
+/** The app proper, against a backend that answered. */
+function Connected({ backend }: { backend: Backend }) {
+  const info = useApp(s => s.info);
+  // The session list poll failed: shown until the next poll answers.
+  const [offline, setOffline] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    setOffline('');
+    if (!useApp.getState().info) {
+      backend.info()
+        .then(i => { if (live) useApp.getState().setInfo(i); })
+        .catch(e => { if (live) toast(t(`Could not reach the host: ${e instanceof Error ? e.message : e}`, `无法连接宿主：${e instanceof Error ? e.message : e}`)); });
+    }
+    const stop = backend.watchSessions(s => {
+      useApp.getState().setSessions(s);
+      setOffline('');
+      // Sessions gone from the host (deleted here or elsewhere) release their cache and draft.
+      releaseMissing(new Set(s.map(x => x.id)));
+    }, e => {
+      if (!live) return;
+      setOffline(e.status ? e.message : connectError());
+      // The list stopped answering: on the standalone page the host may have moved (LAN, tunnel port).
+      if (!STANDALONE || e.status) return;
+      void relocateHost().then(moved => { if (live && typeof moved === 'string') toast(moved); });
+    });
+    return () => { live = false; stop(); };
+  }, [backend]);
+
+  // The host's name, colour and icon: tab title, favicon, --host-color.
+  useEffect(() => {
+    if (info?.name && info.color) applyIdentity({ name: info.name, color: info.color, icon: info.icon || '' });
+  }, [info?.name, info?.color, info?.icon]);
+
+  return (
+    <BackendContext.Provider value={backend}>
+      <TooltipPrimitive.Provider delayDuration={400} skipDelayDuration={200}>
+        <div className="flex h-full min-h-0 flex-col">
+          <PlainHttpBanner />
+          {offline && (
+            <div role="status" className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-destructive-surface px-3 py-1.5 text-ui-sm text-destructive-surface-foreground">
+              <WifiOff className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate" title={offline}>{offline}</span>
+              <span className="shrink-0 text-ui-xs opacity-80">{t('Retrying…', '正在重试…')}</span>
+            </div>
+          )}
+          <div className="min-h-0 flex-1"><Shell /></div>
+        </div>
+        <Surfaces />
+      </TooltipPrimitive.Provider>
+    </BackendContext.Provider>
+  );
+}
+
+function Shell() {
+  const mobile = useIsMobile();
+  useGlobalShortcuts();
+  return mobile ? <MobileShell /> : <DesktopShell />;
+}
 
 /**
- * Interactive card for a terminal session's question; "Answer in terminal" leaves it to the native dialog.
- * Its unsent input lives in the tab (by request id), so moving between the transcript and
- * the pending list, or switching sessions, keeps it. A request's content never changes, and
- * polling recreates its object, so it is compared by id.
+ * Composer and request-card drafts per host (a standalone page's hosts never see
+ * each other's), kept in step with the page's other tabs, removals included.
  */
-const SharedQuestion = memo(function SharedQuestion({ request, call, busy, sessionMode, draft, onAnswer, onDraft }: SharedQuestionProps) {
-  const shown = useMemo(() => call ? (request.kind === 'plan' ? { ...call, input: request.input } : call) : requestCall(request), [call, request.id]);
-  const setDraft = useCallback((update: (old: QuestionDraft) => QuestionDraft) => onDraft(request.id, update), [onDraft, request.id]);
-  return <QuestionCard call={shown} waitingHint={t('Waiting for an answer (on the web or in the terminal)', '等待回答（网页或终端均可）')} busy={busy} sessionMode={sessionMode} draft={draft || NO_DRAFT} setDraft={setDraft} onAnswer={answers => onAnswer(request, { decision: 'allow', answers })} onClarify={message => onAnswer(request, { decision: 'deny', message })} onDecide={decision => onAnswer(request, decision)} onHandoff={() => onAnswer(request, { decision: 'terminal' })} />;
-}, (a, b) => a.request.id === b.request.id && a.call === b.call && a.busy === b.busy && a.sessionMode === b.sessionMode && a.draft === b.draft && a.onAnswer === b.onAnswer && a.onDraft === b.onDraft);
-
-/** The teammate messages in a recorded user turn, leaving out protocol messages such as going idle. */
-function teammateEvents(event: Event): Event[] {
-  return [...(event.text || '').matchAll(/<teammate-message\s([^>]*)>([\s\S]*?)<\/teammate-message>/g)].flatMap(([, attrs, body], part) => {
-    if (/^\s*\{\s*"type"\s*:/.test(body)) return [];
-    const attr = (name: string) => attrs.match(new RegExp(`${name}="([^"]*)"`))?.[1] || '';
-    return [{ ...event, kind: 'teammate', text: body.trim(), payload: { teammate_id: attr('teammate_id'), color: attr('color'), summary: attr('summary'), part } }];
-  });
-}
-
-function messages(events: Event[]) {
-  const items: Event[] = [];
-  let stream: Event | undefined;
-  for (const event of foldCodexActivityEvents(events)) {
-    // A subagent's messages nest under its Agent call and never touch the main reply's stream.
-    if (parentOf(event)) { if (['assistant', 'tool', 'tool_result'].includes(event.kind)) items.push(event); continue; }
-    if (event.kind === 'assistant_delta') {
-      if (!stream) { stream = { ...event, kind: 'assistant', text: '' }; items.push(stream); }
-      stream.text = (stream.text || '') + (event.text || '');
-    } else if (event.kind === 'assistant') {
-      if (stream) { stream.text = event.text; stream = undefined; }
-      else items.push(event);
-    } else {
-      // A background task's notification is a user turn Claude Code adds, not something typed
-      // (the host filters it now; terminal sessions may have recorded it before).
-      if (event.kind === 'user' && event.text?.trimStart().startsWith('<task-notification>')) continue;
-      // So is a teammate's message; the host turns it into teammate events, older records are split here.
-      if (event.kind === 'user' && event.text?.trimStart().startsWith('Another Claude session sent a message:')) { items.push(...teammateEvents(event)); continue; }
-      // A recap only matters until its reader is back: the next message or recap replaces it.
-      if (event.kind === 'user' || event.kind === 'recap') { for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === 'recap') { items.splice(i, 1); break; } }
-      if (['user', 'tool', 'tool_result', 'error', 'compact', 'recap', 'teammate'].includes(event.kind)) items.push(event);
-      const codexStatus = parseCodexStatus(event);
-      if (codexStatus && codexStatus.type !== 'usage') {
-        const previous = (codexStatus.type === 'plan' || codexStatus.type === 'diff') && event.payload?.turnId && items.findIndex(item => item.kind === 'status' && item.payload?.turnId === event.payload.turnId && parseCodexStatus(item)?.type === codexStatus.type);
-        if (typeof previous === 'number' && previous >= 0) items[previous] = event;
-        else items.push(event);
-      }
-      if (['user', 'result', 'error', 'compact', 'recap'].includes(event.kind)) stream = undefined;
-    }
-  }
-  return items;
-}
-
-/** Header chips for the configured model and effort; clicking one opens the quick switch. */
-function QuickChips({ session, defaults, onQuick }: { session: Session; defaults?: Defaults; onQuick: (kind: QuickKind, rect: DOMRect) => void }) {
-  const live = session.live;
-  const model = live?.modelId || session.model || defaults?.model || '';
-  const effort = live?.effort || session.effort || defaults?.effort || '';
-  const chip = (kind: QuickKind, value: string, fallback: string, title: string) => <button type="button" className="chip chip-action" title={title} aria-haspopup="listbox" onClick={event => { event.preventDefault(); onQuick(kind, event.currentTarget.getBoundingClientRect()); }}>{value || fallback}</button>;
-  return <>
-    {chip('model', model, t('Model · default', '模型 · 默认'), t('Switch model', '切换模型'))}
-    {chip('effort', effort, t('Effort · default', '强度 · 默认'), t('Switch effort', '切换推理强度'))}
-  </>;
-}
-
-export default function App() {
-  const [token, setToken] = useState(loadToken);
-  const [credential, setCredential] = useState('');
-  const safety = useSafetyAck();
-  const [connected, setConnected] = useState(false);
-  const [info, setInfo] = useState<Info>();
-  const providers = hostProviders(info);
-  const supportsCodex = providers.includes('codex');
-  const providerOptions = providers.map(value => ({ value, label: providerName(value) }));
-  const [host, setHost] = useState(initialIdentity);
-  useEffect(() => onIdentity(setHost), []);
-  // host is what is shown (this page's alias, tint and emblem win), so applyIdentity also runs when only those differ: cheap, and it settles the record.
-  useEffect(() => { if (info?.name && info.color) applyIdentity({ name: info.name, color: info.color, icon: info.icon || '' }); }, [info?.name, info?.color, info?.icon]);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [search, setSearch] = useState('');
-  const [native, setNative] = useState(false);
-  const [savedHistoryProvider, setHistoryProvider] = useState<Provider>(() => { try { return localStorage.getItem(hostKey('cc-history-provider')) === 'codex' ? 'codex' : 'claude'; } catch { return 'claude'; } });
-  const historyProvider: Provider = supportsCodex ? savedHistoryProvider : 'claude';
-  useEffect(() => { if (connected) try { localStorage.setItem(hostKey('cc-history-provider'), historyProvider); } catch {} }, [connected, historyProvider]);
-  const [selected, setSelected] = useState('');
-  const listView = useRef({ native, provider: historyProvider });
-  listView.current = { native, provider: historyProvider };
-  const navigationVersion = useRef(0);
-  const [tabs, setTabs] = useState<ConversationTab[]>([]);
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-  const activeKey = tabKey(selected, native, historyProvider);
-  const activeTab = tabs.find(tab => tab.key === activeKey);
-  const session = activeTab?.session;
-  const events = activeTab?.events || [];
-  const requests = activeTab?.requests || [];
-  const draft = activeTab?.draft || '';
-  const loading = !!selected && !activeTab?.loaded;
-  const updateTab = useCallback((key: string, update: (tab: ConversationTab) => ConversationTab) => { setTabs(old => old.map(tab => tab.key === key ? update(tab) : tab)); }, []);
-  const setDraft = (value: string) => updateTab(activeKey, tab => ({ ...tab, draft: value }));
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('cc-sidebar-collapsed') === 'true');
-  const [sendKey, setSendKey] = useState(() => localStorage.getItem('cc-send-key') || 'ctrl-enter');
-  const composing = useRef(false);
-  const [drawer, setDrawer] = useState(false);
-  const [create, setCreate] = useState(false);
-  const [title, setTitle] = useState('');
-  // Terminal sessions the user switched to the terminal view, remembered per host.
-  const [termViews, setTermViews] = useState<string[]>(() => { try { const ids = JSON.parse(localStorage.getItem(hostKey('cc-term-view')) || '[]'); return Array.isArray(ids) ? ids : []; } catch { return []; } });
-  const [newMode, setNewMode] = useState<'managed' | 'terminal'>(() => { try { return localStorage.getItem('cc-new-mode') === 'managed' ? 'managed' : 'terminal'; } catch { return 'terminal'; } });
-  const [newProvider, setNewProvider] = useState<Provider>('claude');
-  const [newProfileId, setNewProfileId] = useState('');
-  const [resumeProfileId, setResumeProfileId] = useState('');
-  const [trustFolder, setTrustFolder] = useState(false);
-  const [cwd, setCwd] = useState('');
-  const [newOverrides, setNewOverrides] = useState({ permissionMode: '', model: '', effort: '' });
-  const [importing, setImporting] = useState<'' | 'terminal' | 'managed'>('');
-  const [stopped, setStopped] = useState(false);
-  const [sharing, setSharing] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
-  const [copying, setCopying] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
-  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false);
-  const [quick, setQuick] = useState<QuickTarget | null>(null);
-  const [statusAnchor, setStatusAnchor] = useState<DOMRect | null>(null);
-  const [hiddenRecaps, setHiddenRecaps] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cc-hidden-recaps') || '[]'); } catch { return []; } });
-  const [deleting, setDeleting] = useState<Session>();
-  const [defaultsByProvider, setDefaultsByProvider] = useState<Partial<Record<Provider, Defaults>>>({});
-  const activeProvider = providerOf(session);
-  const defaults = defaultsByProvider[activeProvider];
-  // defaultMode of Claude's own settings.json, the last fallback of a session's permission mode.
-  const [claudeMode, setClaudeMode] = useState('');
-  const [dragging, setDragging] = useState(false);
-  const sidebar = useSidebarWidth();
-  // The bearer token travels in clear text when this page is served over plain http from another machine.
-  // A standalone page also checks its own address: its storage holds every host's token.
-  const plainAddress = [new URL(apiBase || location.href), ...(STANDALONE ? [new URL(location.href)] : [])].find(where => {
-    const host = where.hostname.replace(/^\[|\]$/g, '');
-    return where.protocol === 'http:' && !(host === 'localhost' || host === '::1' || /^127\./.test(host));
-  })?.host;
-  const [plainHttp, setPlainHttp] = useState(() => {
-    try { if (sessionStorage.getItem(hostKey('cc-plain-http-dismissed')) === '1') return false; } catch {}
-    return !!plainAddress;
-  });
-  const dismissPlainHttp = () => { setPlainHttp(false); try { sessionStorage.setItem(hostKey('cc-plain-http-dismissed'), '1'); } catch {} };
-  const [uploading, setUploading] = useState(false);
-  const [commands, setCommands] = useState<Command[]>([]);
-  const attachments = activeTab?.attachments || [];
-  const bottom = useRef<HTMLDivElement>(null);
-  const nearBottom = useRef(true);
-  // Reading history (well above the end): the message box shrinks to a line and an arrow
-  // jumps back. It enters further up than it leaves, so the box's own change of height
-  // cannot flip it back.
-  const [away, setAway] = useState(false);
-  const [composerFocus, setComposerFocus] = useState(false);
-  const scroll = useRef<HTMLDivElement>(null);
-  const selectedRef = useRef(activeKey);
-  selectedRef.current = activeKey;
-  // Polls revalidate with the last ETag: an unchanged reply (304) returns the earlier object,
-  // so nothing re-renders and nothing is transferred. Cursor queries change every time; skip them.
-  const etags = useRef(new Map<string, { tag: string; data: unknown }>());
-  const api = useCallback(async <T,>(path: string, options?: RequestInit): Promise<T> => {
-    const cacheable = (options?.method || 'GET').toUpperCase() === 'GET' && !/[?&](after|before)=/.test(path);
-    const cached = cacheable ? etags.current.get(path) : undefined;
-    const response = await fetch(apiUrl(path), { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-CC-Lang': lang, ...(cached ? { 'If-None-Match': cached.tag } : {}), ...options?.headers }, cache: 'no-store' }).catch(async err => {
-      if (!STANDALONE || options?.signal?.aborted) throw err;
-      // A host found through an entry may have moved (a tunnel's port changed): ask again; the page reopens there.
-      const moved = await relocateHost();
-      if (moved === true) await new Promise(() => {});
-      throw new Error(typeof moved === 'string' ? moved : connectError());
-    });
-    if (response.status === 304 && cached) return cached.data as T;
-    if (!response.ok) {
-      let message = t(`Request failed (${response.status})`, `请求失败 (${response.status})`);
-      let delivery: string | undefined;
-      try { const body = await response.json(); message = body.error || body.message || message; delivery = body.delivery; } catch {}
-      if (response.status === 401) { setConnected(false); clearToken(); for (const view of [false, true]) for (const provider of ['claude', 'codex'] as const) try { localStorage.removeItem(listKey(view, provider)); } catch {} }
-      throw Object.assign(new Error(message), { status: response.status, delivery });
-    }
-    if (response.status === 204) return undefined as T;
-    const data = await response.json();
-    const tag = response.headers.get('ETag');
-    if (cacheable && tag) {
-      etags.current.delete(path); etags.current.set(path, { tag, data });
-      if (etags.current.size > 64) etags.current.delete(etags.current.keys().next().value!);
-    }
-    return data;
-  }, [token]);
-  useEffect(() => { etags.current.clear(); setDefaultsByProvider({}); setNewProfileId(''); setResumeProfileId(''); }, [token]);
-  useEffect(() => { setResumeProfileId(''); }, [importing, selected, historyProvider]);
-  const list = useCallback(async () => {
-    const result = await api<Session[]>(native ? nativeListPath(historyProvider) : '/api/sessions');
-    if (listView.current.native === native && (!native || listView.current.provider === historyProvider)) setSessions(result);
-    setTabs(old => old.map(tab => tab.native === native && (!native || providerOf(tab) === historyProvider) ? { ...tab, session: result.find(item => item.id === tab.id) || tab.session } : tab));
-  }, [api, native, historyProvider]);
-  // A standalone page keeps trying a host it cannot reach (it may be restarting, or its
-  // tunnel moving); a refused token is not retried.
-  const [connectTry, setConnectTry] = useState(0);
-  const [retrying, setRetrying] = useState(false); // no answer yet: tried again by itself
-  useEffect(() => {
-    if (!token) return;
-    let active = true;
-    let timer = 0;
-    api<Info>('/api/info').then(data => { if (active) { setInfo(data); setConnected(true); setCwd(data.cwd); setError(''); saveToken(token); } }).catch(err => {
-      if (!active) return;
-      setError(err.message);
-      setRetrying(STANDALONE && !(err as { status?: number }).status);
-      if (STANDALONE && !(err as { status?: number }).status) timer = window.setTimeout(() => setConnectTry(n => n + 1), 10_000);
-    });
-    return () => { active = false; clearTimeout(timer); };
-  }, [api, token, connectTry]);
-  useEffect(() => {
-    if (!connected) return;
-    let active = true;
-    let refreshing = false;
-    setSessions(loadList(native, historyProvider));
-    const refresh = async () => {
-      // A hidden page keeps polling only to notify (the browser slows its timer down).
-      if (document.hidden && !notifying() || refreshing) return;
-      refreshing = true;
-      const views = native ? [false, true] : [false];
-      const results = await Promise.allSettled(views.map(async view => ({ view, data: await api<Session[]>(view ? nativeListPath(historyProvider) : '/api/sessions') })));
-      refreshing = false;
-      if (!active) return;
-      for (const result of results) {
-        if (result.status === 'rejected') { setError((result.reason as Error).message); continue; }
-        const { view, data } = result.value;
-        if (!view) notifyChanges(data);
-        if (view === native && listView.current.native === native && (!native || listView.current.provider === historyProvider)) setSessions(data);
-        if (savedLists.current[`${view}:${view ? historyProvider : ''}`] !== data) { savedLists.current[`${view}:${view ? historyProvider : ''}`] = data; saveList(view, data, historyProvider); }
-        setTabs(old => old.map(tab => tab.native === view && (!view || providerOf(tab) === historyProvider) ? { ...tab, session: data.find(item => item.id === tab.id) || tab.session } : tab));
-      }
-    };
-    refresh(); const timer = window.setInterval(refresh, 3000);
-    return () => { active = false; clearInterval(timer); };
-  }, [connected, api, native, historyProvider]);
-  const savedLists = useRef<Record<string, Session[]>>({});
-  // Statuses seen in the last poll, per host session: changes become notifications.
-  const seenStatus = useRef(new Map<string, { status?: string; online?: boolean }>());
-  useEffect(() => { seenStatus.current.clear(); setTitleBadge(0); }, [token]);
-  const hostName = useRef(host.name); hostName.current = host.name;
-  const notifyChanges = (data: Session[]) => {
-    setTitleBadge(data.filter(item => item.status === 'waiting').length);
-    const changes = sessionChanges(seenStatus.current, data);
-    if (!changes.length || !notifying()) return;
-    const prefs = notifyPrefs();
-    for (const change of changes) {
-      // Nothing to say about the session in front of the user.
-      if (!prefs[change.event] || !document.hidden && document.hasFocus() && selectedRef.current === tabKey(change.id, false)) continue;
-      const hash = formatHash(change.id, false);
-      void showNotification(change, hostName.current, location.href.split('#')[0] + hash, () => { location.hash = hash; }).catch(() => {});
-    }
-  };
-  // A notification clicked while the page is open: the service worker focuses it and says where to go.
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return;
-    const onMessage = (event: MessageEvent) => { if (event.data?.type === 'cc-open' && typeof event.data.url === 'string') location.hash = new URL(event.data.url).hash; };
-    navigator.serviceWorker.addEventListener('message', onMessage);
-    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
-  }, []);
-  const openKeys = tabs.map(tab => tab.key).join('|');
-  useEffect(() => {
-    if (!connected || !openKeys) return;
-    let active = true;
-    const inFlight = new Set<string>();
-    const refreshTab = async (snapshot: ConversationTab) => {
-      if (inFlight.has(snapshot.key)) return;
-      inFlight.add(snapshot.key);
-      try {
-        let nextSession: Session | undefined;
-        let nextEvents: Event[] | undefined;
-        let hasOlder: boolean | undefined;
-        const base = transcriptPath(snapshot);
-        // The tab on screen tells the host someone is looking (terminal sessions: focus for recaps).
-        const viewing = snapshot.key === selectedRef.current && !document.hidden ? '&viewing=1' : '';
-        if (!snapshot.loaded) {
-          const data = await api<{ session: Session; events: Event[]; hasMore?: boolean }>(providerQuery(`${base}?tail=${PAGE}&compact=1${viewing}`, snapshot.native ? providerOf(snapshot) : 'claude'));
-          nextSession = data.session;
-          nextEvents = data.events;
-          hasOlder = !!data.hasMore;
-        } else {
-          nextEvents = await api<Event[]>(providerQuery(`${base}/events?after=${snapshot.events.at(-1)?.seq || 0}&compact=1${viewing}`, snapshot.native ? providerOf(snapshot) : 'claude'));
-        }
-        const pending = snapshot.native ? [] : await api<Request[]>(`/api/requests?sessionId=${encodeURIComponent(snapshot.id)}`);
-        if (!active) return;
-        updateTab(snapshot.key, tab => ({ ...tab, session: nextSession || tab.session, loaded: true, hasOlder: hasOlder ?? tab.hasOlder,
-          events: !snapshot.loaded ? nextEvents! : nextEvents!.length ? [...tab.events, ...nextEvents!.filter(event => event.seq > (tab.events.at(-1)?.seq || 0))] : tab.events,
-          requests: pending.filter(request => request.status === 'pending') }));
-      } catch (err) {
-        // 409: a native transcript was rewritten and renumbered; load it again from the end.
-        if (active && (err as { status?: number }).status === 409) updateTab(snapshot.key, tab => ({ ...tab, loaded: false, events: [], hasOlder: false }));
-        else if (active && selectedRef.current === snapshot.key) setError((err as Error).message);
-      }
-      finally { inFlight.delete(snapshot.key); }
-    };
-    const refresh = () => { if (!document.hidden) for (const tab of tabsRef.current) void refreshTab(tab); };
-    refresh();
-    const timer = window.setInterval(refresh, 1500);
-    document.addEventListener('visibilitychange', refresh);
-    return () => { active = false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
-  }, [openKeys, connected, api, updateTab]);
-  // Refresh persistence: the hash routes (#/s/<id>, #/native/<id>), localStorage keeps the
-  // opened tabs and per-session drafts, sessionStorage keeps scroll and tool expansion.
-  const [restored, setRestored] = useState(false);
-  const [restoreTry, setRestoreTry] = useState(0);
-  const [routeNotice, setRouteNotice] = useState('');
-  const savedDrafts = useRef(new Map<string, string>());
-  const draftChanges = useRef<Record<string, SessionDraft | null>>({});
-  const savedLayout = useRef(''); const pendingLayout = useRef<Pick<UIState, 'open' | 'selected' | 'sidebarTab'> | undefined>(undefined);
-  const savedViews = useRef(''); const pendingViews = useRef('');
-  const persistTimer = useRef(0);
-  const replaceRoute = useRef(true);
-  const flush = useCallback(() => {
-    clearTimeout(persistTimer.current); persistTimer.current = 0;
-    if (pendingLayout.current || Object.keys(draftChanges.current).length) saveUI(mergeUI(loadUI(), pendingLayout.current, draftChanges.current));
-    if (pendingViews.current) saveViews(pendingViews.current);
-    pendingLayout.current = undefined; draftChanges.current = {}; pendingViews.current = '';
-  }, []);
-  const forgetDraft = (id: string) => { draftChanges.current[id] = null; savedDrafts.current.delete(id); };
-  useEffect(() => {
-    if (!connected || restored) return;
-    let active = true;
-    const stored = loadUI(); const views = loadViews();
-    const hash = location.hash === '#' ? '' : location.hash;
-    const target = hash ? parseHash(hash) : parseKey(stored.selected);
-    const wanted = [...stored.open.map(parseKey), target].filter((route): route is Route => !!route && (providerOf(route) === 'claude' || supportsCodex));
-    Promise.all([api<Session[]>('/api/sessions'), Promise.all((['claude', 'codex'] as const).map(async provider => ({ provider, items: wanted.some(route => route.native && providerOf(route) === provider) ? await api<Session[]>(nativeListPath(provider)).catch(() => undefined) : [] })))]).then(([managed, nativeList]) => {
-      if (!active) return;
-      if ((location.hash === '#' ? '' : location.hash) !== hash) { setRestoreTry(n => n + 1); return; }
-      // null: known to be gone; undefined: the list could not be read, keep it.
-      const lookup = (route: Route) => {
-        if (providerOf(route) === 'codex' && !supportsCodex) return null;
-        if (!route.native) return managed.find(item => item.id === route.id) || null;
-        const items = nativeList.find(list => list.provider === providerOf(route))?.items;
-        return items && (items.find(item => item.id === route.id) || null);
-      };
-      let state = stored;
-      for (const id of Object.keys(state.drafts)) if (!managed.some(item => item.id === id)) state = forget(state, { id, native: false });
-      const restoredTabs: ConversationTab[] = [];
-      for (const route of wanted) {
-        const key = tabKey(route.id, route.native, route.provider); const found = lookup(route);
-        if (found === null) { state = forget(state, route); continue; }
-        if (!restoredTabs.some(tab => tab.key === key)) restoredTabs.push(blankTab(key, route.id, route.native, found, route.native ? undefined : state.drafts[route.id], views[key], providerOf(route)));
-      }
-      if (state !== stored) saveUI(state);
-      if (hash && (!target || lookup(target) === null)) setRouteNotice(t('The session does not exist or was deleted', '会话不存在或已删除'));
-      for (const tab of restoredTabs) if (!tab.native) savedDrafts.current.set(tab.id, JSON.stringify(pickDraft(tab)));
-      const fresh = !tabsRef.current.length;
-      setTabs(old => [...restoredTabs, ...old.filter(tab => !restoredTabs.some(item => item.key === tab.key))]);
-      if (fresh) {
-        const open = !!target && restoredTabs.some(tab => tab.key === tabKey(target.id, target.native, target.provider));
-        setNative(open ? target!.native : state.sidebarTab === 'native'); if (open && target!.native) setHistoryProvider(providerOf(target!)); setSelected(open ? target!.id : '');
-      }
-      replaceRoute.current = true; setRestored(true);
-    }).catch(err => { if (active) { setError((err as Error).message); window.setTimeout(() => setRestoreTry(n => n + 1), 3000); } });
-    return () => { active = false; };
-  }, [connected, restored, restoreTry, api, supportsCodex]);
-  useEffect(() => {
-    if (!restored) return;
-    for (const tab of tabs) {
-      if (tab.native) continue;
-      const value = pickDraft(tab); const text = JSON.stringify(value);
-      if (savedDrafts.current.get(tab.id) === text) continue;
-      savedDrafts.current.set(tab.id, text);
-      draftChanges.current[tab.id] = draftEmpty(value) ? null : { ...value, updatedAt: Date.now() };
-    }
-    const layout = { open: tabs.map(tab => tab.key), selected: selected ? tabKey(selected, native, historyProvider) : '', sidebarTab: native ? 'native' as const : 'session' as const };
-    const layoutText = JSON.stringify(layout);
-    if (layoutText !== savedLayout.current) { savedLayout.current = layoutText; pendingLayout.current = layout; }
-    const viewsText = serializeViews(Object.fromEntries(tabs.map(tab => [tab.key, { scrollTop: tab.scrollTop, nearBottom: tab.nearBottom, expandedTools: tab.expandedTools, expandedGroups: tab.expandedGroups }])));
-    if (viewsText !== savedViews.current) { savedViews.current = viewsText; pendingViews.current = viewsText; }
-    if (!persistTimer.current && (pendingLayout.current || pendingViews.current || Object.keys(draftChanges.current).length)) persistTimer.current = window.setTimeout(flush, 300);
-  }, [restored, tabs, selected, native, historyProvider, flush]);
-  useEffect(() => {
-    const hidden = () => { if (document.visibilityState === 'hidden') flush(); };
-    window.addEventListener('pagehide', flush); document.addEventListener('visibilitychange', hidden);
-    return () => { window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', hidden); };
-  }, [flush]);
-  // Another browser tab wrote drafts: adopt them for open sessions without unsaved edits here,
-  // so a later write from this page never brings back stale text. Selection is not synced.
-  useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== hostKey(UI_KEY) || !event.newValue) return;
-      const stored = deserialize(event.newValue, Date.now());
-      for (const tab of tabsRef.current) {
-        if (tab.native || tab.id in draftChanges.current) continue;
-        const mine = JSON.stringify(pickDraft(tab));
-        if (savedDrafts.current.get(tab.id) !== mine) continue;
-        const theirs = pickDraft(stored.drafts[tab.id] || { draft: '', attachments: [], questionDrafts: {}, answers: {} });
-        const text = JSON.stringify(theirs);
-        if (text === mine) continue;
-        savedDrafts.current.set(tab.id, text);
-        updateTab(tab.key, old => ({ ...old, ...theirs }));
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [updateTab]);
-  useEffect(() => {
-    if (!restored) return;
-    const next = formatHash(selected, native, historyProvider);
-    if ((location.hash === '#' ? '' : location.hash) !== next) {
-      if (replaceRoute.current) history.replaceState(null, '', cleanURL() + next); else history.pushState(null, '', cleanURL() + next);
-    }
-    replaceRoute.current = false;
-  }, [restored, selected, native, historyProvider]);
-  const routeTo = useRef(() => {});
-  routeTo.current = () => {
-    if (!restored) return;
-    const version = ++navigationVersion.current;
-    const hash = location.hash;
-    const stillCurrent = () => navigationVersion.current === version && location.hash === hash;
-    const route = parseHash(hash);
-    if (!route) { if (selected) setSelected(''); return; }
-    if (providerOf(route) === 'codex' && !supportsCodex) { setSelected(''); setRouteNotice(t('This host does not support Codex', '此主机不支持 Codex')); return; }
-    if (route.id === selected && route.native === native && (!native || providerOf(route) === historyProvider)) return;
-    if (tabs.some(tab => tab.key === tabKey(route.id, route.native, route.provider))) { choose(route.id, route.native, undefined, providerOf(route)); return; }
-    api<Session[]>(route.native ? nativeListPath(providerOf(route)) : '/api/sessions').then(items => {
-      if (!stillCurrent()) return;
-      const found = items.find(item => item.id === route.id);
-      if (found) { choose(route.id, route.native, found, providerOf(route)); return; }
-      setRouteNotice(t('The session does not exist or was deleted', '会话不存在或已删除'));
-      if (!route.native) forgetDraft(route.id);
-      setTabs(old => old.filter(tab => tab.key !== tabKey(route.id, route.native, route.provider)));
-      setSelected(''); history.replaceState(null, '', cleanURL());
-    }).catch(err => { if (stillCurrent()) setError((err as Error).message); });
-  };
-  useEffect(() => {
-    const handler = () => routeTo.current();
-    window.addEventListener('hashchange', handler); window.addEventListener('popstate', handler);
-    return () => { window.removeEventListener('hashchange', handler); window.removeEventListener('popstate', handler); };
-  }, []);
-  useLayoutEffect(() => {
-    const element = scroll.current;
-    if (!element || !activeTab) return;
-    nearBottom.current = activeTab.nearBottom;
-    element.scrollTop = activeTab.nearBottom ? element.scrollHeight : activeTab.scrollTop;
-    setAway(!activeTab.nearBottom);
-  }, [activeKey, loading, termViews]); // back from the terminal view, the conversation is a new element
-  // Older pages: a marker above the transcript loads the previous page when it nears the
-  // viewport; the reading position is kept by shifting scrollTop by the added height.
-  const olderMarker = useRef<HTMLDivElement>(null);
-  const olderInFlight = useRef(new Set<string>());
-  const prepended = useRef<{ key: string; height: number; top: number } | undefined>(undefined);
-  const loadOlder = useCallback(async () => {
-    const key = selectedRef.current;
-    const tab = tabsRef.current.find(item => item.key === key);
-    if (!tab || !tab.loaded || !tab.hasOlder || !tab.events.length || olderInFlight.current.has(key)) return;
-    olderInFlight.current.add(key);
-    updateTab(key, old => ({ ...old, loadingOlder: true }));
-    const before = tab.events[0].seq;
-    try {
-      const data = await api<{ events: Event[]; hasMore: boolean }>(transcriptURL(tab, `/events?before=${before}&limit=${PAGE}&compact=1`));
-      const element = scroll.current;
-      // The tab may have been closed and reopened (reloaded) meanwhile: a page that no longer joins its start is dropped.
-      if (tabsRef.current.find(item => item.key === key)?.events[0]?.seq !== before) return;
-      if (element && selectedRef.current === key) prepended.current = { key, height: element.scrollHeight, top: element.scrollTop };
-      updateTab(key, old => old.events[0]?.seq !== before ? { ...old, loadingOlder: false } : { ...old, loadingOlder: false, hasOlder: data.hasMore, events: [...data.events, ...old.events] });
-    } catch (err) {
-      updateTab(key, old => ({ ...old, loadingOlder: false }));
-      if (selectedRef.current === key) setError((err as Error).message);
-    } finally { olderInFlight.current.delete(key); }
-  }, [api, updateTab]);
-  useLayoutEffect(() => {
-    const anchor = prepended.current; const element = scroll.current;
-    if (!anchor || !element || anchor.key !== activeKey) return;
-    prepended.current = undefined;
-    const behavior = element.style.scrollBehavior;
-    element.style.scrollBehavior = 'auto'; // smooth scrolling would animate the jump
-    element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
-    element.style.scrollBehavior = behavior;
-  }, [events]);
-  const hasOlder = !!activeTab?.hasOlder;
-  const firstSeq = events[0]?.seq;
-  useEffect(() => {
-    const root = scroll.current; const target = olderMarker.current;
-    if (!root || !target || !hasOlder || loading) return;
-    // Recreated per page: a new observer reports at once, so a marker still in view loads the next page.
-    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void loadOlder(); }, { root, rootMargin: '800px 0px 0px 0px' });
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [activeKey, hasOlder, loading, firstSeq, loadOlder]);
-  // Opened tool calls whose text the listing cut fetch their events whole.
-  const fullInFlight = useRef(new Set<string>());
-  const loadFull = useCallback((call: ToolCall) => {
-    const key = activeKey; const tab = tabsRef.current.find(item => item.key === key);
-    if (!tab) return;
-    for (const seq of call.truncated || []) {
-      const id = `${key}#${seq}`;
-      if (fullInFlight.current.has(id)) continue;
-      fullInFlight.current.add(id);
-      api<Event>(transcriptURL(tab, `/events/${seq}`))
-        .then(full => updateTab(key, old => ({ ...old, events: old.events.map(event => event.seq === full.seq ? full : event) })))
-        .catch(err => { if (selectedRef.current === key) setError((err as Error).message); })
-        .finally(() => fullInFlight.current.delete(id));
-    }
-  }, [activeKey, api, updateTab]);
-  useEffect(() => {
-    if (nearBottom.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
-  }, [events, requests]);
-  const jumpToLatest = () => {
-    const element = scroll.current;
-    if (!element) return;
-    nearBottom.current = true; // what arrives during the scroll keeps it at the end
-    setAway(false);
-    element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
-  };
-  // The soft keyboard shrinks the conversation: stay at the bottom when it was there.
-  useEffect(() => {
-    const element = scroll.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => { if (nearBottom.current) element.scrollTop = element.scrollHeight; });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [selected, termViews]);
-  const current = session;
-  const [listLimit, setListLimit] = useState(LIST_RENDER);
-  useEffect(() => { setListLimit(LIST_RENDER); }, [search, native]);
-  const activeSortClocks = useRef(new Map<string, number>());
-  const orderedSessions = conversationOrder(sessions, activeSortClocks.current);
-  const filteredSessions = orderedSessions.filter(item => `${item.title} ${item.cwd}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-  const cachedCount = tabs.filter(tab => tab.native === native && (!native || providerOf(tab) === historyProvider)).length;
-  const [addressesHidden] = useHiddenAddresses();
-  const hostVersion = !info?.version || info.version === 'dev' ? 'dev' : /^\d/.test(info.version) ? `v${info.version}` : info.version;
-  function sidebarState(item: Session) {
-    const cached = tabs.find(tab => tab.key === tabKey(item.id, native, historyProvider));
-    const waiting = !!cached?.requests.length;
-    return { cached, status: waiting ? 'waiting' : item.activeTasks && !['running', 'waiting'].includes(item.status || '') ? 'running' : item.status || 'idle', label: waiting ? t('Needs action', '等待操作') : native ? t('Read-only history', '只读历史') : sessionLabel(item) };
-  }
-  const running = current?.status === 'running' || current?.status === 'waiting';
-  // An older host refuses a field it does not know (the whole message), so these go
-  // only to a host that lists them in /api/info.
-  const hostHas = (feature: string) => !!info?.features?.includes(feature);
-  const hostSendId = (key: string, content: string) => hostHas('sendId') ? sendIdFor(key, content) : undefined;
-  const mention = useMentions({ sessionId: current && !native && hostHas('mentions') ? current.id : '', draft, setDraft, api });
-  // Terminal sessions: the host holds Claude Code; a local terminal attaches to it.
-  const attaching = !native && current?.mode === 'terminal';
-  const showTerm = attaching && termViews.includes(current!.id);
-  const setTermView = (on: boolean) => { if (!current) return; const next = [...termViews.filter(id => id !== current.id), ...(on ? [current.id] : [])].slice(-100); setTermViews(next); try { localStorage.setItem(hostKey('cc-term-view'), JSON.stringify(next)); } catch { /* private window */ } };
-  const attachCommand = attaching && info?.attachCommand ? `${info.attachCommand} ${current!.id.slice(0, 8)}` : '';
-  // A session that can still deliver tool results: calls without one in the last group are running.
-  const live = !native && running;
-  // Unchanged calls and groups keep their objects so memoized cards skip re-rendering.
-  const transcriptCache = useRef<TranscriptItem[]>([]);
-  // Subagents and background tasks of the open managed session, folded by the host from
-  // Claude's task events. Fetched on opening, when a new task event arrives in the transcript
-  // poll, and when the session's status changes (a process that exits ends its tasks).
-  const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  const taskSignal = useMemo(() => { for (let i = events.length - 1; i >= 0; i--) if (events[i].kind === 'status' && events[i].text?.startsWith('task_')) return events[i].seq; return 0; }, [events]);
-  const sessionStatus = session?.status;
-  useEffect(() => { setTasks([]); }, [selected, native]);
-  useEffect(() => {
-    if (!selected || native || !connected) return;
-    let active = true;
-    api<TaskInfo[]>(`/api/sessions/${encodeURIComponent(selected)}/tasks`).then(data => { if (active) setTasks(data); }).catch(() => {});
-    return () => { active = false; };
-  }, [selected, native, connected, api, taskSignal, sessionStatus]);
-  const taskByCall = useMemo(() => new Map(tasks.filter(task => task.toolUseId).map(task => [task.toolUseId!, task])), [tasks]);
-  const runningTasks = tasks.filter(task => task.status === 'running').length;
-  const transcript = useMemo(() => (transcriptCache.current = stabilize(transcriptCache.current, groupTranscript(messages(events), live, id => taskByCall.get(id)?.status === 'running'))), [events, live, taskByCall]);
-  const turns = useMemo(() => extractTurns(events), [events]);
-  // Question and plan cards parse the whole result; load truncated ones as they appear.
-  useEffect(() => { for (const item of transcript) if (item.type === 'special' && item.call.truncated) loadFull(item.call); }, [transcript, loadFull]);
-  // Terminal sessions: AskUserQuestion / ExitPlanMode are answerable here and in the terminal; first answer wins.
-  const shared = !native && current?.mode === 'terminal';
-  const outcomes = useMemo(() => shared ? linkOutcomes(transcript, events) : new Map<number, string>(), [shared, transcript, events]);
-  const linked = useMemo(() => shared ? linkRequests(transcript, requests) : new Map<number, Request>(), [shared, transcript, requests]);
-  const [toolsExpanded, setToolsExpanded] = useState(() => { try { return localStorage.getItem('cc-tools-expanded') === 'true'; } catch { return false; } });
-  function toggleAllTools() {
-    const next = !toolsExpanded;
-    setToolsExpanded(next);
-    try { localStorage.setItem('cc-tools-expanded', String(next)); } catch {}
-    setTabs(old => old.map(tab => ({ ...tab, expandedGroups: {} })));
-  }
-  const toggleGroup = useCallback((key: number, open: boolean) => updateTab(activeKey, tab => ({ ...tab, expandedGroups: { ...tab.expandedGroups, [key]: open } })), [activeKey, updateTab]);
-  const toggleCall = useCallback((seq: number, open: boolean) => updateTab(activeKey, tab => tab.expandedTools.includes(seq) === open ? tab : ({ ...tab, expandedTools: open ? [...tab.expandedTools, seq] : tab.expandedTools.filter(item => item !== seq) })), [activeKey, updateTab]);
-  const nested: NestedProps = useMemo(() => ({ openGroups: activeTab?.expandedGroups || {}, toolsExpanded, onToggleGroup: toggleGroup, openCalls: activeTab?.expandedTools || NO_CALLS, onToggleCall: toggleCall, onLoadFull: loadFull, tasks: taskByCall }), [activeTab?.expandedGroups, activeTab?.expandedTools, toolsExpanded, toggleGroup, toggleCall, loadFull, taskByCall]);
-  // Jump from the task panel to the call that started a task (an agent's card, or a command
-  // inside one): open the cards and groups around it and scroll there.
-  function locateTask(task: TaskInfo) {
-    const id = task.toolUseId || '';
-    const groups: number[] = []; let call: number | undefined;
-    const find = (items: TranscriptItem[]): boolean => items.some(item => {
-      if (item.type === 'agent') { if (item.call.id === id) { groups.push(item.key); return true; } if (find(item.items)) { groups.push(item.key); return true; } return false; }
-      if (item.type === 'tools') { const hit = item.calls.find(entry => entry.id === id); if (hit) { groups.push(item.key); call = hit.seq; return true; } }
-      return false;
-    });
-    setTasksOpen(false);
-    if (!id || !find(transcript)) { setRouteNotice(hasOlder ? t('This task is in earlier messages; scroll up to load them and try again', '这个任务在更早的消息里，向上滚动加载后再试') : t('No call found for this task', '没有找到这个任务的调用记录')); return; }
-    updateTab(activeKey, tab => ({ ...tab, expandedGroups: { ...tab.expandedGroups, ...Object.fromEntries(groups.map(key => [key, true])) }, expandedTools: call === undefined || tab.expandedTools.includes(call) ? tab.expandedTools : [...tab.expandedTools, call] }));
-    window.setTimeout(() => document.querySelector(`[data-agent="${CSS.escape(id)}"],[data-call="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
-  }
-  const headerStatus = native ? t('Read-only history', '只读历史') : sessionLabel(current);
-  // A chip or the status badge toggles the session status box under it.
-  const showStatus = (anchor: DOMRect) => { setQuick(null); setStatusAnchor(old => old ? null : anchor); };
-  useEffect(() => setStatusAnchor(null), [selected]);
-  // The top bar's secondary actions: tool folding stays in the ⋯ menu on desktop,
-  // while phone width gathers the remaining topbar actions there too.
-  const topbarActions: TopbarAction[] = [
-    ...(running && !native ? [{ key: 'stop', label: t('Stop current task', '停止当前任务'), icon: <span aria-hidden="true">■</span>, onClick: stopTurn }] : []),
-    ...(selected ? [{ key: 'tools', label: toolsExpanded ? t('Collapse all tool calls', '折叠全部工具调用') : t('Expand all tool calls', '展开全部工具调用'), icon: toolsExpanded ? <CollapseAllIcon size={15} /> : <ExpandAllIcon size={15} />, onClick: toggleAllTools, active: toolsExpanded, desktop: true }] : []),
-    { key: 'key-enter', label: t('Enter to send', 'Enter 发送'), icon: sendKey === 'enter' ? <CheckIcon size={15} /> : <span aria-hidden="true" />, onClick: () => { setSendKey('enter'); try { localStorage.setItem('cc-send-key', 'enter'); } catch {} }, active: sendKey === 'enter', desktop: true },
-    { key: 'key-ctrl', label: t('Ctrl+Enter to send', 'Ctrl+Enter 发送'), icon: sendKey === 'ctrl-enter' ? <CheckIcon size={15} /> : <span aria-hidden="true" />, onClick: () => { setSendKey('ctrl-enter'); try { localStorage.setItem('cc-send-key', 'ctrl-enter'); } catch {} }, active: sendKey === 'ctrl-enter', desktop: true },
-    { key: 'refresh', label: t('Refresh sessions', '刷新会话'), icon: <RefreshIcon size={15} />, onClick: () => action(list) },
-    ...(current ? [{ key: 'settings', label: t('Session details', '会话详情'), icon: <GearIcon size={15} />, onClick: () => setSessionSettingsOpen(true) }] : []),
-  ];
-  function questionHint(call: ToolCall): string | undefined {
-    if (call.status === 'missing') return t('No answer recorded', '未记录回答');
-    if (native) return t('No answer recorded', '未记录回答');
-    if (shared) return ({ web: t('Submitted, waiting for the session to continue', '已提交，等待会话继续'), handoff: t('Handed to the terminal; answer there', '已交给终端，请在终端作答'), terminal: t('Handled in the terminal', '已在终端处理'), expired: t('Timed out on the web; answer in the terminal', '网页作答已超时，请在终端作答') } as Record<string, string>)[outcomes.get(call.seq) || ''] || t('Waiting for an answer (answer in the terminal)', '等待回答（请在终端作答）');
-    // Managed sessions answer through the interactive request card below; don't show it twice.
-    if (requests.some(request => request.kind === (call.name === 'ExitPlanMode' ? 'plan' : 'question'))) return undefined;
-    return t('Waiting for an answer', '等待回答');
-  }
-  useEffect(() => { setCopyStatus('idle'); }, [sharing, attachCommand]);
-  async function copyAttach() {
-    setCopying(true);
-    try { await copyText(attachCommand); setCopyStatus('copied'); }
-    catch { setCopyStatus('failed'); }
-    finally { setCopying(false); }
-  }
-  useEffect(() => {
-    let active = true;
-    setCommands([]);
-    if (selected && !native && connected) api<Command[]>(`/api/sessions/${selected}/commands`).then(data => { if (active) setCommands(data); }).catch(() => {});
-    return () => { active = false; };
-  }, [selected, native, connected, api]);
-  useEffect(() => {
-    if (!connected || settingsOpen || sessionSettingsOpen) return;
-    let active = true;
-    for (const provider of hostProviders(info)) {
-      api<Defaults>(providerQuery('/api/preferences', provider)).then(data => { if (active) setDefaultsByProvider(old => ({ ...old, [provider]: providerOf(data) === provider ? data : undefined })); }).catch(() => { if (active) setDefaultsByProvider(old => ({ ...old, [provider]: undefined })); });
-    }
-    return () => { active = false; };
-  }, [connected, settingsOpen, sessionSettingsOpen, api, supportsCodex]);
-  useEffect(() => { if (connected) api<{ permissionMode?: string }>('/api/claude/settings').then(data => setClaudeMode(data.permissionMode || '')).catch(() => {}); }, [connected, settingsOpen, api]);
-  useEffect(() => { setSessionSettingsOpen(false); }, [activeKey]);
-  async function addFiles(files: File[]) {
-    if (!files.length || !selected || native || uploading) return;
-    const key = activeKey; const id = selected; const count = attachments.length;
-    setUploading(true); setError('');
-    try {
-      const uploaded = await uploadFiles(token, id, files, count);
-      updateTab(key, tab => ({ ...tab, attachments: [...tab.attachments, ...uploaded] }));
-    } catch (err) { setError((err as Error).message); } finally { setUploading(false); }
-  }
-  // New session: shared directories from managed, Claude and Codex history, the most recent one filled in while the path is still the default.
-  const [recent, setRecent] = useState<RecentProject[]>([]);
-  useEffect(() => {
-    if (!create) return;
-    let active = true;
-    Promise.all([api<Session[]>('/api/sessions').catch(() => []), api<Session[]>(nativeListPath('claude')).catch(() => []), supportsCodex ? api<Session[]>(nativeListPath('codex')).catch(() => []) : Promise.resolve([])]).then(([own, claudeHistory, codexHistory]) => {
-      if (!active) return;
-      const list = recentProjects([...own, ...claudeHistory, ...codexHistory]);
-      setRecent(list);
-      if (list.length) setCwd(old => !old.trim() || old === info?.cwd ? list[0].path : old);
-    });
-    return () => { active = false; };
-  }, [create, api, info?.cwd, supportsCodex]);
-  async function performQueue(item: PendingMessage, operation: QueueAction, text?: string) {
-    const id = selected;
-    if (!item.id) return;
-    const path = `/api/sessions/${encodeURIComponent(id)}/queue/${encodeURIComponent(item.id)}`;
-    try {
-      await api(operation === 'send' ? `${path}/send` : path, {
-        method: operation === 'send' ? 'POST' : operation === 'remove' ? 'DELETE' : 'PATCH',
-        ...(operation === 'edit' ? { body: JSON.stringify({ text }) } : {}),
-      });
-    } finally { await list(); }
-  }
-  function stopTurn() { void action(async () => { await api(`/api/sessions/${selected}/stop`, { method: 'POST' }); await list(); }); }
-  // Esc stops the running turn, as in the terminal (in a terminal session a second Esc
-  // soon after acts as Ctrl+C). Dialogs, menus, an input method and the command list
-  // keep their own Esc.
-  const stopKey = useRef(stopTurn); stopKey.current = stopTurn;
-  const canStop = running && !busy && !native;
-  useEffect(() => {
-    if (!canStop) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
-      if (document.querySelector('.modal-backdrop, .popover-menu, [role="dialog"], .command-menu')) return;
-      if ((event.target as Element | null)?.closest?.('.term-view')) return; // Esc belongs to the terminal there
-      event.preventDefault();
-      stopKey.current();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [canStop]);
-  async function action(fn: () => Promise<void>) { setBusy(true); setError(''); try { await fn(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
-  // Stable so memoized shared question cards only re-render when their own data changes.
-  const answerRequest = useCallback((request: Request, body: object) => {
-    const key = activeKey;
-    setBusy(true); setError('');
-    api(`/api/requests/${request.id}`, { method: 'POST', body: JSON.stringify(body) })
-      .then(() => updateTab(key, tab => { const { [request.id]: _, ...questionDrafts } = tab.questionDrafts; return { ...tab, requests: tab.requests.filter(item => item.id !== request.id), questionDrafts }; }))
-      .catch(err => setError((err as Error).message))
-      .finally(() => setBusy(false));
-  }, [activeKey, api, updateTab]);
-  const updateQuestionDraft = useCallback((id: string, update: (old: QuestionDraft) => QuestionDraft) => updateTab(activeKey, tab => ({ ...tab, questionDrafts: { ...tab.questionDrafts, [id]: update(tab.questionDrafts[id] || {}) } })), [activeKey, updateTab]);
-  // The session's permission mode: its launch options and override, then the CC Remote and Claude defaults.
-  const sessionMode = activeProvider === 'codex' ? current?.permissionMode || defaults?.permissionMode || '' : current?.claudeArgs?.includes('--dangerously-skip-permissions') ? 'bypassPermissions' : current?.permissionMode || defaults?.permissionMode || claudeMode;
-  const sharedCard = (call: ToolCall | undefined, request: Request) => <SharedQuestion key={request.id} request={request} call={call} busy={busy} sessionMode={sessionMode} draft={activeTab?.questionDrafts[request.id]} onAnswer={answerRequest} onDraft={updateQuestionDraft} />;
-  const linkedIds = new Set([...linked.values()].map(request => request.id));
-  function choose(id: string, nativeSession = native, item?: Session, provider: Provider = historyProvider) {
-    if ((nativeSession ? provider : providerOf(item)) === 'codex' && !supportsCodex) return;
-    navigationVersion.current++;
-    const sameList = listView.current.native === nativeSession && (!nativeSession || listView.current.provider === provider);
-    const listed = sameList ? sessions.find(entry => entry.id === id) : undefined;
-    if (!sameList) setSessions(loadList(nativeSession, provider));
-    listView.current = { native: nativeSession, provider };
-    const key = tabKey(id, nativeSession, provider);
-    // A draft saved earlier (or by another browser tab) comes back when the session is reopened.
-    const saved = nativeSession || tabs.some(tab => tab.key === key) ? undefined : loadUI().drafts[id];
-    if (saved) savedDrafts.current.set(id, JSON.stringify(pickDraft(saved)));
-    setTabs(old => old.some(tab => tab.key === key) ? old : [...old, blankTab(key, id, nativeSession, item || listed, saved, undefined, provider)]);
-    setNative(nativeSession); if (nativeSession) setHistoryProvider(provider); setSelected(id); setDrawer(false); setError(''); setRouteNotice('');
-  }
-  function closeTab(key: string) {
-    navigationVersion.current++;
-    const index = tabs.findIndex(tab => tab.key === key);
-    if (tabs[index] && !tabs[index].native) forgetDraft(tabs[index].id);
-    const remaining = tabs.filter(tab => tab.key !== key);
-    setTabs(remaining);
-    if (activeKey === key) { const next = remaining[Math.min(index, remaining.length - 1)]; setSelected(next?.id || ''); if (next) { setNative(next.native); if (next.native) setHistoryProvider(providerOf(next)); } }
-  }
-  async function deleteSession(item: Session, stop: boolean) {
-    await api(`/api/sessions/${encodeURIComponent(item.id)}${stop ? '?stop=1' : ''}`, { method: 'DELETE' });
-    const key = tabKey(item.id, false);
-    forgetDraft(item.id);
-    setTabs(old => old.filter(tab => tab.key !== key));
-    if (!listView.current.native) setSessions(old => old.filter(entry => entry.id !== item.id));
-    if (selectedRef.current === tabKey(item.id, false)) { navigationVersion.current++; setSelected(''); }
-    setDeleting(undefined); setSessionSettingsOpen(false);
-  }
-  function switchTab(value: boolean) { navigationVersion.current++; listView.current = { native: value, provider: historyProvider }; setNative(value); setSelected(''); setSessions(loadList(value, historyProvider)); setSearch(''); }
-  // Claude Code asks before switching a conversation's model: the prompt cache
-  // is per model, so the next message reads the whole history again.
-  const confirmModelSwitch = (x: Session, model: string) => !x.live?.contextTokens || window.confirm(t(`Switch to ${model}?\nThe conversation's cache only works with the current model; after switching, the next message reads the whole history again (about ${Math.round(x.live.contextTokens / 1000)}k tokens), which is slower and uses more tokens.`, `切换到 ${model}？\n当前对话的缓存只对原模型有效，切换后下一条消息会重新读取全部历史（约 ${Math.round(x.live.contextTokens / 1000)}k tokens），更慢也更耗 token。`));
-
-  // Switches the model or effort from the chip list: a terminal session gets
-  // the command typed into Claude Code; a managed one changes its next run.
-  async function quickPick(kind: QuickKind, value: string) {
-    const x = current; const key = activeKey;
-    if (!x) return;
-    await action(async () => {
-      if (x.mode === 'terminal') {
-        if (kind === 'model' && !confirmModelSwitch(x, value)) return;
-        await api(`/api/sessions/${x.id}/messages`, { method: 'POST', body: JSON.stringify({ text: `/${kind} ${value}` }) });
-        updateTab(key, tab => ({ ...tab, notice: t(`Ran /${kind} ${value} in the terminal`, `已在终端执行 /${kind} ${value}`) }));
-        return;
-      }
-      const item = await api<Session>(`/api/sessions/${x.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: x.permissionMode || '', model: kind === 'model' ? value : x.model || '', effort: kind === 'effort' ? value : x.effort || '', confirmDangerous: dangerousMode(x.permissionMode || '', providerOf(x)) }) });
-      setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry));
-      updateTab(key, tab => tab.session ? { ...tab, session: { ...tab.session, ...item }, notice: providerOf(x) === 'codex' ? t('Saved. Applies to the next turn; the current turn keeps its settings.', '已保存，下一轮生效，当前轮次保持原配置。') : tab.notice } : tab);
-    });
-  }
-
-  async function changePermission(value: string) {
-    const x = current; const key = activeKey;
-    if (!x) return;
-    await action(async () => {
-      const item = await api<Session>(`/api/sessions/${x.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: value, model: x.model || '', effort: x.effort || '', confirmDangerous: dangerousMode(value, providerOf(x)) }) });
-      setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry));
-      updateTab(key, tab => tab.session ? { ...tab, session: { ...tab.session, ...item }, notice: t('Permissions saved. New settings apply after the current task.', '权限已保存，新配置将在当前任务结束后生效。') } : tab);
-    });
-  }
-
-  // Sends Claude Code's suggested next prompt as a message.
-  async function sendSuggestion(text: string) {
-    const id = selected;
-    await action(async () => {
-      const sendKey = `suggestion:${id}`;
-      await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, ...(info?.features?.includes('queueControls') ? { defer: true } : {}), sendId: hostSendId(sendKey, text) }) });
-      sendIds.delete(sendKey);
-      await list();
-    });
-  }
-
-  async function steerCurrent() {
-    const text = draft.trim();
-    const confirming = needsSteerConfirmation(sendIds.get(`steer:${activeKey}`), text);
-    if (busy || (!confirming && (!canSteer(info, current, native) || requests.length || uploading || attachments.length || !text || text.startsWith('/')))) return;
-    const key = activeKey; const id = selected;
-    await action(async () => {
-      const sendKey = `steer:${key}`;
-      try {
-        const sendId = sendIdFor(sendKey, text);
-        if (confirming) await api(`/api/sessions/${id}/steer/${sendId}`);
-        else await api(`/api/sessions/${id}/steer`, { method: 'POST', body: JSON.stringify({ text, sendId }) });
-      } catch (error) {
-        if ((error as { delivery?: string }).delivery === 'rejected') sendIds.delete(sendKey);
-        throw error;
-      }
-      sendIds.delete(sendKey);
-      updateTab(key, tab => ({ ...tab, draft: tab.draft.trim() === text ? '' : tab.draft }));
-      await list();
-    });
-  }
-
-  async function send(event: FormEvent) {
-    event.preventDefault();
-    const text = draft.trim(); const isCommand = text.startsWith('/');
-    if (needsSteerConfirmation(sendIds.get(`steer:${activeKey}`), text)) { await steerCurrent(); return; }
-    if ((!text && !attachments.length) || busy || uploading) return;
-    const key = activeKey; const id = selected; const sentImages = attachments;
-    await action(async () => {
-      if (isCommand && /^\/(model|effort)$/.test(text)) {
-        const box = document.querySelector('.composer')?.getBoundingClientRect();
-        if (box) setQuick({ kind: text.slice(1) as QuickKind, anchor: new DOMRect(box.left + 12, box.top, 0, 0) });
-        updateTab(key, tab => ({ ...tab, draft: '' }));
-        return;
-      }
-      if (isCommand && current?.mode === 'terminal' && /^\/model\s+\S/.test(text) && !confirmModelSwitch(current, text.slice(7).trim())) return;
-      if (isCommand) {
-        if (attachments.length) throw new Error(t('Remove the attachments before running a command, or send them with a regular message', '请先移除附件再执行控制命令，或发送描述附件的普通消息'));
-        const result = await api<{ message?: string; openSettings?: boolean; sendMessage?: boolean }>(`/api/sessions/${id}/commands`, { method: 'POST', body: JSON.stringify({ command: text }) });
-        if (result.sendMessage) await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, sendId: hostSendId(key, text) }) });
-        sendIds.delete(key);
-        if (result.openSettings) setSettingsOpen(true);
-        updateTab(key, tab => ({ ...tab, notice: result.message, draft: tab.draft.trim() === text ? '' : tab.draft }));
-      } else {
-        const attachmentIds = sentImages.map(image => image.id);
-        await api(`/api/sessions/${id}/messages`, { method: 'POST', body: JSON.stringify({ text, attachmentIds, ...(info?.features?.includes('queueControls') ? { defer: true } : {}), sendId: hostSendId(key, [text, ...attachmentIds].join('\n')) }) });
-        sendIds.delete(key);
-        updateTab(key, tab => ({ ...tab, draft: tab.draft.trim() === text ? '' : tab.draft, attachments: tab.attachments.filter(image => !sentImages.some(sent => sent.id === image.id)) }));
-      }
-      await list();
-    });
-  }
-  if (!connected && STANDALONE) return <main className="login"><StandaloneHome error={error} retrying={retrying} onRetry={() => { setError(''); setConnectTry(n => n + 1); }} /></main>;
-  if (!connected) return <main className="login"><form className="login-card" onSubmit={event => { event.preventDefault(); if (!safety.ack) return; if (token === credential) api<Info>('/api/info').then(data => { setInfo(data); setConnected(true); setError(''); saveToken(token); }).catch(err => setError(err.message)); else { setError(''); setToken(credential.trim()); } }}><LangSwitch /><img className="brand-symbol" src={iconURL(host.color, host.icon)} alt="" /><span className="eyebrow">YOUR WORKSPACE, ANYWHERE</span><h1>CC Remote</h1><span className="login-host"><span className="login-host-dot" />{host.name}</span><p>{t('Continue your coding sessions from your phone.', '从手机继续你的编程会话。')}</p><label>{t('Host access token', '宿主访问令牌')}<input type="password" value={credential} onChange={event => setCredential(event.target.value)} placeholder={t('Enter the token configured when starting the host', '输入启动宿主时配置的令牌')} autoComplete="current-password" required /></label>{safety.show && <SafetyNotice checked={safety.ack} onChange={safety.setAck} />}{error && <div className="error" role="alert">{error}</div>}<button className="primary" disabled={!safety.ack}>{t('Connect to host', '连接宿主')} <span>→</span></button><small>{t('Connects to this address · the token is saved on this device and cleared when you sign out', '连接至当前地址 · 令牌保存在此设备，退出登录时清除')}</small></form></main>;
-  // Paths in the session's messages open in a file viewer (not for native history: no session on the host).
-  return <FileProvider sessionId={current && !native ? current.id : ''} token={token}><div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={{ '--sidebar-width': `${sidebar.width}px` } as CSSProperties}>
-    {drawer && <button className="backdrop" aria-label={t('Close session list', '关闭会话列表')} onClick={() => setDrawer(false)} />}
-    <aside className={`sidebar ${drawer ? 'open' : ''}`}><div className="brand"><img className="brand-symbol" src={iconURL(host.color, host.icon)} alt="" />{/* The name has a line of its own, however long; the state and version share the line below. */}<div className="brand-text"><div className="brand-name">{STANDALONE ? <HostSwitcher name={host.name} /> : <span title={`${host.name} · CC Remote`}>{host.name}</span>}</div><div className="brand-meta"><span className="brand-status" title={[info?.claudeAvailable && `Claude ${info.claudeVersion || ''}`, info?.codexAvailable && `Codex ${info.codexVersion || ''}`].filter(Boolean).join(' · ')}><span className={`dot ${info?.claudeAvailable || info?.codexAvailable ? 'idle' : 'error'}`} /><span>{[info?.claudeAvailable && 'Claude', info?.codexAvailable && 'Codex'].filter(Boolean).join(' · ') || t('No providers', '无可用提供方')}</span></span>{onLan && <span className="lan-pill" title={t(`On the home network: ${shownAddress(apiBase, addressesHidden)}`, `走内网：${shownAddress(apiBase, addressesHidden)}`)}>{t('LAN', '内网')}</span>}<span className="version-pill" title={STANDALONE ? t(`Host version ${hostVersion} · frontend ${FRONTEND_VERSION}`, `宿主版本 ${hostVersion} · 前端版本 ${FRONTEND_VERSION}`) : t(`Host version ${hostVersion}`, `宿主版本 ${hostVersion}`)}>{hostVersion}</span></div></div>{/* A standalone page forgets a host from its host list instead. */}{!STANDALONE && <button className="icon brand-action" title={t('Sign out', '退出登录')} aria-label={t('Sign out', '退出登录')} onClick={() => { void confirmDialog(t(`Sign out of ${host.name}? The token saved on this device is cleared; you need it to sign in again.`, `退出 ${host.name}？此设备保存的令牌会被清除，再次登录需要重新输入令牌。`)).then(ok => { if (!ok) return; clearToken(); clearTimeout(persistTimer.current); persistTimer.current = 0; draftChanges.current = {}; pendingLayout.current = undefined; pendingViews.current = ''; savedDrafts.current.clear(); savedLayout.current = ''; savedViews.current = ''; clearUI(); setRestored(false); setRouteNotice(''); history.replaceState(null, '', cleanURL()); setToken(''); setConnected(false); setCredential(''); setError(''); setSelected(''); setSessions([]); setTabs([]); }) }}><LogoutIcon size={16} /></button>}<button className="mobile icon brand-action" aria-label={t('Close session list', '关闭会话列表')} onClick={() => setDrawer(false)}><CloseIcon size={18} /></button></div>
-      <div className="sidebar-actions"><button className="new-session primary-action" title={t('New session', '新建会话')} aria-label={t('New session', '新建会话')} onClick={() => setCreate(true)}><PlusIcon size={15} /><span>{t('New', '新建')}</span></button></div>
-      <div className="tabs"><button className={!native ? 'active' : ''} onClick={() => switchTab(false)}>{t('Sessions', '会话')}</button><button className={native ? 'active' : ''} onClick={() => switchTab(true)}>{t('Terminal history', '终端历史')}</button></div>
-      {native && <Select label={t('History provider', '历史提供方')} value={historyProvider} options={providerOptions} onChange={value => { const provider = value as Provider; if (!providers.includes(provider)) return; navigationVersion.current++; listView.current = { native: true, provider }; setHistoryProvider(provider); setSelected(''); setSessions(loadList(true, provider)); setSearch(''); }} />}
-      <input className="session-search" aria-label={t('Search sessions', '搜索会话')} placeholder={t('Search by name or project directory', '搜索名称或项目目录')} value={search} onChange={event => setSearch(event.target.value)} />
-      <div className="session-list-heading"><span>{native ? t('Terminal history', '终端历史') : t('All sessions', '全部会话')}</span><span title={t('Kept in this page; switching keeps drafts and scroll position', '缓存在当前页面内，切换保留草稿和阅读位置')}>{t(`Cached ${cachedCount}`, `已缓存 ${cachedCount}`)}</span></div>
-      <div className="session-list">{filteredSessions.length === 0 ? <p className="muted empty-list">{search.trim() ? t('No matching sessions', '没有匹配的会话') : native ? t('No terminal history to read yet', '暂无可读取的终端历史') : t('Start your first session', '开始你的第一个会话')}</p> : filteredSessions.slice(0, listLimit).map(item => {
-        const state = sidebarState(item);
-        const clock = conversationTime(item, Date.now(), lang);
-        return <div key={item.id} className={`session-row ${selected === item.id ? 'selected' : ''} ${state.cached ? 'cached' : ''}`}>
-          <button className="session-item" aria-current={selected === item.id ? 'page' : undefined} onClick={() => choose(item.id)}>
-            <div><span className={`dot ${state.status}`} /><strong>{item.title || t('Untitled session', '未命名会话')}</strong><time className="session-time" dateTime={clock.iso} title={clock.title} aria-label={clock.title}>{clock.label}</time></div>
-            <small title={item.cwd}>{item.cwd}</small>
-            <span className="session-meta"><span className={`session-state ${state.status}`}>{providerName(providerOf(item))} · {!native && `${modeLabel(item.mode)} · `}{state.label}</span>{state.cached && <span className="cache-marker" title={t('Switching sessions keeps this page\'s messages, drafts and scroll position', '切换会话时保留当前页面的消息、草稿和阅读位置')}>{state.cached.loaded ? t('Cached', '已缓存') : t('Loading', '加载中')}</span>}</span>
-          </button>
-          <SessionMenu title={item.title || t('Untitled session', '未命名会话')} actions={[
-            ...(state.cached ? [{ key: 'release', icon: <CloseIcon size={15} />, label: t('Release page cache', '释放页面缓存'), hint: t('Unsent drafts are cleared; the host task keeps running', '未发送的草稿会清除，宿主任务继续运行'), onClick: () => closeTab(state.cached!.key) }] : []),
-            ...(!native && info?.features?.includes('queueControls') && (item.online || item.status === 'running' || item.status === 'waiting') ? [{ key: 'exit', icon: <LogoutIcon size={15} />, label: t('Exit session', '退出会话'), hint: t('Closes the background process; records stay and the next send relaunches it', '关闭后台进程；记录保留，下次发送时自动重启'), onClick: () => { setDrawer(false); void action(async () => { await api(`/api/sessions/${encodeURIComponent(item.id)}/exit`, { method: 'POST' }); setRouteNotice(t('Session exited. Records are kept; the next send relaunches it.', '会话已退出，记录保留；下次发送时自动重启。')); await list(); }); } }] : []),
-            ...(!native ? [{ key: 'delete', icon: <TrashIcon size={15} />, label: t('Delete session…', '删除会话…'), hint: t('Its CC Remote records; asks first', '删除 CC Remote 记录，会先确认'), danger: true, onClick: () => { setDeleting(item); setDrawer(false); } }] : []),
-          ]} />
-        </div>;
-      })}{filteredSessions.length > listLimit && <button type="button" className="list-more" onClick={() => setListLimit(n => n + LIST_RENDER)}>{t(`Show more (${filteredSessions.length - listLimit} left)`, `显示更多（还有 ${filteredSessions.length - listLimit} 个）`)}</button>}</div>
-      <nav className="sidebar-nav" aria-label={t('Global', '全局')}><button title={t('Settings', '设置')} onClick={() => { setSettingsOpen(true); setDrawer(false); }}><GearIcon size={15} /><span>{t('Settings', '设置')}</span></button><button title={t('Host status', '服务状态')} onClick={() => { setStatusOpen(true); setDrawer(false); }}><StatusIcon size={15} /><span>{t('Host status', '服务状态')}</span></button></nav>
-    </aside>
-    {!sidebarCollapsed && <SidebarResizer width={sidebar.width} max={sidebar.max} onChange={sidebar.set} />}
-    <main className="workspace"><header className="topbar"><button className="desktop icon" aria-label={sidebarCollapsed ? t('Expand session list', '展开会话列表') : t('Collapse session list', '折叠会话列表')} title={sidebarCollapsed ? t('Expand session list', '展开会话列表') : t('Collapse session list', '折叠会话列表')} onClick={() => setSidebarCollapsed(old => { localStorage.setItem('cc-sidebar-collapsed', String(!old)); return !old; })}><MenuIcon size={18} /></button><button className="mobile icon" aria-label={t('Open session list', '打开会话列表')} onClick={() => setDrawer(true)}><MenuIcon size={18} /></button><div className="header-title"><h1>{current?.title || t('Workspace', '工作空间')}</h1><div className="header-sub">{current && !native ? <button type="button" className="badge mobile-badge" aria-haspopup="dialog" onClick={event => showStatus(event.currentTarget.getBoundingClientRect())}>{headerStatus}</button> : <span className="badge mobile-badge">{headerStatus}</span>}{current && !native && <SupplierBadge session={current} />}{current && <span className="chip">{providerName(providerOf(current))}</span>}{current && !native && <QuickChips session={current} defaults={defaults} onQuick={(kind, rect) => setQuick(old => old?.kind === kind ? null : { kind, anchor: rect })} />}<p title={current?.cwd || info?.cwd}>{current?.cwd || info?.cwd}</p></div></div><UsageBar api={api} provider={current ? providerOf(current) : historyProvider} sessionId={!native ? current?.id : undefined} open={() => setStatusOpen(true)} /><button type="button" className="badge desktop-badge" aria-haspopup="dialog" onClick={event => showStatus(event.currentTarget.getBoundingClientRect())}>{headerStatus}</button>{attaching && <div className="view-switch" role="group" aria-label={t('View', '视图')}><button type="button" aria-pressed={!showTerm} className={showTerm ? '' : 'active'} title={t('Conversation view', '对话视图')} onClick={() => setTermView(false)}><ChatIcon size={15} /><span>{t('Chat', '对话')}</span></button><button type="button" aria-pressed={showTerm} className={showTerm ? 'active' : ''} title={t('Terminal view: the full Claude Code screen', '终端视图：完整的 Claude Code 界面')} onClick={() => setTermView(true)}><TerminalIcon size={15} /><span>{t('Terminal', '终端')}</span></button></div>}{running && <button type="button" className="stop" disabled={busy} title={t('Stop the current turn (Esc); queued messages still run', '停止当前轮次（Esc）；排队的消息会继续执行')} onClick={stopTurn}>{t('■ Stop', '■ 停止')}</button>}{tasks.length > 0 && <button className={`icon task-button${runningTasks ? ' active' : ''}`} title={runningTasks ? t(`${runningTasks} tasks running`, `${runningTasks} 个任务运行中`) : t('Subagents and background tasks', '子 agent 与后台任务')} aria-label={t('Subagents and background tasks', '子 agent 与后台任务')} onClick={() => setTasksOpen(true)}><AgentIcon size={17} />{runningTasks > 0 && <span className="task-count">{runningTasks}</span>}</button>}<button className="icon topbar-extra" title={t('Refresh sessions', '刷新会话')} aria-label={t('Refresh sessions', '刷新会话')} onClick={() => action(list)}><RefreshIcon size={17} /></button>{current && <button className="icon topbar-extra" title={t('Session details', '会话详情')} aria-label={t('Session details', '会话详情')} onClick={() => setSessionSettingsOpen(true)}><GearIcon size={17} /></button>}<TopbarMenu actions={topbarActions} /></header>
-      {plainHttp && <div className="plain-http-banner banner" role="status">{t(`You are connected over plain HTTP (${plainAddress}); the access token and session content travel the network unencrypted. Use an HTTPS reverse proxy or a VPN instead.`, `当前通过明文 HTTP 访问（${plainAddress}），访问令牌和会话内容会在网络中明文传输。建议改用 HTTPS 反向代理或 VPN。`)}<button className="icon-button" onClick={dismissPlainHttp} aria-label={t('Dismiss plain HTTP warning', '关闭明文访问提示')}><CloseIcon size={14} /></button></div>}
-      {error && <div className="error banner" role="alert">{error}<button className="icon-button" onClick={() => setError('')} aria-label={t('Dismiss error', '关闭错误')}><CloseIcon size={14} /></button></div>}
-      {routeNotice && <div className="command-notice" role="status"><span>{routeNotice}</span><button className="icon-button" aria-label={t('Dismiss notice', '关闭提示')} onClick={() => setRouteNotice('')}><CloseIcon size={14} /></button></div>}
-      {activeTab?.notice && <div className="command-notice" role="status"><span>{activeTab.notice}</span><button className="icon-button" aria-label={t('Dismiss command result', '关闭命令结果')} onClick={() => updateTab(activeKey, tab => ({ ...tab, notice: undefined }))}><CloseIcon size={14} /></button></div>}{settingsOpen && <ClaudeSettings api={api} providers={providers} provider={native ? historyProvider : activeProvider} sendKey={sendKey} onSendKey={value => { setSendKey(value); localStorage.setItem('cc-send-key', value); }} onStatus={() => { setSettingsOpen(false); setStatusOpen(true); }} close={() => setSettingsOpen(false)} />}{tasksOpen && <TaskPanel tasks={tasks} close={() => setTasksOpen(false)} locate={locateTask} />}{statusOpen && <StatusPanel providerStatus={info} provider={current ? providerOf(current) : historyProvider} sessionId={!native ? current?.id : undefined} api={api} close={() => setStatusOpen(false)} select={id => { setStatusOpen(false); choose(id, false); }} />}{statusAnchor && current && !native && <SessionStatus api={api} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} session={current} events={events} defaults={defaults} label={headerStatus} anchor={statusAnchor} close={() => { setStatusAnchor(null); setQuick(null); }} quick={(kind, anchor) => setQuick(old => old?.kind === kind ? null : { kind, anchor })} settings={() => setSessionSettingsOpen(true)} attach={attaching ? () => setSharing(true) : undefined} />}{quick && current && !native && <QuickSwitch key={activeKey} api={api} provider={activeProvider} model={current.live?.modelId || current.model || defaults?.model || ''} sessionId={current.id} target={quick} current={quick.kind === 'model' ? (current.mode === 'terminal' ? current.live?.modelId || current.model || '' : current.model || '') : (current.mode === 'terminal' ? current.live?.effort || current.effort || '' : current.effort || '')} inherit={current.mode === 'terminal' ? undefined : quick.kind === 'model' ? defaults?.model || '' : defaults?.effort || ''} close={() => setQuick(null)} pick={value => void quickPick(quick.kind, value)} />}{sessionSettingsOpen && current && <SessionSettings key={current.id} api={api} session={{ ...current, readOnly: native }} defaults={defaults} events={events} onImport={native ? () => { setSessionSettingsOpen(false); setImporting('managed'); } : undefined} close={() => setSessionSettingsOpen(false)} onDelete={() => { setSessionSettingsOpen(false); setDeleting(current); }} onUpdated={item => { setSessions(old => old.map(entry => entry.id === item.id ? { ...entry, ...item } : entry)); updateTab(activeKey, tab => tab.session ? { ...tab, session: { ...tab.session, ...item } } : tab); }} />}{deleting && <DeleteSessionDialog session={sessions.find(item => item.id === deleting.id) || deleting} close={() => setDeleting(undefined)} confirm={stop => deleteSession(deleting, stop)} />}<ConfirmDialog />{!selected ? <div className="welcome"><div className="welcome-icon">⌘</div><span className="eyebrow">READY WHEN YOU ARE</span><h2>{t('Take your work with you.', '把工作带到身边。')}</h2><p>{t('Pick a session, or start a new task in a project directory.', '选择一个会话，或在项目目录中开始新的任务。')}<br/>{t('Sessions keep running on the host; close the page and come back later.', '会话持续在宿主运行，关闭页面也可以稍后回来。')}</p><div className="welcome-actions"><button className="primary" onClick={() => setCreate(true)}><PlusIcon size={15} />{t('New session', '新建会话')}</button></div>{!info?.claudeAvailable && !info?.codexAvailable && <p className="error">{t('Install Claude Code or Codex on the host and sign in first.', '请先在宿主安装 Claude Code 或 Codex 并完成登录。')}</p>}</div> : showTerm ? <TerminalView key={current!.id} id={current!.id} api={api} /> : <>
-        <div className="conversation-stage">
-        <TurnRail turns={turns} container={scroll} />
-        <div className="conversation" ref={scroll} onScroll={() => { const element = scroll.current; if (element && !loading) { const distance = element.scrollHeight - element.scrollTop - element.clientHeight; nearBottom.current = distance < 120; if (distance > 240) setAway(true); else if (distance < 40) setAway(false); updateTab(activeKey, tab => ({ ...tab, scrollTop: element.scrollTop, nearBottom: nearBottom.current })); } }}>
-          {loading && <div className="muted loading">{t('Loading session…', '正在加载会话…')}</div>}
-          {!loading && !activeTab?.hasOlder && activeTab?.session?.truncated && <div className="older-marker muted">{t('This transcript is over 64 MiB; only its most recent part is shown.', '这个会话的记录超过 64 MiB，只显示最近的部分。')}</div>}
-          {!loading && activeTab?.hasOlder && <div ref={olderMarker} className="older-marker">{activeTab.loadingOlder ? t('Loading earlier messages…', '正在加载更早的消息…') : <button type="button" onClick={() => void loadOlder()}>{t('Load earlier messages', '加载更早的消息')}</button>}</div>}
-          {!loading && events.length === 0 && <div className="conversation-empty"><h2>{t('Ready to start', '准备开始')}</h2><p>{t('Describe your task to start working in this project directory.', '描述你的任务，开始在此项目目录中工作。')}</p></div>}
-          {/* One child list: a shared card keyed by its request id moves between the transcript and the pending list without remounting. */}
-          {[...transcript.map(item => {
-            if (item.type === 'agent') return <AgentCard key={item.key} call={item.call} items={item.items} nested={nested} />;
-            if (item.type === 'tools') return <ToolGroup key={item.key} groupKey={item.key} calls={item.calls} open={activeTab?.expandedGroups[item.key] ?? toolsExpanded} onToggle={toggleGroup} openCalls={activeTab?.expandedTools || NO_CALLS} onToggleCall={toggleCall} onLoadFull={loadFull} />;
-            if (item.type === 'special') {
-              const request = linked.get(item.call.seq);
-              if (request) return sharedCard(item.call, request);
-              const hint = questionHint(item.call); const outcome = outcomes.get(item.call.seq);
-              return item.call.status === 'ok' || item.call.status === 'error' || hint ? <QuestionCard key={item.key} call={item.call} waitingHint={hint || ''} answeredBy={outcome === 'web' ? 'web' : outcome === 'terminal' || outcome === 'handoff' ? 'terminal' : undefined} /> : null;
-            }
-            const event = item.event;
-            if (event.kind === 'status') return <CodexStatusEvent key={event.seq} event={event} />;
-            if (event.kind === 'recap') {
-              const id = `${selected}:${event.seq}`;
-              if (hiddenRecaps.includes(id)) return null;
-              const hide = () => setHiddenRecaps(old => { const next = [...old, id].slice(-50); try { localStorage.setItem('cc-hidden-recaps', JSON.stringify(next)); } catch { /* private window */ } return next; });
-              return <aside className="recap" key={event.seq} aria-label={t('Session recap', '会话回顾')}><div className="recap-label">{t('※ Recap · while you were away', '※ 回顾 · 你离开期间')}<button type="button" className="icon-button" aria-label={t('Dismiss recap', '关闭回顾')} title={t('Dismiss recap', '关闭回顾')} onClick={hide}><CloseIcon size={13} /></button></div><Markdown text={event.text || ''} /></aside>;
-            }
-            if (event.kind === 'teammate') return <TeammateMessage key={`${event.seq}:${event.payload?.part ?? 0}`} name={event.payload?.teammate_id} color={event.payload?.color} summary={event.payload?.summary} text={event.text || ''} />;
-            if (event.kind === 'compact') return <div className="compact-divider" role="separator" key={event.seq}><span>{compactSummary(event.payload)}</span></div>;
-            return <article className={`message ${event.kind}`} key={event.seq} data-turn-seq={event.kind === 'user' ? event.seq : undefined}><div className="message-label">{event.kind === 'user' ? t('YOU', '你') : event.kind === 'error' ? t('Error', '执行错误') : providerName(activeProvider).toUpperCase()}</div>{(() => {
-              const first = event.kind === 'user' ? (event.text || '').split('\n', 1)[0].trim() : '';
-              const match = first && /^\/([a-z-]+)/.exec(first);
-              const command = match && commands.find(item => item.name === match[1]);
-              if (!command) return <Markdown text={event.text || ''} />;
-              const rest = first.slice(command.name.length + 1).trim();
-              return <button type="button" className="chip chip-action message-command" title={event.text || ''} onClick={() => {
-                if (command.name === 'model' || command.name === 'effort') { const box = document.querySelector('.composer')?.getBoundingClientRect(); if (box) setQuick({ kind: command.name, anchor: new DOMRect(box.left + 12, box.top, 0, 0) }); return; }
-                setDraft(event.text || '');
-                (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus();
-              }}>{match![0]}{rest && <span className="message-command-args">{rest}</span>}{command.name === 'model' || command.name === 'effort' ? <ChevronDownIcon size={12} /> : null}</button>;
-            })()}{event.payload?.attachments?.length > 0 && <AttachmentList items={event.payload.attachments} token={token} />}</article>;
-          }),
-          // A request whose call already shows a terminal result is about to be withdrawn; don't show it twice.
-          ...(native ? [] : requests.filter(request => !linkedIds.has(request.id) && !(shared && requestSettled(request, transcript))).map(request => shared && (request.kind === 'question' || request.kind === 'plan') ? sharedCard(undefined, request) : <RequestCard key={request.id} request={request} busy={busy} answers={activeTab?.answers[request.id] || {}} setAnswers={update => updateTab(activeKey, tab => ({ ...tab, answers: { ...tab.answers, [request.id]: update(tab.answers[request.id] || {}) } }))} shared={shared} onAnswer={(decision, answers, message) => action(async () => { await api(`/api/requests/${request.id}`, { method: 'POST', body: JSON.stringify({ decision, answers, message }) }); updateTab(activeKey, tab => ({ ...tab, requests: tab.requests.filter(item => item.id !== request.id) })); })} />))]}
-
-
-          {activeProvider === 'codex' && <CodexSessionUsage events={events} />}
-          {running && !requests.length && <div className="working"><span className="pulse" />{isCompacting(events) ? t('Compacting context…', '正在压缩上下文…') : current?.live?.activity || t(`${providerName(activeProvider)} is working…`, `${providerName(activeProvider)} 正在工作…`)}</div>}
-          {!running && runningTasks > 0 && <button type="button" className="working working-tasks" onClick={() => setTasksOpen(true)}><span className="pulse" />{t(`${runningTasks} background tasks running · View`, `${runningTasks} 个后台任务运行中 · 查看`)}</button>}<div ref={bottom} />
-        </div>
-        </div>
-        {away && !loading && <div className="jump-latest-anchor"><button type="button" className={`jump-latest${running ? ' live' : ''}`} title={t('Jump to the latest', '跳到最新')} aria-label={t('Jump to the latest', '跳到最新')} onClick={jumpToLatest}><ArrowDownIcon size={18} /></button></div>}
-        {native ? <div className="native-footer"><p>{historyProvider === 'codex' ? t('Import this history to continue as a managed session.', '导入此历史，以托管会话继续。') : t('Keep the original title and context; continue in a terminal or import as a managed session.', '保留原名称和上下文；可在终端继续或导入为托管会话。')}</p>{historyProvider === 'claude' && <button className="primary" onClick={() => setImporting('terminal')}>{t('Continue as terminal session ↔', '以终端会话继续 ↔')}</button>}<button className="secondary" onClick={() => setImporting('managed')}>{t('Import as managed session', '导入为托管会话')}</button></div> : <><PendingQueue key={activeKey} items={current?.queued || []} token={token} perform={performQueue} /><form className={`composer${dragging ? ' dragging' : ''}${away && !composerFocus && !dragging ? ' compact' : ''}`} onSubmit={send} onFocus={() => setComposerFocus(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setComposerFocus(false); }} onDragOver={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }} onDrop={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); setDragging(false); void addFiles(Array.from(event.dataTransfer.files)); }}>{dragging && <div className="drop-hint" aria-hidden="true">{t('Drop to attach (≤ 20 MiB each, up to 8 per message)', '松开以添加附件（单个 ≤ 20 MiB，每条最多 8 个）')}</div>}{mention.menu}{draft.startsWith('/') && !draft.includes(' ') && <div className="command-menu" role="listbox" aria-label={t('Command suggestions', '命令建议')}>{commands.filter(command => command.name.startsWith(draft.slice(1))).map(command => <button type="button" key={command.name} onClick={() => { if (command.name === 'model' || command.name === 'effort') { const box = document.querySelector('.composer')?.getBoundingClientRect(); setDraft(''); if (box) setQuick({ kind: command.name, anchor: new DOMRect(box.left + 12, box.top, 0, 0) }); return; } setDraft(`/${command.name} `); }}><strong>/{command.name}</strong><small>{command.description}{command.terminalOnly ? t(' · in the terminal', ' · 终端操作') : ''}</small></button>)}</div>}{attachments.length > 0 && <AttachmentList items={attachments} token={token} remove={id => updateTab(activeKey, tab => ({ ...tab, attachments: tab.attachments.filter(item => item.id !== id) }))} />}{current?.mode === 'terminal' && !running && !draft && current.live?.suggestion && <div className="suggestion-bar"><span className="suggestion-label">{t('Suggested', '建议')}</span><button type="button" className="suggestion-text" title={t('Send this suggestion', '发送这条建议')} disabled={busy} onClick={() => void sendSuggestion(current.live!.suggestion!)}>{current.live.suggestion}</button><button type="button" className="suggestion-edit" title={t('Put it in the message box to edit', '填入输入框后修改')} onClick={() => setDraft(current.live!.suggestion!)}>{t('Edit', '编辑')}</button></div>}<ComposerInput compact={away && !composerFocus && !dragging} aria-label={t(`Message to ${providerName(activeProvider)}`, `发送给 ${providerName(activeProvider)} 的消息`)} placeholder={running ? t('Keep typing; the message is queued after the current task', '可以继续输入，消息会排在当前任务之后') : t('Describe a task, or ask a follow-up…', '描述任务，或继续提问…')} value={draft} onChange={event => { setDraft(event.target.value); mention.onCaret(event); }} onSelect={mention.onCaret} onPaste={event => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files); } }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} onKeyDown={event => { if (mention.onKeyDown(event)) return; if (event.key !== 'Enter' || event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return; const modifier = event.ctrlKey || event.metaKey; if (!event.shiftKey && !event.altKey && (sendKey === 'enter' ? !modifier : modifier)) { event.preventDefault(); void send(event); } }} /><div className="composer-bottom"><AttachButton disabled={uploading || busy} upload={files => void addFiles(files)} /><button type="button" className="slash-button" data-tip={t('Commands', '命令')} aria-label={t('Command list', '命令列表')} onClick={() => { setDraft(draft.startsWith('/') ? '' : '/'); (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus(); }}>/</button><div className="composer-permission"><span aria-hidden="true"><ShieldIcon size={16} /></span><PermissionPicker className="permission-select" label={t('Session permission mode', '会话权限模式')} title={t('Permission mode', '权限模式')} value={current?.permissionMode || ''} inheritLabel={current?.permissionMode ? t('Use default', '跟随默认') : sessionMode ? permissionLabel(sessionMode, activeProvider) : t('Use default', '跟随默认')} inheritMode={defaults?.permissionMode || (activeProvider === 'claude' ? claudeMode : '')} provider={activeProvider} disabled={busy} onChange={value => void changePermission(value)} /></div><span className="composer-space" /><div className="composer-actions"><ContextUsage key={activeKey} provider={activeProvider} live={current?.live} events={events} sessionId={current?.id} /><ComposerSend extra={<SteerButton supported={canSteer(info, current, native) && !requests.length || needsSteerConfirmation(sendIds.get(`steer:${activeKey}`), draft)} confirming={needsSteerConfirmation(sendIds.get(`steer:${activeKey}`), draft)} disabled={busy || (!needsSteerConfirmation(sendIds.get(`steer:${activeKey}`), draft) && (uploading || !!attachments.length || !draft.trim() || draft.trim().startsWith('/')))} send={() => void steerCurrent()} />} disabled={busy || uploading || (!draft.trim() && !attachments.length) || (!draft.startsWith('/') && !(activeProvider === 'codex' ? info?.codexAvailable : info?.claudeAvailable))} uploading={uploading} running={running} sendKey={sendKey} onSendKey={value => { setSendKey(value); localStorage.setItem('cc-send-key', value); }} /></div></div></form></>}
-      </>}
-    </main>
-    {sharing && attaching && <div className="modal-backdrop"><div className="modal"><div className="modal-heading"><h2>{t('Attach from a local terminal', '在本地终端接入')}</h2><button className="icon" aria-label={t('Close attach instructions', '关闭接入说明')} onClick={() => setSharing(false)}><CloseIcon size={18} /></button></div><p>{t('Run this command on the host to continue the session in a local terminal, just like running Claude Code directly.', '在宿主上运行以下命令，就能在本地终端里继续这个会话，和直接运行 Claude Code 一样。')}</p><textarea className="terminal-command" aria-label={t('Attach command', '接入命令')} readOnly rows={3} value={attachCommand} onFocus={event => event.currentTarget.select()} /><div className="share-actions"><button type="button" className="secondary" disabled={copying || !attachCommand} onClick={() => void copyAttach()}>{copying ? t('Copying…', '复制中…') : copyStatus === 'copied' ? t('Copied', '已复制') : t('Copy command', '复制命令')}</button><span role="status" className={`copy-feedback ${copyStatus === 'failed' ? 'failed' : ''}`}>{copyStatus === 'copied' ? t('Command copied to the clipboard', '命令已复制到剪贴板') : copyStatus === 'failed' ? COPY_FAILED : ''}</span></div><p>{t('Press Ctrl+] to detach. Detaching only leaves the terminal view; Claude Code and its subagents keep running, and you can switch between the web and the terminal at any time.', '按 Ctrl+] 断开。断开只是离开终端界面，Claude Code 和其中的子 agent 会继续运行，网页和本地可以随时切换。')}</p><small>{t('Quicker: run ', '更快的方式：在项目目录运行 ')}<code>ccr</code>{t(' in the project directory to attach to its terminal session (a new one if there is none); ', '，接入该目录的终端会话（没有就新建）；')}<code>ccr ls</code>{t(' lists recent sessions to pick from. Terminal sessions end when the host restarts and resume their context the next time you use them.', ' 列出最近的会话供选择。宿主重启时终端会话会结束，下次使用时自动恢复上下文。')}</small></div></div>}    {create && <div className="modal-backdrop"><form className="modal" onSubmit={event => { event.preventDefault(); action(async () => { if (newProvider === 'codex' && !supportsCodex) return; const item = await api<Session>('/api/sessions', { method: 'POST', body: JSON.stringify(newSessionBody(newProvider, title, cwd, newOverrides, newMode, trustFolder, newProfileId)) }); try { if (newProvider === 'claude') localStorage.setItem('cc-new-mode', newMode); } catch {} setTrustFolder(false); setNative(false); setSessions(old => [item, ...old]); choose(item.id, false, item); setCreate(false); setTitle(''); }); }}><div className="modal-heading"><h2>{t('New session', '新建会话')}</h2><button type="button" className="icon" aria-label={t('Close', '关闭')} onClick={() => setCreate(false)}><CloseIcon size={18} /></button></div><p>{t('Choose a project directory on the host for the task.', '为任务选择宿主上的项目目录。')}</p><div className="mode-choice provider-choice" role="group" aria-label={t('New session provider', '新会话提供方')}>{providers.map(provider => <button key={provider} type="button" aria-pressed={newProvider === provider} className={newProvider === provider ? 'active' : ''} onClick={() => { if (provider === newProvider) return; setNewProvider(provider); setNewProfileId(''); setNewOverrides({ permissionMode: '', model: '', effort: '' }); setTrustFolder(false); }}><strong>{providerName(provider)}</strong><small>{provider === 'codex' ? t('Codex managed sessions · models, reasoning and sandbox permissions', 'Codex 托管会话 · 可配置模型、推理强度和沙箱权限') : t('Claude terminal or managed sessions', 'Claude 终端会话或托管会话')}</small></button>)}</div><NewSessionProfile api={api} app={newProvider} value={newProfileId} onChange={setNewProfileId} />{newProvider === 'codex' && <p>{t('Codex runs as a managed session.', 'Codex 以托管会话运行。')}</p>}<p className="muted">{newProvider === 'codex' ? info?.codexAvailable ? t('Codex available', 'Codex 可用') : t('Codex is unavailable on this host', '此主机上 Codex 不可用') : info?.claudeAvailable ? t('Claude available', 'Claude 可用') : t('Claude is unavailable on this host', '此主机上 Claude 不可用')}</p>{newProvider === 'claude' && <div className="mode-choice" role="radiogroup" aria-label={t('Session type', '会话类型')}><button type="button" role="radio" aria-checked={newMode === 'terminal'} className={newMode === 'terminal' ? 'active' : ''} onClick={() => setNewMode('terminal')}><strong>{t('Terminal session', '终端会话')}</strong><small>{t('The host holds an interactive Claude Code; a local terminal can attach any time, and switching never interrupts the task', '宿主持有交互式 Claude Code，本地终端可随时接入，切换不中断任务')}</small></button><button type="button" role="radio" aria-checked={newMode === 'managed'} className={newMode === 'managed' ? 'active' : ''} onClick={() => setNewMode('managed')}><strong>{t('Managed session', '托管会话')}</strong><small>{t('The host runs Claude in the background; best if you only use the web', '宿主在后台运行 Claude，适合只在网页上使用')}</small></button></div>}<label>{t('Absolute project path', '项目绝对路径')}<input value={cwd} onChange={event => setCwd(event.target.value)} placeholder={t('D:\\Projects\\app or /home/me/app', 'D:\\Projects\\app 或 /home/me/app')} required autoFocus /></label>{recent.length > 0 && <div className="recent-projects" role="group" aria-label={t('Recent projects', '最近项目')}><span className="eyebrow">{t('RECENT PROJECTS', '最近项目')}</span>{matchProjects(recent, cwd).map(item => <button type="button" key={item.path} className={projectKey(item.path) === projectKey(cwd) ? 'active' : ''} title={item.path} onClick={() => setCwd(item.path)}><strong>{item.name}</strong><small>{item.path}</small></button>)}</div>}<small>{t('The project directory must already exist.', '项目目录需要已经存在。')}</small><label>{t('Session name (optional)', '会话名称（可选）')}<input value={title} onChange={event => setTitle(event.target.value)} placeholder={cwd.trim() ? projectName(cwd.trim()) : t('Defaults to the folder name', '默认使用文件夹名称')} /></label>{newProvider === 'claude' && newMode === 'terminal' && <label className="checkbox"><input type="checkbox" checked={trustFolder} onChange={event => setTrustFolder(event.target.checked)} required />{t('Trust this folder: Claude Code may read, edit and execute files in it (the same as confirming "trust this folder" in the terminal)', '信任此目录：Claude Code 可以读取、修改和执行其中的文件（等同于在终端里确认「信任此文件夹」）')}</label>}<div className="new-session-overrides"><div className="field">{t('Permission mode', '权限模式')}<PermissionPicker label={t('New session permission mode', '新会话权限模式')} value={newOverrides.permissionMode} inheritLabel={t('Use default', '跟随默认')} provider={newProvider} onChange={permissionMode => setNewOverrides(old => ({ ...old, permissionMode }))} /></div><div className="field">{t('Effort', '推理强度')}<EffortPicker api={api} provider={newProvider} model={newOverrides.model} inheritLabel={t('Use default', '跟随默认')} label={t('New session effort', '新会话推理强度')} value={newOverrides.effort} onChange={effort => setNewOverrides(old => ({ ...old, effort }))} /></div></div><div className="field">{t('Model', '模型')}<ModelPicker key={newProvider} api={api} provider={newProvider} label={t('New session model', '新会话模型')} value={newOverrides.model} onChange={model => setNewOverrides(old => ({ ...old, model }))} /></div>{error && <div className="error" role="alert">{error}</div>}<button className="primary" disabled={busy}>{busy ? t('Creating…', '创建中…') : t('Create session →', '创建会话 →')}</button></form></div>}
-    {importing && <div className="modal-backdrop"><div className="modal"><div className="modal-heading"><h2>{importing === 'terminal' ? t('Continue as terminal session', '以终端会话继续') : t('Import as managed session', '导入为托管会话')}</h2><button className="icon" aria-label={t('Close', '关闭')} onClick={() => { setImporting(''); setResumeProfileId(''); }}><CloseIcon size={18} /></button></div><p>{t('Running the same session in two places at once makes its state and file operations conflict. Stop the session in its original terminal first.', '同一个会话同时运行会导致状态和文件操作冲突。请先在原终端停止该会话。')}</p><NewSessionProfile key={`${selected}-${historyProvider}`} api={api} app={historyProvider} value={resumeProfileId} onChange={setResumeProfileId} resuming /><label className="checkbox"><input type="checkbox" checked={stopped} onChange={event => setStopped(event.target.checked)} />{t('I have stopped this session in its original terminal', '我已停止原终端中的此会话')}</label>{importing === 'terminal' && <p>{t('Claude Code will run in the session\'s project directory, trusting it as when you resumed it there.', 'Claude Code 将在该会话的项目目录中运行，和在那里恢复会话一样信任此目录。')}</p>}<button className="primary" disabled={!stopped || busy} onClick={() => action(async () => { const item = importing === 'terminal' ? await api<Session>('/api/sessions', { method: 'POST', body: JSON.stringify({ mode: 'terminal', trustFolder: true, resume: selected, ...(resumeProfileId ? { profileId: resumeProfileId } : {}) }) }) : await api<Session>(providerQuery(`/api/native/sessions/${encodeURIComponent(selected)}/import`, historyProvider), { method: 'POST', body: JSON.stringify({ confirmStopped: true, ...(resumeProfileId ? { profileId: resumeProfileId } : {}) }) }); setNative(false); setSessions([item]); choose(item.id, false, item); setImporting(''); setResumeProfileId(''); })}>{importing === 'terminal' ? t('Continue', '继续') : t('Import', '确认导入')}</button>{error && <div className="error" role="alert">{error}</div>}</div></div>}
-  </div></FileProvider>;
-}
-
-/** A managed session's request, or a terminal session's tool approval (shared), which the native dialog can answer too. */
-function RequestCard({ request, busy, shared, onAnswer, answers, setAnswers }: { request: Request; busy: boolean; shared?: boolean; onAnswer: (decision: string, answers?: Record<string, string>, message?: string) => void; answers: Record<string, string>; setAnswers: (update: (old: Record<string, string>) => Record<string, string>) => void }) {
-  const questions: any[] = request.input?.questions || [];
-  return <section className="request"><span className="eyebrow">{t('Needs your action', '需要你的操作')}</span><h3>{request.kind === 'question' ? t('A few questions before continuing', '继续之前有几个问题') : request.kind === 'plan' ? t('Confirm the plan', '确认执行计划') : request.toolName === 'RequestPermissions' ? t('Allow additional permissions for this turn?', '允许本轮扩展权限？') : t(`Allow ${request.toolName || 'tool'}?`, `允许执行 ${request.toolName || '工具'}？`)}</h3>
-    {request.kind === 'question' ? questions.map((question, index) => <div className="question" key={index}><p>{question.question}</p><div className="options">{(question.options || []).map((option: any) => <button key={option.label} className={(answers[question.question] || '').split(', ').includes(option.label) ? 'chosen' : ''} disabled={busy} onClick={() => setAnswers(old => { const key = question.question; const values = (old[key] || '').split(', ').filter(Boolean); return { ...old, [key]: question.multiSelect ? (values.includes(option.label) ? values.filter(value => value !== option.label) : [...values, option.label]).join(', ') : option.label }; })}>{option.label}{option.description && <small>{option.description}</small>}</button>)}</div><input aria-label={t(`Answer: ${question.question}`, `回答：${question.question}`)} placeholder={t('Or type your own answer', '也可以输入自己的回答')} value={answers[question.question] || ''} onChange={event => setAnswers(old => ({ ...old, [question.question]: event.target.value }))} /></div>) : request.toolName === 'RequestPermissions' ? <CodexPermissionDetails input={request.input} /> : <pre>{typeof request.input === 'string' ? request.input : JSON.stringify(request.input, null, 2)}</pre>}
-    {shared && <small className="muted">{t('Answer here or in the terminal; the first answer counts.', '在这里或终端里回答都可以，以先回答的为准。')}</small>}
-    <div className="request-actions">{shared && <button className="secondary" disabled={busy} title={t('Withdraw the request from the web and answer it only in the native terminal', '撤回网页上的请求，只在原生终端处理')} onClick={() => onAnswer('terminal')}>{t('Answer in terminal', '交给终端')}</button>}<button className="secondary" disabled={busy} onClick={() => onAnswer('deny')}>{t('Deny', '拒绝')}</button>{request.kind === 'question' && <button className="secondary" disabled={busy} title={t('Answer nothing for now and talk these questions over first (Chat about this in the terminal)', '先不回答，讨论这些问题（同终端里的 Chat about this）')} onClick={() => onAnswer('deny', undefined, clarifyMessage(questions.map(question => question.question), question => answers[question]?.trim() || ''))}>{t('Chat about this', '先聊聊')}</button>}<button className="primary" disabled={busy || (request.kind === 'question' && questions.some(question => !answers[question.question]?.trim()))} onClick={() => onAnswer('allow', request.kind === 'question' ? answers : undefined)}>{request.kind === 'question' ? t('Submit answers', '提交回答') : t('Allow once', '允许本次操作')}</button></div>
-  </section>;
+function scopeDraftsToHost() {
+  const stops = [syncDraftStore(useDrafts, hostKey('ccn-drafts')), syncDraftStore(useRequestDrafts, hostKey('ccn-request-drafts'))];
+  return () => { for (const stop of stops) stop(); };
 }

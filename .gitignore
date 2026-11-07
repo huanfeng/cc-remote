@@ -58,5 +58,3 @@ Desktop.ini
 # Release packaging output
 /dist/
 /web/dist-standalone/
-/web-next/dist/
-/web-next/dist-standalone/

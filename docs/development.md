@@ -26,11 +26,15 @@ Windows 使用 `go build -o cc-remote.exe ./cmd/cc-remote`。修改前端后必�
 ./cc-remote --listen 127.0.0.1:8790 --data-dir ./.test-data/dev
 ```
 
-前端开发服务器把 `/api` 代理到 `127.0.0.1:8787`（见 `web/vite.config.ts`，使用其它端口时临时修改这里）：
+前端开发服务器（`http://localhost:5174`）把 `/api` 代理到上面的开发宿主 `127.0.0.1:8790`，不会碰到正在使用的服务；其它地址用环境变量 `CC_DEV_HOST` 指定（如 `CC_DEV_HOST=http://127.0.0.1:8787`）：
 
 ```sh
 pnpm --dir web run dev
 ```
+
+不启动宿主也能看界面：打开 `http://localhost:5174/?mock`，使用内置的模拟后端（带示例会话、审批、提问和终端回放）。
+
+前端的设计约定见 `web/CONVENTIONS.md`，第三方来源与许可见 `web/NOTICE.md`。
 
 ## 测试
 

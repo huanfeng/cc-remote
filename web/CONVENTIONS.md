@@ -1,4 +1,4 @@
-# web-next conventions
+# Web frontend conventions
 
 New frontend for cc-remote. Read `docs/redesign-plan.md` (decisions) and `docs/redesign-inventory.md`
 (the old frontend's features and protocol — the behaviour you must reproduce) first.

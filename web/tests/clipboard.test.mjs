@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyText } from '../src/clipboard.ts';
+import { copyText } from '../src/domain/clipboard.ts';
 
 async function environment(options, run) {
   const original = new Map(['window', 'navigator', 'document', 'HTMLElement'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));

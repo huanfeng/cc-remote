@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { matchProjects, recentProjects } from '../src/recentProjects.ts';
+import { matchProjects, recentProjects } from '../src/domain/recentProjects.ts';
 
 test('recent projects: newest first, one entry per directory', () => {
   const list = recentProjects([

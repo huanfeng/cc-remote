@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationTime, conversationOrder } from '../src/conversationTime.ts';
+import { conversationTime, conversationOrder } from '../src/domain/conversationTime.ts';
 
 const now = new Date(2026, 9, 24, 14, 30).getTime();
 const iso = (offset) => new Date(now + offset).toISOString();

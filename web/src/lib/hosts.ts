@@ -1,10 +1,20 @@
-// The standalone web frontend: a page served from its own site (not by a host)
-// that keeps a list of hosts and talks to one at a time. Each host must allow
-// the page's origin (cc-remote --allow-origin). The host-served page is the
-// same app with STANDALONE false: one host, relative URLs, plain storage keys.
-import { t } from './i18n.ts'; // with extension: node tests import this file directly
+// Saved host connections. The standalone page (a static site, `vite build --mode
+// standalone`) and the desktop app keep a list of hosts and talk to one at a
+// time; each host must allow the page's origin (cc-remote --allow-origin). The
+// host-served page is the same app with STANDALONE false: one host, relative
+// URLs, plain storage keys. Ported from the old client's hosts.ts: LAN
+// switching, relocation that only follows a port change, per-host storage keys,
+// `?host=` per tab, tokens.
+import { create } from 'zustand';
+import { lang, t } from './i18n';
 
-export const STANDALONE = import.meta.env?.MODE === 'standalone';
+declare const __APP_VERSION__: string | undefined;
+
+/** True when this page can hold several hosts (standalone build or desktop app). */
+export const multiHost = () =>
+  import.meta.env?.MODE === 'standalone' || (typeof window !== 'undefined' && !!window.__CC_DESKTOP__);
+
+export const STANDALONE = multiHost();
 
 /** How a host's address is found: typed in, or the plain-text answer of an entry URL
  * (a tunnel whose public port changes). */
@@ -15,11 +25,12 @@ export type HostVia = 'direct' | 'text';
  * address on the home network (an https name pointing at a private address), used
  * while it answers. name, color and icon are the host's own (it reports them); alias,
  * tint and emblem are this page's, shown over them. */
-export type HostEntry = { id: string; url: string; token: string; name?: string; color?: string; icon?: string; alias?: string; tint?: string; emblem?: string; entry?: string; via?: Exclude<HostVia, 'direct'>; lan?: string };
+export type HostEntry = {
+  id: string; url: string; token: string; name?: string; color?: string; icon?: string;
+  alias?: string; tint?: string; emblem?: string; entry?: string; via?: Exclude<HostVia, 'direct'>; lan?: string;
+};
 
-/** The colours offered for a host: internal/identity Palette first (a host's default
- * colour is one of those), then more of the same kind: dark tones that keep the light
- * glyph readable. Any #rrggbb can be picked as well. */
+/** The colours offered for a host: dark tones that keep the light glyph readable. */
 export const PALETTE = ['#293c2e', '#0f5e5c', '#1f4e8c', '#3b3f8f', '#5b3a87', '#8a2f62', '#9b2c2c', '#a4501c', '#7d6210', '#3d4650',
   '#3f6b2a', '#0b5563', '#2b5f80', '#1e2a5a', '#6b2d8a', '#6b2737', '#7a3b2e', '#5a4a1f', '#4a3f35', '#1f2933'];
 
@@ -34,9 +45,22 @@ export function randomColor(taken: string[], current = '', random = Math.random)
   const pool = free.length ? free : others;
   return pool[Math.floor(random() * pool.length)];
 }
+
 type HostList = { current: string; hosts: HostEntry[] };
 
 const KEY = 'cc-hosts:v1';
+const browser = typeof window !== 'undefined';
+
+const store = (key: string, value?: string) => { try { if (value === undefined) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* storage unavailable */ } };
+const stored = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+/** Every key of both storages, removing those `drop` picks. Storage can throw (private mode). */
+function dropKeys(drop: (key: string) => boolean) {
+  for (const name of ['localStorage', 'sessionStorage'] as const) {
+    try { const s = window[name]; for (const key of Object.keys(s)) if (drop(key)) s.removeItem(key); } catch { /* storage unavailable */ }
+  }
+}
+/** Keys this page owns: the previous client's `cc-` and this client's `ccn-`. */
+const ownKey = (key: string) => key.startsWith('cc-') || key.startsWith('ccn-');
 
 /** Parses the address the user typed: scheme://host[:port][/path]; a bare host gets this
  * page's scheme (an https page cannot call an http host anyway). */
@@ -51,11 +75,11 @@ export function normalizeHostUrl(text: string): string {
   } catch { return ''; }
 }
 
-const isLocal = (url: URL) => { const host = url.hostname.replace(/^\[|\]$/g, ''); return host === 'localhost' || host === '::1' || /^127\./.test(host); };
+const isLocalName = (hostname: string) => { const host = hostname.replace(/^\[|\]$/g, ''); return host === 'localhost' || host === '::1' || /^127\./.test(host); };
 
 /** Whether this page may not call address url: an https page cannot reach a plain
  * http host, except on this machine. */
-export const blockedHttp = (url: string) => location.protocol === 'https:' && url.startsWith('http:') && !isLocal(new URL(url));
+export const blockedHttp = (url: string) => location.protocol === 'https:' && url.startsWith('http:') && !isLocalName(new URL(url).hostname);
 
 /** Finds the host address behind an entry URL: the first word of its plain-text answer.
  * The entry must answer this page with CORS (Access-Control-Allow-Origin), or the
@@ -75,20 +99,28 @@ export function loadHosts(): HostList {
   try {
     const data = JSON.parse(localStorage.getItem(KEY) || 'null');
     // A host added through a 302 entry (no longer offered) stays at the address it was found at.
-    if (data && Array.isArray(data.hosts)) return { current: String(data.current || ''), hosts: data.hosts.filter((x: HostEntry) => x && typeof x.id === 'string' && typeof x.url === 'string').map((x: HostEntry) => x.via && x.via !== 'text' ? { ...x, entry: undefined, via: undefined } : x) };
-  } catch {}
+    if (data && Array.isArray(data.hosts)) {
+      return {
+        current: String(data.current || ''),
+        hosts: data.hosts
+          .filter((x: HostEntry) => x && typeof x.id === 'string' && typeof x.url === 'string')
+          .map((x: HostEntry) => (x.via && x.via !== 'text' ? { ...x, entry: undefined, via: undefined } : x)),
+      };
+    }
+  } catch { /* corrupt or unavailable: start empty */ }
   return { current: '', hosts: [] };
 }
 
-function saveHosts(list: HostList) { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch {} }
+function saveHosts(list: HostList) {
+  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* storage unavailable */ }
+  syncStore();
+}
 
 // Drops what this page stored for hosts no longer in the list (a removed host's page
 // may still save on its way out).
-if (STANDALONE && typeof localStorage !== 'undefined') {
+if (STANDALONE && browser) {
   const known = new Set(loadHosts().hosts.map(x => x.id));
-  for (const name of ['localStorage', 'sessionStorage'] as const) {
-    try { const storage = window[name]; for (const key of Object.keys(storage)) { const id = /@([^@]+)$/.exec(key)?.[1]; if (key.startsWith('cc-') && id && !known.has(id)) storage.removeItem(key); } } catch {}
-  }
+  dropKeys(key => { const id = /@([^@]+)$/.exec(key)?.[1]; return ownKey(key) && !!id && !known.has(id); });
 }
 
 /** The query parameter naming the host a tab works with, so each tab keeps its own
@@ -104,20 +136,20 @@ const hostURL = (id: string | undefined) => {
 /** The link that opens a host in a tab of its own. */
 export const hostLink = (id: string) => hostURL(id);
 
-/** The host this page works with; undefined until one is added. */
-export const currentHost: HostEntry | undefined = STANDALONE ? (() => {
+/** The host this page works with; undefined until one is added (or on a host's own page). */
+export const currentHost: HostEntry | undefined = STANDALONE && browser ? (() => {
   const list = loadHosts();
   const named = new URLSearchParams(location.search).get(HOST_PARAM);
   return list.hosts.find(x => x.id === named) || list.hosts.find(x => x.id === list.current) || list.hosts[0];
 })() : undefined;
 // The address names the host the page opened, so a reload stays on it.
-if (STANDALONE && typeof history !== 'undefined' && hostURL(currentHost?.id) !== location.pathname + location.search) history.replaceState(history.state, '', hostURL(currentHost?.id) + location.hash);
+if (STANDALONE && browser && hostURL(currentHost?.id) !== location.pathname + location.search) {
+  history.replaceState(history.state, '', hostURL(currentHost?.id) + location.hash);
+}
 
 /** Whether this page talks to the current host at its home-network address: the last
  * page did and found it answering (remembered per host, as the network is the device's). */
 const LAN_KEY = 'cc-lan@', LAN_LEFT_KEY = 'cc-lan-left@';
-const store = (key: string, value?: string) => { try { if (value === undefined) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch {} };
-const stored = (key: string) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
 export const onLan = !!currentHost?.lan && stored(LAN_KEY + currentHost.id) === '1';
 
 /** This page's version (the release tag it was built from). */
@@ -129,20 +161,21 @@ const hideListeners = new Set<() => void>();
 export const addressesHidden = () => stored(HIDE_KEY) === '1';
 export function hideAddresses(on: boolean) { store(HIDE_KEY, on ? '1' : undefined); hideListeners.forEach(f => f()); }
 export function onHiddenAddresses(listener: () => void) { hideListeners.add(listener); return () => { hideListeners.delete(listener); }; }
+/** A host's address as this page shows it: hidden, or as is. */
+export const shownAddress = (address: string, hidden: boolean) => (hidden ? t('Address hidden', '地址已隐藏') : address);
 
 /** Prefix of every API path: the current host's address, or nothing on the host's own page. */
 export const apiBase = (onLan ? currentHost?.lan : currentHost?.url) || '';
-export const apiUrl = (path: string) => apiBase + path;
 
 /** A storage key of the current host: hosts never see each other's tabs, drafts or tokens. */
-export const hostKey = (key: string) => currentHost ? `${key}@${currentHost.id}` : key;
+export const hostKey = (key: string) => (currentHost ? `${key}@${currentHost.id}` : key);
 
 /** Adds or updates a host (matched by address or entry) and makes it current. */
 export function rememberHost(entry: Omit<HostEntry, 'id'> & { id?: string }): HostEntry {
   const list = loadHosts();
   const old = list.hosts.find(x => x.id === entry.id || x.url === entry.url || (entry.entry && x.entry === entry.entry));
   const host: HostEntry = { ...old, ...entry, id: old?.id || entry.id || Math.random().toString(36).slice(2, 10) };
-  list.hosts = old ? list.hosts.map(x => x.id === old.id ? host : x) : [...list.hosts, host];
+  list.hosts = old ? list.hosts.map(x => (x.id === old.id ? host : x)) : [...list.hosts, host];
   list.current = host.id;
   saveHosts(list);
   return host;
@@ -158,7 +191,7 @@ export function findHost(url: string, entry?: string, except?: string): HostEntr
 export function updateHost(id: string, change: Partial<Omit<HostEntry, 'id'>>) {
   const list = loadHosts();
   if ('lan' in change && change.lan !== list.hosts.find(x => x.id === id)?.lan) store(LAN_KEY + id); // a new one is checked first
-  list.hosts = list.hosts.map(x => x.id === id ? { ...x, ...change } : x);
+  list.hosts = list.hosts.map(x => (x.id === id ? { ...x, ...change } : x));
   saveHosts(list);
   if (id === currentHost?.id) reopen();
 }
@@ -167,7 +200,7 @@ export function updateHost(id: string, change: Partial<Omit<HostEntry, 'id'>>) {
 export function updateCurrentHost(change: Partial<Omit<HostEntry, 'id' | 'url'>>) {
   if (!currentHost) return;
   const list = loadHosts();
-  list.hosts = list.hosts.map(x => x.id === currentHost.id ? { ...x, ...change } : x);
+  list.hosts = list.hosts.map(x => (x.id === currentHost.id ? { ...x, ...change } : x));
   saveHosts(list);
 }
 
@@ -189,7 +222,7 @@ export async function lanAnswers(host: HostEntry, fetcher: typeof fetch = fetch,
 
 /** lanAnswers, except for a minute after the page left that address, so a flaky one
  * cannot bounce the page back and forth. */
-const backHome = (host: HostEntry) => Date.now() - Number(stored(LAN_LEFT_KEY + host.id)) < 60_000 ? Promise.resolve(false) : lanAnswers(host);
+const backHome = (host: HostEntry) => (Date.now() - Number(stored(LAN_LEFT_KEY + host.id)) < 60_000 ? Promise.resolve(false) : lanAnswers(host));
 
 /** Moves the current host to its home-network address, or off it, by reopening the page. */
 function moveToLan(on: boolean) {
@@ -201,7 +234,7 @@ function moveToLan(on: boolean) {
 
 /** While on the outside address: checks the home-network one when the page opens, comes
  * back into view, the network changes, and every two minutes; moves there when it answers. */
-if (STANDALONE && currentHost?.lan && !onLan) {
+if (STANDALONE && browser && currentHost?.lan && !onLan) {
   const host = currentHost;
   let checked = 0;
   const check = () => {
@@ -217,30 +250,42 @@ if (STANDALONE && currentHost?.lan && !onLan) {
 }
 
 /** After the current host stopped answering: leaves the home-network address, when it no
- * longer answers either, for the outside one; on the outside one, moves home when that answers, else asks the entry
- * for the address again (a tunnel's port changed) and, when it moved, reopens the page
- * there. Resolves true when it moved, a message when the entry led elsewhere, false
- * otherwise; at most once a minute, across the reloads, so a bad entry cannot loop. */
+ * longer answers either, for the outside one; on the outside one, moves home when that
+ * answers, else asks the entry for the address again (a tunnel's port changed) and, when
+ * it moved, reopens the page there. Resolves true when it moved, a message when the entry
+ * led elsewhere, false otherwise; at most once a minute, across reloads, so a bad entry
+ * cannot loop. */
 let relocating: Promise<boolean | string> | undefined;
 // Requests the browser cuts off as the page reloads or leaves fail like an unreachable host.
 let leaving = false;
-if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { leaving = true; });
+if (browser) window.addEventListener('pagehide', () => { leaving = true; });
 export function relocateHost(): Promise<boolean | string> {
   const host = currentHost;
   if (!host || leaving) return Promise.resolve(false);
   if (relocating) return relocating;
   // One failed request is not the network changing: the home address is checked first.
-  if (onLan) return relocating = lanAnswers(host).then(yes => { if (yes || leaving) return false; moveToLan(false); return true; }).finally(() => { relocating = undefined; });
-  if (!host.entry || !host.via) return relocating = backHome(host).then(yes => { if (yes) moveToLan(true); return yes; }).finally(() => { relocating = undefined; });
+  if (onLan) {
+    return relocating = lanAnswers(host)
+      .then(yes => { if (yes || leaving) return false; moveToLan(false); return true; })
+      .finally(() => { relocating = undefined; });
+  }
+  if (!host.entry || !host.via) {
+    return relocating = backHome(host)
+      .then(yes => { if (yes) moveToLan(true); return yes; })
+      .finally(() => { relocating = undefined; });
+  }
   const key = `cc-relocated@${host.id}`;
-  try { if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 60_000) return Promise.resolve(false); sessionStorage.setItem(key, String(Date.now())); } catch {}
+  try {
+    if (Date.now() - Number(sessionStorage.getItem(key) || 0) < 60_000) return Promise.resolve(false);
+    sessionStorage.setItem(key, String(Date.now()));
+  } catch { /* storage unavailable: no loop guard across reloads, the in-page one still holds */ }
   relocating = backHome(host).then(async yes => {
     if (yes) { moveToLan(true); return true; }
     const url = await resolveEntry(host.entry!);
     if (url === host.url) return false;
     if (!samePlace(host.url, url)) return t(`${host.entry} now leads to ${url}, not ${host.url}. Only a new port is followed by itself; add the host again to trust the new address.`, `${host.entry} 现在指向 ${url}，而不是 ${host.url}。只有端口变化会自动跟随；如信任新地址，请重新添加该宿主。`);
     const list = loadHosts();
-    list.hosts = list.hosts.map(x => x.id === host.id ? { ...x, url } : x);
+    list.hosts = list.hosts.map(x => (x.id === host.id ? { ...x, url } : x));
     saveHosts(list);
     reopen();
     return true;
@@ -272,18 +317,15 @@ export function removeHost(id: string) {
   const hosts = list.hosts.filter(x => x.id !== id);
   const current = list.current === id ? hosts[0]?.id || '' : list.current;
   saveHosts({ hosts, current });
-  for (const name of ['localStorage', 'sessionStorage'] as const) {
-    try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.endsWith(`@${id}`)) storage.removeItem(key); } catch {}
-  }
+  dropKeys(key => key.endsWith(`@${id}`));
   if (currentHost?.id === id) reopen(current || undefined);
 }
 
 /** Forgets every host and everything this page stored (tokens, drafts, tabs, its own
  * settings), and opens the page empty: leaving no trace on a shared device. */
 export function forgetAllHosts() {
-  for (const name of ['localStorage', 'sessionStorage'] as const) {
-    try { const storage = window[name]; for (const key of Object.keys(storage)) if (key.startsWith('cc-')) storage.removeItem(key); } catch {}
-  }
+  dropKeys(ownKey);
+  leaving = true;
   history.replaceState(null, '', location.pathname);
   location.reload();
 }
@@ -294,10 +336,101 @@ export function loadToken(): string {
   try { return localStorage.getItem('cc-token') || sessionStorage.getItem('cc-token') || ''; } catch { return ''; }
 }
 export function saveToken(token: string) {
-  if (STANDALONE) { updateCurrentHost({ token }); return; }
-  try { localStorage.setItem('cc-token', token); sessionStorage.removeItem('cc-token'); } catch {}
+  if (STANDALONE) { if (currentHost) currentHost.token = token; updateCurrentHost({ token }); return; }
+  try { localStorage.setItem('cc-token', token); sessionStorage.removeItem('cc-token'); } catch { /* storage unavailable: signed in for this page only */ }
 }
 export function clearToken() {
-  if (STANDALONE) { updateCurrentHost({ token: '' }); return; }
-  try { localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); } catch {}
+  if (STANDALONE) { if (currentHost) currentHost.token = ''; updateCurrentHost({ token: '' }); return; }
+  try { localStorage.removeItem('cc-token'); sessionStorage.removeItem('cc-token'); } catch { /* storage unavailable */ }
+}
+
+// ---- Checking hosts other than the open one (the switcher, the add/edit form) ----
+
+export type Ping = { online: boolean; running: number; waiting: number };
+
+/** Checks a host with its saved token: reachable, and how many sessions run or wait. */
+export async function pingHost(host: HostEntry, signal?: AbortSignal): Promise<Ping> {
+  const base = host.id === currentHost?.id ? apiBase : host.url;
+  try {
+    const response = await fetch(`${base}/api/sessions`, { headers: { Authorization: `Bearer ${host.token}`, 'X-CC-Lang': lang }, cache: 'no-store', credentials: 'omit', signal });
+    if (!response.ok) return { online: response.status !== 401 && response.status < 500, running: 0, waiting: 0 };
+    const items: { status?: string }[] = await response.json();
+    return { online: true, running: items.filter(x => x.status === 'running').length, waiting: items.filter(x => x.status === 'waiting').length };
+  } catch { return { online: false, running: 0, waiting: 0 }; }
+}
+
+/** What a host runs to let this page in: it applies at once (cc-remote --allow-origin
+ * does the same for a host started by hand). */
+export const allowCommand = () => `cc-remote service config --allow-origin ${location.origin}`;
+
+/** Why a host could not be reached from this page, in words the user can act on. A host
+ * that does not allow this page fails the preflight: that looks like no answer at all. */
+export function connectError(status?: number): string {
+  if (status === 401) return t('The access token is not valid for this host', '访问令牌与这个宿主不符');
+  if (status) return t(`The host answered with an error (${status})`, `宿主返回错误（${status}）`);
+  if (!STANDALONE) return t('Cannot reach the host. Check that it is running and try again.', '无法连接宿主。请确认宿主正在运行，然后重试。');
+  return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page (on the host: ${allowCommand()})`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面（在宿主上运行：${allowCommand()}）`);
+}
+
+/** Asks a host for /api/info with token: its name and colour, or why it refused. */
+export async function checkHost(base: string, token: string): Promise<{ ok: true; name?: string; color?: string; icon?: string } | { ok: false; status?: number }> {
+  const response = await fetch(`${base}/api/info`, { headers: { Authorization: `Bearer ${token}`, 'X-CC-Lang': lang }, cache: 'no-store', credentials: 'omit' }).catch(() => undefined);
+  if (!response?.ok) return { ok: false, status: response?.status };
+  try {
+    const info: { name?: string; color?: string; icon?: string } = await response.json();
+    return { ok: true, name: info.name, color: info.color, icon: info.icon };
+  } catch { return { ok: false, status: response.status }; }
+}
+
+// ---- The list as a store, for the switcher ----
+
+export interface HostSummary {
+  id: string;
+  name: string;
+  /** The address shown (the entry for an indirect host). */
+  url: string;
+  color: string;
+  icon?: string;
+  /** The saved record; absent for the mock's demo hosts. */
+  entry?: HostEntry;
+  /** Last ping: null = not yet known. */
+  ping: Ping | null;
+}
+
+interface HostsState {
+  hosts: HostSummary[];
+  currentId: string;
+  set(patch: Partial<Pick<HostsState, 'hosts' | 'currentId'>>): void;
+}
+
+export const useHosts = create<HostsState>()(set => ({
+  hosts: [],
+  currentId: '',
+  set: patch => set(patch),
+}));
+
+const summary = (host: HostEntry, ping: Ping | null): HostSummary => ({
+  id: host.id, name: shownName(host), url: host.entry || host.url, color: shownColor(host), icon: shownIcon(host), entry: host, ping,
+});
+
+/** Mirrors the saved list into the store, keeping the pings already known. */
+function syncStore() {
+  if (!STANDALONE) return;
+  const old = new Map(useHosts.getState().hosts.map(h => [h.id, h.ping]));
+  useHosts.getState().set({ hosts: loadHosts().hosts.map(h => summary(h, old.get(h.id) ?? null)), currentId: currentHost?.id || '' });
+}
+if (STANDALONE && browser) {
+  syncStore();
+  // Another tab added, edited or removed a host.
+  window.addEventListener('storage', e => { if (e.key === KEY) syncStore(); });
+}
+
+/** Pings every saved host and records the result in the store. */
+export function pingAll(signal: AbortSignal) {
+  for (const host of loadHosts().hosts) {
+    void pingHost(host, signal).then(ping => {
+      if (signal.aborted) return;
+      useHosts.getState().set({ hosts: useHosts.getState().hosts.map(h => (h.id === host.id ? { ...h, ping } : h)) });
+    });
+  }
 }

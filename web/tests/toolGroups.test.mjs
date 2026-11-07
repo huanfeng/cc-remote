@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { argSummary, groupStats, groupTranscript, parseAnswers, questionViews, stabilize, summaryLabel } from '../src/toolGroups.ts';
+import { argSummary, groupStats, groupTranscript, parseAnswers, questionViews, stabilize, summaryLabel } from '../src/domain/toolGroups.ts';
 
 let seq = 0;
 const at = s => new Date(Date.UTC(2026, 0, 1, 0, 0, s)).toISOString();
@@ -98,36 +98,6 @@ test('argument summaries per tool', () => {
   assert.equal(argSummary('Custom', { n: 1, name: 'first\nsecond' }).text, 'first');
 });
 
-test('question card and tool group render answered and collapsed states', async () => {
-  const { build } = await import('esbuild');
-  const { mkdirSync } = await import('node:fs');
-  const { dirname, join } = await import('node:path');
-  const { fileURLToPath, pathToFileURL } = await import('node:url');
-  const web = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const outdir = join(web, 'node_modules', '.cache', 'tools-test');
-  mkdirSync(outdir, { recursive: true });
-  const outfile = join(outdir, 'entry.mjs');
-  await build({ stdin: { contents: "export { QuestionCard } from './src/QuestionCard.tsx'; export { ToolGroup } from './src/ToolGroup.tsx';", resolveDir: web, loader: 'ts' }, outfile, bundle: true, format: 'esm', platform: 'node', jsx: 'automatic', packages: 'external', loader: { '.css': 'empty' }, logLevel: 'silent' });
-  const { QuestionCard, ToolGroup } = await import(pathToFileURL(outfile).href);
-  const { createElement } = await import('react');
-  const { renderToStaticMarkup } = await import('react-dom/server');
-  const question = { questions: [{ question: 'Q?', options: [{ label: 'A', description: 'da' }, { label: 'B' }] }] };
-  const items = groupTranscript([use('q', 'AskUserQuestion', question), res('q', 'Your questions have been answered: "Q?"="B". ok'), use('a', 'Bash', { command: 'npm test' }), res('a', 'fail', true), use('b', 'Read', { file_path: '/r/x.ts' })], true);
-  const card = renderToStaticMarkup(createElement(QuestionCard, { call: items[0].call, waitingHint: '' }));
-  assert.match(card, /Answered/);
-  assert.match(card, /<li class="selected"><div>.*<strong>B<\/strong>/);
-  const waiting = renderToStaticMarkup(createElement(QuestionCard, { call: groupTranscript([use('w', 'AskUserQuestion', question)], true)[0].call, waitingHint: 'Waiting for an answer (answer in the terminal)' }));
-  assert.match(waiting, /Waiting for an answer \(answer in the terminal\)/);
-  const props = { groupKey: items[1].key, calls: items[1].calls, onToggle() {}, openCalls: [], onToggleCall() {} };
-  const collapsed = renderToStaticMarkup(createElement(ToolGroup, { ...props, open: false }));
-  assert.match(collapsed, /2 tool calls · Bash · Read/);
-  assert.match(collapsed, /1 failed/);
-  assert.match(collapsed, /Running: <strong>Read<\/strong>/);
-  assert.ok(!collapsed.includes('tool-calls'), 'collapsed group renders no call rows');
-  const open = renderToStaticMarkup(createElement(ToolGroup, { ...props, open: true, openCalls: [items[1].calls[0].seq] }));
-  assert.equal((open.match(/class="tool-call /g) || []).length, 2);
-  assert.match(open, /<pre>fail<\/pre>/);
-});
 test('stabilize keeps unchanged calls and groups, replaces changed ones', () => {
   const events = [use('a', 'Read', {}), res('a'), msg('assistant'), use('b', 'Bash', { command: 'ls' }), use('q', 'AskUserQuestion', { questions: [] })];
   const first = groupTranscript(events, true);
@@ -143,14 +113,14 @@ test('stabilize keeps unchanged calls and groups, replaces changed ones', () => 
 });
 
 test('compact_boundary renders a divider with trigger and token sizes', async () => {
-  const { compactSummary } = await import('../src/toolGroups.ts');
+  const { compactSummary } = await import('../src/domain/toolGroups.ts');
   assert.equal(compactSummary({ compact_metadata: { trigger: 'manual', pre_tokens: 48026, post_tokens: 8969 } }), 'Context compacted (manual) · 48.0k → 9.0k tokens');
   assert.equal(compactSummary({ compact_metadata: { trigger: 'auto', pre_tokens: 900, post_tokens: 300 } }), 'Context compacted (auto) · 900 → 300 tokens');
   assert.equal(compactSummary(undefined), 'Context compacted');
 });
 
 test('isCompacting follows the latest system status until the boundary arrives', async () => {
-  const { isCompacting } = await import('../src/toolGroups.ts');
+  const { isCompacting } = await import('../src/domain/toolGroups.ts');
   const status = value => ({ seq: ++seq, kind: 'status', text: 'status', payload: { type: 'system', subtype: 'status', status: value }, createdAt: at(0) });
   const hook = { seq: ++seq, kind: 'status', text: 'hook_started', payload: { type: 'system', subtype: 'hook_started' }, createdAt: at(0) };
   assert.equal(isCompacting([msg('user'), status('compacting'), hook]), true);

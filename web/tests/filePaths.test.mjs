@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { absoluteDirs, dirname, fileKind, headingSlug, languageOf, parseFileHref, pathInCode, relativeTarget, remarkFilePaths, splitPaths } from '../src/filePaths.ts';
+import { absoluteDirs, dirname, fileKind, headingSlug, languageOf, parseFileHref, pathInCode, relativeTarget, remarkFilePaths, splitPaths } from '../src/domain/filePaths.ts';
 
 const paths = text => splitPaths(text).filter(item => typeof item !== 'string').map(item => item.line ? `${item.path}@${item.line}` : item.path);
 

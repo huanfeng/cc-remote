@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mentionAt } from '../src/mentions.ts';
+import { mentionAt } from '../src/domain/mentions.ts';
 
 test('the @word the caret is in', () => {
   assert.deepEqual(mentionAt('@', 1), { start: 0, end: 1, query: '' });
