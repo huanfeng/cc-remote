@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { useBackend } from '@/backend/backend';
 import type { PendingRequest, Provider, Session, SessionEvent } from '@/backend/types';
 import { useDrafts } from '@/features/composer/drafts';
+import { useRequestDrafts } from '@/features/requests/drafts';
 
 export interface TranscriptState {
   session?: Session;
@@ -52,6 +53,8 @@ export function useTranscript(key: string, id: string | undefined, native?: Prov
     if (!id) return;
     const { patch } = useTranscripts.getState();
     return backend.watchTranscript(id, u => {
+      // Card drafts of requests the session no longer lists are done with.
+      if (!native) useRequestDrafts.getState().prune(id, new Set(u.requests.map(r => r.id)));
       patch(key, cur => {
         // The first update of a watch carries the tail; treat it as a reset even
         // if a backend leaves the flag off, so hasMore is never lost.

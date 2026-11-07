@@ -3,7 +3,7 @@
 // approvals unblock the turn, queued messages are delivered after it, and the
 // terminal is a small fake TUI that echoes and answers.
 import { nanoid } from 'nanoid';
-import { BackendError, type Backend, type ClaudeSettings, type TranscriptUpdate, type Unsubscribe } from '../backend';
+import { BackendError, type Backend, type ClaudeSettings, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
   Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply,
@@ -279,8 +279,12 @@ export class MockBackend implements Backend {
   }
 
   private uploads = new Map<string, Attachment>();
-  async upload(_id: string, file: File): Promise<Attachment> {
-    await wait(600);
+  async upload(_id: string, file: File, opts?: UploadOptions): Promise<Attachment> {
+    for (const f of [0.25, 0.5, 0.75, 1]) {
+      if (opts?.signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
+      await wait(150);
+      opts?.onProgress?.(f);
+    }
     const a: Attachment = {
       id: nanoid(8), kind: file.type.startsWith('image/') ? 'image' : 'file', name: file.name, mime: file.type, size: file.size,
       url: URL.createObjectURL(file),
@@ -288,6 +292,8 @@ export class MockBackend implements Backend {
     this.uploads.set(a.id, a);
     return a;
   }
+
+  async assetUrl(url: string) { return url; }
 
   async editQueued(id: string, mid: string, text: string) {
     await latency();

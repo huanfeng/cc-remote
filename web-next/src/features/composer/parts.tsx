@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/components/lib/utils';
 import type { Attachment, PendingMessage } from '@/backend/types';
+import { useAssetUrl } from '@/backend/backend';
 import type { ContextReading } from '@/domain/contextReading';
 import type { Provider } from '@/domain/providers';
 import { locale, t } from '@/lib/i18n';
@@ -75,10 +76,18 @@ export interface Uploading {
   name: string;
   size: number;
   preview?: string;
+  /** 0…1 once the backend reports it. */
+  progress?: number;
 }
 
-export function AttachmentStrip({ attachments, uploading, onRemove, mobile }: {
-  attachments: Attachment[]; uploading: Uploading[]; onRemove?(id: string): void; mobile?: boolean;
+/** An attachment image; host URLs need the token, so they load through the backend. */
+function AttachmentImage({ attachment: a, className }: { attachment: Attachment; className?: string }) {
+  const src = useAssetUrl(a.url);
+  return src ? <img src={src} alt={a.name} className={className} /> : <span className={cn('block bg-surface', className)} aria-label={a.name} />;
+}
+
+export function AttachmentStrip({ attachments, uploading, onRemove, onCancel, mobile }: {
+  attachments: Attachment[]; uploading: Uploading[]; onRemove?(id: string): void; onCancel?(key: string): void; mobile?: boolean;
 }) {
   const [viewing, setViewing] = useState<Attachment | null>(null);
   if (!attachments.length && !uploading.length) return null;
@@ -89,7 +98,7 @@ export function AttachmentStrip({ attachments, uploading, onRemove, mobile }: {
         return image ? (
           <div key={a.id} className="group/att relative">
             <button type="button" onClick={() => setViewing(a)} className="block size-14 overflow-hidden rounded-lg border border-border/60 bg-surface" aria-label={t(`View ${a.name}`, `查看 ${a.name}`)}>
-              <img src={a.url} alt={a.name} className="size-full object-cover" />
+              <AttachmentImage attachment={a} className="size-full object-cover" />
             </button>
             {onRemove && <RemoveButton name={a.name} mobile={mobile} onClick={() => onRemove(a.id)} />}
           </div>
@@ -105,20 +114,30 @@ export function AttachmentStrip({ attachments, uploading, onRemove, mobile }: {
         );
       })}
       {uploading.map(u => (
-        <div key={u.key} className="relative flex h-14 max-w-56 items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-surface/60 px-2.5" aria-busy>
-          {u.preview ? <img src={u.preview} alt="" className="absolute inset-0 size-full object-cover opacity-40" /> : null}
-          <Spinner className="relative size-3.5 text-foreground-subtle" />
-          <span className="relative flex min-w-0 flex-col">
-            <span className="truncate text-ui-sm">{u.name}</span>
-            <span className="text-ui-xs text-foreground-subtlest">{t('Uploading…', '上传中…')}</span>
-          </span>
+        <div key={u.key} className="group/att relative">
+          <div className="relative flex h-14 max-w-56 items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-surface/60 px-2.5" aria-busy>
+            {u.preview ? <img src={u.preview} alt="" className="absolute inset-0 size-full object-cover opacity-40" /> : null}
+            <Spinner className="relative size-3.5 text-foreground-subtle" />
+            <span className="relative flex min-w-0 flex-col">
+              <span className="truncate text-ui-sm">{u.name}</span>
+              <span className="text-ui-xs tabular-nums text-foreground-subtlest">
+                {u.progress !== undefined ? t(`Uploading ${Math.round(u.progress * 100)}%`, `上传中 ${Math.round(u.progress * 100)}%`) : t('Uploading…', '上传中…')}
+              </span>
+            </span>
+            {u.progress !== undefined && (
+              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-progress-surface" aria-hidden>
+                <span className="block h-full bg-brand transition-[width] duration-150" style={{ width: `${Math.round(u.progress * 100)}%` }} />
+              </span>
+            )}
+          </div>
+          {onCancel && <RemoveButton name={u.name} mobile={mobile} onClick={() => onCancel(u.key)} />}
         </div>
       ))}
       <Dialog open={!!viewing} onOpenChange={o => { if (!o) setViewing(null); }}>
         <DialogContent className="max-w-[min(92vw,1100px)] gap-2 p-2" showCloseButton>
           <DialogTitle className="sr-only">{viewing?.name}</DialogTitle>
           <DialogDescription className="sr-only">{t('Attachment preview', '附件预览')}</DialogDescription>
-          {viewing && <img src={viewing.url} alt={viewing.name} className="max-h-[80dvh] w-full rounded-xl object-contain" />}
+          {viewing && <AttachmentImage attachment={viewing} className="max-h-[80dvh] w-full rounded-xl object-contain" />}
         </DialogContent>
       </Dialog>
     </div>

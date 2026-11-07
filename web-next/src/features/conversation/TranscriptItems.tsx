@@ -1,9 +1,12 @@
 // Renders transcript items (top level or a subagent's nested transcript).
 import { memo, useMemo } from 'react';
-import type { TranscriptItem } from '@/domain/toolGroups';
+import type { ToolCall, TranscriptItem } from '@/domain/toolGroups';
 import { parseCodexStatus } from '@/domain/codexStatus';
 import { QuestionCard } from '@/features/requests/QuestionCard';
 import { PlanCard } from '@/features/requests/PlanCard';
+import { useWholeCall } from '@/features/requests/wholeCall';
+import { findPlan } from '@/domain/planSource';
+import { useTranscripts } from '@/store/transcripts';
 import { useConversation } from './context';
 import { AssistantMessage, CompactDivider, ErrorCallout, Recap, TeammateMessage, UserMessage } from './Messages';
 import { ToolGroup } from './tools/ToolGroup';
@@ -15,17 +18,29 @@ const StatusItem = memo(function StatusItem({ payload, kind, seq }: { payload: u
   return status ? <CodexStatusCard status={status} /> : null;
 });
 
+/** A question or plan card in the transcript; its call loads whole first if the listing cut it. */
+function SpecialCard({ call }: { call: ToolCall }) {
+  const { tkey, session, mobile, requestsByCall, interactions } = useConversation();
+  const request = requestsByCall.get(call.seq);
+  const plan = call.name === 'ExitPlanMode';
+  // ExitPlanMode comes with input {}: the plan is in the request or the Write that saved it.
+  const events = useTranscripts(s => (plan ? s.byKey[tkey]?.events : undefined));
+  const source = useMemo(() => (plan ? findPlan(events ?? [], call.seq, call.input, request?.input) : undefined), [plan, events, call.seq, call.input, request?.input]);
+  const loading = useWholeCall(call, plan ? {
+    content: !!source?.plan.trim() && !source.truncated,
+    extra: source?.truncated && source.seq ? [source.seq] : [],
+  } : {});
+  const props = { call, request, session, interaction: interactions.get(call.seq), mobile, loading };
+  return <div className="my-1 rounded-xl" data-call-id={call.id || undefined}>{plan ? <PlanCard {...props} source={source} /> : <QuestionCard {...props} />}</div>;
+}
+
 const Item = memo(function Item({ item, nested }: { item: TranscriptItem; nested: boolean }) {
-  const { session, mobile, streamingSeq, openers, requestsByCall, interactions } = useConversation();
+  const { streamingSeq, openers } = useConversation();
   switch (item.type) {
     case 'tools': return <ToolGroup calls={item.calls} />;
     case 'agent':
       return <AgentCard call={item.call} items={item.items} renderNested={() => <TranscriptItems items={item.items} nested />} />;
-    case 'special': {
-      const request = requestsByCall.get(item.call.seq);
-      const props = { call: item.call, request, session, interaction: interactions.get(item.call.seq), mobile };
-      return <div className="my-1 rounded-xl" data-call-id={item.call.id || undefined}>{item.call.name === 'ExitPlanMode' ? <PlanCard {...props} /> : <QuestionCard {...props} />}</div>;
-    }
+    case 'special': return <SpecialCard call={item.call} />;
     case 'event': {
       const e = item.event;
       switch (e.kind) {

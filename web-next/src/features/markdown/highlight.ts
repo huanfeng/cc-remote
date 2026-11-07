@@ -18,7 +18,10 @@ export const HIGHLIGHT_MAX = 100_000;
 const ALIASES: Record<string, string> = { sh: 'bash', shell: 'bash', zsh: 'bash', console: 'bash', ps1: 'powershell', yml: 'yaml', golang: 'go', 'c++': 'cpp', py: 'python', ts: 'typescript', js: 'javascript', md: 'markdown', rs: 'rust' };
 
 function getHighlighter(): Promise<Highlighter> {
-  highlighter ??= import('shiki').then(m => m.createHighlighter({ themes: ['github-light', 'github-dark'], langs: [] }) as Promise<Highlighter>);
+  // The JavaScript regex engine, not the default Oniguruma WASM one: the host's
+  // CSP has no 'wasm-unsafe-eval', so WASM would fail to compile in production.
+  highlighter ??= Promise.all([import('shiki'), import('shiki/engine/javascript')]).then(([m, js]) =>
+    m.createHighlighter({ themes: ['github-light', 'github-dark'], langs: [], engine: js.createJavaScriptRegexEngine() }) as Promise<Highlighter>);
   return highlighter;
 }
 

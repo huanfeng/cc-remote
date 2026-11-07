@@ -155,6 +155,9 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   useEffect(() => { if (!mobile) box.current?.focus({ preventScroll: true }); }, [mobile]);
 
   // ---------- attachments ----------
+  // Uploads in flight, by chip key: removing the chip cancels its upload.
+  const uploadAborts = useRef(new Map<string, AbortController>());
+  const cancelUpload = (key: string) => { uploadAborts.current.get(key)?.abort(); };
   const addFiles = async (files: File[]) => {
     if (!files.length) return;
     const { accepted, tooLarge, overLimit } = admitFiles(files, attachments.length + uploading.length);
@@ -164,12 +167,19 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
       const key = `${file.name}:${file.size}:${Math.random().toString(36).slice(2)}`;
       const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
       setUploading(u => [...u, { key, name: file.name, size: file.size, preview }]);
+      const abort = new AbortController();
+      uploadAborts.current.set(key, abort);
       try {
-        const a = await backend.upload(id, file);
-        setAttachments(id, list => [...list, a]);
+        const a = await backend.upload(id, file, {
+          signal: abort.signal,
+          onProgress: progress => setUploading(u => u.map(x => (x.key === key ? { ...x, progress } : x))),
+        });
+        if (!abort.signal.aborted) setAttachments(id, list => [...list, a]);
       } catch (e) {
+        if (abort.signal.aborted) return;
         toast(t(`Upload failed: ${file.name} · ${errorText(e)}`, `上传失败：${file.name} · ${errorText(e)}`), { variant: 'warning', position: 'bottom-center' });
       } finally {
+        uploadAborts.current.delete(key);
         setUploading(u => u.filter(x => x.key !== key));
         if (preview) URL.revokeObjectURL(preview);
       }
@@ -383,7 +393,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
         />
       )}
 
-      <AttachmentStrip attachments={attachments} uploading={uploading} mobile={mobile} onRemove={aid => setAttachments(id, l => l.filter(a => a.id !== aid))} />
+      <AttachmentStrip attachments={attachments} uploading={uploading} mobile={mobile} onCancel={cancelUpload} onRemove={aid => setAttachments(id, l => l.filter(a => a.id !== aid))} />
 
       <div className="relative">
         <textarea

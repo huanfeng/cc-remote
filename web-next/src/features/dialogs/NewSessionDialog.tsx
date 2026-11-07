@@ -24,6 +24,12 @@ import { EffortField, ModelField, PermissionField } from './pickers';
 
 type Resume = { id: string; provider: Provider; cwd: string };
 
+/** Opens a session just created (or imported) here, with the sidebar on the session list it is in. */
+function openCreated(id: string) {
+  useApp.getState().set({ sidebarTab: 'sessions' });
+  select({ kind: 'session', id });
+}
+
 export function NewSessionDialog({ open, onOpenChange, mobile, resume }: { open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean; resume?: Resume }) {
   return resume
     ? <ResumeDialog open={open} onOpenChange={onOpenChange} mobile={mobile} resume={resume} />
@@ -101,7 +107,7 @@ function CreateDialog({ open, onOpenChange, mobile }: { open: boolean; onOpenCha
       const session = await backend.createSession(body);
       if (provider === 'claude') setPrefs({ newSessionMode: mode });
       onOpenChange(false);
-      select({ kind: 'session', id: session.id });
+      openCreated(session.id);
     } catch (err) {
       if (err instanceof BackendError && (err.status === 428 || err.code === 'trust-required')) {
         setTrustNeeded(true);
@@ -281,7 +287,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
         ? await backend.createSession({ mode: 'terminal', trustFolder: true, resume: resume.id, cwd: resume.cwd, title: '', ...(profileId ? { profileId } : {}) })
         : await backend.importNative(resume.id, resume.provider, profileId || undefined);
       onOpenChange(false);
-      select({ kind: 'session', id: session.id });
+      openCreated(session.id);
     } catch (err) {
       setError(errorMessage(err));
     } finally {

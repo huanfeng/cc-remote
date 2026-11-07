@@ -144,10 +144,12 @@ function QuestionBlock({ view, index, interactive, picks, custom, mobile, busy, 
   );
 }
 
-export const QuestionCard = memo(function QuestionCard({ call, request, session, interaction, mobile }: {
+export const QuestionCard = memo(function QuestionCard({ call, request, session, interaction, mobile, loading }: {
   call: ToolCall; request?: PendingRequest; session: Session; interaction?: Interaction; mobile: boolean;
+  /** The questions are still loading (the listing cut the call). */
+  loading?: boolean;
 }) {
-  const { draft, busy, settled, error, update, answer } = useRequest(request?.id ?? '');
+  const { draft, busy, settled, error, update, answer } = useRequest(request?.id ?? '', session.id);
   const views = questionViews(call);
   const interactive = !!request && call.status === 'running';
   const picks = draft.picks ?? {}, custom = draft.custom ?? {};
@@ -186,7 +188,9 @@ export const QuestionCard = memo(function QuestionCard({ call, request, session,
         </>
       ) : undefined}
     >
-      {views.length === 0 && <p className="text-ui-sm text-foreground-subtlest">{t('(no questions)', '（没有问题）')}</p>}
+      {views.length === 0 && (loading
+        ? <p className="animate-pulse text-ui-sm text-foreground-subtlest">{t('Loading the questions…', '正在加载问题…')}</p>
+        : <p className="text-ui-sm text-foreground-subtlest">{t('(no questions)', '（没有问题）')}</p>)}
       {views.map((view, index) => (
         <QuestionBlock
           key={view.question || index}

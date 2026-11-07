@@ -5,19 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f8f8f8" />
+    <!-- The host rewrites <html lang>, the title and the icon below with its identity (internal/server/identity.go). -->
+    <link rel="icon" href="/icon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>CC Remote</title>
-    <script>
-      // Apply the theme before first paint so the page never flashes the wrong one.
-      (function () {
-        try {
-          var pref = localStorage.getItem('ccn-theme') || 'system';
-          var dark = pref === 'dark' || (pref === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-          var root = document.documentElement;
-          root.classList.toggle('dark', dark);
-          root.dataset.palette = localStorage.getItem('ccn-palette') || 'graphite';
-        } catch (e) { document.documentElement.dataset.palette = 'graphite'; }
-      })();
-    </script>
+    <!-- A file, not inline: the host's Content-Security-Policy runs no inline script. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

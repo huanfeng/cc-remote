@@ -62,7 +62,7 @@ export const HOST_ICONS: Record<string, { icon: LucideIcon; label: () => string 
 
 /** The host's glyph on its colour: a preset icon, or a few characters / an emoji. */
 export function HostGlyph({ icon, color, className }: { icon: string; color: string; className?: string }) {
-  const preset = HOST_ICONS[icon || 'laptop'];
+  const preset = HOST_ICONS[icon || 'code'];
   // The host colour is user data, not a theme colour.
   return (
     <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg text-white', className)} style={{ background: color }}>

@@ -27,6 +27,7 @@ import { remarkCjkAutolinks } from '@/domain/autolinks';
 import { copyText } from '@/domain/clipboard';
 import { t } from '@/lib/i18n';
 import { useHighlight } from './highlight';
+import { HostImage } from './images';
 import './markdown.css';
 
 // ---------- File links ----------
@@ -36,6 +37,15 @@ export type OpenFile = (ref: FileRef, bases: string[]) => void;
 export const MarkdownFiles = createContext<OpenFile | null>(null);
 /** Directories relative paths in the Markdown being rendered may be relative to. */
 const Bases = createContext<string[]>([]);
+
+/** An image named by a host path; other sources (http(s), data:) as they are. */
+function MarkdownImage({ src, alt }: { src?: unknown; alt?: string }) {
+  const open = useContext(MarkdownFiles);
+  const bases = useContext(Bases);
+  const file = typeof src === 'string' ? relativeTarget(src) : undefined;
+  if (file) return <HostImage file={file} alt={alt} bases={bases} onOpen={open ? () => open(file, bases) : undefined} />;
+  return typeof src === 'string' ? <img src={src} alt={alt || ''} loading="lazy" className="max-w-full rounded-lg" /> : null;
+}
 
 export function FileLink({ file, children, className }: { file: FileRef; children: ReactNode; className?: string }) {
   const open = useContext(MarkdownFiles);
@@ -180,6 +190,7 @@ const components: Components = {
     }
     return <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="text-icon-blue underline-offset-2 hover:underline">{children}</a>;
   },
+  img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} />,
   code: ({ children, className, node: _n, ...props }) => {
     if ('data-block' in props) {
       const language = languageOf(className);
@@ -192,9 +203,10 @@ const components: Components = {
 
 // ---------- Entry ----------
 
-function MarkdownBody({ text, streaming, className }: { text: string; streaming: boolean; className?: string }) {
+function MarkdownBody({ text, streaming, className, dir }: { text: string; streaming: boolean; className?: string; dir?: string }) {
   const outer = useContext(Bases);
-  const bases = useMemo(() => [...new Set([...absoluteDirs(text), ...outer])], [text, outer]);
+  // Relative paths resolve against the document's directory, the absolute directories the text names, then outer ones.
+  const bases = useMemo(() => [...new Set([...(dir ? [dir] : []), ...absoluteDirs(text), ...outer])], [text, dir, outer]);
   const source = useMemo(() => normalizeClaudeMarkdown(text), [text]);
   return (
     <Bases.Provider value={bases}>
@@ -216,6 +228,10 @@ function MarkdownBody({ text, streaming, className }: { text: string; streaming:
   );
 }
 
-export const Markdown = memo(function Markdown({ text, streaming = false, className }: { text: string; streaming?: boolean; className?: string }) {
-  return <MarkdownBody text={text} streaming={streaming} className={className} />;
+export const Markdown = memo(function Markdown({ text, streaming = false, className, dir }: {
+  text: string; streaming?: boolean; className?: string;
+  /** A document's directory (the file viewer): its relative links and images resolve there first. */
+  dir?: string;
+}) {
+  return <MarkdownBody text={text} streaming={streaming} className={className} dir={dir} />;
 });

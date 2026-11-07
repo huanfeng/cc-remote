@@ -18,6 +18,7 @@ import { copyText } from '@/domain/clipboard';
 import { useIsMobile } from '@/lib/hooks';
 import { t } from '@/lib/i18n';
 import { Markdown, MarkdownFiles } from '@/features/markdown/Markdown';
+import { MarkdownImages, useImageResolver } from '@/features/markdown/images';
 import { CodeView } from './CodeView';
 import { ImageView } from './ImageView';
 import { MAX_RENDER_BYTES, dirOf, formatBytes, shikiLang, splitLine, svgDataUrl, viewKind } from './fileView';
@@ -81,15 +82,19 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
 
   useEffect(() => {
     let live = true;
+    let held: string | undefined;
+    // An object URL the backend made for this file is ours: released when the entry closes or is replaced.
+    const release = (url?: string) => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
     setLoaded(undefined);
     setError('');
     backend.readFile(sessionId, requested, entry.base).then(async file => {
       let src: string | undefined;
       if (viewKind(file) === 'image') src = await imageSource(file);
-      if (live) setLoaded({ file, src });
+      if (live) { held = file.url; setLoaded({ file, src }); } else release(file.url);
     }, err => { if (live) setError(err instanceof Error ? err.message : String(err)); });
-    return () => { live = false; };
+    return () => { live = false; release(held); };
   }, [backend, sessionId, requested, entry.base, attempt]);
+  const images = useImageResolver(sessionId);
 
   const file = loaded?.file;
   const shownPath = file?.path || requested;
@@ -145,9 +150,11 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
     body = (
       <div className="h-full overflow-auto">
         <MarkdownFiles.Provider value={openLink}>
-          <div className={cn('mx-auto max-w-3xl', mobile ? 'px-4 py-4' : 'px-10 py-8')}>
-            <Markdown text={file.text!} />
-          </div>
+          <MarkdownImages.Provider value={images}>
+            <div className={cn('mx-auto max-w-3xl', mobile ? 'px-4 py-4' : 'px-10 py-8')}>
+              <Markdown text={file.text!} dir={dirname(shownPath)} />
+            </div>
+          </MarkdownImages.Provider>
         </MarkdownFiles.Provider>
       </div>
     );

@@ -13,6 +13,7 @@ import { t } from '@/lib/i18n';
 import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { ErrorText, errorMessage } from '@/features/dialogs/common';
 import { GroupTitle, HOST_ICONS, HostGlyph, SectionHeader, useReportDirty } from './parts';
+import { SignOutRow } from '@/features/auth/SignOut';
 
 type Look = { name: string; color: string; icon: string };
 const MAX_ICON = 3;
@@ -70,6 +71,7 @@ export function HostSection({ mobile }: { mobile: boolean }) {
           <span className="flex-1">{t('Host status', '宿主状态')}<span className="ml-2 text-ui-sm text-foreground-subtlest">{t('Service, diagnostics and usage', '服务、诊断与用量')}</span></span>
           <ChevronRight className="size-4 text-foreground-subtlest" />
         </button>
+        <SignOutRow />
       </GroupCard>
 
       <GroupTitle>{t('Identity', '身份')}</GroupTitle>

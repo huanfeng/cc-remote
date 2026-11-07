@@ -79,6 +79,8 @@ export interface Session {
   permissionMode?: string;
   model?: string;
   effort?: string;
+  /** Claude Code options a terminal session was started with. */
+  claudeArgs?: string[];
   queued?: PendingMessage[];
   live?: LiveStatus;
   activeTasks?: number;
@@ -103,6 +105,7 @@ export type EventKind =
 
 export interface SessionEvent {
   seq: number;
+  sessionId?: string;
   kind: EventKind | string;
   text?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,6 +146,10 @@ export interface CommandReply {
   message?: string;
   openSettings?: boolean;
   sendMessage?: boolean;
+  /** /help lists the commands the session supports. */
+  commands?: SlashCommand[];
+  /** /status returns the decorated session. */
+  session?: Session;
 }
 
 export interface TaskInfo {
@@ -245,14 +252,27 @@ export interface SessionStats {
   lastActivityAt: string;
 }
 
+/** One session's row in /api/status: its identity plus its recorded statistics. */
+export interface SessionStatusRow extends SessionStats {
+  id: string;
+  title: string;
+  mode: SessionMode | string;
+  status: SessionStatus | string;
+  online: boolean;
+  cwd: string;
+}
+
 export interface HostStatus {
   version: string;
   pid: number;
   startedAt: string;
   uptimeSeconds: number;
   listen: string;
+  listenAddresses?: string[];
   listeners: { address: string; loopback: boolean; insecure?: boolean }[];
   dataDir: string;
+  claudeConfigDir?: string;
+  logFile?: string;
   goVersion: string;
   os: string;
   arch: string;
@@ -261,8 +281,11 @@ export interface HostStatus {
   sessions: Record<'total' | 'managed' | 'terminal' | 'running' | 'waiting' | 'idle', number>;
   pendingRequests: number;
   activeRuns: number;
-  totals?: { turns: number; costUSD: number; tokens: number; durationMs: number; toolCalls: number; errors: number };
+  storage?: { databaseBytes: number; logBytes: number; uploadsBytes?: number };
+  /** Sums of every session's statistics (GET /api/status only, not /summary). */
+  totals?: SessionStats;
   daily?: { date: string; turns: number; costUSD: number; tokens: number }[];
+  sessionStats?: SessionStatusRow[];
   logTail?: string[];
 }
 
@@ -294,6 +317,8 @@ export interface NewSessionRequest {
   mode?: SessionMode;
   trustFolder?: boolean;
   resume?: string;
+  /** Claude Code options for a terminal session (the host validates them). */
+  claudeArgs?: string[];
   permissionMode?: string;
   model?: string;
   effort?: string;
@@ -363,5 +388,11 @@ export interface TerminalStream {
 export interface TerminalHandlers {
   onData(chunk: Uint8Array | string): void;
   onSize(size: TerminalSize): void;
-  onState(state: TerminalState, detail?: string): void;
+  /**
+   * A stream reports 'connecting', then 'open', and ends with 'exited' (Claude Code
+   * quit, close code 4001: do not reconnect) or 'failed' (reconnect with backoff).
+   * opts.retry false marks a failure retrying cannot fix (the session is gone or
+   * is not a terminal, the token was refused, the address is blocked).
+   */
+  onState(state: TerminalState, detail?: string, opts?: { retry?: boolean }): void;
 }

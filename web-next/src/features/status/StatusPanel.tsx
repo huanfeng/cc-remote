@@ -29,12 +29,15 @@ export function StatusPanel({ open, onOpenChange, mobile }: { open: boolean; onO
 
   useEffect(() => {
     let live = true;
+    let full = false;
     const load = () => {
       setLoading(true);
       backend.status()
-        .then(s => { if (live) { setStatus(s); setError(''); } }, e => { if (live) setError(errorMessage(e)); })
+        .then(s => { if (live) { full = true; setStatus(s); setError(''); } }, e => { if (live) setError(errorMessage(e)); })
         .finally(() => { if (live) setLoading(false); });
     };
+    // The summary skips the statistics scan: it paints first, the full reply replaces it.
+    backend.statusSummary?.().then(s => { if (live && !full) setStatus(old => old ?? s); }, () => {});
     load();
     const timer = window.setInterval(() => { if (!document.hidden) load(); }, REFRESH);
     return () => { live = false; window.clearInterval(timer); };
@@ -174,7 +177,7 @@ function Counts({ status: s }: { status: HostStatus }) {
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
             <Stat label={t('Turns', '轮次')} value={compactNumber(totals.turns)} />
             <Stat label={t('Cost', '费用')} value={costText(totals.costUSD)} />
-            <Stat label="Tokens" value={compactNumber(totals.tokens)} />
+            <Stat label="Tokens" value={totals.costKnown ? compactNumber(totals.inputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheCreationTokens) : '—'} />
             <Stat label={t('Run time', '执行耗时')} value={durationText(totals.durationMs / 1000)} />
             <Stat label={t('Tool calls', '工具调用')} value={compactNumber(totals.toolCalls)} />
             <Stat label={t('Errors', '错误')} value={compactNumber(totals.errors)} />

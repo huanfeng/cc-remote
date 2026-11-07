@@ -338,7 +338,10 @@ export const hostStatus: HostStatus = {
   service: { managed: true, manager: 'Windows 计划任务' },
   sessions: { total: 7, managed: 5, terminal: 2, running: 1, waiting: 2, idle: 4 },
   pendingRequests: 2, activeRuns: 1,
-  totals: { turns: 412, costUSD: 187.4, tokens: 48_200_000, durationMs: 86_400_000, toolCalls: 6210, errors: 31 },
+  totals: {
+    sessionId: '', turns: 412, results: 409, costUSD: 187.4, costKnown: true, inputTokens: 6_100_000, outputTokens: 1_900_000,
+    cacheReadTokens: 38_400_000, cacheCreationTokens: 1_800_000, durationMs: 86_400_000, toolCalls: 6210, errors: 31, lastActivityAt: ago(2),
+  },
   daily: Array.from({ length: 14 }, (_, i) => ({
     date: new Date(NOW - (13 - i) * 86_400_000).toISOString().slice(0, 10),
     turns: [12, 30, 22, 8, 0, 41, 37, 26, 19, 44, 52, 33, 28, 17][i],

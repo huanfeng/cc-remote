@@ -24,7 +24,7 @@ function Preview({ request }: { request: PendingRequest }) {
 }
 
 export const ApprovalCard = memo(function ApprovalCard({ request, session }: { request: PendingRequest; session: Session }) {
-  const { busy, settled, error, answer } = useRequest(request.id);
+  const { busy, settled, error, answer } = useRequest(request.id, session.id);
   const description = typeof request.input?.description === 'string' ? request.input.description : '';
   return (
     <RequestShell

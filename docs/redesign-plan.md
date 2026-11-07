@@ -51,6 +51,21 @@
   独立审查发现的 1 个 HIGH、10 个 MEDIUM 已修复。等待用户在浏览器中验收。
 - 已定：新建终端会话时，「信任此文件夹」由宿主判断（未信任返回 428 后再提示勾选），不再每次强制勾选。
 
+- 2026-11-07 用户验收阶段 1 通过（浅色向 Codex 提亮、自带 Inter + 思源黑体、顶栏供应商/路径芯片），
+  进入阶段 2+3：正式接入宿主并替换旧前端。
+
+## 阶段 2+3 工作包
+- **WP-http**（`src/backend/http/**`，独占 `backend/types.ts`、`backend/backend.ts`）：HttpBackend
+  实现 Backend 全部方法；宿主 JSON 与 web-next 类型对齐（以 Go 源为准）；轮询、ETag、409 重置、
+  在途去重；上传进度；终端 ticket + WS（重连退避、4001、打开超时）；fake fetch 单元测试。
+- **WP-shell**（`App.tsx`、`lib/hosts.ts`、`features/auth/**`、`features/standalone/**`、`public/`）：
+  登录页与安全须知、明文 http 提示、登出、拒绝 iframe、sw.js/PWA、标题徽章/favicon/宿主色、
+  列表变化通知；独立版多宿主（添加/编辑/切换/LAN/地址迁移/`?host=`）；开发时 `?mock` 用 MockBackend。
+- **WP-replace**（最后做）：web-next 移到 `web/` 替换旧版；`embed.go`、standalone 构建、CSP、
+  CI/release/pages、文档与脚本；Go 编译嵌入验证。
+- **验收**：独立数据目录的开发宿主（`--listen 127.0.0.1:8790 --data-dir ./.test-data/dev`），
+  按 `redesign-inventory.md` 逐项在浏览器中走查。
+
 ## 阶段 2 待办（来自阶段 1）
 - HttpBackend：实现 `Backend` 接口（包括 BackendError、`fileLink`、`steerStatus`、`claudeSettings`、
   `replaceOAuthProfile`）；在内部轮询，节奏为列表 3 秒、会话 1.5 秒、用量 60 秒，并处理 ETag 和 409 重置。

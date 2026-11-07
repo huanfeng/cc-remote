@@ -15,6 +15,7 @@ import { useApp } from '@/store/app';
 import { cn } from '@/components/lib/utils';
 import { t } from '@/lib/i18n';
 import { MarkdownFiles, type OpenFile } from '@/features/markdown/Markdown';
+import { MarkdownImages, useImageResolver } from '@/features/markdown/images';
 import { RequestCard } from '@/features/requests/RequestCard';
 import { toast } from '@/components/ui/toast';
 import { locateCall, revealCall } from './locate';
@@ -112,6 +113,7 @@ export function ConversationView({ tkey, session, transcript, native, mobile }: 
   const openFile = useCallback((path: string, base?: string[], line?: number) => {
     useApp.getState().open({ type: 'file', sessionId: session.id, path: line ? `${path}:${line}` : path, ...(base?.length ? { base } : {}) });
   }, [session.id]);
+  const images = useImageResolver(native ? undefined : session.id);
   const openMarkdownFile = useCallback<OpenFile>((ref, bases) => openFile(ref.path, bases, ref.line), [openFile]);
 
   const ctx = useMemo<ConversationContextValue>(() => ({
@@ -185,6 +187,7 @@ export function ConversationView({ tkey, session, transcript, native, mobile }: 
   return (
     <ConversationContext.Provider value={ctx}>
       <MarkdownFiles.Provider value={native ? null : openMarkdownFile}>
+      <MarkdownImages.Provider value={images}>
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div ref={scrollRef as React.RefCallback<HTMLDivElement>} className="min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]">
             <div ref={contentRef as React.RefCallback<HTMLDivElement>}
@@ -228,6 +231,7 @@ export function ConversationView({ tkey, session, transcript, native, mobile }: 
             </button>
           </div>
         </div>
+      </MarkdownImages.Provider>
       </MarkdownFiles.Provider>
     </ConversationContext.Provider>
   );

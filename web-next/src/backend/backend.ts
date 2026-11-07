@@ -1,9 +1,10 @@
 // The one seam between the UI and a host. The UI never fetches or polls by
 // itself: it calls these methods and subscribes to the watch* streams. The
-// mock backend pushes changes directly; the HTTP backend (phase 2) polls the
-// host behind the same interface (list 3 s, open session 1.5 s, usage 60 s),
-// so polling cadence, ETags and 409 resets stay out of the components.
-import { createContext, useContext } from 'react';
+// mock backend pushes changes directly; the HTTP backend (http/httpBackend.ts)
+// polls the host behind the same interface (list 3 s, open session 1.5 s,
+// usage 60 s), so polling cadence, ETags and 409 resets stay out of the components.
+import { createContext, useContext, useEffect, useState } from 'react';
+import { BackendError } from './errors';
 import type {
   Attachment, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
@@ -13,21 +14,14 @@ import type {
 
 export type Unsubscribe = () => void;
 
-/**
- * Every Backend rejects with this. `status` is the host's HTTP status (409 needs
- * confirmation or is already handled, 428 trust-required, 401 signed out…);
- * `code` and `delivery` carry the host's extra fields when present.
- */
-export class BackendError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly code?: string,
-    readonly delivery?: 'rejected' | 'pending' | 'unknown',
-  ) {
-    super(message);
-    this.name = 'BackendError';
-  }
+export { BackendError };
+export type { Delivery } from './errors';
+
+/** Upload progress and cancellation. */
+export interface UploadOptions {
+  /** Called with 0…1 as the file is sent (not called by backends that cannot tell). */
+  onProgress?: (fraction: number) => void;
+  signal?: AbortSignal;
 }
 
 /** Claude Code's own ~/.claude/settings.json, the "native" layer under CC Remote's defaults. */
@@ -57,7 +51,11 @@ export interface Backend {
   info(): Promise<HostInfo>;
 
   // Sessions
-  watchSessions(onChange: (sessions: Session[]) => void): Unsubscribe;
+  /**
+   * The host's managed sessions, re-delivered whenever the list changes (an
+   * unchanged poll is not delivered). onError reports a failed poll; the watch keeps going.
+   */
+  watchSessions(onChange: (sessions: Session[]) => void, onError?: (e: BackendError) => void): Unsubscribe;
   createSession(body: NewSessionRequest): Promise<Session>;
   patchSession(id: string, patch: SessionPatch): Promise<Session>;
   deleteSession(id: string, opts?: { stop?: boolean }): Promise<void>;
@@ -78,7 +76,14 @@ export interface Backend {
   commands(id: string): Promise<SlashCommand[]>;
   runCommand(id: string, command: string): Promise<CommandReply>;
   mentions(id: string, q: string): Promise<string[]>;
-  upload(id: string, file: File): Promise<Attachment>;
+  upload(id: string, file: File, opts?: UploadOptions): Promise<Attachment>;
+  /**
+   * A URL an <img> or link can use for a host resource that needs the access token
+   * (an attachment's `/api/sessions/{id}/uploads/{uid}` url). Host paths are fetched
+   * with the token and come back as object URLs, cached by the backend (do not
+   * revoke them); data:, blob: and absolute URLs come back unchanged. Prefer useAssetUrl().
+   */
+  assetUrl(url: string): Promise<string>;
   editQueued(id: string, messageId: string, text: string): Promise<void>;
   removeQueued(id: string, messageId: string): Promise<void>;
   sendQueuedNow(id: string, messageId: string): Promise<void>;
@@ -121,6 +126,11 @@ export interface Backend {
   watchUsage(opts: { provider: Provider; sessionId?: string }, onChange: (u: UsageReply) => void): Unsubscribe;
   usageHistory(hours: number): Promise<UsageHistory>;
   status(): Promise<HostStatus>;
+  /** The cheap part of status() (no totals, daily chart, session rows or log tail) for a fast first paint. */
+  statusSummary?(): Promise<HostStatus>;
+
+  /** Stops every poll and stream (the shell switches host or signs out). */
+  dispose?(): void;
 }
 
 export const BackendContext = createContext<Backend | null>(null);
@@ -129,4 +139,25 @@ export function useBackend(): Backend {
   const b = useContext(BackendContext);
   if (!b) throw new Error('useBackend outside BackendContext');
   return b;
+}
+
+const direct = (url: string) => !url.startsWith('/');
+
+/**
+ * Resolves an attachment (or other host) URL for <img src> / <a href>:
+ * undefined while a token-protected host resource loads or if it failed.
+ */
+export function useAssetUrl(url: string | undefined): string | undefined {
+  const backend = useBackend();
+  const [resolved, setResolved] = useState<{ url: string; src?: string }>();
+  const immediate = !url || backend.kind === 'mock' || direct(url);
+  useEffect(() => {
+    if (immediate || !url) return;
+    let live = true;
+    backend.assetUrl(url).then(src => { if (live) setResolved({ url, src }); }, () => { if (live) setResolved({ url }); });
+    return () => { live = false; };
+  }, [backend, url, immediate]);
+  if (!url) return undefined;
+  if (immediate) return url;
+  return resolved?.url === url ? resolved.src : undefined;
 }

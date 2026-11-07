@@ -3,6 +3,7 @@
 import { memo, useState } from 'react';
 import { ChevronRightIcon, FileIcon, TriangleAlertIcon, UsersIcon, XIcon } from 'lucide-react';
 import type { Attachment } from '@/backend/types';
+import { useAssetUrl } from '@/backend/backend';
 import { compactSummary, type TranscriptEvent } from '@/domain/toolGroups';
 import { providerName, providerOf } from '@/domain/providers';
 import { usePrefs } from '@/lib/prefs';
@@ -20,12 +21,7 @@ function Attachments({ items, mobile }: { items: Attachment[]; mobile: boolean }
   const images = items.filter(isImage), files = items.filter(a => !isImage(a));
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
-      {images.map(a => (
-        <a key={a.id} href={a.url} target="_blank" rel="noopener noreferrer" title={a.name}
-          className={cn('block overflow-hidden rounded-lg border border-border/60 bg-surface transition-opacity hover:opacity-90', mobile ? 'size-20' : 'size-24')}>
-          <img src={a.url} alt={a.name} loading="lazy" className="size-full object-cover" />
-        </a>
-      ))}
+      {images.map(a => <AttachmentThumb key={a.id} attachment={a} mobile={mobile} />)}
       {files.map(a => (
         <span key={a.id} title={a.name} className="inline-flex h-8 max-w-56 items-center gap-1.5 rounded-lg border border-border/60 bg-card px-2 text-ui-sm">
           <FileIcon className="size-3.5 shrink-0 text-foreground-subtlest" />
@@ -34,6 +30,18 @@ function Attachments({ items, mobile }: { items: Attachment[]; mobile: boolean }
         </span>
       ))}
     </div>
+  );
+}
+
+/** Host attachment URLs need the token: the image loads through the backend as an object URL. */
+function AttachmentThumb({ attachment: a, mobile }: { attachment: Attachment; mobile: boolean }) {
+  const src = useAssetUrl(a.url);
+  const box = cn('block overflow-hidden rounded-lg border border-border/60 bg-surface transition-opacity hover:opacity-90', mobile ? 'size-20' : 'size-24');
+  if (!src) return <span className={box} title={a.name} aria-label={a.name} />;
+  return (
+    <a href={src} target="_blank" rel="noopener noreferrer" title={a.name} className={box}>
+      <img src={src} alt={a.name} loading="lazy" className="size-full object-cover" />
+    </a>
   );
 }
 

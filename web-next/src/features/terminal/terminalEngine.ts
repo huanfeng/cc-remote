@@ -74,6 +74,8 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
 
   // gen numbers connection attempts: a newer one (or hiding the page) makes an older one's events stale.
   let disposed = false, gen = 0, attempt = 0, exited = false, opened = false;
+  // A failure retrying cannot fix (no such terminal, refused, blocked): only "Connect again" tries again.
+  let refused = false;
   let stream: TerminalStream | undefined;
   let retryTimer = 0, openTimer = 0, frame = 0;
   let controlling = initialControl(mobile, o.fitDevice());
@@ -172,7 +174,7 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
     clearTimeout(retryTimer);
     drop();
     const g = ++gen;
-    if (disposed || exited || document.hidden) return;
+    if (disposed || exited || refused || document.hidden) return;
     o.onUi({ state: 'connecting' });
     firstSize = true; // the size the PTY had before this view connected
     sentKey = '';
@@ -190,7 +192,7 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
         o.onUi({ size: hostSize, held: holding });
         schedule();
       },
-      onState(state, detail) {
+      onState(state, detail, opts) {
         if (!live()) return;
         if (state === 'open') {
           clearTimeout(openTimer);
@@ -206,6 +208,13 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
           drop();
           exited = true;
           o.onUi({ state: 'exited', reason: detail ?? '' });
+          return;
+        }
+        if (state === 'failed' && opts?.retry === false) {
+          drop();
+          clearTimeout(retryTimer);
+          refused = true;
+          o.onUi({ state: 'failed', reason: detail || t('Could not reach the terminal', '无法连接到终端') });
           return;
         }
         if (state === 'failed' || state === 'paused') {
@@ -253,7 +262,7 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-palette'] });
 
   const onVisible = () => {
-    if (exited) return; // only "Start again" starts Claude Code again
+    if (exited || refused) return; // only "Start again" / "Connect again" tries again
     if (document.hidden) {
       clearTimeout(retryTimer);
       drop();
@@ -276,7 +285,7 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
     take: () => { if (!controlling && !holding) { setMode(true); layout(); } },
     follow: value => { setMode(value && !holding); schedule(); },
     layout: schedule,
-    reconnect: () => { exited = false; attempt = 0; o.onUi({ reason: '', attempt: 0 }); connect(); },
+    reconnect: () => { exited = false; refused = false; attempt = 0; o.onUi({ reason: '', attempt: 0 }); connect(); },
     copySelection,
     appCursor: () => !!term.modes.applicationCursorKeysMode,
     bracketedPaste: () => !!term.modes.bracketedPasteMode,
