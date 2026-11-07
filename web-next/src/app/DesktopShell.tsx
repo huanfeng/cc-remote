@@ -16,7 +16,7 @@ export function DesktopShell() {
   const width = usePrefs(s => s.sidebarWidth);
   const selection = useApp(s => s.selection);
   return (
-    <div className="flex h-full min-h-0 bg-sidebar">
+    <div className="flex h-full min-h-0 bg-background-win-alt">
       <aside
         className={cn('relative shrink-0 overflow-hidden transition-[width] duration-200 ease-out', collapsed && 'w-0')}
         style={collapsed ? undefined : { width }}
@@ -51,7 +51,7 @@ function Resizer() {
       aria-valuemin={SIDEBAR_MIN}
       aria-valuemax={SIDEBAR_MAX}
       tabIndex={0}
-      className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize hover:bg-resize-handle/40 focus-visible:bg-resize-handle/40 active:bg-resize-handle/60"
+      className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize"
       onPointerDown={e => {
         start.current = { x: e.clientX, w: width };
         e.currentTarget.setPointerCapture(e.pointerId);

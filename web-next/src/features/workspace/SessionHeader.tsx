@@ -1,7 +1,7 @@
 // Conversation header. Desktop: one 48px row, also the window drag region.
 // Phone: back/menu, title + status, and the usage orb; the rest moves into ⋯.
 import {
-  ChevronLeft, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Square, SquareTerminal,
+  ChevronLeft, FolderOpen, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Square, SquareTerminal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -16,7 +16,9 @@ import { usePrefs } from '@/lib/prefs';
 import { t } from '@/lib/i18n';
 import { shortPath, statusLabel, statusTone, tonePill } from '@/features/session/status';
 import { SessionStatusPopover } from '@/features/header/SessionStatusPopover';
-import { ModelChips } from '@/features/header/ModelChips';
+import { Chip, ModelChips } from '@/features/header/ModelChips';
+import { copyText } from '@/domain/clipboard';
+import { toast } from '@/components/ui/toast';
 import { UsageMeter } from '@/features/header/UsageMeter';
 
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
@@ -71,9 +73,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
           ) : null}
         </div>
         {!mobile && !native && <ModelChips session={session} />}
-        {!mobile && session.cwd && (
-          <span className="hidden truncate text-ui-sm text-foreground-subtlest lg:inline" title={session.cwd}>{shortPath(session.cwd)}</span>
-        )}
+        {!mobile && session.cwd && <PathChip cwd={session.cwd} />}
       </div>
 
       {!native && <UsageMeter session={session} mobile={mobile} />}
@@ -164,4 +164,25 @@ function rememberView(views: Record<string, boolean>, id: string, on: boolean): 
   const keys = Object.keys(next);
   for (const k of keys.slice(0, Math.max(0, keys.length - 100))) delete next[k];
   return next;
+}
+
+/** Working folder: shortened in the header, full path on hover, click copies it. */
+function PathChip({ cwd }: { cwd: string }) {
+  const copy = () => copyText(cwd).then(
+    () => toast(t('Path copied', '路径已复制')),
+    () => toast(t('Could not copy the path', '无法复制路径')),
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Chip icon={<FolderOpen />} className="hidden max-w-56 shrink lg:inline-flex" aria-label={t(`Folder: ${cwd}. Copy`, `目录：${cwd}，点击复制`)} onClick={() => void copy()}>
+          {shortPath(cwd)}
+        </Chip>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-[32rem] break-all">
+        <div className="font-mono">{cwd}</div>
+        <div className="opacity-60">{t('Click to copy', '点击复制')}</div>
+      </TooltipContent>
+    </Tooltip>
+  );
 }

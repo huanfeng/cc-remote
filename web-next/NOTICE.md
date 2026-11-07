@@ -22,3 +22,9 @@ This directory (`web-next/`) contains code derived from third-party projects.
 ## Vercel AI Elements
 - `src/components/ai-elements/*` derive from https://github.com/vercel/ai-elements via ZCode —
   Apache License 2.0, Copyright Vercel, Inc. Per-file headers are preserved.
+
+## Fonts
+- Inter (via `@fontsource-variable/inter`) — SIL Open Font License 1.1, Copyright 2016 The Inter
+  Project Authors (https://github.com/rsms/inter).
+- Noto Sans SC (via `@fontsource-variable/noto-sans-sc`) — SIL Open Font License 1.1,
+  Copyright Google Inc. The license texts ship in each package's `LICENSE`.

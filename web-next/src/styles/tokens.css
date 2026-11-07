@@ -2,7 +2,7 @@
  * Modified by cc-remote: removed product-specific tokens, re-keyed themes to .dark + [data-palette]. */
 
 @theme {
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Noto Sans SC Variable", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
   --text-ui-settings-title: calc(var(--ui-font-size) + 10px);
   --text-ui-settings-title--line-height: calc(4 / 3);
   --text-ui-settings-title-lg: calc(var(--ui-font-size) + 16px);
@@ -333,8 +333,9 @@
   --shadow-composer-soft: 0 1px 3px rgb(0 0 0 / 4%), 0 6px 18px rgb(0 0 0 / 4%);
   --animated-gradient-text-strong: rgba(13, 13, 13, 1);
   --animated-gradient-text-soft: rgba(13, 13, 13, 0.22);
-  --color-background: #f8f8f8;
-  --color-background-win-alt: #ececee;
+  /* cc-remote: lightened toward Codex (frame/sidebar #fafbfd, main white). */
+  --color-background: #ffffff;
+  --color-background-win-alt: #fafbfd;
   --color-background-alt: color-mix(in oklab, var(--color-background) 70%, transparent);
   --color-brand: #000000;
   --color-accent: #ebf4ff;
@@ -343,10 +344,10 @@
   --color-border: rgba(13, 13, 13, 0.1);
   --color-border-hover: rgba(13, 13, 13, 0.15);
   --color-hover: rgba(13, 13, 13, 0.05);
-  --color-selected: rgba(13, 13, 13, 0.05);
+  --color-selected: rgba(13, 13, 13, 0.065);
   --color-header: #ffffff;
   --color-panel: #ffffff;
-  --color-sidebar: #f0f0f0;
+  --color-sidebar: #fafbfd;
   --color-surface: rgba(13, 13, 13, 0.03);
   --color-user-message-bubble: rgba(13, 13, 13, 0.05);
   --color-surface-hover: rgba(13, 13, 13, 0.05);
@@ -355,7 +356,7 @@
   --color-card-border: var(--color-border);
   --color-popover: #ffffff;
   --color-popover-foreground: var(--color-foreground);
-  --color-popover-header: #f8f8f8;
+  --color-popover-header: #fafbfd;
   --color-popover-border: var(--color-border);
   --color-input: #ffffff;
   --color-input-focused: var(--color-input);

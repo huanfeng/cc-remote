@@ -1,4 +1,8 @@
 @import "tailwindcss";
+/* Bundled UI fonts (OFL): Inter for Latin, Noto Sans SC for CJK. Both are
+ * split by unicode-range, so a page downloads only the slices it renders. */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/noto-sans-sc";
 @import "tw-animate-css";
 @import "tailwind-scrollbar-hide/v4";
 @import "./shadcn-variants.css";
@@ -21,6 +25,10 @@
 
 /* One display size for empty-state headings; everything else uses the text-ui-* scale. */
 @theme {
+  /* Bundled fonts first so text looks the same on every system: Microsoft
+   * YaHei UI (what system-ui gives on zh-CN Windows) has no medium weight and
+   * renders thin. System fonts stay as the fallback while slices load. */
+  --font-sans: "Inter Variable", "Noto Sans SC Variable", ui-sans-serif, system-ui, "Microsoft YaHei UI", "Segoe UI", "PingFang SC", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --text-ui-display: calc(var(--ui-font-size) + 12px);
   --text-ui-display--line-height: 1.25;
 }
@@ -38,9 +46,8 @@
   /* Height of the visual viewport, kept current by lib/viewport.ts so the
    * soft keyboard never covers the composer on phones. */
   --app-height: 100dvh;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  /* Preflight applies --font-sans (above). No antialiased smoothing: it only
+   * thins text on macOS. */
 }
 
 html,

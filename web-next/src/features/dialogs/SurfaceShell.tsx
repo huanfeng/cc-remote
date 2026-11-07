@@ -91,7 +91,7 @@ function FullFrame({ open, onOpenChange, title, description, bodyClassName, foot
           </div>
           {description && <DialogPrimitive.Description className="sr-only">{description}</DialogPrimitive.Description>}
           {/* Phones: every button and select in the body is at least 36 px. */}
-          <div className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3', TOUCH, !footer && 'pb-safe', bodyClassName)}>{children}</div>
+          <div className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3', TOUCH, !footer && 'pb-[max(1.5rem,env(safe-area-inset-bottom))]', bodyClassName)}>{children}</div>
           {footer && (
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] [&_[data-slot=button]]:h-10 [&_[data-slot=button]]:px-4">
               {footer}

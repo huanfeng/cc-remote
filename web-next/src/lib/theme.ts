@@ -36,7 +36,7 @@ export function useApplyTheme() {
       localStorage.setItem('ccn-palette', palette);
     } catch { /* storage unavailable */ }
     const meta = document.querySelector('meta[name="theme-color"]');
-    const bg = getComputedStyle(root).getPropertyValue('--color-sidebar').trim();
+    const bg = getComputedStyle(root).getPropertyValue('--color-background-win-alt').trim();
     if (meta && bg) meta.setAttribute('content', bg);
   }, [dark, palette, theme]);
 }

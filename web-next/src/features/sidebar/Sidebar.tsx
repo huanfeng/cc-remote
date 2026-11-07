@@ -35,7 +35,7 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
   const mobile = variant === 'mobile';
 
   return (
-    <div data-sidebar className="flex h-full min-h-0 flex-col bg-sidebar text-foreground">
+    <div data-sidebar className="flex h-full min-h-0 flex-col bg-background-win-alt text-foreground">
       {/* Brand / host row. On desktop it doubles as the window drag region. */}
       <div data-tauri-drag-region className={cn('flex shrink-0 items-center gap-1 px-2', mobile ? 'h-14 pt-safe' : 'h-12')}>
         <HostSwitcher />
@@ -91,7 +91,7 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
         {tab === 'sessions' ? <SessionList query={query} mobile={mobile} /> : <HistoryList query={query} mobile={mobile} />}
       </div>
 
-      <div className="flex shrink-0 items-center gap-0.5 border-t border-border/60 px-2 py-1.5 pb-safe">
+      <div className="flex shrink-0 items-center gap-0.5 border-t border-border/60 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
         <FooterButton mobile={mobile} icon={<Settings className="size-4" />} label={t('Settings', '设置')} onClick={() => open({ type: 'settings' })} />
         <FooterButton mobile={mobile} icon={<Activity className="size-4" />} label={t('Host status', '宿主状态')} onClick={() => open({ type: 'status' })} />
       </div>
@@ -133,7 +133,7 @@ function TabButton({ active, children, onClick, mobile }: { active: boolean; chi
 
 function FooterButton({ icon, label, onClick, mobile }: { icon: React.ReactNode; label: string; onClick: () => void; mobile?: boolean }) {
   return (
-    <button type="button" onClick={onClick} className={cn('flex flex-1 items-center gap-2 rounded-lg px-2 text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground', mobile ? 'h-10' : 'h-8')}>
+    <button type="button" onClick={onClick} className={cn('flex flex-1 items-center justify-center gap-2 rounded-lg px-2 text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground', mobile ? 'h-10' : 'h-8')}>
       {icon}
       <span className="truncate">{label}</span>
     </button>

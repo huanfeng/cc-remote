@@ -4,7 +4,7 @@
 // suggestion bar sit around the card. Request bodies follow the host's
 // features (sendId, defer, mentions, queueControls, codexSteer).
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ArrowUp, AtSign, CornerDownRight, Hand, Maximize2, Plus, Slash, Square, X } from 'lucide-react';
+import { ArrowUp, AtSign, CornerDownRight, Hand, Maximize2, Plus, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -370,7 +370,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
           id={menuId} label={t('Commands', '命令')} mobile={mobile} active={slashActive} onActive={setSlashActive}
           onPick={i => pickCommand(slashItems[i])}
           items={slashItems.map(c => ({
-            key: c.name, icon: <Slash className="size-3.5" />, label: `/${commandName(c.name)}`,
+            key: c.name, icon: <SlashGlyph />, label: `/${commandName(c.name)}`,
             hint: `${c.description}${c.terminalOnly ? t(' · in the terminal', ' · 终端中') : ''}`,
           }))}
           footer={t('↑↓ choose · Enter / Tab pick · Esc close', '↑↓ 选择 · Enter / Tab 选中 · Esc 关闭')}
@@ -426,7 +426,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
         </ToolButton>
         <input ref={fileInput} type="file" multiple hidden onChange={e => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
         <ToolButton size={iconSize} label={t('Commands', '命令')} disabled={!!trimmed && slash === undefined} onClick={toggleSlash}>
-          <Slash className="size-3.5" />
+          <SlashGlyph />
         </ToolButton>
         {mentionsOn && (
           <ToolButton size={iconSize} label={t('Mention a file', '引用文件')} onClick={insertAt}>
@@ -556,4 +556,9 @@ function ToolButton({ label, onClick, disabled, size, children }: { label: strin
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
+}
+
+/** The command trigger is the "/" character itself; the lucide Slash icon reads too large. */
+function SlashGlyph() {
+  return <span aria-hidden className="flex size-4 items-center justify-center text-ui-base leading-none">/</span>;
 }
