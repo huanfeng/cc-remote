@@ -14,6 +14,8 @@ interface Prefs {
   sendKey: SendKey;
   sidebarCollapsed: boolean;
   sidebarWidth: number;
+  /** Project groups collapsed in the session list, by hostKey(folder). */
+  collapsedProjects: Record<string, boolean>;
   toolsExpanded: boolean;
   /** Terminal sessions shown as the terminal rather than the chat view. */
   terminalView: Record<string, boolean>;
@@ -38,6 +40,7 @@ export const usePrefs = create<Prefs>()(
       sendKey: 'enter',
       sidebarCollapsed: false,
       sidebarWidth: SIDEBAR_DEFAULT,
+      collapsedProjects: {},
       toolsExpanded: false,
       terminalView: {},
       terminalZoom: 1,

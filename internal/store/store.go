@@ -31,6 +31,10 @@ type Session struct {
 	Resume                    bool   `json:"-"`
 	Mode                      string `json:"mode"`
 	Online                    bool   `json:"online"`
+	// Archived sessions are left out of the web's list until they have a new
+	// conversation or a running turn (see archived).
+	ArchivedAt string `json:"-"`
+	Archived   bool   `json:"archived,omitempty"`
 	// Per-session launch overrides; empty follows cc-remote preferences.
 	PermissionMode string `json:"permissionMode"`
 	Model          string `json:"model"`
@@ -124,7 +128,7 @@ func ID() string {
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',profile_id TEXT NOT NULL DEFAULT '',profile_json TEXT NOT NULL DEFAULT '',UNIQUE(provider,claude_id)`
+const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',profile_id TEXT NOT NULL DEFAULT '',profile_json TEXT NOT NULL DEFAULT '',archived_at TEXT NOT NULL DEFAULT '',UNIQUE(provider,claude_id)`
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -144,7 +148,7 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}, {"profile_id", "''"}, {"profile_json", "''"}} {
+	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}, {"profile_id", "''"}, {"profile_json", "''"}, {"archived_at", "''"}} {
 		var n int
 		if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c.name).Scan(&n); err == nil && n == 0 {
 			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c.name + ` TEXT NOT NULL DEFAULT ` + c.def)
@@ -275,15 +279,18 @@ func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provide
 	return x, err
 }
 
-const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json`
+// sessionColumns are the columns migrateNativeIdentity copies; archived_at is
+// added before it runs, so it is always there.
+const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json,archived_at`
 
 const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0)`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.LastConversationAt, &x.ConversationTimeEstimated)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.LastConversationAt, &x.ConversationTimeEstimated)
 	if err == nil {
+		x.Archived = archived(x)
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
 		var profile struct {
 			Name string `json:"name"`
@@ -351,6 +358,36 @@ func (s *Store) SetClaudeArgs(id string, args []string) error {
 
 func (s *Store) SetMode(id, mode string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET mode=?,updated_at=? WHERE id=?`, mode, now(), id)
+	return err
+}
+
+// archived reports whether an archived session is still archived: a
+// conversation after it was archived, or a running turn, brings it back
+// without anyone clearing archived_at.
+func archived(x Session) bool {
+	if x.ArchivedAt == "" || x.Status == "running" || x.Status == "waiting" {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, x.ArchivedAt)
+	if err != nil {
+		return false
+	}
+	last, err := time.Parse(time.RFC3339Nano, x.LastConversationAt)
+	return err != nil || !last.After(at)
+}
+
+// SetArchived archives a session now, or brings it back.
+func (s *Store) SetArchived(id string, on bool) error {
+	at := ""
+	if on {
+		at = conversationTimestamp(now())
+	}
+	r, err := s.db.Exec(`UPDATE sessions SET archived_at=? WHERE id=?`, at, id)
+	if err == nil {
+		if n, _ := r.RowsAffected(); n == 0 {
+			err = sql.ErrNoRows
+		}
+	}
 	return err
 }
 

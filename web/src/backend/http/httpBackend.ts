@@ -172,8 +172,8 @@ export class HttpBackend implements Backend {
   }
 
   async patchSession(id: string, patch: SessionPatch): Promise<Session> {
-    const { permissionMode, model, effort, confirmDangerous } = patch;
-    const s = await this.call<Session>('PATCH', this.session(id), defined({ permissionMode, model, effort, confirmDangerous }));
+    const { permissionMode, model, effort, confirmDangerous, archived } = patch;
+    const s = await this.call<Session>('PATCH', this.session(id), defined({ permissionMode, model, effort, confirmDangerous, archived }));
     this.refresh(id);
     return s;
   }

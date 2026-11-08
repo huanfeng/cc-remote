@@ -8,7 +8,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive';
 
 export interface HostInfo {
   version: string;
@@ -84,6 +84,8 @@ export interface Session {
   queued?: PendingMessage[];
   live?: LiveStatus;
   activeTasks?: number;
+  /** Archived: hidden from the list until its next conversation (host feature `archive`). */
+  archived?: boolean;
 }
 
 /** A session from the provider's own history (~/.claude/projects, Codex threads). */
@@ -323,6 +325,8 @@ export interface NewSessionRequest {
   model?: string;
   effort?: string;
   confirmDangerous?: boolean;
+  /** Needs the host feature `archive`. */
+  archived?: boolean;
 }
 
 export interface SessionPatch {
@@ -330,6 +334,8 @@ export interface SessionPatch {
   model?: string;
   effort?: string;
   confirmDangerous?: boolean;
+  /** Needs the host feature `archive`. */
+  archived?: boolean;
 }
 
 export interface SendRequest {

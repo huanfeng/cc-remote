@@ -2,7 +2,7 @@
 // component is the home page (and the drawer over a conversation).
 import { useMemo, useRef, useState } from 'react';
 import {
-  Activity, ChevronDown, History, MoreHorizontal, PanelLeftClose, Plus, Search, Settings, SquareTerminal, Trash2, X,
+  Activity, Archive, ArchiveRestore, ChevronDown, History, MoreHorizontal, PanelLeftClose, Plus, Search, Settings, SquareTerminal, Trash2, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -10,11 +10,13 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/components/lib/utils';
-import { useBackend } from '@/backend/backend';
+import { useBackend, type Backend } from '@/backend/backend';
 import type { NativeSession, Provider, Session } from '@/backend/types';
 import { hasFeature, select, selectionKey, useApp } from '@/store/app';
 import { releaseSession, useTranscripts } from '@/store/transcripts';
 import { usePrefs } from '@/lib/prefs';
+import { hostKey } from '@/lib/hosts';
+import { toast } from '@/components/ui/toast';
 import { t, lang } from '@/lib/i18n';
 import { useNow } from '@/lib/hooks';
 import { conversationOrder, conversationTime } from '@/domain/conversationTime';
@@ -22,6 +24,7 @@ import { hostProviders, providerName } from '@/domain/providers';
 import { folderName, sessionMeta, shortPath, statusLabel, statusTone, toneDot } from '@/features/session/status';
 import { HostSwitcher } from './HostSwitcher';
 import { useNativeSessions } from './useNativeSessions';
+import { busy, projectGroups } from './projectGroups';
 
 const PAGE = 200;
 
@@ -148,56 +151,101 @@ function matches(q: string, ...fields: (string | undefined)[]) {
 
 /** Sessions grouped by project folder, like Codex/ZCode's project sections. */
 function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
+  const backend = useBackend();
   const sessions = useApp(s => s.sessions);
   const loaded = useApp(s => s.sessionsLoaded);
   const selection = useApp(s => s.selection);
+  const canArchive = useApp(s => hasFeature(s.info, 'archive'));
+  const collapsed = usePrefs(s => s.collapsedProjects);
+  const setPrefs = usePrefs(s => s.set);
   const clocks = useRef(new Map<string, number>());
   const [limit, setLimit] = useState(PAGE);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  useNow(30_000);
+  // Groups whose older sessions are unfolded; per visit, like Codex's "show more".
+  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const now = useNow(30_000);
+  const currentKey = selectionKey(selection);
 
+  const matched = useMemo(() => sessions.filter(s => matches(query, s.title, s.cwd)), [sessions, query]);
+  // A search also finds archived sessions; otherwise they wait in their own section.
   const ordered = useMemo(
-    () => conversationOrder(sessions.filter(s => matches(query, s.title, s.cwd)), clocks.current),
-    [sessions, query],
+    () => conversationOrder(query ? matched : matched.filter(s => !s.archived), clocks.current),
+    [matched, query],
   );
-  const shown = ordered.slice(0, limit);
-  const groups = useMemo(() => {
-    const map = new Map<string, Session[]>();
-    for (const s of shown) {
-      const k = s.cwd.replace(/\\/g, '/').toLowerCase();
-      const list = map.get(k);
-      if (list) list.push(s); else map.set(k, [s]);
-    }
-    return [...map.values()];
-  }, [shown]);
+  const archived = useMemo(() => (query ? [] : conversationOrder(matched.filter(s => s.archived))), [matched, query]);
+  const groups = useMemo(
+    () => projectGroups(ordered.slice(0, limit), now, s => currentKey === `session:${s.id}`, !query),
+    [ordered, limit, now, currentKey, query],
+  );
 
   if (!loaded) return <ListSkeleton />;
-  if (!ordered.length) {
+  if (!ordered.length && !archived.length) {
     return <p className="px-2 py-6 text-center text-ui-sm text-foreground-subtlest">{query ? t('No matching sessions', '没有匹配的会话') : t('No sessions yet', '还没有会话')}</p>;
   }
-  const currentKey = selectionKey(selection);
+  const row = (s: Session, showFolder?: boolean) => (
+    <SessionRow key={s.id} session={s} active={currentKey === `session:${s.id}`} mobile={mobile} showFolder={showFolder} />
+  );
+  const toggleGroup = (key: string, on: boolean) => {
+    const next = { ...collapsed };
+    if (on) next[key] = true; else delete next[key];
+    setPrefs({ collapsedProjects: next });
+  };
   return (
     <div className="flex flex-col gap-2">
-      {groups.map(list => {
-        const cwd = list[0].cwd;
-        const key = cwd.toLowerCase();
-        const isCollapsed = collapsed[key];
+      {groups.map(g => {
+        // Collapsed state is kept per host; a search opens every group.
+        const stored = hostKey(g.key);
+        const isCollapsed = !query && !!collapsed[stored];
+        const idle = [...g.shown, ...g.folded].filter(s => !busy(s));
+        const open = !!unfolded[g.key];
         return (
-          <section key={key}>
-            <button
-              type="button"
-              onClick={() => setCollapsed(c => ({ ...c, [key]: !c[key] }))}
-              title={cwd}
-              aria-expanded={!isCollapsed}
-              className={cn('group flex w-full items-center gap-1 rounded-md px-2 text-left text-ui-xs font-medium text-foreground-subtlest hover:text-foreground-subtle', mobile ? 'h-8' : 'h-6')}
-            >
-              <ChevronDown className={cn('size-3 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
-              <span className="truncate">{folderName(cwd)}</span>
-              <span className="ml-auto opacity-0 group-hover:opacity-100">{list.length}</span>
-            </button>
+          <section key={g.key}>
+            <div className="group/head relative flex items-center">
+              <button
+                type="button"
+                onClick={() => toggleGroup(stored, !isCollapsed)}
+                title={g.cwd}
+                aria-expanded={!isCollapsed}
+                className={cn('flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-ui-xs font-medium text-foreground-subtlest hover:text-foreground-subtle', mobile ? 'h-8' : 'h-6', canArchive && 'pr-7')}
+              >
+                <ChevronDown className={cn('size-3 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
+                <span className="truncate">{folderName(g.cwd)}</span>
+                <span className={cn('ml-auto', !mobile && 'opacity-0 group-hover/head:opacity-100')}>{g.shown.length + g.folded.length}</span>
+              </button>
+              {canArchive && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={t('Project actions', '项目操作')}
+                      className={cn('absolute right-0.5 text-foreground-subtlest', !mobile && 'opacity-0 focus-visible:opacity-100 group-hover/head:opacity-100 data-[state=open]:opacity-100')}
+                    >
+                      <MoreHorizontal className="size-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem disabled={!idle.length} onSelect={() => void archiveSessions(backend, idle, true)}>
+                      <Archive className="size-3.5" /> {t(`Archive idle sessions (${idle.length})`, `归档空闲会话（${idle.length}）`)}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
             {!isCollapsed && (
               <div className="flex flex-col gap-px">
-                {list.map(s => <SessionRow key={s.id} session={s} active={currentKey === `session:${s.id}`} mobile={mobile} />)}
+                {g.shown.map(s => row(s))}
+                {open && g.folded.map(s => row(s))}
+                {g.folded.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setUnfolded(u => ({ ...u, [g.key]: !open }))}
+                    aria-expanded={open}
+                    className={cn('flex items-center rounded-lg pl-[26px] pr-2 text-left text-ui-xs text-foreground-subtlest hover:bg-surface-hover hover:text-foreground-subtle', mobile ? 'h-9' : 'h-7')}
+                  >
+                    {open ? t('Show fewer', '收起较早的会话') : t(`${g.folded.length} earlier`, `更早的 ${g.folded.length} 条`)}
+                  </button>
+                )}
               </div>
             )}
           </section>
@@ -208,11 +256,46 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
           {t(`Show more (${ordered.length - limit})`, `显示更多（${ordered.length - limit}）`)}
         </Button>
       )}
+      {archived.length > 0 && (
+        <section className={cn(ordered.length > 0 && 'border-t border-border pt-2')}>
+          <button
+            type="button"
+            onClick={() => setArchiveOpen(o => !o)}
+            aria-expanded={archiveOpen}
+            className={cn('flex w-full items-center gap-1 rounded-md px-2 text-left text-ui-xs font-medium text-foreground-subtlest hover:text-foreground-subtle', mobile ? 'h-8' : 'h-6')}
+          >
+            <ChevronDown className={cn('size-3 shrink-0 transition-transform', !archiveOpen && '-rotate-90')} />
+            <span>{t(`Archived (${archived.length})`, `已归档（${archived.length}）`)}</span>
+          </button>
+          {archiveOpen && <div className="flex flex-col gap-px">{archived.map(s => row(s, true))}</div>}
+        </section>
+      )}
     </div>
   );
 }
 
-function SessionRow({ session: s, active, mobile }: { session: Session; active: boolean; mobile: boolean }) {
+/** Archives (or brings back) sessions; archiving offers an undo. */
+async function archiveSessions(backend: Backend, list: Session[], on: boolean) {
+  if (!list.length) return;
+  const results = await Promise.allSettled(list.map(s => backend.patchSession(s.id, { archived: on })));
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed) {
+    const reason = failed.reason instanceof Error ? failed.reason.message : String(failed.reason);
+    toast(t(`Could not ${on ? 'archive' : 'restore'}: ${reason}`, `${on ? '归档' : '取消归档'}失败：${reason}`), { variant: 'warning', position: 'bottom-center' });
+    return;
+  }
+  if (!on) return;
+  toast(list.length === 1 ? t('Session archived', '会话已归档') : t(`${list.length} sessions archived`, `已归档 ${list.length} 个会话`), {
+    variant: 'success',
+    durationMs: 8000,
+    position: 'bottom-center',
+    actionLabel: t('Undo', '撤销'),
+    onAction: () => void archiveSessions(backend, list, false),
+    dedupeKey: 'archive',
+  });
+}
+
+function SessionRow({ session: s, active, mobile, showFolder }: { session: Session; active: boolean; mobile: boolean; showFolder?: boolean }) {
   const backend = useBackend();
   const info = useApp(st => st.info);
   const open = useApp(st => st.open);
@@ -221,6 +304,7 @@ function SessionRow({ session: s, active, mobile }: { session: Session; active: 
   const tone = statusTone(s);
   const time = conversationTime(s, Date.now(), lang);
   const canExit = hasFeature(info, 'queueControls') && (s.online || s.status === 'running');
+  const canArchive = hasFeature(info, 'archive');
   const queued = s.queued?.length ?? 0;
   const choose = () => select({ kind: 'session', id: s.id });
   return (
@@ -250,7 +334,8 @@ function SessionRow({ session: s, active, mobile }: { session: Session; active: 
         </div>
         <div className="flex items-center gap-1.5 text-ui-xs text-foreground-subtlest">
           {s.mode === 'terminal' && <SquareTerminal className="size-3 shrink-0" aria-label={t('Terminal', '终端')} />}
-          <span className="truncate">{sessionMeta(s)}</span>
+          <span className="truncate">{showFolder ? `${folderName(s.cwd)} · ${sessionMeta(s)}` : sessionMeta(s)}</span>
+          {s.archived && !showFolder && <span className="shrink-0">· {t('Archived', '已归档')}</span>}
           {tone === 'waiting' && <span className="shrink-0 text-warning">· {statusLabel(s.status)}</span>}
           {queued > 0 && <span className="shrink-0">· {t(`${queued} queued`, `${queued} 条排队`)}</span>}
         </div>
@@ -275,6 +360,16 @@ function SessionRow({ session: s, active, mobile }: { session: Session; active: 
             {t('Release page cache', '释放页面缓存')}
           </DropdownMenuItem>
           {canExit && <DropdownMenuItem onSelect={() => void backend.exit(s.id)}>{t('Exit session', '退出会话')}</DropdownMenuItem>}
+          {canArchive && (s.archived ? (
+            <DropdownMenuItem onSelect={() => void archiveSessions(backend, [s], false)}>
+              <ArchiveRestore className="size-3.5" /> {t('Restore', '取消归档')}
+            </DropdownMenuItem>
+          ) : (
+            // A running turn would bring it straight back; archive it once it is done.
+            <DropdownMenuItem disabled={busy(s)} onSelect={() => void archiveSessions(backend, [s], true)}>
+              <Archive className="size-3.5" /> {busy(s) ? t('Archive (when done)', '归档（结束后可用）') : t('Archive', '归档')}
+            </DropdownMenuItem>
+          ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={() => open({ type: 'session-details', id: s.id })}>
             <Trash2 className="size-3.5" /> {t('Delete…', '删除…')}

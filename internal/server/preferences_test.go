@@ -337,3 +337,25 @@ func TestModelListConcurrentCallersShareOneCollection(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchArchivesSession(t *testing.T) {
+	_, ts, _ := setup(t, func(context.Context, claude.Options, func(claude.Event) error) error { return nil })
+	code, b := request(t, ts, "POST", "/api/sessions", map[string]string{"title": "x", "cwd": t.TempDir()}, testToken)
+	var x store.Session
+	if code != 201 || json.Unmarshal(b, &x) != nil {
+		t.Fatalf("create %d %s", code, b)
+	}
+	for _, on := range []bool{true, false} {
+		code, b = request(t, ts, "PATCH", "/api/sessions/"+x.ID, map[string]bool{"archived": on}, testToken)
+		var got store.Session
+		if code != 200 || json.Unmarshal(b, &got) != nil || got.Archived != on {
+			t.Fatalf("archived=%v: %d %s", on, code, b)
+		}
+		if on != strings.Contains(string(b), `"archived":true`) {
+			t.Fatalf("archived=%v body %s", on, b)
+		}
+	}
+	if code, _ = request(t, ts, "PATCH", "/api/sessions/missing", map[string]bool{"archived": true}, testToken); code != 404 {
+		t.Fatalf("missing session %d", code)
+	}
+}

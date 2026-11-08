@@ -53,7 +53,7 @@ export const hostInfo: HostInfo = {
   name: 'Cartech 工作站',
   color: '#3b82f6',
   icon: 'laptop',
-  features: ['sendId', 'mentions', 'codex', 'codexSteer', 'queueControls'],
+  features: ['sendId', 'mentions', 'codex', 'codexSteer', 'queueControls', 'archive'],
 };
 
 // ---------- s1: Claude managed, running, tool groups + subagent + queue ----------
@@ -244,7 +244,13 @@ const s7Session: Session = {
   mode: 'managed', online: false, createdAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3), lastConversationAt: ago(60 * 24 * 3),
 };
 
-export const sessions: Session[] = [s1Session, s2Session, s4Session, s3Session, s5Session, s6Session, s7Session];
+// Older sessions in one folder, so the list folds them; one is archived.
+const older: Session[] = ['修复 Windows 服务安装', '升级 xterm 到 v5', '会话导入去重', 'ETag 轮询', '移动端键盘遮挡', '整理发布脚本'].map((title, i) => ({
+  id: `old${i}`, provider: 'claude', title, cwd: 'D:/Develop/workspace/cc-remote', status: 'completed', mode: 'managed', online: false,
+  createdAt: ago(60 * 24 * (12 + i * 5)), updatedAt: ago(60 * 24 * (12 + i * 5)), lastConversationAt: ago(60 * 24 * (12 + i * 5)), archived: i === 5,
+}));
+
+export const sessions: Session[] = [s1Session, s2Session, s4Session, s3Session, s5Session, s6Session, s7Session, ...older];
 
 export const transcripts: Record<string, SessionEvent[]> = {
   s1: s1.events, s2: s2.events, s3: s3.events, s4: s4.events, s5: s5.events, s6: s6.events, s7: s7.events,

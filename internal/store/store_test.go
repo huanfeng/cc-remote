@@ -447,3 +447,58 @@ func TestLegacyTranscriptFlag(t *testing.T) {
 		t.Fatal("flagged again on the next start")
 	}
 }
+
+func TestArchiveUntilNextConversation(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	x, err := s.Create("Old", "/tmp", ID(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.AppendAt(x.ID, "user", "hi", nil, "2020-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	get := func() Session {
+		t.Helper()
+		got, err := s.Get(x.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if get().Archived {
+		t.Fatal("new session archived")
+	}
+	if err = s.SetArchived(x.ID, true); err != nil || !get().Archived {
+		t.Fatalf("archive: %v %+v", err, get())
+	}
+	if list, _ := s.List(); len(list) != 1 || !list[0].Archived {
+		t.Fatalf("list: %+v", list)
+	}
+	// A running turn shows it while it runs.
+	if err = s.SetStatus(x.ID, "running"); err != nil || get().Archived {
+		t.Fatalf("running session still archived: %v", err)
+	}
+	if err = s.SetStatus(x.ID, "idle"); err != nil || !get().Archived {
+		t.Fatalf("idle again: %v", err)
+	}
+	// An older conversation (an import) keeps it archived; a new one brings it back.
+	if _, err = s.AppendAt(x.ID, "assistant", "old", nil, "2021-01-01T00:00:00Z"); err != nil || !get().Archived {
+		t.Fatalf("old import: %v", err)
+	}
+	if _, err = s.Append(x.ID, "user", "again", nil); err != nil || get().Archived {
+		t.Fatalf("new conversation: %v", err)
+	}
+	if err = s.SetArchived(x.ID, true); err != nil || !get().Archived {
+		t.Fatal("archive again")
+	}
+	if err = s.SetArchived(x.ID, false); err != nil || get().Archived {
+		t.Fatal("unarchive")
+	}
+	if err = s.SetArchived("missing", true); err != sql.ErrNoRows {
+		t.Fatalf("missing session: %v", err)
+	}
+}

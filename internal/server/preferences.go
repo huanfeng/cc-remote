@@ -71,6 +71,8 @@ type overrideRequest struct {
 	Model            *string `json:"model"`
 	Effort           *string `json:"effort"`
 	ConfirmDangerous bool    `json:"confirmDangerous"`
+	// Archived archives the session (true) or brings it back (false).
+	Archived *bool `json:"archived"`
 }
 
 // apply merges the requested fields into x and validates the result.
@@ -128,6 +130,15 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 	if err = s.store.SetOverrides(id, x.PermissionMode, x.Model, x.Effort); err != nil {
 		fail(w, 500, s.lang(r).T("Could not save session settings", "无法保存会话设置"))
 		return
+	}
+	if req.Archived != nil {
+		if err = s.store.SetArchived(id, *req.Archived); err == nil {
+			x, err = s.store.Get(id)
+		}
+		if err != nil {
+			fail(w, 500, s.lang(r).T("Could not archive the session", "无法归档会话"))
+			return
+		}
 	}
 	s.mu.Lock()
 	if rt := s.procs[id]; rt != nil && x.Provider == "codex" {
