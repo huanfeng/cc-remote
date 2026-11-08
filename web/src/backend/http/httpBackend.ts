@@ -32,7 +32,8 @@ export interface HttpBackendOptions {
   // ---- injected in tests ----
   fetch?: typeof fetch;
   WebSocket?: WebSocketCtor;
-  XMLHttpRequest?: typeof XMLHttpRequest;
+  /** null: upload with fetch (the desktop app, whose fetch goes through Rust). */
+  XMLHttpRequest?: typeof XMLHttpRequest | null;
   /** Polling periods in ms. */
   intervals?: Partial<{ sessions: number; transcript: number; usage: number }>;
 }
@@ -331,7 +332,7 @@ export class HttpBackend implements Backend {
 
   upload(id: string, file: File, opts?: UploadOptions): Promise<Attachment> {
     const path = `${this.session(id)}/uploads`;
-    const XHR = this.o.XMLHttpRequest ?? (typeof XMLHttpRequest !== 'undefined' ? XMLHttpRequest : undefined);
+    const XHR = this.o.XMLHttpRequest === null ? undefined : this.o.XMLHttpRequest ?? (typeof XMLHttpRequest !== 'undefined' ? XMLHttpRequest : undefined);
     if (!XHR) return this.uploadByFetch(path, file, opts);
     return new Promise<Attachment>((resolve, reject) => {
       if (opts?.signal?.aborted) { reject(abortError()); return; }

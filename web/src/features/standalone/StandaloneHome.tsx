@@ -17,6 +17,18 @@ import { SafetyNotice, useSafetyAck } from '@/features/auth/SafetyNotice';
 import { useConnection } from '@/features/auth/connection';
 import { HostFormDialog } from './HostForm';
 import { AllowHint, HideAddressesButton, useHiddenAddresses } from './parts';
+import { DESKTOP } from '@/platform/desktop';
+import { LocalServicePanel } from '@/features/desktop/LocalService';
+
+/** The desktop app's card for the service on this computer. */
+function ThisComputer() {
+  return (
+    <div className="rounded-xl border border-border/70 bg-surface px-4 py-3">
+      <div className="mb-2 text-ui-sm font-medium">{t('This computer', '本机服务')}</div>
+      <LocalServicePanel connectLabel={t('Connect to this computer', '连接本机宿主')} />
+    </div>
+  );
+}
 
 export function StandaloneHome() {
   const [form, setForm] = useState<'' | 'add' | 'edit'>('');
@@ -44,10 +56,13 @@ export function StandaloneHome() {
             <HostGlyph icon="code" color="#293c2e" className="size-11 rounded-xl [&_svg]:size-5" />
             <h1 className="mt-3 text-ui-xl font-semibold tracking-tight">CC Remote</h1>
             <p className="mt-1 text-ui-sm leading-5 text-foreground-subtle">
-              {t('Use Claude Code on your computer from this browser: follow sessions, send messages, answer approvals and questions. This page is only the frontend; it keeps the hosts you add and their tokens on this device.', '在这个浏览器里使用你电脑上的 Claude Code：查看会话、发送消息、回答审批和提问。此页面只是前端，你添加的宿主和令牌只保存在本设备。')}
+              {DESKTOP
+                ? t('Use Claude Code and Codex on your computers: follow sessions, send messages, answer approvals and questions. Connect to the cc-remote host on this computer, or add hosts elsewhere.', '使用你电脑上的 Claude Code 与 Codex：查看会话、发送消息、回答审批和提问。可以连接本机的 cc-remote 宿主，也可以添加其它电脑上的宿主。')
+                : t('Use Claude Code on your computer from this browser: follow sessions, send messages, answer approvals and questions. This page is only the frontend; it keeps the hosts you add and their tokens on this device.', '在这个浏览器里使用你电脑上的 Claude Code：查看会话、发送消息、回答审批和提问。此页面只是前端，你添加的宿主和令牌只保存在本设备。')}
             </p>
           </div>
-          <ol className="flex flex-col gap-2 text-ui-sm">
+          {DESKTOP && <ThisComputer />}
+          {!DESKTOP && <ol className="flex flex-col gap-2 text-ui-sm">
             {[
               t('Run a cc-remote host on the computer with Claude Code.', '在装有 Claude Code 的电脑上运行 cc-remote 宿主。'),
               t('Let this page in on the host (below).', '在宿主上允许本页面访问（见下方）。'),
@@ -58,12 +73,12 @@ export function StandaloneHome() {
                 <span className="leading-5">{step}</span>
               </li>
             ))}
-          </ol>
+          </ol>}
           {safety.show && <SafetyNotice checked={safety.ack} onChange={safety.setAck} />}
-          <Button size="lg" className={cn('w-full', big)} disabled={!safety.ack} onClick={() => setForm('add')}>
-            {t('Add a host', '添加宿主')}<ArrowRight className="size-4" />
+          <Button size="lg" variant={DESKTOP ? 'outline' : 'default'} className={cn('w-full', big)} disabled={!safety.ack} onClick={() => setForm('add')}>
+            {DESKTOP ? t('Add a host by address', '按地址添加宿主') : t('Add a host', '添加宿主')}<ArrowRight className="size-4" />
           </Button>
-          <AllowHint />
+          {!DESKTOP && <AllowHint />}
         </div>
         {dialog}
       </AuthFrame>
@@ -105,6 +120,8 @@ export function StandaloneHome() {
             <Pencil className="size-4" />{t('Edit host', '编辑宿主')}
           </Button>
         </div>
+
+        {DESKTOP && <ThisComputer />}
 
         {others.length > 0 && (
           <div className="flex flex-col gap-1">

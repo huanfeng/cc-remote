@@ -5,12 +5,13 @@ import { useState } from 'react';
 import { TriangleAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { STANDALONE, apiBase, hostKey } from '@/lib/hosts';
+import { DESKTOP } from '@/platform/desktop';
 import { t } from '@/lib/i18n';
 
 const KEY = () => hostKey('cc-plain-http-dismissed');
 
 function plainAddress(): string | undefined {
-  const places = [new URL(apiBase || location.href), ...(STANDALONE ? [new URL(location.href)] : [])];
+  const places = [new URL(apiBase || location.href), ...(STANDALONE && !DESKTOP ? [new URL(location.href)] : [])];
   return places.find(where => {
     const host = where.hostname.replace(/^\[|\]$/g, '');
     return where.protocol === 'http:' && !(host === 'localhost' || host === '::1' || /^127\./.test(host));

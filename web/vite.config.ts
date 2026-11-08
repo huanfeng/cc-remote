@@ -42,15 +42,21 @@ const relativePublic = (): Plugin => ({
 // acceptance host on 8790), never the one a user runs on 8787 by default.
 export default defineConfig(({ mode }) => {
   const standalone = mode === 'standalone';
+  // `--mode desktop`: the desktop app's frontend (desktop/, Tauri). Tauri sends the CSP
+  // (desktop/src-tauri/tauri.conf.json) and serves the files from the root.
+  const desktop = mode === 'desktop';
   const devHost = process.env.CC_DEV_HOST || 'http://127.0.0.1:8790';
   return {
     plugins: [react(), tailwindcss(), ...(standalone ? [standaloneCsp(), relativePublic()] : [])],
     resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
     define: { __APP_VERSION__: JSON.stringify(appVersion()) },
-    server: { port: 5174, proxy: { '/api': { target: devHost, ws: true } } },
+    server: desktop
+      ? { port: 5175, strictPort: true, host: 'localhost' }
+      : { port: 5174, proxy: { '/api': { target: devHost, ws: true } } },
+    clearScreen: !desktop,
     ...(standalone ? { base: './' } : {}),
     build: {
-      outDir: standalone ? 'dist-standalone' : 'dist',
+      outDir: standalone ? 'dist-standalone' : desktop ? 'dist-desktop' : 'dist',
       chunkSizeWarningLimit: 1500,
       // Fonts stay files: the host CSP (default-src 'self', no font-src) blocks
       // data: fonts, and Vite would otherwise inline the small woff2 slices.

@@ -58,3 +58,4 @@ Desktop.ini
 # Release packaging output
 /dist/
 /web/dist-standalone/
+/web/dist-desktop/

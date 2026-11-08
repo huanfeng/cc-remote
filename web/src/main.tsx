@@ -1,3 +1,5 @@
+// First: lib/hosts.ts reads the desktop bridge when it loads.
+import { DESKTOP } from './platform/desktop';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/index.css';
@@ -34,6 +36,7 @@ window.addEventListener('vite:preloadError', event => {
 // The service worker caches the app's own assets and shows notifications on
 // Android (no Notification constructor there). Relative to the page: the
 // standalone build may live under a sub-path.
-if (!framed && import.meta.env.PROD && 'serviceWorker' in navigator) {
+// The desktop app has its files on disk already.
+if (!framed && !DESKTOP && import.meta.env.PROD && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => { /* unsupported or blocked */ });
 }

@@ -6,6 +6,7 @@ import { ShieldAlert } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/components/lib/utils';
 import { STANDALONE } from '@/lib/hosts';
+import { DESKTOP } from '@/platform/desktop';
 import { t } from '@/lib/i18n';
 
 const KEY = 'cc-safety-ack:v1';
@@ -34,7 +35,10 @@ export const plainHttpPage = () => location.protocol === 'http:' && !/^(localhos
 export function SafetyNotice({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
   const items: { text: string; tone?: 'ok' | 'warn'; link?: boolean }[] = [
     { text: t('An access token gives full control of the host: through it, Claude Code can read files and run any command on that computer.', '访问令牌等同于宿主电脑的控制权：凭它可以让 Claude Code 读取文件、执行任意命令。') },
-    ...(STANDALONE ? [
+    ...(DESKTOP ? [
+      { text: t('CC Remote is open source. The desktop app talks only to the hosts you add; tokens are kept in the app data on this computer.', 'CC Remote 完全开源。桌面应用只和你添加的宿主直接通信，令牌保存在本机的应用数据里。'), link: true },
+      { text: t('A host reached over plain http from another computer sends the token across the network unencrypted. Use such a host only on a network you trust, or over HTTPS or a VPN.', '通过明文 http 连接其它电脑上的宿主时，令牌会在网络中明文传输。请只在可信网络中这样使用，或改用 HTTPS / VPN。'), tone: 'warn' as const },
+    ] : STANDALONE ? [
       { text: t('CC Remote is open source. This page is static: it talks only to the hosts you add and sends nothing anywhere else.', 'CC Remote 完全开源。本页面是纯静态前端，只和你添加的宿主直接通信，不会把数据发送到其它地方。'), link: true },
       { text: t('But whoever deploys a copy controls its code: a modified copy can quietly record the tokens you enter. Use only the official page or one you deployed yourself, and check the address bar.', '但页面代码由部署者决定：被改动过的副本可以悄悄记下你输入的令牌。请只使用官方实例或你自己部署的版本，并核对地址栏。') },
       official()

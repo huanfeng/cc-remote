@@ -29,6 +29,7 @@ import { useConnection } from '@/features/auth/connection';
 import { ConnectingScreen, LoginScreen } from '@/features/auth/LoginScreen';
 import { PlainHttpBanner } from '@/features/auth/PlainHttpBanner';
 import { StandaloneHome } from '@/features/standalone/StandaloneHome';
+import { DESKTOP, DesktopSocket } from '@/platform/desktop';
 
 const env = import.meta.env;
 const mockMode = (env.DEV || env.VITE_MOCK === '1') && typeof location !== 'undefined' && new URLSearchParams(location.search).has('mock');
@@ -67,7 +68,11 @@ function HostApp() {
   // One backend per token: a new sign-in starts from nothing cached.
   useEffect(() => {
     if (!token) { setBackend(undefined); return; }
-    const b = new HttpBackend({ baseUrl: apiBase, token, lang, onUnauthorized: () => useConnection.getState().unauthorized() });
+    const b = new HttpBackend({
+      baseUrl: apiBase, token, lang, onUnauthorized: () => useConnection.getState().unauthorized(),
+      // The desktop app reaches hosts through Rust: its fetch already does, the terminal socket and uploads follow.
+      ...(DESKTOP ? { WebSocket: DesktopSocket, XMLHttpRequest: null } : {}),
+    });
     setBackend(b);
     return () => b.dispose();
   }, [token]);

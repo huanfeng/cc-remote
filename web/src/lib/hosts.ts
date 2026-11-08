@@ -7,12 +7,12 @@
 // `?host=` per tab, tokens.
 import { create } from 'zustand';
 import { lang, t } from './i18n';
+import { DESKTOP } from '@/platform/desktop';
 
 declare const __APP_VERSION__: string | undefined;
 
 /** True when this page can hold several hosts (standalone build or desktop app). */
-export const multiHost = () =>
-  import.meta.env?.MODE === 'standalone' || (typeof window !== 'undefined' && !!window.__CC_DESKTOP__);
+export const multiHost = () => import.meta.env?.MODE === 'standalone' || DESKTOP;
 
 export const STANDALONE = multiHost();
 
@@ -62,12 +62,21 @@ function dropKeys(drop: (key: string) => boolean) {
 /** Keys this page owns: the previous client's `cc-` and this client's `ccn-`. */
 const ownKey = (key: string) => key.startsWith('cc-') || key.startsWith('ccn-');
 
+/** The scheme for an address typed without one. The desktop app reaches http hosts too: a
+ * name on this machine or the home network (an IP address, localhost, a single label,
+ * .local, .lan) is taken as http, anything else as https. */
+function bareScheme(value: string): 'http' | 'https' {
+  if (!DESKTOP) return location.protocol === 'http:' ? 'http' : 'https';
+  const host = value.replace(/[/?#].*$/, '').replace(/:d+$/, '').replace(/^[|]$/g, '').toLowerCase();
+  return /^[d.]+$/.test(host) || host.includes(':') || !host.includes('.') || /.(local|lan|home|internal)$/.test(host) ? 'http' : 'https';
+}
+
 /** Parses the address the user typed: scheme://host[:port][/path]; a bare host gets this
  * page's scheme (an https page cannot call an http host anyway). */
 export function normalizeHostUrl(text: string): string {
   let value = text.trim();
   if (!value) return '';
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `${location.protocol === 'http:' ? 'http' : 'https'}://${value}`;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) value = `${bareScheme(value)}://${value}`;
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
@@ -79,7 +88,7 @@ const isLocalName = (hostname: string) => { const host = hostname.replace(/^\[|\
 
 /** Whether this page may not call address url: an https page cannot reach a plain
  * http host, except on this machine. */
-export const blockedHttp = (url: string) => location.protocol === 'https:' && url.startsWith('http:') && !isLocalName(new URL(url).hostname);
+export const blockedHttp = (url: string) => !DESKTOP && location.protocol === 'https:' && url.startsWith('http:') && !isLocalName(new URL(url).hostname);
 
 /** Finds the host address behind an entry URL: the first word of its plain-text answer.
  * The entry must answer this page with CORS (Access-Control-Allow-Origin), or the
@@ -369,6 +378,7 @@ export function connectError(status?: number): string {
   if (status === 401) return t('The access token is not valid for this host', '访问令牌与这个宿主不符');
   if (status) return t(`The host answered with an error (${status})`, `宿主返回错误（${status}）`);
   if (!STANDALONE) return t('Cannot reach the host. Check that it is running and try again.', '无法连接宿主。请确认宿主正在运行，然后重试。');
+  if (DESKTOP) return t('Cannot reach the host. Check the address, and that the host is running and reachable from this computer.', '无法连接宿主。请检查地址，并确认宿主正在运行、本机可以访问到它。');
   return t(`Cannot reach the host. Check the address, that it is served over HTTPS (this page is ${location.protocol.replace(':', '')}), and that the host allows this page (on the host: ${allowCommand()})`, `无法连接宿主。请检查地址、宿主是否通过 HTTPS 提供（本页为 ${location.protocol.replace(':', '')}），以及宿主是否允许本页面（在宿主上运行：${allowCommand()}）`);
 }
 

@@ -1,21 +1,11 @@
 // Minimise / maximise / close for the Tauri desktop shell on Windows and
 // Linux (macOS keeps its native traffic lights). Rendered only inside the
-// desktop app; the phase-4 Tauri bootstrap sets `.desktop-shell` and the
-// platform class on <html> and provides window.__CC_DESKTOP__.
+// desktop app; platform/desktop.ts sets `.desktop-shell` and the platform
+// class on <html> and provides window.__CC_DESKTOP__.
 import { Minus, Square, X } from 'lucide-react';
 import { cn } from '@/components/lib/utils';
 import { t } from '@/lib/i18n';
-
-interface DesktopBridge {
-  platform: 'windows' | 'linux' | 'mac';
-  minimize(): void;
-  toggleMaximize(): void;
-  close(): void;
-}
-
-declare global {
-  interface Window { __CC_DESKTOP__?: DesktopBridge }
-}
+import type {} from '@/platform/desktop';
 
 export function WindowControls() {
   const bridge = typeof window !== 'undefined' ? window.__CC_DESKTOP__ : undefined;

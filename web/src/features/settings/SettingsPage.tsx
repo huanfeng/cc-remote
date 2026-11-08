@@ -1,10 +1,10 @@
-// Settings in four sections. Desktop: a large dialog with a left nav.
+// Settings in four sections (five in the desktop app: the service on this computer). Desktop: a large dialog with a left nav.
 // Phones: a full-screen page listing the sections, each opening as its own
 // page (back returns to the list). Leaving a section with unsaved edits, or
 // closing, asks first.
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { ChevronRight, Globe2, KeyRound, Monitor, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
+import { ChevronRight, Globe2, HardDrive, KeyRound, Monitor, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/lib/utils';
 import type { SettingsSection } from '@/store/app';
@@ -16,12 +16,15 @@ import { DefaultsSection } from './DefaultsSection';
 import { OAuthSection } from './OAuthSection';
 import { HostSection } from './HostSection';
 import { BrowserSection } from './BrowserSection';
+import { ComputerSection } from './ComputerSection';
+import { DESKTOP } from '@/platform/desktop';
 
 const SECTIONS: { key: SettingsSection; icon: LucideIcon; title: () => string; hint: () => string }[] = [
   { key: 'defaults', icon: SlidersHorizontal, title: () => t('Session defaults', '会话默认'), hint: () => t('Supplier, model, effort, permissions', '供应商、模型、推理与权限') },
   { key: 'oauth', icon: KeyRound, title: () => t('OAuth tokens', 'OAuth 令牌'), hint: () => t('Official logins for sessions', '会话使用的官方登录') },
   { key: 'host', icon: Monitor, title: () => t('This host', '本宿主'), hint: () => t('Versions, name, colour and icon', '版本、名称、颜色与图标') },
-  { key: 'browser', icon: Globe2, title: () => t('This browser', '本浏览器'), hint: () => t('Language, theme, send key, notifications', '语言、主题、发送键、通知') },
+  { key: 'browser', icon: Globe2, title: () => (DESKTOP ? t('This app', '本应用') : t('This browser', '本浏览器')), hint: () => t('Language, theme, send key, notifications', '语言、主题、发送键、通知') },
+  ...(DESKTOP ? [{ key: 'computer' as const, icon: HardDrive, title: () => t('This computer', '本机服务'), hint: () => t('The cc-remote service here', '本机的 cc-remote 服务') }] : []),
 ];
 
 function Body({ section, mobile }: { section: SettingsSection; mobile: boolean }) {
@@ -30,6 +33,7 @@ function Body({ section, mobile }: { section: SettingsSection; mobile: boolean }
     case 'oauth': return <OAuthSection mobile={mobile} />;
     case 'host': return <HostSection mobile={mobile} />;
     case 'browser': return <BrowserSection mobile={mobile} />;
+    case 'computer': return <ComputerSection mobile={mobile} />;
   }
 }
 

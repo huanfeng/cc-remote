@@ -59,6 +59,9 @@
   原生历史）；修复联调发现的问题（会话状态滞后、托管计划批准、ExitPlanMode 计划正文、字体被 CSP 拦截、
   宿主升级后旧页面懒加载 404）。新前端已移到 `web/` 替换旧版，宿主嵌入后在真实 CSP 下零控制台错误。
 - 剩余：阶段 4（Tauri 2 桌面端）、阶段 5（配色样板）；包体积懒加载；新会话无对话时间时显示「时间未知」应回退到创建时间。
+- 2026-11-07 v0.26.0 发布（新前端）。阶段 4 开始，已定：桌面应用是多宿主客户端 + 本机服务管理（不内置宿主）；
+  HTTP 与终端 WebSocket 经 Rust 转发（宿主拒收未知 Origin，且局域网宿主常为 http）；自绘标题栏；先本地构建，
+  验收后再接入 Release。实现与说明见 `docs/desktop.md`。
 
 ## 阶段 2+3 工作包
 - **WP-http**（`src/backend/http/**`，独占 `backend/types.ts`、`backend/backend.ts`）：HttpBackend

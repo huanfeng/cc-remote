@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CC Remote",
+  "mainBinaryName": "cc-remote-desktop",
+  "version": "0.1.0",
+  "identifier": "io.github.huanfeng.ccremote",
+  "build": {
+    "devUrl": "http://localhost:5175",
+    "frontendDist": "../../web/dist-desktop",
+    "beforeDevCommand": { "script": "pnpm run dev:desktop", "cwd": "../../web" },
+    "beforeBuildCommand": { "script": "pnpm run build:desktop", "cwd": "../../web" }
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CC Remote",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 480,
+        "center": true,
+        "decorations": false,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost blob: data:",
+        "worker-src": "'self' blob:",
+        "media-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi", "dmg", "app", "deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Claude Code and Codex sessions on your hosts",
+    "category": "DeveloperTool"
+  }
+}

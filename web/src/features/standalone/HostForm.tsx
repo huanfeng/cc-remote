@@ -17,6 +17,7 @@ import { SurfaceShell, TOUCH } from '@/features/dialogs/SurfaceShell';
 import { ErrorText } from '@/features/dialogs/common';
 import { SafetyNotice, useSafetyAck } from '@/features/auth/SafetyNotice';
 import { AllowHint, ColorChoices, IconChoices } from './parts';
+import { DESKTOP } from '@/platform/desktop';
 
 const VIA_LABEL: Record<HostVia, () => string> = { direct: () => t('Direct', '直连'), text: () => t('Address URL', '文本地址') };
 
@@ -167,7 +168,7 @@ function HostForm({ editing, mobile, onDone }: { editing?: HostEntry; mobile: bo
           {busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')}
         </Button>
       </div>
-      {!editing && <AllowHint />}
+      {!editing && !DESKTOP && <AllowHint />}
     </form>
   );
 }
