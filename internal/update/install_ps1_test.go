@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+
+	"golang.org/x/sys/windows"
 )
 
 // These are intentionally non-executable fixture files. Every installation uses
@@ -45,7 +47,10 @@ func newInstallerFixture(t *testing.T, shell string) *installerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &installerFixture{t: t, shell: shell, script: script, root: t.TempDir()}
+	// Windows runners may return a DOS 8.3 TEMP alias such as RUNNER~1.
+	// PowerShell and ShellLink normalize it; use the actual long name before
+	// deriving any fixture paths so strict persisted-path checks compare peers.
+	f := &installerFixture{t: t, shell: shell, script: script, root: installerLongPath(t, t.TempDir())}
 	f.installDir = filepath.Join(f.root, "program files 中文 🚀", "bin")
 	f.appData = filepath.Join(f.root, "roaming")
 	f.tempDir = filepath.Join(f.root, "temp")
@@ -101,6 +106,44 @@ func newInstallerFixture(t *testing.T, shell string) *installerFixture {
 	}
 	f.release("first", "", false)
 	return f
+}
+
+func installerLongPath(t *testing.T, path string) string {
+	t.Helper()
+	input, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]uint16, windows.MAX_LONG_PATH)
+	n, err := windows.GetLongPathName(input, &buffer[0], uint32(len(buffer)))
+	if err != nil || n == 0 || n >= uint32(len(buffer)) {
+		t.Fatalf("expand fixture path %q: length %d, error %v", path, n, err)
+	}
+	return windows.UTF16ToString(buffer[:n])
+}
+
+func TestInstallerLongPathExpandsShortName(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "installer directory with a long name")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	long := installerLongPath(t, root)
+	input, err := windows.UTF16PtrFromString(long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]uint16, windows.MAX_LONG_PATH)
+	n, err := windows.GetShortPathName(input, &buffer[0], uint32(len(buffer)))
+	if err != nil || n == 0 || n >= uint32(len(buffer)) {
+		t.Fatalf("obtain short fixture path: length %d, error %v", n, err)
+	}
+	short := windows.UTF16ToString(buffer[:n])
+	if strings.EqualFold(short, long) {
+		t.Skip("this volume does not generate DOS 8.3 aliases")
+	}
+	if got := installerLongPath(t, short); got != long {
+		t.Fatalf("short path %q expanded to %q, want %q", short, got, long)
+	}
 }
 
 func (f *installerFixture) release(version, missing string, badChecksum bool) {
