@@ -84,6 +84,22 @@ cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，�
 - 页面切到后台时断开，回来自动重连；宿主重启后同样自动重连。Claude Code 退出时显示「已退出」，点「重新启动」再启动它。
 - 只显示当前屏幕和此后的输出，更早的内容在对话视图里看。网页终端不计入 `ccr` 的「已有终端接入」提示。
 
+#### 在 Herdr 里使用
+
+[Herdr](https://herdr.dev) 是在终端里并排运行多个 agent 的复用器，会在侧栏显示每个 pane 里 agent 的状态，并在 agent 等你回答时提醒。直接在 Herdr 的 pane 里运行 `ccr` 即可：Claude Code 实际运行在宿主上，Herdr 看不到它，所以接入期间 `ccr` 把宿主掌握的会话状态上报给 Herdr：
+
+| 会话状态 | Herdr 显示 |
+|---|---|
+| 执行中 | 工作中（working） |
+| 等待操作（审批、提问、计划确认） | 需要回答（blocked） |
+| 空闲 | 空闲（idle） |
+
+- 在手机或网页上回答了待答请求后，Herdr 里的「需要回答」随之消失；状态来自宿主的 Hook 与记录，比 Herdr 看屏幕判断更准确。
+- 按 `Ctrl+]` 断开、会话结束或宿主离线时，`ccr` 会取消上报，pane 回到普通 shell；再次接入后恢复。
+- 上报时同时告诉 Herdr 恢复命令 `ccr <会话 ID>`：Herdr 服务重启并恢复布局后会在该 pane 里重新运行，自动接回同一个会话（需要 Herdr 0.9.2 或更高，且 `ccr` 在 `PATH` 里）。
+- 两种 Herdr 都支持，`ccr` 按环境自动选择：Herdr 终端版（环境里有 `HERDR_ENV`、`HERDR_PANE_ID`）通过它的 `herdr pane report-agent` 命令上报；Herdr 桌面版（`herdr-app` / `herdr-core`，命令行 `hc`，环境里有 `HC_TERMINAL_ID`）直接往终端写 [OSC 7501](https://mitchellh.com/writing/program-status-osc7501) 状态序列，不需要额外命令。设置 `CC_REMOTE_HERDR=0` 可全部关闭；`CC_REMOTE_OSC7501=1` 可在其它认 OSC 7501 的终端里强制启用。Herdr 不可用时静默忽略，不影响终端使用。
+- 目前只支持 Claude Code 的终端会话，Codex 不在其中。设计说明见 [design/herdr-bridge.md](design/herdr-bridge.md)。
+
 ### 终端历史与导入
 
 侧栏「终端历史」读取 Claude Code 本地的项目级 JSONL 记录（只读，不修改原文件）。可以「导入为托管会话」继续，导入前必须停止原终端进程；导入沿用原会话标题。

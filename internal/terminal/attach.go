@@ -469,9 +469,11 @@ type client struct {
 	created bool
 }
 
-func (c *client) http() *http.Client {
-	return &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}
-}
+// hostHTTP is shared: a client per request would keep every connection of a
+// poll (the Herdr bridge asks the host each second) idle in a pool nobody reuses.
+var hostHTTP = &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{Proxy: nil}}
+
+func (c *client) http() *http.Client { return hostHTTP }
 
 func (c *client) do(method, path string, body any, out any) error {
 	var r io.Reader
@@ -930,6 +932,10 @@ func (c *client) dialStream(ctx context.Context, id string) (*websocket.Conn, er
 }
 
 func (c *client) attachOnce(x remoteSession) error {
+	// Registered first so it runs last: the stream is closed and the terminal
+	// restored before the pane is released in Herdr (which may take a moment).
+	stopHerdr := func() {}
+	defer func() { stopHerdr() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	conn, err := c.dialStream(ctx, x.ID)
@@ -955,6 +961,11 @@ func (c *client) attachOnce(x remoteSession) error {
 		links = newLinkWriter(os.Stdout)
 		screenOut = links
 	}
+	osc := newOSCStatus(os.Getenv, os.Stdout) // in an hc terminal: tell it the session's state
+	if osc != nil {
+		screenOut = osc.wrap(screenOut)
+	}
+	stopHerdr = c.startHerdr(x, osc) // inside a Herdr pane: report the session's state to it
 	detached := false
 	defer func() {
 		if links != nil {
