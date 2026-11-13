@@ -9,7 +9,6 @@ import { useApp } from '@/store/app';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { SessionWorkspace } from '@/features/workspace/SessionWorkspace';
 import { EmptyState } from '@/features/workspace/EmptyState';
-import { WindowControls } from './WindowControls';
 
 export function DesktopShell() {
   const collapsed = usePrefs(s => s.sidebarCollapsed);
@@ -31,7 +30,6 @@ export function DesktopShell() {
       <main className={cn('relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background', 'my-1.5 mr-1.5 rounded-xl border border-border/60 shadow-xs', collapsed && 'ml-1.5')}>
         {selection ? <SessionWorkspace mobile={false} /> : <EmptyState />}
       </main>
-      <WindowControls />
     </div>
   );
 }

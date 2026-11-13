@@ -2,30 +2,46 @@
 // desktop`) in a native window. It holds several hosts like the standalone page,
 // talks to them from Rust (net.rs, ws.rs) and manages the cc-remote service on
 // this computer (service.rs).
+mod history;
 mod net;
 mod service;
+mod usage_tray;
 mod ws;
-mod history;
-
-use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(history::Requests(std::sync::Mutex::new(history::HistoryRequest::from_args(std::env::args()))))
+        .manage(history::Requests(std::sync::Mutex::new(
+            history::HistoryRequest::from_args(std::env::args()),
+        )))
         // A second launch brings the open window forward instead.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let tray_only = args.iter().any(|arg| arg == "--tray");
             history::receive(app, args);
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
+            if !tray_only {
+                usage_tray::show_main(app);
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                // Old frameless state must not override the system title bar.
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(net::Net::new())
         .manage(ws::Sockets::default())
+        .setup(|app| {
+            usage_tray::setup(app)?;
+            if !std::env::args().any(|arg| arg == "--tray") {
+                usage_tray::show_main(app.handle());
+            }
+            Ok(())
+        })
+        .on_window_event(usage_tray::window_event)
         .invoke_handler(tauri::generate_handler![
             net::http_request,
             net::http_abort,
@@ -55,16 +71,29 @@ mod tests {
     fn app() -> tauri::App<tauri::test::MockRuntime> {
         mock_builder()
             .manage(crate::net::Net::new())
-            .invoke_handler(tauri::generate_handler![crate::net::http_request, crate::net::http_abort])
+            .invoke_handler(tauri::generate_handler![
+                crate::net::http_request,
+                crate::net::http_abort
+            ])
             .build(mock_context(noop_assets()))
             .expect("mock app")
     }
 
-    fn request(app: &tauri::App<tauri::test::MockRuntime>, meta: serde_json::Value, body: Vec<u8>) -> Result<(serde_json::Value, Vec<u8>), serde_json::Value> {
+    fn request(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        meta: serde_json::Value,
+        body: Vec<u8>,
+    ) -> Result<(serde_json::Value, Vec<u8>), serde_json::Value> {
         let label = format!("w{}", meta["id"]);
-        let webview = WebviewWindowBuilder::new(app, &label, Default::default()).build().unwrap();
+        let webview = WebviewWindowBuilder::new(app, &label, Default::default())
+            .build()
+            .unwrap();
         let mut headers = tauri::http::HeaderMap::new();
-        let encoded = percent_encoding::utf8_percent_encode(&meta.to_string(), percent_encoding::NON_ALPHANUMERIC).to_string();
+        let encoded = percent_encoding::utf8_percent_encode(
+            &meta.to_string(),
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string();
         headers.insert("x-cc-meta", encoded.parse().unwrap());
         let reply = get_ipc_response(
             &webview,
@@ -78,7 +107,9 @@ mod tests {
                 invoke_key: INVOKE_KEY.to_string(),
             },
         )?;
-        let InvokeResponseBody::Raw(bytes) = reply else { panic!("expected a raw reply") };
+        let InvokeResponseBody::Raw(bytes) = reply else {
+            panic!("expected a raw reply")
+        };
         let len = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
         let head = serde_json::from_slice(&bytes[4..4 + len]).unwrap();
         Ok((head, bytes[4 + len..].to_vec()))
@@ -87,21 +118,36 @@ mod tests {
     #[test]
     fn refuses_other_schemes() {
         let app = app();
-        let err = request(&app, serde_json::json!({ "id": 1, "method": "GET", "url": "file:///etc/passwd" }), vec![]).unwrap_err();
+        let err = request(
+            &app,
+            serde_json::json!({ "id": 1, "method": "GET", "url": "file:///etc/passwd" }),
+            vec![],
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("unsupported"), "{err}");
     }
 
     #[test]
     fn unreachable_host_is_an_error() {
         let app = app();
-        let err = request(&app, serde_json::json!({ "id": 2, "method": "GET", "url": "http://127.0.0.1:1/api/info" }), vec![]).unwrap_err();
+        let err = request(
+            &app,
+            serde_json::json!({ "id": 2, "method": "GET", "url": "http://127.0.0.1:1/api/info" }),
+            vec![],
+        )
+        .unwrap_err();
         assert!(!err.to_string().is_empty());
     }
 
     /// A host refuses a browser Origin it does not know; the request from Rust has none.
     #[test]
     fn live_host_answers_without_origin() {
-        let (Ok(host), Ok(token)) = (std::env::var("CC_TEST_HOST"), std::env::var("CC_TEST_TOKEN")) else { return };
+        let (Ok(host), Ok(token)) = (
+            std::env::var("CC_TEST_HOST"),
+            std::env::var("CC_TEST_TOKEN"),
+        ) else {
+            return;
+        };
         let app = app();
         let meta = serde_json::json!({
             "id": 3, "method": "GET", "url": format!("{host}/api/info"),
@@ -110,9 +156,17 @@ mod tests {
         let (head, body) = request(&app, meta, vec![]).unwrap();
         assert_eq!(head["status"], 200, "{head}");
         let info: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(info.get("version").is_some() || info.get("name").is_some(), "{info}");
+        assert!(
+            info.get("version").is_some() || info.get("name").is_some(),
+            "{info}"
+        );
         // An ETag revalidation comes back as 304 with no body.
-        let etag = head["headers"].as_array().unwrap().iter().find(|h| h[0] == "etag").map(|h| h[1].as_str().unwrap().to_string());
+        let etag = head["headers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h[0] == "etag")
+            .map(|h| h[1].as_str().unwrap().to_string());
         if let Some(tag) = etag {
             let meta = serde_json::json!({ "id": 4, "method": "GET", "url": format!("{host}/api/info"), "headers": [["Authorization", format!("Bearer {token}")], ["If-None-Match", tag]] });
             let (head, body) = request(&app, meta, vec![]).unwrap();

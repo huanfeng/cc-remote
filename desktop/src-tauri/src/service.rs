@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 
 /// Where `cc-remote service install` puts its copy (internal/service/config.go InstallRoot).
 fn install_root() -> Option<PathBuf> {
-    let home = || std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let home =
+        || std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
     if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
@@ -17,7 +18,11 @@ fn install_root() -> Option<PathBuf> {
             .or_else(|| home().map(|h| h.join("AppData").join("Local")))
             .map(|p| p.join("cc-remote"))
     } else if cfg!(target_os = "macos") {
-        home().map(|h| h.join("Library").join("Application Support").join("cc-remote"))
+        home().map(|h| {
+            h.join("Library")
+                .join("Application Support")
+                .join("cc-remote")
+        })
     } else {
         std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
@@ -29,12 +34,21 @@ fn install_root() -> Option<PathBuf> {
 
 /// The installed copy, else a cc-remote on PATH.
 fn executable() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "cc-remote.exe" } else { "cc-remote" };
-    if let Some(path) = install_root().map(|r| r.join("bin").join(name)).filter(|p| p.is_file()) {
+    let name = if cfg!(windows) {
+        "cc-remote.exe"
+    } else {
+        "cc-remote"
+    };
+    if let Some(path) = install_root()
+        .map(|r| r.join("bin").join(name))
+        .filter(|p| p.is_file())
+    {
         return Some(path);
     }
     let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).map(|dir| dir.join(name)).find(|p| p.is_file())
+    std::env::split_paths(&paths)
+        .map(|dir| dir.join(name))
+        .find(|p| p.is_file())
 }
 
 struct Output {
@@ -43,7 +57,12 @@ struct Output {
     stderr: String,
 }
 
-async fn cc_remote(exe: &PathBuf, args: &[&str], lang: &str, timeout: Duration) -> Result<Output, String> {
+async fn cc_remote(
+    exe: &PathBuf,
+    args: &[&str],
+    lang: &str,
+    timeout: Duration,
+) -> Result<Output, String> {
     let mut command = tokio::process::Command::new(exe);
     command
         .args(args)
@@ -67,12 +86,41 @@ async fn cc_remote(exe: &PathBuf, args: &[&str], lang: &str, timeout: Duration) 
 }
 
 async fn status(exe: &PathBuf, lang: &str) -> Result<Value, String> {
-    let out = cc_remote(exe, &["service", "status", "--json"], lang, Duration::from_secs(20)).await?;
+    let out = cc_remote(
+        exe,
+        &["service", "status", "--json"],
+        lang,
+        Duration::from_secs(20),
+    )
+    .await?;
     // Exit 3 is "not running", still with the JSON.
     serde_json::from_str::<Value>(&out.stdout).map_err(|_| {
-        let text = if out.stderr.trim().is_empty() { out.stdout } else { out.stderr };
+        let text = if out.stderr.trim().is_empty() {
+            out.stdout
+        } else {
+            out.stderr
+        };
         format!("cc-remote service status: {}", text.trim())
     })
+}
+
+/// Resolve the local monitor without sharing credentials with the tray UI.
+pub(crate) async fn usage_monitor_location() -> Result<(String, PathBuf), String> {
+    let exe = executable().ok_or("未安装 cc-remote 后台")?;
+    let value = status(&exe, "zh").await?;
+    let url = value
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or("本机后台尚未运行")?;
+    let dir = value
+        .pointer("/config/dataDir")
+        .and_then(Value::as_str)
+        .ok_or("本机后台未配置数据目录")?;
+    let dir = PathBuf::from(dir);
+    if !dir.is_absolute() {
+        return Err("本机后台数据目录必须为绝对路径".into());
+    }
+    Ok((crate::history::local_origin(url)?, dir))
 }
 
 /// The local service: { available: false } when cc-remote is not installed,
@@ -85,7 +133,10 @@ pub async fn local_service_status(lang: String) -> Result<Value, String> {
     let mut value = status(&exe, &lang).await?;
     if let Value::Object(map) = &mut value {
         map.insert("available".into(), Value::Bool(true));
-        map.insert("exe".into(), Value::String(exe.to_string_lossy().into_owned()));
+        map.insert(
+            "exe".into(),
+            Value::String(exe.to_string_lossy().into_owned()),
+        );
     }
     Ok(value)
 }
@@ -99,7 +150,8 @@ pub async fn local_service_token(lang: String) -> Result<String, String> {
         .pointer("/config/dataDir")
         .and_then(Value::as_str)
         .ok_or("the service has no data directory")?;
-    let token = std::fs::read_to_string(PathBuf::from(dir).join("access-token")).map_err(|e| e.to_string())?;
+    let token = std::fs::read_to_string(PathBuf::from(dir).join("access-token"))
+        .map_err(|e| e.to_string())?;
     Ok(token.trim().to_string())
 }
 
@@ -114,30 +166,48 @@ pub async fn local_service_action(action: String, lang: String) -> Result<String
     if out.code == Some(0) {
         Ok(out.stdout.trim().to_string())
     } else {
-        let text = if out.stderr.trim().is_empty() { out.stdout } else { out.stderr };
+        let text = if out.stderr.trim().is_empty() {
+            out.stdout
+        } else {
+            out.stderr
+        };
         Err(text.trim().to_string())
     }
 }
 
 /// Resolve the tray's local host without putting its access token in argv or a URL.
 #[tauri::command]
-pub async fn usage_history_connection(request: crate::history::HistoryRequest, lang: String) -> Result<Value, String> {
+pub async fn usage_history_connection(
+    request: crate::history::HistoryRequest,
+    lang: String,
+) -> Result<Value, String> {
     let (host, dir) = match (request.host, request.data_dir) {
         (Some(host), Some(dir)) => (host, dir),
         (None, None) => {
             let exe = executable().ok_or("cc-remote is not installed")?;
             let value = status(&exe, &lang).await?;
-            let host = value.get("url").and_then(Value::as_str).ok_or("The local service is not running")?;
-            let dir = value.pointer("/config/dataDir").and_then(Value::as_str).ok_or("The service has no data directory")?;
+            let host = value
+                .get("url")
+                .and_then(Value::as_str)
+                .ok_or("The local service is not running")?;
+            let dir = value
+                .pointer("/config/dataDir")
+                .and_then(Value::as_str)
+                .ok_or("The service has no data directory")?;
             (host.to_string(), dir.to_string())
         }
         _ => return Err("Both --host and --data-dir are required for a custom host".into()),
     };
     let host = crate::history::local_origin(&host)?;
     let dir = PathBuf::from(dir);
-    if !dir.is_absolute() { return Err("The data directory must be absolute".into()); }
-    let token = std::fs::read_to_string(dir.join("access-token")).map_err(|_| "Could not read the local access token")?;
-    if token.trim().is_empty() { return Err("The local access token is empty".into()); }
+    if !dir.is_absolute() {
+        return Err("The data directory must be absolute".into());
+    }
+    let token = std::fs::read_to_string(dir.join("access-token"))
+        .map_err(|_| "Could not read the local access token")?;
+    if token.trim().is_empty() {
+        return Err("The local access token is empty".into());
+    }
     Ok(json!({"url": host, "token": token.trim(), "account": request.account}))
 }
 
@@ -149,16 +219,34 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cc-remote-history-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("access-token"), "test-history-token\n").unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let request = HistoryRequest { host: Some("http://127.0.0.1:8790/".into()), data_dir: Some(dir.to_string_lossy().into()), account: Some("claude:123".into()) };
-        let value = rt.block_on(super::usage_history_connection(request.clone(), "en".into())).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let request = HistoryRequest {
+            host: Some("http://127.0.0.1:8790/".into()),
+            data_dir: Some(dir.to_string_lossy().into()),
+            account: Some("claude:123".into()),
+        };
+        let value = rt
+            .block_on(super::usage_history_connection(
+                request.clone(),
+                "en".into(),
+            ))
+            .unwrap();
         assert_eq!(value["url"], "http://127.0.0.1:8790");
         assert_eq!(value["token"], "test-history-token");
         assert_eq!(value["account"], "claude:123");
-        let mut remote = request.clone(); remote.host = Some("https://example.com".into());
-        assert!(rt.block_on(super::usage_history_connection(remote, "en".into())).is_err());
-        let mut incomplete = request; incomplete.host = None;
-        assert!(rt.block_on(super::usage_history_connection(incomplete, "en".into())).is_err());
+        let mut remote = request.clone();
+        remote.host = Some("https://example.com".into());
+        assert!(rt
+            .block_on(super::usage_history_connection(remote, "en".into()))
+            .is_err());
+        let mut incomplete = request;
+        incomplete.host = None;
+        assert!(rt
+            .block_on(super::usage_history_connection(incomplete, "en".into()))
+            .is_err());
         std::fs::remove_file(dir.join("access-token")).unwrap();
         std::fs::remove_dir(dir).unwrap();
     }
@@ -169,12 +257,25 @@ mod tests {
         if std::env::var("CC_TEST_LOCAL_SERVICE").is_err() {
             return;
         }
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let v = rt.block_on(super::local_service_status("en".into())).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let v = rt
+            .block_on(super::local_service_status("en".into()))
+            .unwrap();
         assert_eq!(v["available"], true, "{v}");
         assert!(v.get("running").is_some() && v.get("exe").is_some(), "{v}");
-        println!("running={} url={} version={}", v["running"], v["url"], v.pointer("/config/version").unwrap_or(&serde_json::Value::Null));
-        let token = rt.block_on(super::local_service_token("en".into())).unwrap();
+        println!(
+            "running={} url={} version={}",
+            v["running"],
+            v["url"],
+            v.pointer("/config/version")
+                .unwrap_or(&serde_json::Value::Null)
+        );
+        let token = rt
+            .block_on(super::local_service_token("en".into()))
+            .unwrap();
         assert!(token.len() > 16);
     }
 }

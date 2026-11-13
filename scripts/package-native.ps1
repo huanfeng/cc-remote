@@ -13,39 +13,33 @@ if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
 $null = New-Item -ItemType Directory -Path $StageDir
 $null = New-Item -ItemType Directory -Path $OutputDir
 $portableDir = Join-Path $StageDir 'portable'
-$trayDir = Join-Path $StageDir 'tray'
-$null = New-Item -ItemType Directory -Path $portableDir, $trayDir
+$null = New-Item -ItemType Directory -Path $portableDir
 
 $desktopRelease = Join-Path $repoRoot 'desktop/src-tauri/target/release'
-$trayBinary = Join-Path $repoRoot 'tray/target/release/cc-remote-tray.exe'
 $backendBinary = Join-Path $repoRoot 'dist/native/cc-remote.exe'
 $installers = @(Get-ChildItem -LiteralPath (Join-Path $desktopRelease 'bundle/nsis') -Filter "*_${Version}_x64-setup.exe")
 if ($installers.Count -ne 1) { throw "Expected one NSIS installer for $Version, found $($installers.Count)" }
 
-Copy-Item -LiteralPath (Join-Path $desktopRelease 'cc-remote-desktop.exe'), $trayBinary, $backendBinary -Destination $portableDir
-Copy-Item -LiteralPath $trayBinary -Destination $trayDir
-foreach ($directory in @($portableDir, $trayDir)) {
-    Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE'), (Join-Path $repoRoot 'tray/README.md') -Destination $directory
-}
+Copy-Item -LiteralPath (Join-Path $desktopRelease 'cc-remote-desktop.exe'), $backendBinary -Destination $portableDir
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE'), (Join-Path $repoRoot 'docs/desktop.md') -Destination $portableDir
 @'
 CC Remote for Windows x64
 
-For installation and future updates of all three programs, run in PowerShell:
+For installation and future updates of the backend and desktop app, run in PowerShell:
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
-This creates Start Menu shortcuts and starts only the native tray. Add
--AutoStart using the parameter syntax documented in README.md for sign-in startup.
+This creates Start Menu shortcuts and starts the desktop app in tray mode. Add
+-AutoStart using the parameter syntax documented in desktop.md for sign-in startup.
 
 To use this extracted archive manually:
 1. Run cc-remote.exe service install to install or update the local backend.
-2. Run cc-remote-tray.exe for the native tray. It does not load a WebView.
-3. Choose detailed history in the tray to open cc-remote-desktop.exe.
+2. Run cc-remote-desktop.exe --tray for the desktop's built-in tray.
+3. Hover over the tray to view usage; click it to open CC Remote. History is in its menu.
 
-Keep all three executables in this directory. The backend stores accounts and
+Keep both executables in this directory. The backend stores accounts and
 history in its existing user data directory. Exiting the tray does not stop it.
 The desktop client requires WebView2. Manual archive use does not register tray startup.
 '@ | Set-Content -LiteralPath (Join-Path $portableDir 'START-HERE.txt') -Encoding utf8
 
 Copy-Item -LiteralPath $installers[0].FullName -Destination (Join-Path $OutputDir "cc-remote-desktop_${Version}_windows_amd64-setup.exe")
 Compress-Archive -Path (Join-Path $portableDir '*') -DestinationPath (Join-Path $OutputDir "cc-remote-desktop_${Version}_windows_amd64.zip") -CompressionLevel Optimal
-Compress-Archive -Path (Join-Path $trayDir '*') -DestinationPath (Join-Path $OutputDir "cc-remote-tray_${Version}_windows_amd64.zip") -CompressionLevel Optimal
 Get-ChildItem -LiteralPath $OutputDir

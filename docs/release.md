@@ -26,8 +26,8 @@ git push origin v0.2.0
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | push / PR 到 `main` | ubuntu + windows：在 `web/` 安装锁定依赖、类型检查、构建前端、`go vet ./...`、`go test -race ./...`；另在 ubuntu 上 `CGO_ENABLED=0` 交叉编译 darwin/arm64；`govulncheck ./...` 发现可达漏洞（含标准库）即失败 |
-| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 6 个平台后台、独立网页、Windows x64 Tauri 客户端与托盘 → 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
-| `.github/workflows/native-windows.yml` | 由 CI / Release 调用 | 统一原生版本、Rust 测试、Tauri NSIS 安装包、托盘 ZIP、包含三个程序的便携 ZIP |
+| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 6 个平台后台、独立网页、Windows x64 内置托盘的 Tauri 客户端 → 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
+| `.github/workflows/native-windows.yml` | 由 CI / Release 调用 | 统一原生版本、Rust 测试、Tauri NSIS 安装包、包含后台和桌面客户端的便携 ZIP |
 
 Go 版本取自 `go.mod`：`go` 指令是最低语言版本，`toolchain` 指令固定实际编译用的补丁版本（含标准库安全修复）；`actions/setup-go` 使用 `go-version-file: go.mod` + `check-latest: true` 读取它。升级工具链时修改 `toolchain` 一行即可。
 
@@ -46,25 +46,24 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 | 文件 | 内容 |
 | --- | --- |
 | `cc-remote-desktop_<版本>_windows_amd64-setup.exe` | Windows x64 Tauri 客户端 NSIS 安装包；后台需另外安装 |
-| `cc-remote-desktop_<版本>_windows_amd64.zip` | Windows x64 便携包：后台、Tauri 客户端、原生托盘、使用说明和许可证 |
-| `cc-remote-tray_<版本>_windows_amd64.zip` | Windows x64 原生托盘、使用说明和许可证；复用已安装的后台与桌面客户端 |
+| `cc-remote-desktop_<版本>_windows_amd64.zip` | Windows x64 便携包：后台、内置托盘的 Tauri 客户端、使用说明和许可证 |
 | `cc-remote_<版本>_windows_amd64.zip` / `_windows_arm64.zip` | `cc-remote.exe`、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_linux_{amd64,arm64}.tar.gz` | `cc-remote`（可执行）、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_darwin_{amd64,arm64}.tar.gz` | 同上 |
 | `cc-remote_<版本>_web.zip` | 独立网页前端（静态文件），见[独立网页前端](standalone.md)；正式版同时发布到 GitHub Pages（`.github/workflows/pages.yml`）；`cc-remote update` 不会选它 |
 | `checksums.txt` | 所有归档及桌面安装包的 sha256（`sha256sum` 格式） |
 | `install.ps1` / `install.sh` | 安装脚本副本；`releases/latest/download/install.*` 即指向最新正式版中的这两个文件 |
-| `install-desktop.ps1` | Windows x64 完整安装入口：后台服务、Tauri 客户端、原生托盘；从同一份 PowerShell 安装逻辑生成 |
+| `install-desktop.ps1` | Windows x64 完整安装入口：后台服务和内置托盘的 Tauri 客户端；从同一份 PowerShell 安装逻辑生成 |
 
 `<版本>` 不带 `v`，例如标签 `v0.2.0` 对应 `cc-remote_0.2.0_linux_amd64.tar.gz`，程序内的版本号（`main.version`）为 `0.2.0`。
 
 ### 桌面与托盘流水线
 
-`.github/workflows/native-windows.yml` 是 CI / Release 共用的 Windows x64 构建任务：锁定 pnpm / Cargo 依赖安装，统一 Tauri 配置、桌面与托盘 Cargo 包版本和 lockfile，构建桌面前端，运行两个 Rust 包的测试，再构建 NSIS 安装包和两个 ZIP。PR / push 到 `main` 使用 `0.0.0-ci`，附件位于 Actions 的 `native-windows-amd64`，保留 7 天。
+`.github/workflows/native-windows.yml` 是 CI / Release 共用的 Windows x64 构建任务：锁定 pnpm / Cargo 依赖安装，统一 Tauri 配置、桌面 Cargo 包版本和 lockfile，构建桌面前端，运行桌面 Rust 测试，再构建 NSIS 安装包和便携 ZIP。PR / push 到 `main` 使用 `0.0.0-ci`，附件位于 Actions 的 `native-windows-amd64`，保留 7 天。
 
 Release 使用标签对应的版本；原生任务成功后才发布，避免只发布后台的半成品版本。安装包和 ZIP 与原有后台、独立网页一起进入同一个 Release、校验清单和来源证明。后台安装脚本和 `cc-remote update` 继续按 `cc-remote_` 前缀选择后台归档。
 
-当前原生发布范围为 Windows x64，未配置代码签名或客户端内自动更新。推荐通过下方完整安装入口安装和更新三者；NSIS 安装包只安装客户端，手动使用便携包时按 `START-HERE.txt` 安装后台，再运行托盘。Windows ARM64、macOS 和 Linux 仍发布原有后台归档，暂不发布原生客户端和托盘。
+当前原生发布范围为 Windows x64，未配置代码签名或客户端内自动更新。推荐通过下方完整安装入口安装和更新后台与客户端；NSIS 安装包只安装客户端，手动使用便携包时按 `START-HERE.txt` 安装后台，再运行托盘。Windows ARM64、macOS 和 Linux 仍发布原有后台归档，暂不发布原生客户端和托盘。
 
 ## 凭据
 
@@ -88,7 +87,7 @@ Windows x64 完整安装（后台、客户端、托盘）：
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
 ```
 
-默认安装到 `%LOCALAPPDATA%\cc-remote\bin`，创建开始菜单中的 **CC Remote** 和 **CC Remote Tray**。安装完成后仅启动或重启这一安装目录的托盘，不加载 WebView；详细历史按需启动客户端。运行中的客户端可继续使用，关闭后重新打开即使用新版。更新保留后台配置、账号、历史、客户端存储和托盘偏好。
+默认安装到 `%LOCALAPPDATA%\cc-remote\bin`，创建开始菜单中的 **CC Remote** 和 **CC Remote Tray**（同一个 desktop 程序，后者带 `--tray`）。安装完成后以 `--tray` 启动此目录的 desktop，常驻及 Windows 原生悬停不创建 WebView；悬停用量窗口由 wind-ui-rust 原生渲染，点击托盘时才创建主窗口 WebView。更新时旧独立托盘的登录自启快捷方式会改指向 desktop `--tray`，旧偏好及数据保留。运行中的客户端可继续使用，从托盘菜单退出后重新打开即使用新版。更新保留后台配置、账号、历史、客户端存储和托盘偏好。
 
 可选登录自启或只安装不启动：
 
@@ -125,9 +124,9 @@ $s = gh api repos/huanfeng/cc-remote/contents/scripts/install.ps1 -H "Accept: ap
 | `-Version v0.2.0` | 指定版本，默认最新正式版 |
 | `-Listen a,b` | 传给 `service install --listen`，可重复或逗号分隔 |
 | `-Lang zh` | 界面语言 `auto` / `zh` / `en`，传给 `service install --lang`；默认取 `$env:CC_REMOTE_LANG`，都未设置时沿用已安装的设置 |
-| `-NoService` | 不装服务，只把所选包的程序复制到 `-InstallDir`（默认 `%LOCALAPPDATA%\cc-remote\bin`）；完整包仍创建客户端与托盘快捷方式 |
+| `-NoService` | 不装服务，只把所选包的程序复制到 `-InstallDir`（默认 `%LOCALAPPDATA%\cc-remote\bin`）；完整包仍创建普通启动与托盘模式快捷方式 |
 | `-InstallDir DIR` | 客户端和托盘的目标目录；只有 `-NoService` 时后台也复制到此处，服务模式的后台仍安装在标准目录。自定义目录更新时需再次传入 |
-| `-AutoStart` | 完整安装入口：创建托盘的当前用户登录自启快捷方式；更新保留已有自启项 |
+| `-AutoStart` | 完整安装入口：创建客户端 `--tray` 模式的当前用户登录自启快捷方式；更新保留已有自启项 |
 | `-NoLaunch` | 完整安装入口：不启动或重启托盘，适合只安装或无交互环境 |
 | `-NoAlias` / `-Alias:$false` | 不创建 `ccr` 别名（默认创建） |
 | `-DryRun` | 只解析版本和附件并打印计划，不下载不安装 |
@@ -207,7 +206,7 @@ cc-remote alias uninstall                    # 删除 ccr 并移除其 PATH 条�
 
 之后删除安装目录（Windows `%LOCALAPPDATA%\cc-remote`，Linux `~/.local/share/cc-remote`，macOS `~/Library/Application Support/cc-remote`）。数据目录（令牌、SQLite）默认在 Windows `%APPDATA%\cc-remote`、Linux `~/.config/cc-remote`、macOS `~/Library/Application Support/cc-remote`，需要时手动删除。
 
-`cc-remote service uninstall` 只卸载后台服务，不会删除完整 Windows 安装中的客户端、托盘或快捷方式。退出两个应用后，可手动删除安装目录里的 `cc-remote-desktop.exe`、`cc-remote-tray.exe`，开始菜单中的 `CC Remote` 文件夹（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\CC Remote`），以及可选的 Startup 自启项 `CC Remote Tray.lnk`（运行 `shell:startup` 打开）。这些操作保留后台账号与历史、客户端 WebView 存储和托盘偏好。
+`cc-remote service uninstall` 只卸载后台服务，不会删除客户端或快捷方式。从托盘菜单退出客户端后，可手动删除安装目录里的 `cc-remote-desktop.exe`、开始菜单中的 `CC Remote` 文件夹（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\CC Remote`），以及可选的 Startup 自启项 `CC Remote Tray.lnk`（运行 `shell:startup` 打开）。旧版遗留的 `cc-remote-tray.exe` 可在退出该程序后一并删除。这些操作保留后台账号与历史、客户端 WebView 存储和托盘偏好。
 
 ## 故障排查
 

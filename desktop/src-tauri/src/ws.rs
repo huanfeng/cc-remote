@@ -62,8 +62,17 @@ pub fn ws_open(url: String, events: Channel, sockets: State<'_, Sockets>) -> Res
 }
 
 /// One connection, until it ends; returns the close code and reason to report.
-async fn run(url: &str, events: &Channel, mut rx: mpsc::UnboundedReceiver<Command>) -> (u16, String) {
-    let stream = match tokio::time::timeout(Duration::from_secs(20), tokio_tungstenite::connect_async(url)).await {
+async fn run(
+    url: &str,
+    events: &Channel,
+    mut rx: mpsc::UnboundedReceiver<Command>,
+) -> (u16, String) {
+    let stream = match tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio_tungstenite::connect_async(url),
+    )
+    .await
+    {
         Ok(Ok((stream, _))) => stream,
         Ok(Err(err)) => return (1006, err.to_string()),
         Err(_) => return (1006, "timed out".into()),
@@ -124,15 +133,19 @@ pub fn ws_send(request: Request<'_>, sockets: State<'_, Sockets>) -> Result<(), 
         InvokeBody::Raw(bytes) => bytes.clone(),
         InvokeBody::Json(_) => return Err("expected a binary frame".into()),
     };
-    sender(&sockets, id, Command::Send(Message::Binary(bytes.into())))
+    sender(&sockets, id, Command::Send(Message::Binary(bytes)))
 }
 
 #[tauri::command]
 pub fn ws_send_text(id: u64, text: String, sockets: State<'_, Sockets>) -> Result<(), String> {
-    sender(&sockets, id, Command::Send(Message::Text(text.into())))
+    sender(&sockets, id, Command::Send(Message::Text(text)))
 }
 
 #[tauri::command]
 pub fn ws_close(id: u64, code: Option<u16>, reason: Option<String>, sockets: State<'_, Sockets>) {
-    let _ = sender(&sockets, id, Command::Close(code.unwrap_or(1000), reason.unwrap_or_default()));
+    let _ = sender(
+        &sockets,
+        id,
+        Command::Close(code.unwrap_or(1000), reason.unwrap_or_default()),
+    );
 }

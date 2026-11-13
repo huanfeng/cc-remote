@@ -28,7 +28,7 @@ import (
 // These are intentionally non-executable fixture files. Every installation uses
 // -NoService -NoAlias and either -NoLaunch or a mocked process launcher, so tests
 // never touch the user's host or apps.
-var installerExecutables = []string{"cc-remote.exe", "cc-remote-desktop.exe", "cc-remote-tray.exe"}
+var installerExecutables = []string{"cc-remote.exe", "cc-remote-desktop.exe"}
 
 type installerFixture struct {
 	t                *testing.T
@@ -313,9 +313,10 @@ func TestPowerShellInstaller(t *testing.T) {
 					f.assertFile(filepath.Join(f.installDir, name), "first:"+name)
 				}
 				f.assertAbsent(filepath.Join(f.installDir, "unexpected.txt"))
-				for i, name := range []string{"CC Remote.lnk", "CC Remote Tray.lnk"} {
+				f.assertAbsent(filepath.Join(f.installDir, "cc-remote-tray.exe"))
+				for _, name := range []string{"CC Remote.lnk", "CC Remote Tray.lnk"} {
 					path := filepath.Join(f.appData, "Microsoft", "Windows", "Start Menu", "Programs", "CC Remote", name)
-					f.assertShortcut(path, filepath.Join(f.installDir, installerExecutables[i+1]))
+					f.assertShortcut(path, filepath.Join(f.installDir, "cc-remote-desktop.exe"))
 				}
 				preserved := filepath.Join(f.root, "local", "cc-remote", "history-and-accounts.json")
 				if err := os.MkdirAll(filepath.Dir(preserved), 0700); err != nil {
@@ -333,7 +334,12 @@ func TestPowerShellInstaller(t *testing.T) {
 				if info, err := os.Stat(startup); err != nil || info.Size() == 0 {
 					t.Fatalf("missing startup shortcut: %v", err)
 				}
-				f.assertShortcut(startup, filepath.Join(f.installDir, "cc-remote-tray.exe"))
+				f.assertShortcut(startup, filepath.Join(f.installDir, "cc-remote-desktop.exe"))
+				startupData, _ := os.ReadFile(startup)
+				trayArgument := []byte{'-', 0, '-', 0, 't', 0, 'r', 0, 'a', 0, 'y', 0}
+				if !bytes.Contains(startupData, trayArgument) {
+					t.Fatal("tray shortcut is missing --tray")
+				}
 				// An update without -AutoStart retains the explicit opt-in.
 				f.run("", "-Desktop", "-NoLaunch")
 				if _, err := os.Stat(startup); err != nil {
@@ -344,7 +350,7 @@ func TestPowerShellInstaller(t *testing.T) {
 					corrupt          bool
 				}{
 					{message: "sha256 mismatch", corrupt: true},
-					{missing: "cc-remote-tray.exe", message: "archive must contain one nonempty cc-remote-tray.exe"},
+					{missing: "cc-remote-desktop.exe", message: "archive must contain one nonempty cc-remote-desktop.exe"},
 				} {
 					f.release("bad", failure.missing, failure.corrupt)
 					f.run(failure.message, "-Desktop", "-NoLaunch")
@@ -354,7 +360,47 @@ func TestPowerShellInstaller(t *testing.T) {
 					f.assertFile(preserved, "keep my data")
 				}
 			})
-			t.Run("default launch starts only the hidden tray", func(t *testing.T) {
+			t.Run("desktop update tolerates a legacy shortcut type in the same shell", func(t *testing.T) {
+				f := newInstallerFixture(t, shell)
+				f.env = append(f.env, "CC_REMOTE_TEST_SCRIPT="+f.script, "CC_REMOTE_TEST_DIR="+f.installDir)
+				// Add-Type definitions survive repeated installer runs in one shell.
+				// The old installer exposed only the two-argument Save method.
+				wrapper := `Add-Type -TypeDefinition @'
+namespace CCRemote {
+    public static class NativeShortcut {
+        public static void Save(string path, string target) {
+            throw new System.InvalidOperationException("legacy shortcut helper must not be called");
+        }
+    }
+}
+'@
+1..2 | ForEach-Object {
+    & $env:CC_REMOTE_TEST_SCRIPT -Repo test/repo -InstallDir $env:CC_REMOTE_TEST_DIR -Desktop -NoService -NoAlias -NoLaunch -AutoStart
+    if (-not $?) { exit 1 }
+}
+`
+				f.script = filepath.Join(f.root, "legacy-shortcut-test.ps1")
+				if err := os.WriteFile(f.script, []byte(wrapper), 0600); err != nil {
+					t.Fatal(err)
+				}
+				f.run("")
+				desktop := filepath.Join(f.installDir, "cc-remote-desktop.exe")
+				menu := filepath.Join(f.appData, "Microsoft", "Windows", "Start Menu", "Programs", "CC Remote")
+				f.assertShortcut(filepath.Join(menu, "CC Remote.lnk"), desktop)
+				tray := filepath.Join(menu, "CC Remote Tray.lnk")
+				startup := filepath.Join(f.appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "CC Remote Tray.lnk")
+				for _, path := range []string{tray, startup} {
+					f.assertShortcut(path, desktop)
+					data, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !bytes.Contains(data, []byte{'-', 0, '-', 0, 't', 0, 'r', 0, 'a', 0, 'y', 0}) {
+						t.Fatalf("shortcut %s is missing --tray", path)
+					}
+				}
+			})
+			t.Run("default launch starts only the resident GUI tray", func(t *testing.T) {
 				f := newInstallerFixture(t, shell)
 				record := filepath.Join(f.root, "launch.json")
 				f.env = append(f.env, "CC_REMOTE_TEST_SCRIPT="+f.script,
@@ -362,8 +408,8 @@ func TestPowerShellInstaller(t *testing.T) {
 				// Mock just process creation. Downloads, verification, installation,
 				// process selection and shortcut creation still execute the real script.
 				wrapper := `function Start-Process {
-    param($FilePath, $WorkingDirectory, $WindowStyle)
-    @{ FilePath = $FilePath; WorkingDirectory = $WorkingDirectory; WindowStyle = $WindowStyle } |
+    param($FilePath, $ArgumentList, $WorkingDirectory, $WindowStyle)
+    @{ FilePath = $FilePath; ArgumentList = $ArgumentList; WorkingDirectory = $WorkingDirectory; WindowStyle = $WindowStyle } |
         ConvertTo-Json -Compress | Add-Content -LiteralPath $env:CC_REMOTE_TEST_LAUNCH -Encoding UTF8
 }
 & $env:CC_REMOTE_TEST_SCRIPT -Repo test/repo -InstallDir $env:CC_REMOTE_TEST_DIR -Desktop -NoService -NoAlias
@@ -382,8 +428,8 @@ if (-not $?) { exit 1 }
 				if err := json.Unmarshal(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}), &launch); err != nil {
 					t.Fatalf("expected exactly one launch record: %v\n%s", err, data)
 				}
-				if launch["FilePath"] != filepath.Join(f.installDir, "cc-remote-tray.exe") ||
-					launch["WorkingDirectory"] != f.installDir || launch["WindowStyle"] != "Hidden" {
+				if launch["FilePath"] != filepath.Join(f.installDir, "cc-remote-desktop.exe") || launch["ArgumentList"] != "--tray" ||
+					launch["WorkingDirectory"] != f.installDir || launch["WindowStyle"] != "Normal" {
 					t.Fatalf("unexpected launch: %v", launch)
 				}
 			})

@@ -157,7 +157,7 @@ function openWindow(url: string) {
   const label = `host-${Date.now().toString(36)}-${nextWindow++}`;
   new WebviewWindow(label, {
     url, title: 'CC Remote', width: 1200, height: 800, minWidth: 720, minHeight: 480,
-    decorations: platformOf() === 'mac', ...(platformOf() === 'mac' ? { titleBarStyle: 'overlay', hiddenTitle: true } : {}),
+    decorations: true, ...(platformOf() === 'mac' ? { titleBarStyle: 'overlay', hiddenTitle: true } : {}),
   });
 }
 

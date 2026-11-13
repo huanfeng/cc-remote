@@ -14,13 +14,13 @@ Use your local Claude Code and Codex from a phone, browser or desktop client, an
   <img src="docs/images/mobile.png" alt="CC Remote on a phone" width="22%">
 </p>
 
-The CC Remote backend is a small host program (a single executable) that runs on your computer, uses your logged-in Claude Code CLI or Codex app-server, and serves a mobile-friendly web UI (PWA). Windows x64 also has a Tauri desktop client and a native tray that stays resident without a WebView. The backend manages sessions, accounts and history. The UI supports English and Chinese.
+The CC Remote backend is a small host program (a single executable) that runs on your computer, uses your logged-in Claude Code CLI or Codex app-server, and serves a mobile-friendly web UI (PWA). Windows x64 also has a Tauri desktop client with a built-in tray that stays resident without a WebView. The backend manages sessions, accounts and history. The UI supports English and Chinese.
 
 ## Features
 
 - **Codex managed sessions**: streaming replies, tool events, approvals, questions, queued turns, interrupts, thread resume and native history import through the local `codex app-server`. Model, reasoning and sandbox defaults are stored separately. See [Codex setup and scope](docs/codex.md) (Chinese).
 - **Provider profiles**: read CC-Switch profiles directly, select them when creating or resuming a Claude Code session, and switch within a session after confirming the interruption. See [provider profiles](docs/supplier-profiles.md) (Chinese).
-- **Desktop client**: a Tauri window with multiple hosts, local service controls and subscription history. Install or update the backend, client and tray together on Windows x64. See [the desktop app](docs/desktop.md) (Chinese).
+- **Desktop client**: a Tauri window with system title-bar controls, multiple hosts, local service controls, subscription history and a built-in tray. Closing its main window keeps the tray running. Install or update the backend and client together on Windows x64. See [the desktop app](docs/desktop.md) (Chinese).
 - **Share a terminal session with the web**: run `ccr` in a project to start native Claude Code; the web UI talks to that very process, so you can keep going away from your desk. The web can also switch to a terminal view of the full Claude Code screen, with an input box and a row of keys on phones.
 - **Managed sessions**: start sessions from the browser in any project directory, run several in parallel, and close the tab without stopping them.
 - **Answer approvals, questions and plans from the web**: tool permissions, AskUserQuestion choices and plan approvals show up as cards; in terminal sessions, whichever side answers first wins.
@@ -29,14 +29,14 @@ The CC Remote backend is a small host program (a single executable) that runs on
 - **View files on the host**: file paths in messages and tool cards open in a viewer: Markdown rendered (relative links and images work), code highlighted with line numbers, images previewed.
 - **Background service with auto start**: one command registers a per-user service (Windows Task Scheduler / systemd / launchd) and adds the `ccr` shortcut.
 - **Status and usage**: a status panel with uptime, cost, tokens, a 14-day chart and the log tail.
-- **Subscription monitor and native tray**: background quota snapshots every 10 / 30 minutes, with account history across official logins and multiple Claude OAuth profiles. The [native tray](tray/README.md) stays resident without a WebView; detailed history opens the desktop client on demand. See [subscription monitoring](docs/subscription-monitor.md) (Chinese).
+- **Subscription monitor and desktop tray**: background quota snapshots every 10 / 30 minutes, with account history across official logins and multiple Claude OAuth profiles. The desktop tray supports multiple favorite accounts, a compact wind-ui-rust native quota panel on Windows hover. Tray residency and usage use no WebView; clicking the tray opens the main client and history loads there. See [subscription monitoring](docs/subscription-monitor.md) (Chinese).
 - **Built for phones**: responsive layout, drawer session list, installable as a PWA.
 - **Several hosts**: every host serves its own web UI; you can also add and switch between hosts in one standalone web frontend — use the public instance at <https://huanfeng.github.io/cc-remote/> or deploy it to Vercel or Cloudflare Pages; hosts behind a tunnel whose port changes are supported through an address URL (see [the standalone web frontend](docs/standalone.md), in Chinese).
 - **Survives a refresh**: the open session, unsent drafts and attachments, and half-filled answers come back after reloading.
 
 ## Quick start
 
-**Requirements**: install and sign in to [Claude Code](https://code.claude.com/docs) (`claude auth login`) or [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`), depending on which you use. The backend supports Windows, Linux and macOS. Native desktop and tray packages currently target Windows x64.
+**Requirements**: install and sign in to [Claude Code](https://code.claude.com/docs) (`claude auth login`) or [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`), depending on which you use. The backend supports Windows, Linux and macOS. The desktop package with its built-in tray currently targets Windows x64.
 
 ### 1. Install
 
@@ -46,7 +46,7 @@ Full Windows x64 installation (PowerShell 5.1 / 7, recommended):
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
 ```
 
-Installs the background service, Tauri client and native tray, and adds Start Menu shortcuts. Only the tray starts after installation; the WebView loads when you open the client or detailed history. **Run the same command again to update all three**, keeping settings, accounts and history. Close and reopen an existing client window to use its update.
+Installs the background service and Tauri client with its built-in tray, and adds Start Menu shortcuts. The client starts in `--tray` mode without a WebView; hover shows a native quota panel and clicking the tray opens the main window on demand. **Run the same command again to update both programs**, keeping settings, accounts and history. Quit an existing client through its tray menu and reopen it to use its update. Existing tray startup shortcuts migrate to the desktop client; the old standalone wind-ui-rust tool is no longer bundled.
 
 To start the tray at Windows sign-in:
 
@@ -66,7 +66,7 @@ Backend only, Linux / macOS:
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
 ```
 
-Each entry downloads the latest stable release, verifies SHA256, installs and starts the background service, and creates the `ccr` command. Backend-only entries and `cc-remote update` update only the backend. Repeat the full installation command to update the client and tray too.
+Each entry downloads the latest stable release, verifies SHA256, installs and starts the background service, and creates the `ccr` command. Backend-only entries and `cc-remote update` update only the backend. Repeat the full installation command to update the desktop client too.
 
 To pass options (for example, to allow LAN access):
 
@@ -166,7 +166,7 @@ Network setup beyond the first two steps is outside what this project supports; 
 | `cc-remote service restart` | Restart (also `start` / `stop`) |
 | `cc-remote service config` | Show or change listen addresses, allowed web frontends, environment, … (listen addresses and web frontends apply without a restart; other settings restart the host once sessions are idle, `--force` restarts now) |
 | `cc-remote service uninstall` | Remove the service (data is kept) |
-| `cc-remote update` | Update the backend; it restarts once sessions are idle (`--check` to only check, `--force` to restart now). Repeat the full installer to update the client and tray |
+| `cc-remote update` | Update the backend; it restarts once sessions are idle (`--check` to only check, `--force` to restart now). Repeat the full installer to update the desktop client |
 
 ## Configuration and docs
 

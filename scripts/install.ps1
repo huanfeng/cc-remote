@@ -7,7 +7,7 @@
   runs "cc-remote service install", which copies the binary to
   %LOCALAPPDATA%\cc-remote\bin and (re)starts the background service.
   Re-running the script updates an existing installation in place.
-  -Desktop also installs the Windows x64 desktop client and native tray, adds
+  -Desktop also installs the Windows x64 desktop client with its built-in tray, adds
   Start Menu shortcuts and starts only the tray (no WebView). Use -AutoStart
   for tray startup at sign-in, or -NoLaunch to leave it stopped.
   Account, history and application settings remain in their existing locations.
@@ -35,7 +35,7 @@ param(
     # Language of messages and the web UI: auto, zh or en, passed to "service install --lang".
     # Default: $env:CC_REMOTE_LANG; when neither is set the installed setting is kept.
     [string]$Lang = "",
-    # Install the Windows x64 desktop client and native tray alongside the backend.
+    # Install the Windows x64 desktop client with its built-in tray alongside the backend.
     [switch]$Desktop,
     # Start the tray at sign-in (desktop mode only; existing startup is kept on update).
     [switch]$AutoStart,
@@ -116,7 +116,7 @@ The repository may be private or the request was rate-limited. Either:
         "ARM64" { $arch = "arm64" }
         default { throw "unsupported architecture '$cpu'" }
     }
-    if ($Desktop -and $arch -ne "amd64") { throw "desktop and tray packages currently support Windows x64 only" }
+    if ($Desktop -and $arch -ne "amd64") { throw "desktop packages currently support Windows x64 only" }
     if (($AutoStart -or $NoLaunch) -and -not $Desktop) { throw "-AutoStart and -NoLaunch require -Desktop" }
     $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 
@@ -196,7 +196,7 @@ The repository may be private or the request was rate-limited. Either:
         $plan = "run: cc-remote " + ($serviceArgs -join " ")
     }
     if ($Desktop) {
-        $plan += "; install desktop and tray to $InstallDir; create Start Menu shortcuts"
+        $plan += "; install desktop with built-in tray to $InstallDir; create Start Menu shortcuts"
         if ($AutoStart) { $plan += "; start tray at sign-in" }
         if (-not $NoLaunch) { $plan += "; start/restart tray (no WebView)" }
     }
@@ -239,7 +239,7 @@ The repository may be private or the request was rate-limited. Either:
         $x = Join-Path $tmp "x"
         # Extract only the required root entries, never paths supplied by the archive.
         $required = @("cc-remote.exe")
-        if ($Desktop) { $required += @("cc-remote-desktop.exe", "cc-remote-tray.exe") }
+        if ($Desktop) { $required += @("cc-remote-desktop.exe") }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $tmp $asset))
         try {
@@ -298,20 +298,24 @@ The repository may be private or the request was rate-limited. Either:
         if ($Desktop) {
             New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
             $trayTarget = Join-Path $InstallDir "cc-remote-tray.exe"
+            $desktopTarget = Join-Path $InstallDir "cc-remote-desktop.exe"
             # Only stop our own installed tray; other copies and the backend keep running.
             if (-not $NoLaunch) {
                 Get-Process -Name "cc-remote-tray" -ErrorAction SilentlyContinue | Where-Object {
                     $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq $trayTarget
                 } | ForEach-Object { Stop-Process -Id $_.Id -ErrorAction Stop; $_.WaitForExit(10000) | Out-Null }
             }
-            foreach ($name in @("cc-remote-desktop.exe", "cc-remote-tray.exe")) {
+            foreach ($name in @("cc-remote-desktop.exe")) {
                 Install-Executable $name
             }
             # WScript.Shell rejects target paths outside the system ANSI code
             # page. Use the Unicode Shell link interface for every path instead.
             # Interface order follows shobjidl_core.h / IShellLinkW.
             # https://learn.microsoft.com/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishelllinkw
-            if (-not ('CCRemote.NativeShortcut' -as [type])) {
+            # CLR types survive installer invocations in the same PowerShell
+            # session. V2 accepts shortcut arguments; the old two-argument
+            # helper may still be loaded when upgrading from the standalone tray.
+            if (-not ('CCRemote.NativeShortcutV2' -as [type])) {
                 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -320,7 +324,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
 namespace CCRemote {
-    public static class NativeShortcut {
+    public static class NativeShortcutV2 {
         [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IShellLinkW {
             void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr findData, uint flags);
@@ -343,13 +347,14 @@ namespace CCRemote {
             void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
         }
 
-        public static void Save(string path, string target) {
+        public static void Save(string path, string target, string arguments) {
             object instance = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));
             try {
                 IShellLinkW link = (IShellLinkW)instance;
                 link.SetPath(target);
                 link.SetWorkingDirectory(Path.GetDirectoryName(target));
                 link.SetIconLocation(target, 0);
+                ((IShellLinkW)instance).SetArguments(arguments);
                 ((IPersistFile)instance).Save(path, true);
             } finally {
                 Marshal.FinalReleaseComObject(instance);
@@ -359,18 +364,20 @@ namespace CCRemote {
 }
 '@
             }
-            function Save-Shortcut([string]$path, [string]$target) {
+            function Save-Shortcut([string]$path, [string]$target, [string]$arguments = "") {
                 New-Item -ItemType Directory -Force -Path (Split-Path $path -Parent) | Out-Null
-                [CCRemote.NativeShortcut]::Save($path, $target)
+                [CCRemote.NativeShortcutV2]::Save($path, $target, $arguments)
             }
             $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\CC Remote"
             Save-Shortcut (Join-Path $menu "CC Remote.lnk") (Join-Path $InstallDir "cc-remote-desktop.exe")
-            Save-Shortcut (Join-Path $menu "CC Remote Tray.lnk") $trayTarget
+            Save-Shortcut (Join-Path $menu "CC Remote Tray.lnk") $desktopTarget "--tray"
             $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\CC Remote Tray.lnk"
-            if ($AutoStart -or (Test-Path -LiteralPath $startup)) { Save-Shortcut $startup $trayTarget }
-            if (-not $NoLaunch) { Start-Process -FilePath $trayTarget -WorkingDirectory $InstallDir -WindowStyle Hidden | Out-Null }
-            Write-Host "desktop and tray installed to $InstallDir ($tag)"
-            Write-Host "repeat this installer to update all three programs; an open desktop client uses the update after closing and reopening"
+            if ($AutoStart -or (Test-Path -LiteralPath $startup)) { Save-Shortcut $startup $desktopTarget "--tray" }
+            # This is a GUI executable and starts resident without a window.
+            # SW_HIDE in STARTUPINFO would suppress its first user-opened panel.
+            if (-not $NoLaunch) { Start-Process -FilePath $desktopTarget -ArgumentList "--tray" -WorkingDirectory $InstallDir -WindowStyle Normal | Out-Null }
+            Write-Host "desktop with built-in tray installed to $InstallDir ($tag)"
+            Write-Host "repeat this installer to update the backend and desktop; an open desktop client uses the update after exiting from its tray and reopening"
         }
         Write-Host "done: cc-remote $tag"
     } finally {

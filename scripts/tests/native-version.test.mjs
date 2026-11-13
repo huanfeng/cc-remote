@@ -14,10 +14,9 @@ function fixture(t) {
     originals.set(path, content);
   }
   mkdirSync(join(root, 'desktop/src-tauri'), { recursive: true });
-  mkdirSync(join(root, 'tray'));
   put('desktop/package.json', '{"name":"cc-remote-desktop","version":"0.1.0"}\n');
   put('desktop/src-tauri/tauri.conf.json', '{"version":"0.1.0","productName":"CC Remote"}\n');
-  for (const [directory, name] of [['desktop/src-tauri', 'cc-remote-desktop'], ['tray', 'cc-remote-tray']]) {
+  for (const [directory, name] of [['desktop/src-tauri', 'cc-remote-desktop']]) {
     put(`${directory}/Cargo.toml`, `[package]\r\nname = "${name}"\r\nversion = "0.1.0"\r\n\r\n[dependencies]\r\nserde = "1"\r\n`);
     // Exercise a dependency before and after our own package, including EOF.
     put(`${directory}/Cargo.lock`, `version = 4\n\n[[package]]\nname = "a-dependency"\nversion = "0.1.0"\n\n[[package]]\nname = "${name}"\nversion = "0.1.0"\n\n[[package]]\nname = "z-dependency"\nversion = "0.1.0"\n`);
@@ -26,7 +25,7 @@ function fixture(t) {
 }
 
 for (const version of ['1.23.4', '1.23.4-rc.1', '0.0.0-ci']) {
-  test(`stamps ${version} across JSON, manifests and locks without changing dependencies`, (t) => {
+  test(`stamps ${version} without a standalone tray directory or dependency changes`, (t) => {
     const { root, originals } = fixture(t);
     stampNativeVersion(root, version);
     for (const [path, source] of originals) {
@@ -34,7 +33,7 @@ for (const version of ['1.23.4', '1.23.4-rc.1', '0.0.0-ci']) {
         ? source.replace('"0.1.0"', `"${version}"`)
         : path.endsWith('Cargo.toml')
           ? source.replace('version = "0.1.0"', `version = "${version}"`)
-          : source.replace(/(name = "cc-remote-(?:desktop|tray)"\n)version = "0.1.0"/, `$1version = "${version}"`);
+          : source.replace(/(name = "cc-remote-desktop"\n)version = "0.1.0"/, `$1version = "${version}"`);
       assert.equal(readFileSync(join(root, path), 'utf8'), expected, path);
     }
     stampNativeVersion(root, version); // Repeating a stamp is harmless.
@@ -51,8 +50,8 @@ test('invalid versions leave every file unchanged', (t) => {
 
 test('missing lock package fails before writing any file', (t) => {
   const { root, originals } = fixture(t);
-  writeFileSync(join(root, 'tray/Cargo.lock'), 'version = 4\n');
-  originals.set('tray/Cargo.lock', 'version = 4\n');
-  assert.throws(() => stampNativeVersion(root, '1.2.3'), /Expected one cc-remote-tray version/);
+  writeFileSync(join(root, 'desktop/src-tauri/Cargo.lock'), 'version = 4\n');
+  originals.set('desktop/src-tauri/Cargo.lock', 'version = 4\n');
+  assert.throws(() => stampNativeVersion(root, '1.2.3'), /Expected one cc-remote-desktop version/);
   for (const [path, source] of originals) assert.equal(readFileSync(join(root, path), 'utf8'), source);
 });

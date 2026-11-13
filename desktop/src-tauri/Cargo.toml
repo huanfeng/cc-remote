@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
@@ -26,6 +26,9 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 reqwest = { version = "0.12", default-features = false, features = ["native-tls", "http2", "charset", "gzip"] }
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 percent-encoding = "2"
+
+[target.'cfg(windows)'.dependencies]
+windui = { git = "https://github.com/huanfeng/wind-ui-rust", rev = "263938c72ffe93ff3fa3d4537e529e1566d4db47", default-features = false }
 
 [profile.release]
 codegen-units = 1

@@ -20,7 +20,6 @@ export function stampNativeVersion(root, version) {
   }
   for (const [directory, name] of [
     ['desktop/src-tauri', 'cc-remote-desktop'],
-    ['tray', 'cc-remote-tray'],
   ]) {
     for (const basename of ['Cargo.toml', 'Cargo.lock']) {
       const file = resolve(root, directory, basename);

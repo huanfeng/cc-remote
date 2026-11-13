@@ -30,4 +30,4 @@ Claude 额度读取延用现有机制：先调用官方 usage 接口；403/429 �
 | `PUT /api/usage/monitor/settings` | `{ "intervalMinutes": 10 }` 或 `30`，持久化 |
 | `GET /api/usage/monitor/history?account=…&hours=24` | 当前账号的历史，最长 720 小时 |
 
-托盘开发和运行见 [tray/README.md](../tray/README.md)；完整历史客户端见 [desktop.md](desktop.md)。
+托盘与用量快览已集成到桌面客户端，开发和运行见 [desktop.md](desktop.md)。旧 wind-ui-rust 工具源码已迁出至同级 `cc-tray/` 目录，本仓库不再包含独立托盘程序；独立仓库和独立刷新逻辑尚未实现。
