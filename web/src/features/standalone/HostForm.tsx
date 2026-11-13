@@ -62,7 +62,7 @@ function HostForm({ editing, mobile, onDone }: { editing?: HostEntry; mobile: bo
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!safety.ack || busy) return;
+    if (busy || (!editing && !safety.ack)) return;
     const entered = normalizeHostUrl(url);
     if (!entered) {
       setError(via === 'direct' ? t('Enter the host address, such as https://ccr.example.com', '请输入宿主地址，例如 https://ccr.example.com') : t('Enter the entry URL, such as https://example.com/ccr', '请输入入口地址，例如 https://example.com/ccr'));
@@ -163,7 +163,7 @@ function HostForm({ editing, mobile, onDone }: { editing?: HostEntry; mobile: bo
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button type="button" variant="ghost" size="lg" onClick={onDone} disabled={busy}>{t('Cancel', '取消')}</Button>
-        <Button type="submit" size="lg" disabled={busy || !safety.ack}>
+        <Button type="submit" size="lg" disabled={busy || (!editing && !safety.ack)}>
           {busy && <Spinner className="size-3.5" />}
           {busy ? t('Connecting…', '连接中…') : editing ? t('Save', '保存') : t('Connect to host', '连接宿主')}
         </Button>
