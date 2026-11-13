@@ -77,7 +77,9 @@ function installFetch() {
     const href = input instanceof Request ? input.url : String(input);
     let url: URL;
     try { url = new URL(href, location.href); } catch { return own(input, init); }
-    const remote = (url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin;
+    // Tauri's invoke itself uses fetch(http[s]://ipc.localhost/...). Sending
+    // that through desktopFetch would invoke Rust recursively until V8 OOMs.
+    const remote = (url.protocol === 'http:' || url.protocol === 'https:') && url.origin !== location.origin && url.hostname !== 'ipc.localhost';
     return remote ? desktopFetch(input, init) : own(input, init);
   };
 }

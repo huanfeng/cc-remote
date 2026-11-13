@@ -25,7 +25,6 @@ import (
 // has it: Claude Code pointed at another provider, or using an API key, does not.
 const (
 	usageFresh        = time.Minute      // a page polling sooner gets the last reading
-	usageSampleEvery  = 10 * time.Minute // the host reads it this often for the history
 	usageSampleGap    = 10 * time.Minute // an unchanged reading is recorded at most this often
 	usageKeep         = 30 * 24 * time.Hour
 	usageTimeout      = 10 * time.Second
@@ -61,9 +60,9 @@ type usageReply struct {
 	Available bool `json:"available"`
 	// Reason says why there is none: "third-party" (another provider),
 	// "api-key" (billed per token) or "no-login".
-	Reason   string        `json:"reason,omitempty"`
-	Provider string        `json:"provider,omitempty"`
-	Plan     string        `json:"plan,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Plan     string `json:"plan,omitempty"`
 	// Profile and Account name the OAuth token profile the reading belongs to
 	// (empty for the host's own login).
 	Profile string        `json:"profile,omitempty"`
@@ -130,6 +129,10 @@ func (s *Server) readUsage(maxAge time.Duration) usageReply {
 // readUsageOf reads one login's usage through its own cache. source is empty
 // for the host's login, else the OAuth profile ID.
 func (s *Server) readUsageOf(source string, c *usageCache, token claude.OAuthToken, maxAge time.Duration) usageReply {
+	return s.readUsageOfContext(context.Background(), source, c, token, maxAge)
+}
+
+func (s *Server) readUsageOfContext(ctx context.Context, source string, c *usageCache, token claude.OAuthToken, maxAge time.Duration) usageReply {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.loaded {
@@ -143,15 +146,17 @@ func (s *Server) readUsageOf(source string, c *usageCache, token claude.OAuthTok
 		}
 	}
 	now := time.Now()
-	if key := tokenFingerprint(token.AccessToken, nil); key != c.tokenKey {
+	key := tokenFingerprint(token.AccessToken, nil)
+	changedToken := key != c.tokenKey
+	if changedToken {
 		// A replaced token starts over: it may have the scope the old one lacked.
-		c.tokenKey, c.probe, c.err, c.retryAt, c.backoff, c.fetchedAt = key, false, "", time.Time{}, 0, time.Time{}
+		c.tokenKey, c.probe, c.err, c.retryAt, c.backoff = key, false, "", time.Time{}, 0
 	}
 	if c.probe {
 		maxAge = max(maxAge, usageProbeEvery)
 	}
-	if (c.last == nil || now.Sub(c.fetchedAt) >= maxAge) && !now.Before(c.retryAt) {
-		s.fetchUsageLocked(source, c, token, now)
+	if (changedToken || c.last == nil || now.Sub(c.fetchedAt) >= maxAge) && !now.Before(c.retryAt) {
+		s.fetchUsageLocked(ctx, source, c, token, now)
 	}
 	reply := usageReply{Available: true, Plan: token.Plan, Usage: c.last, Error: c.err, Stale: c.err != ""}
 	if c.last != nil {
@@ -161,7 +166,7 @@ func (s *Server) readUsageOf(source string, c *usageCache, token claude.OAuthTok
 	return reply
 }
 
-func (s *Server) fetchUsageLocked(source string, c *usageCache, token claude.OAuthToken, now time.Time) {
+func (s *Server) fetchUsageLocked(parent context.Context, source string, c *usageCache, token claude.OAuthToken, now time.Time) {
 	// An expired login is renewed by Claude Code when it next runs; the host
 	// never refreshes it (that would sign the running Claude Code out).
 	if !token.ExpiresAt.IsZero() && token.ExpiresAt.Before(now.Add(usageExpiryMargin)) {
@@ -172,7 +177,7 @@ func (s *Server) fetchUsageLocked(source string, c *usageCache, token claude.OAu
 	if v := claudeSemver.FindString(s.claudeVersion().Version); v != "" {
 		agent = "claude-code/" + v
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+	ctx, cancel := context.WithTimeout(parent, usageTimeout)
 	defer cancel()
 	var u claude.Usage
 	var err error
@@ -221,25 +226,6 @@ func sameUsage(a, b claude.Usage) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
-}
-
-// sampleUsage reads the usage now and then, so the history has no gaps while
-// no page is open.
-func (s *Server) sampleUsage(stop <-chan struct{}, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-t.C:
-		}
-		s.readUsage(every - time.Minute)
-		entries, _ := loadOAuthEntries(s.cfg.DataDir)
-		for _, e := range entries {
-			s.readOAuthUsage(oauthIDPrefix+e.ID, every-time.Minute)
-		}
-	}
 }
 
 func (s *Server) usage(w http.ResponseWriter, r *http.Request) {

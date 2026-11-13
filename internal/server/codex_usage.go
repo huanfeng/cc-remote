@@ -39,6 +39,10 @@ func (s *Server) codexUsage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	respond(w, 200, s.readCodexUsage(r.Context(), o))
+}
+
+func (s *Server) readCodexUsage(ctx context.Context, o claude.Options) codexUsageReply {
 	c := &s.codexUsageCache
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -52,7 +56,7 @@ func (s *Server) codexUsage(w http.ResponseWriter, r *http.Request) {
 		if fetch == nil {
 			fetch = codex.ReadSubscriptionUsage
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), usageTimeout)
+		ctx, cancel := context.WithTimeout(ctx, usageTimeout)
 		usage, err := fetch(ctx, o)
 		cancel()
 		c.retryAt = now.Add(usageFresh)
@@ -62,5 +66,5 @@ func (s *Server) codexUsage(w http.ResponseWriter, r *http.Request) {
 			c.reply = codexUsageReply{SubscriptionUsage: usage, FetchedAt: &now}
 		}
 	}
-	respond(w, 200, c.reply)
+	return c.reply
 }

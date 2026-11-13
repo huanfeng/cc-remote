@@ -119,8 +119,50 @@ pub async fn local_service_action(action: String, lang: String) -> Result<String
     }
 }
 
+/// Resolve the tray's local host without putting its access token in argv or a URL.
+#[tauri::command]
+pub async fn usage_history_connection(request: crate::history::HistoryRequest, lang: String) -> Result<Value, String> {
+    let (host, dir) = match (request.host, request.data_dir) {
+        (Some(host), Some(dir)) => (host, dir),
+        (None, None) => {
+            let exe = executable().ok_or("cc-remote is not installed")?;
+            let value = status(&exe, &lang).await?;
+            let host = value.get("url").and_then(Value::as_str).ok_or("The local service is not running")?;
+            let dir = value.pointer("/config/dataDir").and_then(Value::as_str).ok_or("The service has no data directory")?;
+            (host.to_string(), dir.to_string())
+        }
+        _ => return Err("Both --host and --data-dir are required for a custom host".into()),
+    };
+    let host = crate::history::local_origin(&host)?;
+    let dir = PathBuf::from(dir);
+    if !dir.is_absolute() { return Err("The data directory must be absolute".into()); }
+    let token = std::fs::read_to_string(dir.join("access-token")).map_err(|_| "Could not read the local access token")?;
+    if token.trim().is_empty() { return Err("The local access token is empty".into()); }
+    Ok(json!({"url": host, "token": token.trim(), "account": request.account}))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usage_history_connection_reads_only_an_explicit_local_pair() {
+        use crate::history::HistoryRequest;
+        let dir = std::env::temp_dir().join(format!("cc-remote-history-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("access-token"), "test-history-token\n").unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let request = HistoryRequest { host: Some("http://127.0.0.1:8790/".into()), data_dir: Some(dir.to_string_lossy().into()), account: Some("claude:123".into()) };
+        let value = rt.block_on(super::usage_history_connection(request.clone(), "en".into())).unwrap();
+        assert_eq!(value["url"], "http://127.0.0.1:8790");
+        assert_eq!(value["token"], "test-history-token");
+        assert_eq!(value["account"], "claude:123");
+        let mut remote = request.clone(); remote.host = Some("https://example.com".into());
+        assert!(rt.block_on(super::usage_history_connection(remote, "en".into())).is_err());
+        let mut incomplete = request; incomplete.host = None;
+        assert!(rt.block_on(super::usage_history_connection(incomplete, "en".into())).is_err());
+        std::fs::remove_file(dir.join("access-token")).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+
     /// Reads the real service's state (read-only): CC_TEST_LOCAL_SERVICE=1 cargo test.
     #[test]
     fn local_status_parses() {

@@ -8,8 +8,10 @@ import (
 )
 
 // SubscriptionUsage is account quota, independent of per-thread token usage.
-// It contains no credentials, email addresses or account identifiers.
+// Its JSON contains no credentials, email addresses or account identifiers.
 type SubscriptionUsage struct {
+	// Identity is server-confirmed and used only to partition local history.
+	Identity  string               `json:"-"`
 	Available bool                 `json:"available"`
 	Reason    string               `json:"reason,omitempty"`
 	Provider  string               `json:"provider,omitempty"`
@@ -61,6 +63,10 @@ func ReadSubscriptionUsage(ctx context.Context, o claude.Options) (SubscriptionU
 		return SubscriptionUsage{Reason: "third-party", Provider: provider}, nil
 	}
 	var account struct {
+		UserID           string `json:"userId"`
+		WorkspaceRouting *struct {
+			AccountID string `json:"chatgptAccountId"`
+		} `json:"workspaceRouting"`
 		Account *struct {
 			Type     string `json:"type"`
 			PlanType string `json:"planType"`
@@ -92,6 +98,12 @@ func ReadSubscriptionUsage(ctx context.Context, o claude.Options) (SubscriptionU
 		main = bucket
 	}
 	result := SubscriptionUsage{Available: true, Plan: account.Account.PlanType, Usage: &SubscriptionWindows{Windows: []QuotaWindow{}}}
+	if account.UserID != "" {
+		result.Identity = account.UserID
+		if account.WorkspaceRouting != nil {
+			result.Identity += "/" + account.WorkspaceRouting.AccountID
+		}
+	}
 	appendWindow := func(name string, w *rateWindow) {
 		if w == nil || w.UsedPercent == nil || *w.UsedPercent < 0 || *w.UsedPercent > 100 {
 			return

@@ -305,9 +305,9 @@ export function relocateHost(): Promise<boolean | string> {
 /** Reloads on host id (this one by default) without the session route: it belongs to
  * the old host. replaceState fires no hashchange, so the old host's page does not record
  * an empty selection on its way out. */
-export function reopen(id = currentHost?.id) {
+export function reopen(id = currentHost?.id, hash = '') {
   leaving = true;
-  history.replaceState(null, '', hostURL(id));
+  history.replaceState(null, '', hostURL(id) + hash);
   location.reload();
 }
 

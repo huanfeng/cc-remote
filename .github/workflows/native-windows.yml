@@ -1,0 +1,90 @@
+name: Native Windows
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      artifact-name:
+        required: false
+        type: string
+        default: native-windows-amd64
+
+permissions:
+  contents: read
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Tauri and tray (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ inputs.version }}
+      CC_REMOTE_VERSION: v${{ inputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Enable pnpm
+        run: corepack enable
+      - name: Install dependencies
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test and stamp release versions
+        run: |
+          node --test scripts/tests/native-version.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/native-version.mjs $env:VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build frontend for native tests and backend
+        run: |
+          pnpm --dir web run build:desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --dir web run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test native applications
+        run: |
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path tray/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build backend for portable bundle
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -trimpath -ldflags "-s -w -X main.version=$env:VERSION" -o dist/native/cc-remote.exe ./cmd/cc-remote
+      - name: Build Tauri installer
+        working-directory: desktop
+        # Invoke the CLI directly so PowerShell's pnpm.ps1 shim cannot consume
+        # the -- separator intended for Cargo.
+        run: node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis -- --locked
+      - name: Build native tray
+        run: cargo build --release --locked --manifest-path tray/Cargo.toml
+      - name: Package installer and portable archives
+        run: ./scripts/package-native.ps1 -Version $env:VERSION -StageDir "$env:RUNNER_TEMP/native-stage" -OutputDir "$env:GITHUB_WORKSPACE/out-native"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: out-native/*
+          if-no-files-found: error
+          retention-days: 7

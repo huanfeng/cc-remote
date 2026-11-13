@@ -5,13 +5,16 @@
 mod net;
 mod service;
 mod ws;
+mod history;
 
 use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(history::Requests(std::sync::Mutex::new(history::HistoryRequest::from_args(std::env::args()))))
         // A second launch brings the open window forward instead.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            history::receive(app, args);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -33,6 +36,8 @@ pub fn run() {
             service::local_service_status,
             service::local_service_token,
             service::local_service_action,
+            history::take_usage_history_request,
+            service::usage_history_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the CC Remote desktop app");

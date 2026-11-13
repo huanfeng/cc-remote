@@ -1,13 +1,13 @@
 package server
 
 import (
-	"slices"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -186,7 +186,7 @@ func (s *Server) oauthAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		entries = append(entries[:at], entries[at+1:]...)
 		s.accountUsage.forget(oauthIDPrefix + id)
-		_ = s.store.DeleteAccountUsage(oauthIDPrefix + id)
+		// Removing a credential stops collection; account history is retained.
 	case http.MethodPost, http.MethodPatch:
 		if r.Method == http.MethodPost {
 			if req.Name == nil || req.Token == nil {

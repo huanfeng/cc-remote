@@ -26,7 +26,8 @@ git push origin v0.2.0
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | push / PR 到 `main` | ubuntu + windows：`pnpm --dir web install --frozen-lockfile`、`typecheck`、构建前端、`go vet ./...`、`go test -race ./...`；另在 ubuntu 上 `CGO_ENABLED=0` 交叉编译 darwin/arm64；`govulncheck ./...` 发现可达漏洞（含标准库）即失败 |
-| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 构建一次前端 → 6 个平台 `CGO_ENABLED=0` 编译（`-trimpath -ldflags "-s -w -X main.version=<版本>"`）→ 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
+| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 6 个平台后台、独立网页、Windows x64 Tauri 客户端与托盘 → 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
+| `.github/workflows/native-windows.yml` | 由 CI / Release 调用 | 统一原生版本、Rust 测试、Tauri NSIS 安装包、托盘 ZIP、包含三个程序的便携 ZIP |
 
 Go 版本取自 `go.mod`：`go` 指令是最低语言版本，`toolchain` 指令固定实际编译用的补丁版本（含标准库安全修复）；`actions/setup-go` 使用 `go-version-file: go.mod` + `check-latest: true` 读取它。升级工具链时修改 `toolchain` 一行即可。
 
@@ -44,14 +45,25 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 
 | 文件 | 内容 |
 | --- | --- |
+| `cc-remote-desktop_<版本>_windows_amd64-setup.exe` | Windows x64 Tauri 客户端 NSIS 安装包；后台需另外安装 |
+| `cc-remote-desktop_<版本>_windows_amd64.zip` | Windows x64 便携包：后台、Tauri 客户端、原生托盘、使用说明和许可证 |
+| `cc-remote-tray_<版本>_windows_amd64.zip` | Windows x64 原生托盘、使用说明和许可证；复用已安装的后台与桌面客户端 |
 | `cc-remote_<版本>_windows_amd64.zip` / `_windows_arm64.zip` | `cc-remote.exe`、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_linux_{amd64,arm64}.tar.gz` | `cc-remote`（可执行）、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_darwin_{amd64,arm64}.tar.gz` | 同上 |
 | `cc-remote_<版本>_web.zip` | 独立网页前端（静态文件），见[独立网页前端](standalone.md)；正式版同时发布到 GitHub Pages（`.github/workflows/pages.yml`）；`cc-remote update` 不会选它 |
-| `checksums.txt` | 所有归档的 sha256（`sha256sum` 格式） |
+| `checksums.txt` | 所有归档及桌面安装包的 sha256（`sha256sum` 格式） |
 | `install.ps1` / `install.sh` | 安装脚本副本；`releases/latest/download/install.*` 即指向最新正式版中的这两个文件 |
 
 `<版本>` 不带 `v`，例如标签 `v0.2.0` 对应 `cc-remote_0.2.0_linux_amd64.tar.gz`，程序内的版本号（`main.version`）为 `0.2.0`。
+
+### 桌面与托盘流水线
+
+`.github/workflows/native-windows.yml` 是 CI / Release 共用的 Windows x64 构建任务：锁定 pnpm / Cargo 依赖安装，统一 Tauri 配置、桌面与托盘 Cargo 包版本和 lockfile，构建桌面前端，运行两个 Rust 包的测试，再构建 NSIS 安装包和两个 ZIP。PR / push 到 `main` 使用 `0.0.0-ci`，附件位于 Actions 的 `native-windows-amd64`，保留 7 天。
+
+Release 使用标签对应的版本；原生任务成功后才发布，避免只发布后台的半成品版本。安装包和 ZIP 与原有后台、独立网页一起进入同一个 Release、校验清单和来源证明。后台安装脚本和 `cc-remote update` 继续按 `cc-remote_` 前缀选择后台归档。
+
+当前原生发布范围为 Windows x64，未配置代码签名或桌面自动更新；安装包只安装客户端，托盘手动启动。完整便携包按 `START-HERE.txt` 先安装后台，再运行托盘。Windows ARM64、macOS 和 Linux 仍发布原有后台归档，暂不发布原生客户端和托盘。
 
 ## 凭据
 

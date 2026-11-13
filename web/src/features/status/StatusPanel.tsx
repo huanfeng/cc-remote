@@ -17,6 +17,7 @@ import { CopyButton, ErrorText, errorMessage } from '@/features/dialogs/common';
 import { compactNumber, costText, durationText } from './usageMath';
 import { Legend, UsageDetails, useUsage } from './UsageDetails';
 import { DailyChart } from './charts';
+import { UsageMonitor } from './UsageMonitor';
 
 const REFRESH = 5000;
 
@@ -70,7 +71,7 @@ export function StatusPanel({ open, onOpenChange, mobile }: { open: boolean; onO
           {error && <ErrorText>{error}</ErrorText>}
           <HostCards status={status} />
           <Counts status={status} />
-          <UsageSection />
+          <UsageMonitor fallback={<UsageSection />} />
           {status.daily && status.daily.length > 0 && (
             <Section
               title={t('Last 14 days (UTC)', '近 14 天（UTC）')}

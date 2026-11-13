@@ -18,6 +18,11 @@ env:
   COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
 
 jobs:
+  native-windows:
+    uses: ./.github/workflows/native-windows.yml
+    with:
+      version: 0.0.0-ci
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

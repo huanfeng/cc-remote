@@ -162,8 +162,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  native-windows:
+    needs: meta
+    uses: ./.github/workflows/native-windows.yml
+    with:
+      version: ${{ needs.meta.outputs.version }}
+      artifact-name: pkg-native-windows-amd64
+
   release:
-    needs: [meta, web, build]
+    needs: [meta, web, build, native-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -186,7 +193,7 @@ jobs:
         run: |
           cp scripts/install.ps1 scripts/install.sh out/
           cd out
-          sha256sum cc-remote_* > checksums.txt
+          sha256sum cc-remote* > checksums.txt
           cat checksums.txt
       # Supply-chain evidence for `gh attestation verify`. GitHub does not
       # offer attestations for user-owned private repositories, so the step
@@ -196,7 +203,7 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
-            out/cc-remote_*
+            out/cc-remote*
             out/checksums.txt
       - name: Publish GitHub release
         run: |

@@ -3,6 +3,33 @@
 // docs/redesign-inventory.md for the protocol they come from.
 
 export type Provider = 'claude' | 'codex';
+
+export interface MonitorWindow {
+  name: string;
+  percent: number;
+  windowMinutes?: number;
+  resetsAt?: string;
+}
+export interface MonitorAccount {
+  id: string;
+  provider: Provider;
+  name: string;
+  profile?: string;
+  active: boolean;
+  identityKnown: boolean;
+  available: boolean;
+  reason?: string;
+  plan?: string;
+  windows: MonitorWindow[];
+  fetchedAt?: string;
+  stale?: boolean;
+  error?: string;
+}
+export interface UsageMonitor { intervalMinutes: 10 | 30; accounts: MonitorAccount[] }
+export interface MonitorHistory {
+  hours: number;
+  points: { at: string; intervalMinutes?: number; windows: MonitorWindow[] | null; error?: string }[];
+}
 export type SessionMode = 'managed' | 'terminal';
 export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';

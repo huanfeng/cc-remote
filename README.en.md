@@ -30,6 +30,7 @@ CC Remote is a small host program (a single executable) that runs on your comput
 - **View files on the host**: file paths in messages and tool cards open in a viewer: Markdown rendered (relative links and images work), code highlighted with line numbers, images previewed.
 - **Background service with auto start**: one command registers a per-user service (Windows Task Scheduler / systemd / launchd) and adds the `ccr` shortcut.
 - **Status and usage**: a status panel with uptime, cost, tokens, a 14-day chart and the log tail.
+- **Subscription monitor and native tray**: background quota snapshots every 10 / 30 minutes, with account history across official logins and multiple Claude OAuth profiles. The [native tray](tray/README.md) stays resident without a WebView; detailed history opens the desktop client on demand. See [subscription monitoring](docs/subscription-monitor.md) (Chinese).
 - **Built for phones**: responsive layout, drawer session list, installable as a PWA.
 - **Several hosts**: every host serves its own web UI; you can also add and switch between hosts in one standalone web frontend — use the public instance at <https://huanfeng.github.io/cc-remote/> or deploy it to Vercel or Cloudflare Pages; hosts behind a tunnel whose port changes are supported through an address URL (see [the standalone web frontend](docs/standalone.md), in Chinese).
 - **Survives a refresh**: the open session, unsent drafts and attachments, and half-filled answers come back after reloading.

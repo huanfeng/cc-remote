@@ -134,6 +134,8 @@ type Server struct {
 	usageCache      usageCache
 	accountUsage    accountUsage
 	codexUsageCache codexUsageCache
+	monitor         usageMonitor
+	monitorDone     chan struct{}
 	// configMu serializes writers of preferences.json, Claude settings.json and
 	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.
 	configMu sync.Mutex
@@ -146,7 +148,10 @@ func New(st *store.Store, cfg Config) *Server {
 	}
 	s := &Server{switching: map[string]bool{}, store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, sent: sends{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
 	go s.reapIdle(s.stopReaper, time.Minute)
-	go s.sampleUsage(s.stopReaper, usageSampleEvery)
+	if cfg.DataDir != "" {
+		s.monitorDone = make(chan struct{})
+		go func() { defer close(s.monitorDone); s.sampleMonitor(s.stopReaper) }()
+	}
 	return s
 }
 
@@ -170,6 +175,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status/summary", s.statusSummary)
 	mux.HandleFunc("GET /api/usage", s.usage)
 	mux.HandleFunc("GET /api/usage/history", s.usageHistory)
+	mux.HandleFunc("GET /api/usage/monitor", s.monitorAPI)
+	mux.HandleFunc("POST /api/usage/monitor/refresh", s.monitorRefreshAPI)
+	mux.HandleFunc("PUT /api/usage/monitor/settings", s.monitorSettingsAPI)
+	mux.HandleFunc("GET /api/usage/monitor/history", s.monitorHistoryAPI)
 	mux.HandleFunc("GET /api/sessions/{id}/stats", s.sessionStats)
 	mux.HandleFunc("POST /api/admin/shutdown", s.shutdown)
 	mux.HandleFunc("POST /api/admin/restart", s.restart)
@@ -1332,6 +1341,13 @@ func (s *Server) Close(ctx context.Context) error {
 		s.closeTerminalAsync(ts)
 	}
 	s.mu.Unlock()
+	if s.monitorDone != nil {
+		select {
+		case <-s.monitorDone:
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for usage monitor: %w", ctx.Err())
+		}
+	}
 	if err := s.closeProcesses(ctx); err != nil {
 		return err
 	}

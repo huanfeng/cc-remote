@@ -13,7 +13,7 @@ import type {
   Attachment, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
-  UsageReply,
+  UsageReply, UsageMonitor, MonitorHistory,
 } from '../types.ts';
 import { HttpClient, defined, providerQuery, withQuery, type Lang } from './client.ts';
 import { poll, type Poller } from './poll.ts';
@@ -546,6 +546,19 @@ export class HttpBackend implements Backend {
   }
 
   usageHistory(hours: number) { return this.get<UsageHistory>(`/api/usage/history?hours=${hours}`); }
+
+  watchUsageMonitor(onChange: (v: UsageMonitor) => void, onError: (e: unknown) => void): Unsubscribe {
+    let live = true;
+    const p = poll(async () => {
+      const v = await this.get<UsageMonitor>('/api/usage/monitor');
+      if (live) onChange(v);
+    }, 30_000, { pauseHidden: true, onError });
+    this.usagePollers.add(p);
+    return () => { live = false; p.stop(); this.usagePollers.delete(p); };
+  }
+  refreshUsageMonitor() { return this.client.json<UsageMonitor>('/api/usage/monitor/refresh', { method: 'POST' }); }
+  saveUsageMonitor(intervalMinutes: 10 | 30) { return this.client.json<UsageMonitor>('/api/usage/monitor/settings', { method: 'PUT', body: { intervalMinutes } }); }
+  monitorHistory(account: string, hours: number) { return this.get<MonitorHistory>(`/api/usage/monitor/history?account=${enc(account)}&hours=${hours}`); }
 
   status() { return this.get<HostStatus>('/api/status'); }
 

@@ -9,7 +9,7 @@ import type {
   Attachment, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
-  UsageHistory, UsageReply,
+  UsageHistory, UsageReply, UsageMonitor, MonitorHistory,
 } from './types';
 
 export type Unsubscribe = () => void;
@@ -125,6 +125,10 @@ export interface Backend {
   // Usage and status
   watchUsage(opts: { provider: Provider; sessionId?: string }, onChange: (u: UsageReply) => void): Unsubscribe;
   usageHistory(hours: number): Promise<UsageHistory>;
+  watchUsageMonitor?(onChange: (v: UsageMonitor) => void, onError: (e: unknown) => void): Unsubscribe;
+  refreshUsageMonitor?(): Promise<UsageMonitor>;
+  saveUsageMonitor?(intervalMinutes: 10 | 30): Promise<UsageMonitor>;
+  monitorHistory?(account: string, hours: number): Promise<MonitorHistory>;
   status(): Promise<HostStatus>;
   /** The cheap part of status() (no totals, daily chart, session rows or log tail) for a fast first paint. */
   statusSummary?(): Promise<HostStatus>;

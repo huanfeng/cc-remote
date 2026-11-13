@@ -163,10 +163,10 @@ func TestOAuthUsageIsReadPerAccount(t *testing.T) {
 		t.Fatalf("the host history must not include the account %d %s", code, b)
 	}
 
-	// Removing the profile forgets its readings.
+	// Removing the credential stops collection and preserves its readings.
 	request(t, ts, "DELETE", "/api/profiles/oauth/"+strings.TrimPrefix(created.ID, "oauth:"), nil, testToken)
-	if samples, _ := st.AccountUsageSamples(created.ID, time.Now().Add(-time.Hour)); len(samples) != 0 {
-		t.Fatal("history of a removed account must go")
+	if samples, _ := st.AccountUsageSamples(created.ID, time.Now().Add(-time.Hour)); len(samples) != 1 {
+		t.Fatal("history of a removed account must remain")
 	}
 	if r = s.readOAuthUsage(created.ID, 0); r.Available || r.Reason != "no-login" {
 		t.Fatalf("a removed profile has no usage: %+v", r)

@@ -55,6 +55,9 @@ func TestSelectAsset(t *testing.T) {
 	assets := []Asset{
 		{Name: "checksums.txt"},
 		{Name: "install.sh"},
+		{Name: "cc-remote-desktop_0.2.0_windows_amd64.zip"},
+		{Name: "cc-remote-desktop_0.2.0_windows_amd64-setup.exe"},
+		{Name: "cc-remote-tray_0.2.0_windows_amd64.zip"},
 		{Name: "cc-remote_0.2.0_windows_amd64.zip"},
 		{Name: "cc-remote_0.2.0_windows_arm64.zip"},
 		{Name: "cc-remote_0.2.0_linux_amd64.tar.gz"},

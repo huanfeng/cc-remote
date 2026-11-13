@@ -2,7 +2,9 @@
 
 `desktop/` 是 CC Remote 的桌面应用：把 `web/` 的前端装进原生窗口，可以保存多台宿主（和[独立网页前端](standalone.md)一样），并管理本机安装的 cc-remote 服务。安装包里没有宿主本身；宿主仍按[发布与安装](release.md)安装。
 
-目前只在本地构建，还没接入 Release 工作流。
+Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号与后台、托盘一致。安装包只安装桌面客户端；便携包同时包含后台、客户端和托盘。PR / push 到 `main` 会运行原生测试并生成同样的 CI 构建附件。文件名和发布命令见[发布说明](release.md#发布附件)。
+
+轻量常驻功能位于独立的 [wind-ui-rust 托盘](../tray/README.md)。桌面客户端按需展示完整历史，接收 `--usage-history --host <本机 origin> --data-dir <绝对路径> --account <可选账号 ID>`，已运行时聚焦原窗口并定位历史页。令牌通过本机数据目录读取，不进入启动参数。托盘自身不加载 WebView。采样和账号连续性见[订阅监控](subscription-monitor.md)。
 
 ## 与独立网页的区别
 

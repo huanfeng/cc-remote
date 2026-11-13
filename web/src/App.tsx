@@ -30,6 +30,8 @@ import { ConnectingScreen, LoginScreen } from '@/features/auth/LoginScreen';
 import { PlainHttpBanner } from '@/features/auth/PlainHttpBanner';
 import { StandaloneHome } from '@/features/standalone/StandaloneHome';
 import { DESKTOP, DesktopSocket } from '@/platform/desktop';
+import { installUsageHistoryNavigation } from '@/platform/usageHistory';
+import { isUsageHistory } from '@/domain/usageHistoryRoute';
 
 const env = import.meta.env;
 const mockMode = (env.DEV || env.VITE_MOCK === '1') && typeof location !== 'undefined' && new URLSearchParams(location.search).has('mock');
@@ -40,6 +42,7 @@ export function App() {
   useApplyTheme();
   useEffect(() => trackVisualViewport(), []);
   useEffect(() => scopeDraftsToHost(), []);
+  useEffect(() => { installUsageHistoryNavigation(); }, []);
   return mockMode ? <MockApp /> : <HostApp />;
 }
 
@@ -115,6 +118,13 @@ function Connected({ backend }: { backend: Backend }) {
   const info = useApp(s => s.info);
   // The session list poll failed: shown until the next poll answers.
   const [offline, setOffline] = useState('');
+
+  useEffect(() => {
+    const openHistory = () => { if (isUsageHistory(location.hash)) useApp.getState().open({ type: 'status' }); };
+    openHistory();
+    window.addEventListener('hashchange', openHistory);
+    return () => window.removeEventListener('hashchange', openHistory);
+  }, [backend]);
 
   useEffect(() => {
     let live = true;
