@@ -41,14 +41,16 @@ jobs:
           package-manager-cache: false
       - name: Enable pnpm
         run: corepack enable
-      - name: Install dependencies
-        run: |
-          pnpm --dir web install --frozen-lockfile
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm --dir desktop install --frozen-lockfile
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustup default stable-msvc
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Corepack chooses the version before pnpm processes --dir, so run in
+      # each package directory to honor its pinned packageManager version.
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+      - name: Select Rust toolchain
+        run: rustup default stable-msvc
       - name: Test and stamp release versions
         run: |
           node --test scripts/tests/native-version.test.mjs
@@ -56,10 +58,11 @@ jobs:
           node scripts/native-version.mjs $env:VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build frontend for native tests and backend
+        working-directory: web
         run: |
-          pnpm --dir web run build:desktop
+          pnpm run build:desktop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm --dir web run build
+          pnpm run build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test native applications
         run: |
