@@ -1,6 +1,12 @@
 # 桌面应用（Tauri 2）
 
-`desktop/` 是 CC Remote 的桌面应用：把 `web/` 的前端装进原生窗口，可以保存多台宿主（和[独立网页前端](standalone.md)一样），并管理本机安装的 cc-remote 服务。安装包里没有宿主本身；宿主仍按[发布与安装](release.md)安装。
+`desktop/` 是 CC Remote 的桌面应用：把 `web/` 的前端装进原生窗口，可以保存多台宿主（和[独立网页前端](standalone.md)一样），并管理本机安装的 cc-remote 服务。Windows x64 推荐用完整安装入口一次安装后台、客户端与托盘：
+
+```powershell
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
+```
+
+重复执行即可一起更新，配置、账号和历史保留；已打开的客户端需关闭后重新打开以使用新版。安装后默认仅启动不加载 WebView 的托盘，从开始菜单或托盘「详细历史」打开客户端。需要托盘登录自启时，以 scriptblock 方式传入 `-AutoStart`；完整参数见[发布与安装](release.md#一键安装--更新)。
 
 Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号与后台、托盘一致。安装包只安装桌面客户端；便携包同时包含后台、客户端和托盘。PR / push 到 `main` 会运行原生测试并生成同样的 CI 构建附件。文件名和发布命令见[发布说明](release.md#发布附件)。
 
@@ -31,10 +37,13 @@ Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号�
 需要 Rust（MSVC 工具链）、Node 22 和 pnpm；Windows 需要 WebView2 运行时（Windows 11 自带）。
 
 ```sh
-pnpm --dir web install
-pnpm --dir desktop install
-pnpm --dir desktop dev      # 启动 vite（5175 端口，--mode desktop）并运行应用
-pnpm --dir desktop build    # 构建安装包（Windows：NSIS 与 MSI）
+cd web
+corepack enable
+pnpm install --frozen-lockfile
+cd ../desktop
+pnpm install --frozen-lockfile
+pnpm dev      # 启动 vite（5175 端口，--mode desktop）并运行应用
+# 或 pnpm build，构建安装包（Windows：NSIS 与 MSI）
 ```
 
 `web` 里的 `pnpm run build:desktop` 单独构建前端到 `web/dist-desktop/`，内容安全策略由 `desktop/src-tauri/tauri.conf.json` 提供（所有网络请求都走 IPC，`connect-src` 只放行 `ipc:`）。

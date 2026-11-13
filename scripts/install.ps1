@@ -7,6 +7,10 @@
   runs "cc-remote service install", which copies the binary to
   %LOCALAPPDATA%\cc-remote\bin and (re)starts the background service.
   Re-running the script updates an existing installation in place.
+  -Desktop also installs the Windows x64 desktop client and native tray, adds
+  Start Menu shortcuts and starts only the tray (no WebView). Use -AutoStart
+  for tray startup at sign-in, or -NoLaunch to leave it stopped.
+  Account, history and application settings remain in their existing locations.
 
   Public releases download anonymously. For a private fork (CC_REMOTE_REPO),
   credentials are used when available:
@@ -31,9 +35,15 @@ param(
     # Language of messages and the web UI: auto, zh or en, passed to "service install --lang".
     # Default: $env:CC_REMOTE_LANG; when neither is set the installed setting is kept.
     [string]$Lang = "",
+    # Install the Windows x64 desktop client and native tray alongside the backend.
+    [switch]$Desktop,
+    # Start the tray at sign-in (desktop mode only; existing startup is kept on update).
+    [switch]$AutoStart,
+    # Do not launch or restart the tray after installing (desktop mode only).
+    [switch]$NoLaunch,
     # Skip the background service: copy the binary to -InstallDir only.
     [switch]$NoService,
-    # Target directory for -NoService.
+    # Target directory for desktop/tray and for the backend with -NoService.
     [string]$InstallDir = "",
     # Create the "ccr" shim (default on). Use -NoAlias to skip.
     [bool]$Alias = $true,
@@ -106,6 +116,9 @@ The repository may be private or the request was rate-limited. Either:
         "ARM64" { $arch = "arm64" }
         default { throw "unsupported architecture '$cpu'" }
     }
+    if ($Desktop -and $arch -ne "amd64") { throw "desktop and tray packages currently support Windows x64 only" }
+    if (($AutoStart -or $NoLaunch) -and -not $Desktop) { throw "-AutoStart and -NoLaunch require -Desktop" }
+    $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 
     # --- credentials ------------------------------------------------------
     $token = $env:GITHUB_TOKEN
@@ -166,7 +179,9 @@ The repository may be private or the request was rate-limited. Either:
     if (-not $tag) { throw "could not determine the release tag" }
 
     $suffix = "_windows_$arch.zip"
-    $asset = $assets.Keys | Where-Object { $_.StartsWith("cc-remote_") -and $_.EndsWith($suffix) } | Select-Object -First 1
+    $prefix = "cc-remote_"
+    if ($Desktop) { $prefix = "cc-remote-desktop_" }
+    $asset = $assets.Keys | Where-Object { $_.StartsWith($prefix) -and $_.EndsWith($suffix) } | Select-Object -First 1
     if (-not $asset) { throw "release $tag has no archive for windows/$arch" }
     if (-not $assets.ContainsKey("checksums.txt")) { throw "release $tag has no checksums.txt; refusing to install unverified files" }
 
@@ -179,6 +194,11 @@ The repository may be private or the request was rate-limited. Either:
         if ($Alias) { $plan += "; run: cc-remote alias install" }
     } else {
         $plan = "run: cc-remote " + ($serviceArgs -join " ")
+    }
+    if ($Desktop) {
+        $plan += "; install desktop and tray to $InstallDir; create Start Menu shortcuts"
+        if ($AutoStart) { $plan += "; start tray at sign-in" }
+        if (-not $NoLaunch) { $plan += "; start/restart tray (no WebView)" }
     }
 
     Write-Host "repository : $Repo (via $method)"
@@ -217,21 +237,52 @@ The repository may be private or the request was rate-limited. Either:
         Write-Host "sha256 verified"
 
         $x = Join-Path $tmp "x"
-        Expand-Archive -Path (Join-Path $tmp $asset) -DestinationPath $x -Force
+        # Extract only the required root entries, never paths supplied by the archive.
+        $required = @("cc-remote.exe")
+        if ($Desktop) { $required += @("cc-remote-desktop.exe", "cc-remote-tray.exe") }
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $tmp $asset))
+        try {
+            foreach ($name in $required) {
+                $matchesInZip = @($zip.Entries | Where-Object { $_.FullName -ceq $name })
+                if ($matchesInZip.Count -ne 1 -or $matchesInZip[0].Length -eq 0) { throw "archive must contain one nonempty $name at its root" }
+            }
+            New-Item -ItemType Directory -Path $x | Out-Null
+            foreach ($name in $required) { [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.GetEntry($name), (Join-Path $x $name)) }
+        } finally { $zip.Dispose() }
         $bin = Join-Path $x "cc-remote.exe"
         if (-not (Test-Path $bin)) { throw "archive does not contain cc-remote.exe" }
         Unblock-File -Path $bin -ErrorAction SilentlyContinue
 
         # --- install ----------------------------------------------------------
+        function Install-Executable([string]$name) {
+            $target = Join-Path $InstallDir $name
+            $backup = $null
+            # Running programs can be renamed, but not overwritten. Unique
+            # backups also allow another update while an older image is open.
+            if (Test-Path -LiteralPath $target) {
+                $backup = $target + ".old-" + [guid]::NewGuid().ToString("N")
+                Move-Item -LiteralPath $target -Destination $backup
+            }
+            try {
+                Copy-Item -LiteralPath (Join-Path $x $name) -Destination $target
+            } catch {
+                if ($backup) {
+                    Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+                    Move-Item -LiteralPath $backup -Destination $target
+                }
+                throw
+            }
+            Unblock-File -LiteralPath $target -ErrorAction SilentlyContinue
+            # Locked backups stay until a later update after the app closes.
+            Get-ChildItem -LiteralPath $InstallDir -Filter "$name.old-*" -File | ForEach-Object {
+                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
         if ($NoService) {
             New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
             $target = Join-Path $InstallDir "cc-remote.exe"
-            if (Test-Path $target) {
-                # a running exe can be renamed but not overwritten
-                Remove-Item "$target.old" -Force -ErrorAction SilentlyContinue
-                Move-Item $target "$target.old" -Force
-            }
-            Copy-Item $bin $target -Force
+            Install-Executable "cc-remote.exe"
             Write-Host "installed $target ($tag)"
             if ($Alias) {
                 & $target alias install
@@ -244,8 +295,41 @@ The repository may be private or the request was rate-limited. Either:
             if ($LASTEXITCODE -ne 0) { throw "cc-remote service install failed ($LASTEXITCODE)" }
             & $bin service status
         }
+        if ($Desktop) {
+            New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+            $trayTarget = Join-Path $InstallDir "cc-remote-tray.exe"
+            # Only stop our own installed tray; other copies and the backend keep running.
+            if (-not $NoLaunch) {
+                Get-Process -Name "cc-remote-tray" -ErrorAction SilentlyContinue | Where-Object {
+                    $_.Path -and [IO.Path]::GetFullPath($_.Path) -eq $trayTarget
+                } | ForEach-Object { Stop-Process -Id $_.Id -ErrorAction Stop; $_.WaitForExit(10000) | Out-Null }
+            }
+            foreach ($name in @("cc-remote-desktop.exe", "cc-remote-tray.exe")) {
+                Install-Executable $name
+            }
+            $shell = New-Object -ComObject WScript.Shell
+            function Save-Shortcut([string]$path, [string]$target) {
+                New-Item -ItemType Directory -Force -Path (Split-Path $path -Parent) | Out-Null
+                $shortcut = $shell.CreateShortcut($path)
+                $shortcut.TargetPath = $target
+                $shortcut.WorkingDirectory = $InstallDir
+                $shortcut.IconLocation = "$target,0"
+                $shortcut.Save()
+            }
+            $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\CC Remote"
+            Save-Shortcut (Join-Path $menu "CC Remote.lnk") (Join-Path $InstallDir "cc-remote-desktop.exe")
+            Save-Shortcut (Join-Path $menu "CC Remote Tray.lnk") $trayTarget
+            $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\CC Remote Tray.lnk"
+            if ($AutoStart -or (Test-Path -LiteralPath $startup)) { Save-Shortcut $startup $trayTarget }
+            if (-not $NoLaunch) { Start-Process -FilePath $trayTarget -WorkingDirectory $InstallDir -WindowStyle Hidden | Out-Null }
+            Write-Host "desktop and tray installed to $InstallDir ($tag)"
+            Write-Host "repeat this installer to update all three programs; an open desktop client uses the update after closing and reopening"
+        }
         Write-Host "done: cc-remote $tag"
     } finally {
-        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        # The only recursive cleanup target is our own GUID directory under TEMP.
+        if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($tmp)).TrimEnd('\', '/') -eq [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')) {
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

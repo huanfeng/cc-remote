@@ -25,7 +25,7 @@ git push origin v0.2.0
 
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
-| `.github/workflows/ci.yml` | push / PR 到 `main` | ubuntu + windows：`pnpm --dir web install --frozen-lockfile`、`typecheck`、构建前端、`go vet ./...`、`go test -race ./...`；另在 ubuntu 上 `CGO_ENABLED=0` 交叉编译 darwin/arm64；`govulncheck ./...` 发现可达漏洞（含标准库）即失败 |
+| `.github/workflows/ci.yml` | push / PR 到 `main` | ubuntu + windows：在 `web/` 安装锁定依赖、类型检查、构建前端、`go vet ./...`、`go test -race ./...`；另在 ubuntu 上 `CGO_ENABLED=0` 交叉编译 darwin/arm64；`govulncheck ./...` 发现可达漏洞（含标准库）即失败 |
 | `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 6 个平台后台、独立网页、Windows x64 Tauri 客户端与托盘 → 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
 | `.github/workflows/native-windows.yml` | 由 CI / Release 调用 | 统一原生版本、Rust 测试、Tauri NSIS 安装包、托盘 ZIP、包含三个程序的便携 ZIP |
 
@@ -54,6 +54,7 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 | `cc-remote_<版本>_web.zip` | 独立网页前端（静态文件），见[独立网页前端](standalone.md)；正式版同时发布到 GitHub Pages（`.github/workflows/pages.yml`）；`cc-remote update` 不会选它 |
 | `checksums.txt` | 所有归档及桌面安装包的 sha256（`sha256sum` 格式） |
 | `install.ps1` / `install.sh` | 安装脚本副本；`releases/latest/download/install.*` 即指向最新正式版中的这两个文件 |
+| `install-desktop.ps1` | Windows x64 完整安装入口：后台服务、Tauri 客户端、原生托盘；从同一份 PowerShell 安装逻辑生成 |
 
 `<版本>` 不带 `v`，例如标签 `v0.2.0` 对应 `cc-remote_0.2.0_linux_amd64.tar.gz`，程序内的版本号（`main.version`）为 `0.2.0`。
 
@@ -63,7 +64,7 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 
 Release 使用标签对应的版本；原生任务成功后才发布，避免只发布后台的半成品版本。安装包和 ZIP 与原有后台、独立网页一起进入同一个 Release、校验清单和来源证明。后台安装脚本和 `cc-remote update` 继续按 `cc-remote_` 前缀选择后台归档。
 
-当前原生发布范围为 Windows x64，未配置代码签名或桌面自动更新；安装包只安装客户端，托盘手动启动。完整便携包按 `START-HERE.txt` 先安装后台，再运行托盘。Windows ARM64、macOS 和 Linux 仍发布原有后台归档，暂不发布原生客户端和托盘。
+当前原生发布范围为 Windows x64，未配置代码签名或客户端内自动更新。推荐通过下方完整安装入口安装和更新三者；NSIS 安装包只安装客户端，手动使用便携包时按 `START-HERE.txt` 安装后台，再运行托盘。Windows ARM64、macOS 和 Linux 仍发布原有后台归档，暂不发布原生客户端和托盘。
 
 ## 凭据
 
@@ -77,9 +78,28 @@ Release 使用标签对应的版本；原生任务成功后才发布，避免只
 
 ## 一键安装 / 更新
 
-重复执行同一命令就是**更新**：脚本下载新版本、校验 sha256，然后运行新二进制的 `service install`，由它停止服务 → 复制到固定位置 → 重新启动；已有的 `--listen` 等配置不传参数时保留。默认同时创建 `ccr` 别名。
+重复执行同一命令就是**更新**：脚本下载新版本、校验 SHA256，然后运行新二进制的 `service install`，替换后台并请求会话空闲后重启；已有的 `--listen` 等配置不传参数时保留。默认同时创建 `ccr` 别名。完整安装入口同时更新客户端和托盘，后台专用入口只更新后台。
 
 ### Windows（PowerShell 5.1 / 7）
+
+Windows x64 完整安装（后台、客户端、托盘）：
+
+```powershell
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
+```
+
+默认安装到 `%LOCALAPPDATA%\cc-remote\bin`，创建开始菜单中的 **CC Remote** 和 **CC Remote Tray**。安装完成后仅启动或重启这一安装目录的托盘，不加载 WebView；详细历史按需启动客户端。运行中的客户端可继续使用，关闭后重新打开即使用新版。更新保留后台配置、账号、历史、客户端存储和托盘偏好。
+
+可选登录自启或只安装不启动：
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1))) -AutoStart
+& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1))) -NoLaunch
+```
+
+`-AutoStart` 创建当前用户的 Startup 快捷方式，后续更新会保留；不加此参数不会新建自启项。要关闭自启，可在 `shell:startup` 中删除 **CC Remote Tray** 快捷方式。
+
+仅安装后台（Windows x64 / ARM64，保留原有入口）：
 
 ```powershell
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 | iex
@@ -105,7 +125,10 @@ $s = gh api repos/huanfeng/cc-remote/contents/scripts/install.ps1 -H "Accept: ap
 | `-Version v0.2.0` | 指定版本，默认最新正式版 |
 | `-Listen a,b` | 传给 `service install --listen`，可重复或逗号分隔 |
 | `-Lang zh` | 界面语言 `auto` / `zh` / `en`，传给 `service install --lang`；默认取 `$env:CC_REMOTE_LANG`，都未设置时沿用已安装的设置 |
-| `-NoService` | 不装服务，只把 exe 复制到 `-InstallDir`（默认 `%LOCALAPPDATA%\cc-remote\bin`） |
+| `-NoService` | 不装服务，只把所选包的程序复制到 `-InstallDir`（默认 `%LOCALAPPDATA%\cc-remote\bin`）；完整包仍创建客户端与托盘快捷方式 |
+| `-InstallDir DIR` | 客户端和托盘的目标目录；只有 `-NoService` 时后台也复制到此处，服务模式的后台仍安装在标准目录。自定义目录更新时需再次传入 |
+| `-AutoStart` | 完整安装入口：创建托盘的当前用户登录自启快捷方式；更新保留已有自启项 |
+| `-NoLaunch` | 完整安装入口：不启动或重启托盘，适合只安装或无交互环境 |
 | `-NoAlias` / `-Alias:$false` | 不创建 `ccr` 别名（默认创建） |
 | `-DryRun` | 只解析版本和附件并打印计划，不下载不安装 |
 
@@ -145,6 +168,8 @@ curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.
 
 ## 用 cc-remote 自身更新
 
+以下命令仅更新后台。客户端与托盘请重复执行 `install-desktop.ps1` 完整安装入口；它们不通过 `cc-remote update` 更新。
+
 ```sh
 cc-remote update --check          # 只查看是否有新版本
 cc-remote update                  # 有新版本时安装
@@ -181,6 +206,8 @@ cc-remote alias uninstall                    # 删除 ccr 并移除其 PATH 条�
 ```
 
 之后删除安装目录（Windows `%LOCALAPPDATA%\cc-remote`，Linux `~/.local/share/cc-remote`，macOS `~/Library/Application Support/cc-remote`）。数据目录（令牌、SQLite）默认在 Windows `%APPDATA%\cc-remote`、Linux `~/.config/cc-remote`、macOS `~/Library/Application Support/cc-remote`，需要时手动删除。
+
+`cc-remote service uninstall` 只卸载后台服务，不会删除完整 Windows 安装中的客户端、托盘或快捷方式。退出两个应用后，可手动删除安装目录里的 `cc-remote-desktop.exe`、`cc-remote-tray.exe`，开始菜单中的 `CC Remote` 文件夹（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\CC Remote`），以及可选的 Startup 自启项 `CC Remote Tray.lnk`（运行 `shell:startup` 打开）。这些操作保留后台账号与历史、客户端 WebView 存储和托盘偏好。
 
 ## 故障排查
 

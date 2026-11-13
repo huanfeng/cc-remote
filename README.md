@@ -2,7 +2,7 @@
 
 # CC Remote
 
-在手机或浏览器上使用本机的 Claude Code 和 Codex。Claude Code 支持终端与网页接力，Codex 支持网页托管会话。
+在手机、浏览器或桌面客户端上使用本机的 Claude Code 和 Codex，用轻量原生托盘查看订阅额度。Claude Code 支持终端与网页接力，Codex 支持托管会话。
 
 [![CI](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/huanfeng/cc-remote?include_prereleases)](https://github.com/huanfeng/cc-remote/releases)
@@ -14,14 +14,13 @@
   <img src="docs/images/mobile.png" alt="CC Remote 手机端界面" width="22%">
 </p>
 
-CC Remote 是一个运行在你电脑上的小型宿主程序（单个可执行文件），直接调用本机已登录的 Claude Code CLI，并提供一个可在手机上使用的 Web 界面（PWA）。不需要终端模拟器，也不需要把代码传到别处。
+CC Remote 的后台是一个运行在你电脑上的小型宿主程序（单个可执行文件），调用本机已登录的 Claude Code CLI 或 Codex app-server，提供可在手机上使用的 Web 界面（PWA）。Windows x64 还提供 Tauri 桌面客户端和不加载 WebView 的原生托盘；会话、账号和历史由后台统一管理。
 
 ## 功能特性
 
-- **供应商配置选择与切换**：直接只读读取 CC-Switch 数据，支持 `ccr` 和 Web 在新建、恢复会话时选择供应商，以及会话内确认中断后切换并恢复上下文。不再依赖 cc-tool 导出或导入。见 [供应商配置说明](docs/supplier-profiles.md)。
-
+- **供应商配置选择与切换**：直接只读读取 CC-Switch 数据，支持 `ccr` 和 Web 在新建、恢复会话时选择供应商，以及会话内确认中断后切换并恢复上下文。见 [供应商配置说明](docs/supplier-profiles.md)。
 - **Codex 托管会话**：新建时选择 Codex，支持流式回复、工具过程、网页审批与提问、排队、停止、恢复线程和原生历史导入；模型、推理强度与沙箱默认设置独立保存。见 [Codex 使用说明](docs/codex.md)。
-
+- **桌面客户端**：Tauri 原生窗口支持多宿主连接、本机服务管理和订阅历史；Windows x64 可一键安装与更新后台、客户端和托盘。见 [桌面应用](docs/desktop.md)。
 - **终端与网页接力**：在项目里运行 `ccr`，宿主持有一个交互式 Claude Code，本地终端接入使用；按 `Ctrl+]` 离开后它继续运行，网页和手机可以接着发消息，再运行 `ccr` 就接回来。子 agent 等长任务不会因为切换而中断。网页也可以切换到终端视图，直接操作完整的 Claude Code 界面，手机上有专门的输入框和按键行。
 - **网页托管会话**：直接在网页新建会话、指定项目目录，多个会话并行执行，关掉浏览器任务也不会停。
 - **审批、提问、计划都能在网页回答**：工具权限审批、AskUserQuestion 选项、计划确认以卡片呈现；终端会话中网页和终端谁先答谁生效。
@@ -37,23 +36,37 @@ CC Remote 是一个运行在你电脑上的小型宿主程序（单个可执行�
 
 ## 快速开始
 
-**前提**：已安装 [Claude Code](https://code.claude.com/docs) 并完成登录（`claude auth login`）；系统为 Windows、Linux 或 macOS。
+**前提**：按需安装并登录 [Claude Code](https://code.claude.com/docs)（`claude auth login`）或 [Codex CLI](https://developers.openai.com/codex/cli)（`codex login`）。后台支持 Windows、Linux 和 macOS；原生客户端与托盘目前发布 Windows x64 包。
 
 ### 1. 安装
 
-Windows（PowerShell）：
+Windows x64 完整安装（PowerShell 5.1 / 7，推荐）：
+
+```powershell
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
+```
+
+一次安装后台服务、Tauri 客户端和原生托盘，创建开始菜单快捷方式。安装后只启动托盘，不加载 WebView；打开客户端或详细历史时才加载完整界面。**以后重复执行同一命令即可更新三者**，保留已有配置、账号与历史。已打开的客户端关闭后重新打开即可使用新版。
+
+需要托盘在登录 Windows 时自启：
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1))) -AutoStart
+```
+
+仅安装后台（Windows x64 / ARM64）：
 
 ```powershell
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 | iex
 ```
 
-Linux / macOS：
+仅安装后台（Linux / macOS）：
 
 ```sh
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
 ```
 
-脚本会下载最新正式版、校验 sha256、注册并启动后台服务，同时创建 `ccr` 命令。重复执行即为更新（沿用已有配置）。
+以上入口都会下载最新正式版、校验 SHA256、注册并启动后台服务，同时创建 `ccr` 命令。后台专用入口重复执行只更新后台；`cc-remote update` 也只更新后台。客户端和托盘请重复执行完整安装入口。
 
 需要传参数时（例如允许局域网访问）：
 
@@ -65,11 +78,13 @@ curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/instal
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh -s -- --listen lan:8787
 ```
 
-其它参数：`-Version` / `--version`、`-Lang` / `--lang`、`-NoService` / `--no-service`、`-NoAlias` / `--no-alias`、`-DryRun` / `--dry-run`，详见 [docs/release.md](docs/release.md)。
+其它参数：`-Version` / `--version`、`-Lang` / `--lang`、`-NoService` / `--no-service`、`-NoAlias` / `--no-alias`、`-DryRun` / `--dry-run`。完整安装入口另有 `-NoLaunch`（不启动或重启托盘）；`-AutoStart` 为可选项，更新会保留已有自启设置。详见 [发布与安装](docs/release.md)。
 
 界面语言：命令行输出和网页默认跟随系统语言（中文或英文）。安装时可用 `-Lang zh` / `--lang en`（或环境变量 `CC_REMOTE_LANG`）指定，之后用 `cc-remote service config --lang zh|en|auto` 修改；网页还可以在设置里为当前浏览器单独选择语言。详见 [docs/configuration.md](docs/configuration.md#界面语言)。
 
-### 2. 打开网页并登录
+### 2. 打开客户端或网页
+
+完整安装后可从开始菜单打开 **CC Remote**，在「本机服务」里一键连接；从托盘打开「详细历史」也会启动客户端并连接本机后台。远程宿主仍需填写其地址和访问令牌。
 
 浏览器打开 <http://127.0.0.1:8787>，输入访问令牌。令牌在首次启动时生成，保存在数据目录的 `access-token` 文件中：
 
@@ -85,7 +100,7 @@ cat "${XDG_CONFIG_HOME:-$HOME/.config}/cc-remote/access-token"
 cat "$HOME/Library/Application Support/cc-remote/access-token"
 ```
 
-### 3. 在项目里运行 `ccr`
+### 3. 在项目里运行 `ccr`（Claude Code）
 
 ```sh
 cd your-project
@@ -115,7 +130,7 @@ Claude Code 退出时提示的 `claude --resume <会话ID>`，把 `claude` 换�
 
 ### 托管会话
 
-在网页点「新建」，填写名称和宿主上已存在的项目目录即可。Claude Code 在宿主上常驻运行，执行中可以继续发消息排队，可随时停止当前一轮，空闲后自动释放、下次自动恢复上下文。「终端历史」可浏览本机已有的 Claude Code 会话，并导入为托管会话继续。
+在网页或客户端点「新建」，选择 Claude Code 或 Codex，填写名称和宿主上已存在的项目目录即可。执行中可以继续发消息排队，也可停止当前一轮。「终端历史」可浏览并导入对应供应商的本机历史；Codex 的模型、推理强度和沙箱设置独立保存。
 
 更多：网页命令（`/model`、`/effort`、`/status` 等）、附件、查看文件、设置对话框、刷新恢复，见 [docs/usage.md](docs/usage.md)。
 
@@ -155,13 +170,17 @@ cc-remote service config --listen 127.0.0.1:8787,lan:8787
 | `cc-remote service restart` | 重启（另有 `start` / `stop`） |
 | `cc-remote service config` | 查看或修改监听地址、允许的网页前端、环境变量等（监听地址和网页前端无需重启；其它设置等会话空闲后自动重启，`--force` 立即重启） |
 | `cc-remote service uninstall` | 卸载服务（保留数据） |
-| `cc-remote update` | 更新到最新版，会话空闲后自动重启（`--check` 只检查，`--force` 立即重启） |
+| `cc-remote update` | 更新后台，会话空闲后自动重启（`--check` 只检查，`--force` 立即重启）；客户端与托盘重复执行完整安装入口更新 |
 
 ## 配置与文档
 
 | 文档 | 内容 |
 | --- | --- |
 | [docs/usage.md](docs/usage.md) | 详细使用说明 |
+| [docs/desktop.md](docs/desktop.md) | Tauri 桌面客户端与本机服务 |
+| [docs/subscription-monitor.md](docs/subscription-monitor.md) | 多账号订阅监控、采样历史与账号连续性 |
+| [docs/codex.md](docs/codex.md) | Codex 托管会话与原生历史导入 |
+| [docs/supplier-profiles.md](docs/supplier-profiles.md) | CC-Switch 配置读取、供应商选择与切换 |
 | [docs/configuration.md](docs/configuration.md) | 命令行参数、数据目录、环境变量、监听地址、服务环境、权限与模型偏好 |
 | [docs/standalone.md](docs/standalone.md) | 独立网页前端：部署（GitHub Pages / Vercel / Cloudflare）、HTTPS、内网穿透入口 |
 | [docs/security.md](docs/security.md) | 安全模型与建议 |
@@ -188,8 +207,11 @@ cc-remote service config --listen 127.0.0.1:8787,lan:8787
 需要 Go 1.26+、Node.js 22 和 pnpm（`corepack enable`）：
 
 ```sh
-pnpm --dir web install --frozen-lockfile
-pnpm --dir web run build
+cd web
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run build
+cd ..
 go build -o cc-remote ./cmd/cc-remote
 ```
 

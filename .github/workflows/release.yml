@@ -184,6 +184,10 @@ jobs:
       REPLACE: ${{ github.event_name == 'workflow_dispatch' && inputs.replace }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          package-manager-cache: false
       - uses: actions/download-artifact@v8
         with:
           pattern: pkg-*
@@ -192,6 +196,7 @@ jobs:
       - name: Checksums and install scripts
         run: |
           cp scripts/install.ps1 scripts/install.sh out/
+          node scripts/build-desktop-installer.mjs out/install-desktop.ps1
           cd out
           sha256sum cc-remote* > checksums.txt
           cat checksums.txt

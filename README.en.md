@@ -2,9 +2,7 @@
 
 # CC Remote
 
-Codex managed sessions are also supported: select **Codex** when creating a web session. Streaming replies, tool events, approvals, questions, queued turns, interrupts, thread resume, and native history import use the local `codex app-server`. Provider defaults are stored separately. `ccr` and terminal handoff remain Claude Code features. See [Codex setup and scope](docs/codex.md).
-
-Use the Claude Code on your own machine from your phone or any browser — the terminal and the web UI share the same session, so you can pick up right where you left off.
+Use your local Claude Code and Codex from a phone, browser or desktop client, and check subscription quotas from a lightweight native tray. Claude Code supports terminal handoff; Codex supports managed sessions.
 
 [![CI](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/huanfeng/cc-remote?include_prereleases)](https://github.com/huanfeng/cc-remote/releases)
@@ -16,12 +14,13 @@ Use the Claude Code on your own machine from your phone or any browser — the t
   <img src="docs/images/mobile.png" alt="CC Remote on a phone" width="22%">
 </p>
 
-CC Remote is a small host program (a single executable) that runs on your computer, drives the Claude Code CLI you are already logged in to, and serves a mobile-friendly web UI (PWA). No terminal emulator, and your code never leaves your machine.
-
-> The web UI is currently in Chinese.
+The CC Remote backend is a small host program (a single executable) that runs on your computer, uses your logged-in Claude Code CLI or Codex app-server, and serves a mobile-friendly web UI (PWA). Windows x64 also has a Tauri desktop client and a native tray that stays resident without a WebView. The backend manages sessions, accounts and history. The UI supports English and Chinese.
 
 ## Features
 
+- **Codex managed sessions**: streaming replies, tool events, approvals, questions, queued turns, interrupts, thread resume and native history import through the local `codex app-server`. Model, reasoning and sandbox defaults are stored separately. See [Codex setup and scope](docs/codex.md) (Chinese).
+- **Provider profiles**: read CC-Switch profiles directly, select them when creating or resuming a Claude Code session, and switch within a session after confirming the interruption. See [provider profiles](docs/supplier-profiles.md) (Chinese).
+- **Desktop client**: a Tauri window with multiple hosts, local service controls and subscription history. Install or update the backend, client and tray together on Windows x64. See [the desktop app](docs/desktop.md) (Chinese).
 - **Share a terminal session with the web**: run `ccr` in a project to start native Claude Code; the web UI talks to that very process, so you can keep going away from your desk. The web can also switch to a terminal view of the full Claude Code screen, with an input box and a row of keys on phones.
 - **Managed sessions**: start sessions from the browser in any project directory, run several in parallel, and close the tab without stopping them.
 - **Answer approvals, questions and plans from the web**: tool permissions, AskUserQuestion choices and plan approvals show up as cards; in terminal sessions, whichever side answers first wins.
@@ -37,23 +36,37 @@ CC Remote is a small host program (a single executable) that runs on your comput
 
 ## Quick start
 
-**Requirements**: [Claude Code](https://code.claude.com/docs) installed and logged in (`claude auth login`), on Windows, Linux or macOS.
+**Requirements**: install and sign in to [Claude Code](https://code.claude.com/docs) (`claude auth login`) or [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`), depending on which you use. The backend supports Windows, Linux and macOS. Native desktop and tray packages currently target Windows x64.
 
 ### 1. Install
 
-Windows (PowerShell):
+Full Windows x64 installation (PowerShell 5.1 / 7, recommended):
+
+```powershell
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
+```
+
+Installs the background service, Tauri client and native tray, and adds Start Menu shortcuts. Only the tray starts after installation; the WebView loads when you open the client or detailed history. **Run the same command again to update all three**, keeping settings, accounts and history. Close and reopen an existing client window to use its update.
+
+To start the tray at Windows sign-in:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1))) -AutoStart
+```
+
+Backend only, Windows x64 / ARM64:
 
 ```powershell
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 | iex
 ```
 
-Linux / macOS:
+Backend only, Linux / macOS:
 
 ```sh
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the latest stable release, verifies its sha256, installs and starts the background service, and creates the `ccr` command. Run it again to update; your settings are kept.
+Each entry downloads the latest stable release, verifies SHA256, installs and starts the background service, and creates the `ccr` command. Backend-only entries and `cc-remote update` update only the backend. Repeat the full installation command to update the client and tray too.
 
 To pass options (for example, to allow LAN access):
 
@@ -65,11 +78,13 @@ To pass options (for example, to allow LAN access):
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh -s -- --listen lan:8787
 ```
 
-Other options: `-Version` / `--version`, `-Lang` / `--lang`, `-NoService` / `--no-service`, `-NoAlias` / `--no-alias`, `-DryRun` / `--dry-run`. See [docs/release.md](docs/release.md) (Chinese).
+Other options: `-Version` / `--version`, `-Lang` / `--lang`, `-NoService` / `--no-service`, `-NoAlias` / `--no-alias`, `-DryRun` / `--dry-run`. The full Windows entry also accepts `-NoLaunch` to skip starting or restarting the tray. `-AutoStart` is optional; updates preserve an existing startup shortcut. See [installation and releases](docs/release.md) (Chinese).
 
 Language: command output and the web UI follow the system language (English or Chinese) by default. Choose one at install time with `-Lang en` / `--lang zh` (or the `CC_REMOTE_LANG` environment variable), and change it later with `cc-remote service config --lang zh|en|auto`; the web UI can also pick its own language per browser in its settings. See [docs/configuration.md](docs/configuration.md) (Chinese).
 
-### 2. Open the web UI and log in
+### 2. Open the client or web UI
+
+After a full installation, open **CC Remote** from the Start Menu and connect through **Local service**. Opening detailed history from the tray also connects the client to the local backend. Remote hosts still require their address and access token.
 
 Open <http://127.0.0.1:8787> and enter the access token. It is generated on first start and stored in the `access-token` file in the data directory:
 
@@ -85,14 +100,14 @@ cat "${XDG_CONFIG_HOME:-$HOME/.config}/cc-remote/access-token"
 cat "$HOME/Library/Application Support/cc-remote/access-token"
 ```
 
-### 3. Run `ccr` in a project
+### 3. Run `ccr` in a project (Claude Code)
 
 ```sh
 cd your-project
 ccr
 ```
 
-Claude Code opens in the terminal as usual and the session appears in the web UI. The host runs it: close the terminal and it keeps going; run `ccr` again to attach. (If `ccr` is not found right after installing, open a new terminal.)
+Claude Code opens in the terminal and the session appears in the web UI. Press `Ctrl+]` to detach while the host keeps it running; run `ccr` again to attach. (If `ccr` is not found right after installing, open a new terminal.)
 
 ## Usage
 
@@ -111,7 +126,7 @@ Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+
 
 ### Managed sessions
 
-Click "新建" (New) in the web UI and enter a name and an existing project directory on the host. Claude Code keeps running on the host: you can queue more messages while it works, stop the current turn at any time, and an idle session is released and resumed automatically. "终端历史" (Terminal history) lists existing Claude Code sessions on the machine and can import them as managed sessions.
+Click **New** in the web UI or client, choose Claude Code or Codex, and enter a name and an existing project directory on the host. You can queue messages while it works or stop the current turn. **Terminal history** lets you browse and import local sessions for either provider. Codex model, reasoning and sandbox defaults are stored separately.
 
 More — web commands (`/model`, `/effort`, `/status` …), attachments, settings dialogs, refresh recovery — in [docs/usage.md](docs/usage.md) (Chinese).
 
@@ -151,7 +166,7 @@ Network setup beyond the first two steps is outside what this project supports; 
 | `cc-remote service restart` | Restart (also `start` / `stop`) |
 | `cc-remote service config` | Show or change listen addresses, allowed web frontends, environment, … (listen addresses and web frontends apply without a restart; other settings restart the host once sessions are idle, `--force` restarts now) |
 | `cc-remote service uninstall` | Remove the service (data is kept) |
-| `cc-remote update` | Update to the latest release; the host restarts once sessions are idle (`--check` to only check, `--force` to restart now) |
+| `cc-remote update` | Update the backend; it restarts once sessions are idle (`--check` to only check, `--force` to restart now). Repeat the full installer to update the client and tray |
 
 ## Configuration and docs
 
@@ -160,6 +175,10 @@ The detailed docs are in Chinese.
 | Document | Covers |
 | --- | --- |
 | [docs/usage.md](docs/usage.md) | Detailed usage |
+| [docs/desktop.md](docs/desktop.md) | Tauri client and local service controls |
+| [docs/subscription-monitor.md](docs/subscription-monitor.md) | Multi-account quota monitoring, snapshots and account continuity |
+| [docs/codex.md](docs/codex.md) | Codex managed sessions and native history import |
+| [docs/supplier-profiles.md](docs/supplier-profiles.md) | CC-Switch profile reading, selection and switching |
 | [docs/configuration.md](docs/configuration.md) | CLI flags, data directory, environment variables, listen addresses, service environment, permission and model preferences |
 | [docs/standalone.md](docs/standalone.md) | Standalone web frontend: deploying (GitHub Pages / Vercel / Cloudflare), HTTPS, tunnel entries |
 | [docs/security.md](docs/security.md) | Security model and recommendations |
@@ -186,8 +205,11 @@ That relies on a Claude Code hook. With `disableAllHooks` or an organization pol
 Requires Go 1.26+, Node.js 22 and pnpm (`corepack enable`):
 
 ```sh
-pnpm --dir web install --frozen-lockfile
-pnpm --dir web run build
+cd web
+corepack enable
+pnpm install --frozen-lockfile
+pnpm run build
+cd ..
 go build -o cc-remote ./cmd/cc-remote
 ```
 

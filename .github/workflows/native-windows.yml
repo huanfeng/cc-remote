@@ -53,7 +53,7 @@ jobs:
         run: rustup default stable-msvc
       - name: Test and stamp release versions
         run: |
-          node --test scripts/tests/native-version.test.mjs
+          node --test scripts/tests/*.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/native-version.mjs $env:VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

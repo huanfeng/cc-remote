@@ -30,13 +30,19 @@ foreach ($directory in @($portableDir, $trayDir)) {
 @'
 CC Remote for Windows x64
 
+For installation and future updates of all three programs, run in PowerShell:
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
+This creates Start Menu shortcuts and starts only the native tray. Add
+-AutoStart using the parameter syntax documented in README.md for sign-in startup.
+
+To use this extracted archive manually:
 1. Run cc-remote.exe service install to install or update the local backend.
 2. Run cc-remote-tray.exe for the native tray. It does not load a WebView.
 3. Choose detailed history in the tray to open cc-remote-desktop.exe.
 
 Keep all three executables in this directory. The backend stores accounts and
 history in its existing user data directory. Exiting the tray does not stop it.
-The desktop client requires WebView2. Tray startup is currently manual.
+The desktop client requires WebView2. Manual archive use does not register tray startup.
 '@ | Set-Content -LiteralPath (Join-Path $portableDir 'START-HERE.txt') -Encoding utf8
 
 Copy-Item -LiteralPath $installers[0].FullName -Destination (Join-Path $OutputDir "cc-remote-desktop_${Version}_windows_amd64-setup.exe")
