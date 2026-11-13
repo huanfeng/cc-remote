@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,10 +20,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 // These are intentionally non-executable fixture files. Every installation uses
-// -NoService -NoAlias -NoLaunch, so tests never touch the user's host or apps.
+// -NoService -NoAlias and either -NoLaunch or a mocked process launcher, so tests
+// never touch the user's host or apps.
 var installerExecutables = []string{"cc-remote.exe", "cc-remote-desktop.exe", "cc-remote-tray.exe"}
 
 type installerFixture struct {
@@ -43,7 +46,7 @@ func newInstallerFixture(t *testing.T, shell string) *installerFixture {
 		t.Fatal(err)
 	}
 	f := &installerFixture{t: t, shell: shell, script: script, root: t.TempDir()}
-	f.installDir = filepath.Join(f.root, "program files 中文", "bin")
+	f.installDir = filepath.Join(f.root, "program files 中文 🚀", "bin")
 	f.appData = filepath.Join(f.root, "roaming")
 	f.tempDir = filepath.Join(f.root, "temp")
 	for _, dir := range []string{f.appData, f.tempDir, filepath.Join(f.root, "local"), filepath.Join(f.root, "empty-path")} {
@@ -151,10 +154,42 @@ func (f *installerFixture) run(wantError string, options ...string) string {
 	f.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	args := []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", f.script,
-		"-Repo", "test/repo", "-InstallDir", f.installDir, "-NoService", "-NoAlias"}
-	cmd := exec.CommandContext(ctx, f.shell, append(args, options...)...)
-	cmd.Env = f.env
+	arguments := map[string]any{"Repo": "test/repo", "InstallDir": f.installDir, "NoService": true, "NoAlias": true}
+	for i := 0; i < len(options); i++ {
+		name := strings.TrimPrefix(options[i], "-")
+		if i+1 < len(options) && !strings.HasPrefix(options[i+1], "-") {
+			i++
+			arguments[name] = options[i]
+		} else {
+			arguments[name] = true
+		}
+	}
+	encoded, err := json.Marshal(arguments)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	// -File alone can collapse nested COM exceptions to an unhelpful message.
+	// Keep the original invocation and script stack for failures on other runner
+	// images, without changing the actual installer or mocking its error path.
+	runner := filepath.Join(f.root, "invoke-installer.ps1")
+	const runnerSource = `$ErrorActionPreference = 'Stop'
+try {
+    $arguments = @{}
+    $values = ConvertFrom-Json $env:CC_REMOTE_TEST_ARGUMENTS
+    foreach ($property in $values.PSObject.Properties) { $arguments[$property.Name] = $property.Value }
+    & $env:CC_REMOTE_TEST_ENTRY @arguments
+} catch {
+    [Console]::Error.WriteLine($_.Exception.ToString())
+    [Console]::Error.WriteLine($_.InvocationInfo.PositionMessage)
+    [Console]::Error.WriteLine($_.ScriptStackTrace)
+    exit 1
+}
+`
+	if err := os.WriteFile(runner, []byte(runnerSource), 0600); err != nil {
+		f.t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, f.shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", runner)
+	cmd.Env = append(append([]string{}, f.env...), "CC_REMOTE_TEST_ENTRY="+f.script, "CC_REMOTE_TEST_ARGUMENTS="+string(encoded))
 	output, err := cmd.CombinedOutput()
 	if wantError == "" {
 		if err != nil {
@@ -185,6 +220,33 @@ func (f *installerFixture) assertAbsent(path string) {
 	}
 }
 
+func (f *installerFixture) assertShortcut(path, target string) {
+	f.t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	// Read the persisted Unicode strings directly: WScript.Shell itself cannot
+	// reliably round-trip paths outside the machine's ANSI code page.
+	// The LinkInfo target is NUL-terminated; the WorkingDir StringData uses a
+	// UTF-16 character count prefix. Check both complete persisted values.
+	for index, value := range []string{target, f.installDir} {
+		words := utf16.Encode([]rune(value))
+		encoded := make([]byte, 2+2*len(words))
+		offset := 0
+		if index == 1 {
+			binary.LittleEndian.PutUint16(encoded, uint16(len(words)))
+			offset = 2
+		}
+		for i, word := range words {
+			binary.LittleEndian.PutUint16(encoded[offset+2*i:], word)
+		}
+		if !bytes.Contains(data, encoded) {
+			f.t.Fatalf("shortcut %s does not preserve Unicode path %q", path, value)
+		}
+	}
+}
+
 func TestPowerShellInstaller(t *testing.T) {
 	for _, name := range []string{"powershell.exe", "pwsh.exe"} {
 		shell, err := exec.LookPath(name)
@@ -208,11 +270,9 @@ func TestPowerShellInstaller(t *testing.T) {
 					f.assertFile(filepath.Join(f.installDir, name), "first:"+name)
 				}
 				f.assertAbsent(filepath.Join(f.installDir, "unexpected.txt"))
-				for _, name := range []string{"CC Remote.lnk", "CC Remote Tray.lnk"} {
+				for i, name := range []string{"CC Remote.lnk", "CC Remote Tray.lnk"} {
 					path := filepath.Join(f.appData, "Microsoft", "Windows", "Start Menu", "Programs", "CC Remote", name)
-					if info, err := os.Stat(path); err != nil || info.Size() == 0 {
-						t.Fatalf("missing Start Menu shortcut %s: %v", path, err)
-					}
+					f.assertShortcut(path, filepath.Join(f.installDir, installerExecutables[i+1]))
 				}
 				preserved := filepath.Join(f.root, "local", "cc-remote", "history-and-accounts.json")
 				if err := os.MkdirAll(filepath.Dir(preserved), 0700); err != nil {
@@ -230,6 +290,7 @@ func TestPowerShellInstaller(t *testing.T) {
 				if info, err := os.Stat(startup); err != nil || info.Size() == 0 {
 					t.Fatalf("missing startup shortcut: %v", err)
 				}
+				f.assertShortcut(startup, filepath.Join(f.installDir, "cc-remote-tray.exe"))
 				// An update without -AutoStart retains the explicit opt-in.
 				f.run("", "-Desktop", "-NoLaunch")
 				if _, err := os.Stat(startup); err != nil {
@@ -264,13 +325,6 @@ func TestPowerShellInstaller(t *testing.T) {
 }
 & $env:CC_REMOTE_TEST_SCRIPT -Repo test/repo -InstallDir $env:CC_REMOTE_TEST_DIR -Desktop -NoService -NoAlias
 if (-not $?) { exit 1 }
-$shell = New-Object -ComObject WScript.Shell
-$menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\CC Remote'
-foreach ($entry in @(@('CC Remote.lnk', 'cc-remote-desktop.exe'), @('CC Remote Tray.lnk', 'cc-remote-tray.exe'))) {
-    $shortcut = $shell.CreateShortcut((Join-Path $menu $entry[0]))
-    if ($shortcut.TargetPath -ne (Join-Path $env:CC_REMOTE_TEST_DIR $entry[1])) { throw 'shortcut target mismatch' }
-    if ($shortcut.WorkingDirectory -ne $env:CC_REMOTE_TEST_DIR) { throw 'shortcut working directory mismatch' }
-}
 `
 				f.script = filepath.Join(f.root, "launch-test.ps1")
 				if err := os.WriteFile(f.script, []byte(wrapper), 0600); err != nil {

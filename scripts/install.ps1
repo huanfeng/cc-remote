@@ -307,14 +307,61 @@ The repository may be private or the request was rate-limited. Either:
             foreach ($name in @("cc-remote-desktop.exe", "cc-remote-tray.exe")) {
                 Install-Executable $name
             }
-            $shell = New-Object -ComObject WScript.Shell
+            # WScript.Shell rejects target paths outside the system ANSI code
+            # page. Use the Unicode Shell link interface for every path instead.
+            # Interface order follows shobjidl_core.h / IShellLinkW.
+            # https://learn.microsoft.com/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishelllinkw
+            if (-not ('CCRemote.NativeShortcut' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+namespace CCRemote {
+    public static class NativeShortcut {
+        [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellLinkW {
+            void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr findData, uint flags);
+            void GetIDList(out IntPtr idList);
+            void SetIDList(IntPtr idList);
+            void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder text, int count);
+            void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string text);
+            void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count);
+            void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string path);
+            void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder arguments, int count);
+            void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string arguments);
+            void GetHotkey(out ushort hotkey);
+            void SetHotkey(ushort hotkey);
+            void GetShowCmd(out int command);
+            void SetShowCmd(int command);
+            void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, out int index);
+            void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string path, int index);
+            void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, uint reserved);
+            void Resolve(IntPtr window, uint flags);
+            void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+        }
+
+        public static void Save(string path, string target) {
+            object instance = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));
+            try {
+                IShellLinkW link = (IShellLinkW)instance;
+                link.SetPath(target);
+                link.SetWorkingDirectory(Path.GetDirectoryName(target));
+                link.SetIconLocation(target, 0);
+                ((IPersistFile)instance).Save(path, true);
+            } finally {
+                Marshal.FinalReleaseComObject(instance);
+            }
+        }
+    }
+}
+'@
+            }
             function Save-Shortcut([string]$path, [string]$target) {
                 New-Item -ItemType Directory -Force -Path (Split-Path $path -Parent) | Out-Null
-                $shortcut = $shell.CreateShortcut($path)
-                $shortcut.TargetPath = $target
-                $shortcut.WorkingDirectory = $InstallDir
-                $shortcut.IconLocation = "$target,0"
-                $shortcut.Save()
+                [CCRemote.NativeShortcut]::Save($path, $target)
             }
             $menu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\CC Remote"
             Save-Shortcut (Join-Path $menu "CC Remote.lnk") (Join-Path $InstallDir "cc-remote-desktop.exe")
