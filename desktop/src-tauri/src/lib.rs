@@ -4,6 +4,7 @@
 // this computer (service.rs).
 mod history;
 mod net;
+mod paths;
 mod service;
 mod usage_tray;
 mod ws;
@@ -43,6 +44,7 @@ pub fn run() {
         })
         .on_window_event(usage_tray::window_event)
         .invoke_handler(tauri::generate_handler![
+            paths::open_local_path,
             net::http_request,
             net::http_abort,
             ws::ws_open,

@@ -65,6 +65,10 @@ func TestSelectProfile(t *testing.T) {
 	defer func(old *bufio.Reader) { stdin = old }(stdin)
 	requests := 0
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/profiles/usage" {
+			w.WriteHeader(404)
+			return
+		}
 		requests++
 		if r.URL.Path != "/api/profiles" || r.Header.Get("Authorization") != "Bearer t" {
 			t.Errorf("profile request: %s, auth=%q", r.URL.Path, r.Header.Get("Authorization"))

@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -45,10 +44,12 @@ type remoteSession struct {
 	// UpdatedAt is the last activity (RFC 3339).
 	UpdatedAt string `json:"updatedAt"`
 	// ProfileID is the saved supplier configuration, offered on a resume.
-	ProfileID string `json:"profileId,omitempty"`
+	ProfileID   string `json:"profileId,omitempty"`
+	Model       string `json:"model,omitempty"`
+	ProfileName string `json:"profileName,omitempty"`
 }
 
-// Attach is `cc-remote attach`: it connects this terminal to a terminal
+// Attach is `ccr attach`: it connects this terminal to a terminal
 // session the host holds.
 func Attach(args []string, defaultDataDir string) error {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
@@ -57,7 +58,7 @@ func Attach(args []string, defaultDataDir string) error {
 	create := fs.Bool("new", false, i18n.T("start a new terminal session in the current directory", "在当前目录新建终端会话"))
 	title := fs.String("title", "", newTitleHelp())
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), i18n.T("usage: cc-remote attach [--new [--title T]] [session id prefix or title]", "用法：cc-remote attach [--new [--title T]] [会话 ID 前缀或标题]"))
+		fmt.Fprintln(fs.Output(), i18n.T("usage: ccr attach [--new [--title T]] [session id prefix or title]", "用法：ccr attach [--new [--title T]] [会话 ID 前缀或标题]"))
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -338,7 +339,7 @@ func (c *client) resume(r resumeArgs, title string, options map[string]any) (rem
 	target := list[0]
 	if len(list) > 1 {
 		fmt.Println(i18n.T("Claude Code sessions:", "Claude Code 会话："))
-		if target, err = choose(list, nil); err != nil {
+		if target, err = chooseWithReload(list, nil, c.reloadCandidates(list, true)); err != nil {
 			return remoteSession{}, err
 		}
 	}
@@ -433,7 +434,16 @@ func (c *client) here(title string, options map[string]any) (remoteSession, erro
 	// A directory usually has several sessions: always ask, Enter taking the
 	// most recent one no terminal is attached to.
 	fmt.Println(i18n.F("Terminal sessions in this directory (%d):", "这个目录的终端会话（%d 个）：", len(list)))
-	return choose(list, func() (remoteSession, error) { return c.create(title, options) })
+	return chooseWithReload(list, func() (remoteSession, error) { return c.create(title, options) }, func() ([]remoteSession, error) {
+		all, e := c.terminals()
+		var out []remoteSession
+		for _, x := range all {
+			if samePath(x.Cwd, cwd) {
+				out = append(out, x)
+			}
+		}
+		return out, e
+	})
 }
 
 // recentLimit is how many sessions the pickers list.
@@ -450,7 +460,7 @@ func (c *client) recent(title string, options map[string]any) (remoteSession, er
 		return c.create(title, options)
 	}
 	fmt.Println(i18n.T("Recent terminal sessions:", "最近的终端会话："))
-	return choose(list, func() (remoteSession, error) { return c.create(title, options) })
+	return chooseWithReload(list, func() (remoteSession, error) { return c.create(title, options) }, c.terminals)
 }
 
 func samePath(a, b string) bool {
@@ -588,42 +598,15 @@ func (c *client) pickProfile(value any, interactive, resuming bool) (string, err
 	if resuming {
 		defaultID = "@keep"
 	}
-	return chooseProfile(list, defaultID)
+	return c.chooseSupplier(list, defaultID)
 }
 
 func chooseProfile(list []supplierProfile, defaultID string) (string, error) {
-	label := i18n.T("host configuration", "宿主配置")
-	if defaultID == "@keep" {
-		label = i18n.T("Keep session configuration", "沿用原会话配置")
-	}
-	for _, p := range list {
-		if p.ID == defaultID {
-			label = p.Name
-		}
-	}
-	fmt.Println(i18n.T("Supplier configuration:", "供应商配置："))
-	fmt.Printf("  0. %s (%s)\n", i18n.T("Default", "默认"), printable(label))
+	items := []pickerItem{{id: "", lines: [2]string{"0  " + i18n.T("Default", "默认"), ""}}}
 	for i, p := range list {
-		name := printable(p.Name)
-		if p.Kind == "oauth" {
-			name += " · OAuth"
-		}
-		fmt.Printf("  %d. %s (%s)\n", i+1, name, printable(p.ID))
+		items = append(items, pickerItem{id: p.ID, lines: [2]string{fmt.Sprintf("%d  %s", i+1, p.Name), p.ID}, search: p.Name})
 	}
-	fmt.Print(i18n.T("Configuration number (Enter: default): ", "选择配置编号（回车 = 默认）："))
-	line, err := stdin.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
-	}
-	line = strings.TrimSpace(line)
-	if line == "" || line == "0" {
-		return "", nil
-	}
-	n, err := strconv.Atoi(line)
-	if err != nil || n < 1 || n > len(list) {
-		return "", errors.New(i18n.T("invalid supplier configuration choice", "无效的供应商配置选择"))
-	}
-	return list[n-1].ID, nil
+	return pickItems(items, "", nil, nil)
 }
 
 // start creates a terminal session. In a folder Claude Code does not trust
@@ -730,56 +713,60 @@ func statusText(status string) string {
 
 // choose asks for one of list by number; with create, 0 starts a new session.
 func choose(list []remoteSession, create func() (remoteSession, error)) (remoteSession, error) {
-	if len(list) > recentLimit {
-		list = list[:recentLimit]
-	}
-	// The default: the most recent session no terminal is attached to, else a
-	// new one (or the first when none can be created).
-	def := -1
-	for i, x := range list {
-		if x.Attached == 0 {
-			def = i
-			break
+	return chooseWithReload(list, create, nil)
+}
+
+func chooseWithReload(list []remoteSession, create func() (remoteSession, error), reload func() ([]remoteSession, error)) (remoteSession, error) {
+	items, def := sessionItems(list, create != nil)
+	var refresh pickerRefresh
+	if reload != nil {
+		refresh = func() ([]pickerItem, error) {
+			next, err := reload()
+			if err != nil {
+				return nil, err
+			}
+			list = next
+			items, _ := sessionItems(list, create != nil)
+			return items, nil
 		}
 	}
-	if def < 0 && create == nil {
-		def = 0
+	id, err := pickItems(items, def, refresh, nil)
+	if err != nil {
+		return remoteSession{}, err
 	}
-	showCwd := false
-	for _, x := range list {
-		showCwd = showCwd || !samePath(x.Cwd, list[0].Cwd)
-	}
-	for i, x := range list {
-		mark := " "
-		if i == def {
-			mark = "*"
-		}
-		where := ""
-		if showCwd {
-			where = "  " + x.Cwd
-		}
-		fmt.Printf("%s%2d. %s  [%s]%s  (%s)\n", mark, i+1, printable(x.Title), sessionState(x), printable(where), x.ID[:8])
-	}
-	if create != nil {
-		mark := " "
-		if def < 0 {
-			mark = "*"
-		}
-		fmt.Println(mark + i18n.T(" 0. New terminal session", " 0. 新建终端会话"))
-	}
-	fmt.Print(i18n.F("Session number (Enter: %d): ", "选择会话编号（回车 = %d）：", def+1))
-	line, _ := stdin.ReadString('\n')
-	n, err := def+1, error(nil)
-	if line = strings.TrimSpace(line); line != "" {
-		n, err = strconv.Atoi(line)
-	}
-	if err == nil && n == 0 && create != nil {
+	if id == "" && create != nil {
 		return create()
 	}
-	if err != nil || n < 1 || n > len(list) {
-		return remoteSession{}, errors.New(i18n.T("invalid choice", "无效的选择"))
+	for _, x := range list {
+		if x.ID == id {
+			return x, nil
+		}
 	}
-	return list[n-1], nil
+	return remoteSession{}, errPickerCancelled
+}
+
+// Native/query results retain the original query scope when refreshed.
+func (c *client) reloadCandidates(original []remoteSession, native bool) func() ([]remoteSession, error) {
+	ids := map[string]bool{}
+	for _, x := range original {
+		ids[x.ID] = true
+	}
+	return func() ([]remoteSession, error) {
+		var all []remoteSession
+		var err error
+		if native {
+			err = c.do("GET", "/api/native/sessions", nil, &all)
+		} else {
+			all, err = c.terminals()
+		}
+		var out []remoteSession
+		for _, x := range all {
+			if ids[x.ID] {
+				out = append(out, x)
+			}
+		}
+		return out, err
+	}
 }
 
 // stdin is shared by the prompts, so a line typed ahead is not lost between them.
@@ -832,11 +819,11 @@ func (c *client) pick(query string) (remoteSession, error) {
 	case len(list) == 0 && query != "":
 		return remoteSession{}, i18n.Errorf("no terminal session matches %q", "没有匹配 %q 的终端会话", query)
 	case len(list) == 0:
-		return remoteSession{}, errors.New(i18n.T("no terminal sessions yet; start one in this directory with cc-remote attach --new", "还没有终端会话；用 cc-remote attach --new 在当前目录新建一个"))
+		return remoteSession{}, errors.New(i18n.T("no terminal sessions yet; start one in this directory with ccr attach --new", "还没有终端会话；用 ccr attach --new 在当前目录新建一个"))
 	case len(list) == 1:
 		return list[0], nil
 	}
-	return choose(list, nil)
+	return chooseWithReload(list, nil, c.reloadCandidates(list, false))
 }
 
 // errHostRestart: the stream ended because the host stopped (an update, a
@@ -947,7 +934,7 @@ func (c *client) attachOnce(x remoteSession) error {
 
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	if !term.IsTerminal(in) {
-		return errors.New(i18n.T("cc-remote attach must run in a terminal", "cc-remote attach 需要在终端里运行"))
+		return errors.New(i18n.T("ccr attach must run in a terminal", "ccr attach 需要在终端里运行"))
 	}
 	restoreOut := enableVT(os.Stdout)
 	defer restoreOut()

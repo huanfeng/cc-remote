@@ -73,7 +73,7 @@ func ensureHost(dataDir, host, claudeBin, configDir string) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"--listen", u.Host, "--data-dir", dataDir, "--claude", claudeBin}
+	args := []string{"serve", "--listen", u.Host, "--data-dir", dataDir, "--claude", claudeBin}
 	if configDir != "" {
 		args = append(args, "--claude-config-dir", configDir)
 	}

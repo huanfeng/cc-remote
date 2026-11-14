@@ -50,7 +50,7 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
-const serviceUsageZH = `用法：cc-remote service <命令> [参数]
+const serviceUsageZH = `用法：ccr service <命令> [参数]
 
 命令：
   install    复制可执行文件，注册并启动后台服务
@@ -62,12 +62,12 @@ const serviceUsageZH = `用法：cc-remote service <命令> [参数]
   status     显示服务和宿主状态（--json；未运行时退出码为 3）
   logs       打印 host.log（-n 行数，-f 持续跟随）
 
-运行 "cc-remote service <命令> -h" 查看参数。
+运行 "ccr service <命令> -h" 查看参数。
 `
 
 func serviceUsage() string { return i18n.T(serviceUsageEN, serviceUsageZH) }
 
-const serviceUsageEN = `usage: cc-remote service <command> [flags]
+const serviceUsageEN = `usage: ccr service <command> [flags]
 
 commands:
   install    copy the executable, register and start the background service
@@ -79,10 +79,10 @@ commands:
   status     show service and host state (--json; exit 3 when not running)
   logs       print host.log (-n lines, -f follow)
 
-Run "cc-remote service <command> -h" for flags.
+Run "ccr service <command> -h" for flags.
 `
 
-// Main runs "cc-remote service ...".
+// Main runs "ccr service ...".
 func Main(args []string, version string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Print(serviceUsage())
@@ -155,7 +155,7 @@ func mustConfig(dataDir string) (*Config, error) {
 		return nil, err
 	}
 	if cfg == nil {
-		return nil, errors.New(i18n.T("service is not installed (no service.json); run: cc-remote service install", "服务未安装（没有 service.json）；请运行：cc-remote service install"))
+		return nil, errors.New(i18n.T("service is not installed (no service.json); run: ccr service install", "服务未安装（没有 service.json）；请运行：ccr service install"))
 	}
 	return cfg, nil
 }
@@ -418,11 +418,11 @@ func installCmd(args []string, version string) error {
 		cfg.DataDir = absData
 		fmt.Fprint(out, i18n.F("Existing installation found (data dir %s); updating it.\n", "发现已有安装（数据目录 %s），将更新它。\n", absData))
 		// Installs from before --allow-insecure-remote existed may already
-		// bind every interface; keep them working through "cc-remote update"
+		// bind every interface; keep them working through "ccr update"
 		// (the old binary cannot set the flag) but record the opt-in.
 		if bad := listen.Insecure(cfg.Listen); len(bad) > 0 && !cfg.AllowInsecureRemote && !set["listen"] && !set["allow-insecure-remote"] {
 			cfg.AllowInsecureRemote = true
-			fmt.Fprint(out, i18n.F("warning: the existing installation listens on %s (every interface); keeping it and recording --allow-insecure-remote. Prefer: cc-remote service config --listen lan:PORT --allow-insecure-remote=false\n", "警告：现有安装监听 %s（所有网卡）；保持不变并记录 --allow-insecure-remote。建议改为：cc-remote service config --listen lan:PORT --allow-insecure-remote=false\n", strings.Join(bad, ", ")))
+			fmt.Fprint(out, i18n.F("warning: the existing installation listens on %s (every interface); keeping it and recording --allow-insecure-remote. Prefer: ccr service config --listen lan:PORT --allow-insecure-remote=false\n", "警告：现有安装监听 %s（所有网卡）；保持不变并记录 --allow-insecure-remote。建议改为：ccr service config --listen lan:PORT --allow-insecure-remote=false\n", strings.Join(bad, ", ")))
 		}
 	}
 	if err = applySettings(cfg, set, listenVals, *claudeBin, *configDir, *allowInsecure, out); err != nil {
@@ -516,7 +516,7 @@ func installCmd(args []string, version string) error {
 				return err
 			}
 		case err != nil:
-			return i18n.Errorf("new version installed, but asking the host to restart failed: %w (run: cc-remote service restart)", "新版本已安装，但请求宿主重启失败：%w（请运行：cc-remote service restart）", err)
+			return i18n.Errorf("new version installed, but asking the host to restart failed: %w (run: ccr service restart)", "新版本已安装，但请求宿主重启失败：%w（请运行：ccr service restart）", err)
 		default:
 			printRestart(out, busy, i18n.T("New version installed", "新版本已安装"))
 			return nil
@@ -526,7 +526,7 @@ func installCmd(args []string, version string) error {
 		return err
 	}
 	printExposure(cfg, out)
-	// Reinstalls (and "cc-remote update") refresh an existing ccr alias too, so
+	// Reinstalls (and "ccr update") refresh an existing ccr alias too, so
 	// its target and the Unix cc-remote link follow the new installation.
 	if *withAlias || aliasInstalled() {
 		if err = installAlias(aliasOptions{dryRun: *dryRun}, out); err != nil {
@@ -534,7 +534,7 @@ func installCmd(args []string, version string) error {
 		}
 	}
 	if *noStart {
-		fmt.Fprintln(out, i18n.T("Service registered; start it with: cc-remote service start", "服务已注册；用此命令启动：cc-remote service start"))
+		fmt.Fprintln(out, i18n.T("Service registered; start it with: ccr service start", "服务已注册；用此命令启动：ccr service start"))
 		return nil
 	}
 	if *dryRun {
@@ -546,7 +546,7 @@ func installCmd(args []string, version string) error {
 
 // existingInstall locates the installation to update. An explicit --data-dir
 // wins; otherwise the mirrored service.json in InstallRoot (then the default
-// data dir) names the data dir, so "cc-remote update" and the install scripts
+// data dir) names the data dir, so "ccr update" and the install scripts
 // keep a non-default data dir, listen addresses and Claude settings.
 func existingInstall(dataDir string) (*Config, string, error) {
 	if dataDir != "" {
@@ -680,7 +680,7 @@ func configCmd(args []string) error {
 		}
 		printExposure(cfg, out)
 		if *noRestart {
-			fmt.Fprintln(out, i18n.T("Saved; restart with: cc-remote service restart", "已保存；用此命令重启生效：cc-remote service restart"))
+			fmt.Fprintln(out, i18n.T("Saved; restart with: ccr service restart", "已保存；用此命令重启生效：ccr service restart"))
 			return nil
 		}
 		if hostURL != "" {
@@ -700,7 +700,7 @@ func configCmd(args []string) error {
 	}
 	printExposure(cfg, out)
 	if *noRestart {
-		fmt.Fprintln(out, i18n.T("Saved; the running host applies it when it next restarts (now: cc-remote service config --force).", "已保存；运行中的宿主下次重启时生效（立即生效：cc-remote service config --force）。"))
+		fmt.Fprintln(out, i18n.T("Saved; the running host applies it when it next restarts (now: ccr service config --force).", "已保存；运行中的宿主下次重启时生效（立即生效：ccr service config --force）。"))
 		return nil
 	}
 	err = applyToHost(hostURL, cfg, out)
@@ -773,7 +773,7 @@ func applyToHost(hostURL string, cfg *Config, out io.Writer) error {
 		return err
 	}
 	if err != nil {
-		return i18n.Errorf("settings saved, but asking the host to restart failed: %w (run: cc-remote service restart)", "设置已保存，但请求宿主重启失败：%w（请运行：cc-remote service restart）", err)
+		return i18n.Errorf("settings saved, but asking the host to restart failed: %w (run: ccr service restart)", "设置已保存，但请求宿主重启失败：%w（请运行：ccr service restart）", err)
 	}
 	if !supported {
 		return errNoSelfRestart
@@ -870,7 +870,7 @@ func start(cfg *Config, out io.Writer) error {
 	}
 	u, ok := waitReady(cfg, 10*time.Second)
 	if !ok {
-		return errors.New(i18n.T("service started but the host did not answer within 10s; see: cc-remote service logs", "服务已启动，但宿主 10 秒内没有响应；请查看：cc-remote service logs"))
+		return errors.New(i18n.T("service started but the host did not answer within 10s; see: ccr service logs", "服务已启动，但宿主 10 秒内没有响应；请查看：ccr service logs"))
 	}
 	fmt.Fprint(out, i18n.F("Host running at %s\n", "宿主正在 %s 运行\n", u))
 	return nil

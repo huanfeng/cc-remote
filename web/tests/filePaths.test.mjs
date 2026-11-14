@@ -51,6 +51,9 @@ test('kinds, languages and directories', () => {
   assert.equal(dirname('/a/b/c.md'), '/a/b');
   assert.equal(dirname('C:\\a\\c.md'), 'C:\\a');
   assert.equal(dirname('/c.md'), '/');
+  assert.equal(dirname('C:\\c.md'), 'C:\\');
+  assert.equal(dirname('C:/c.md'), 'C:/');
+  assert.equal(dirname('C:\\'), 'C:\\');
 });
 
 test('UNC shares are never file links', () => {

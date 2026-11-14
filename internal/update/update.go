@@ -1,4 +1,4 @@
-// Package update implements "cc-remote update": it finds a newer GitHub
+// Package update implements "ccr update": it finds a newer GitHub
 // release, verifies its sha256 against checksums.txt and installs it, either
 // through "service install" (when the background service is installed) or by
 // replacing the running executable in place.
@@ -36,7 +36,7 @@ type updater struct {
 	runCmd        func(name string, args ...string) error
 }
 
-// Run executes "cc-remote update [--check] [--version vX.Y.Z] [--yes]".
+// Run executes "ccr update [--check] [--version vX.Y.Z] [--yes]".
 // current is the version compiled into the running binary (main.version).
 func Run(current string, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
@@ -49,7 +49,7 @@ func Run(current string, args []string) error {
 		return err
 	}
 	if fs.NArg() > 0 {
-		return i18n.Errorf("usage: cc-remote update [--check] [--version vX.Y.Z] [--yes] [--force]", "用法：cc-remote update [--check] [--version vX.Y.Z] [--yes] [--force]")
+		return i18n.Errorf("usage: ccr update [--check] [--version vX.Y.Z] [--yes] [--force]", "用法：ccr update [--check] [--version vX.Y.Z] [--yes] [--force]")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -105,9 +105,9 @@ func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) err
 	if check {
 		switch {
 		case !comparable:
-			fmt.Fprint(u.out, i18n.F("current build is not a release version; run \"cc-remote update --yes\" to install %s\n", "当前构建不是正式版本；运行 \"cc-remote update --yes\" 安装 %s\n", rel.Tag))
+			fmt.Fprint(u.out, i18n.F("current build is not a release version; run \"ccr update --yes\" to install %s\n", "当前构建不是正式版本；运行 \"ccr update --yes\" 安装 %s\n", rel.Tag))
 		case cmp > 0:
-			fmt.Fprintln(u.out, i18n.T("a newer release is available; run \"cc-remote update\" to install it", "有更新的版本；运行 \"cc-remote update\" 安装"))
+			fmt.Fprintln(u.out, i18n.T("a newer release is available; run \"ccr update\" to install it", "有更新的版本；运行 \"ccr update\" 安装"))
 		default:
 			fmt.Fprintln(u.out, i18n.T("already up to date", "已是最新版本"))
 		}

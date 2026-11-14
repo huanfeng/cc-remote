@@ -66,7 +66,7 @@ irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 |
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
 ```
 
-以上入口都会下载最新正式版、校验 SHA256、注册并启动后台服务，同时创建 `ccr` 命令。后台专用入口重复执行只更新后台；`cc-remote update` 也只更新后台。客户端和托盘请重复执行完整安装入口。
+以上入口都会下载最新正式版、校验 SHA256、注册并启动后台服务，同时创建 `ccr` 命令。后台专用入口重复执行只更新后台；`ccr update` 也只更新后台。客户端和托盘请重复执行完整安装入口。
 
 需要传参数时（例如允许局域网访问）：
 
@@ -113,6 +113,8 @@ ccr
 
 ### 终端会话（ccr）
 
+`ccr` 和 `cc-remote` 完全等价，文档统一使用短名称。两者无参数均进入当前项目的会话选择；查看帮助使用 `ccr --help`，前台运行后台使用 `ccr serve`。
+
 ```sh
 ccr                      # 选择当前目录的终端会话接入（回车 = 最近一个没有终端接入的），没有就新建
 ccr ls                   # 列出最近的终端会话，选择一个接入
@@ -124,9 +126,27 @@ ccr -c                   # 继续当前目录最近的 Claude Code 会话
 
 Claude Code 退出时提示的 `claude --resume <会话ID>`，把 `claude` 换成 `ccr` 就会在宿主上继续这个会话。
 
-终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。`cc-remote attach`（缩写 `cc-remote a`）是同样的功能，需要指定 `--host` 时使用。
+终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。可以用 `ccr attach`（缩写 `ccr a`）明确接入，也可以用 `ccr --host URL <会话>` 指定宿主。
 
-`ccr` 也接受 Claude Code 的参数：`ccr --add-dir ../lib --model sonnet` 带这些参数新建终端会话，`cc-remote -- claude [参数]` 与之相同。旧的共享终端（Claude Code 在当前终端里运行、网页经 Channels 接入）已移除，原有的共享会话自动转为终端会话，下次使用时恢复上下文。
+`ccr` 也接受 Claude Code 的参数：`ccr --add-dir ../lib --model sonnet` 带这些参数新建终端会话。直接运行原生 Claude 使用 `ccr claude -- [参数]`，例如 `ccr claude -- --resume ID`。旧的共享终端（Claude Code 在当前终端里运行、网页经 Channels 接入）已移除，原有的共享会话自动转为终端会话，下次使用时恢复上下文。
+
+会话选择器显示状态、模型、供应商、项目和接入数，支持方向键、编号、筛选和刷新。供应商列表每项最多两行，附带可用的缓存额度、重置倒计时与采集时间；没有订阅额度时仍可正常选择。若会话标题恰好叫 `status` 等子命令名称，用 `ccr session status` 查询。
+
+### 后台管理
+
+```sh
+ccr status               # 查看服务和宿主状态
+ccr start                # 启动服务（另有 stop / restart）
+ccr logs -f              # 跟随后台日志
+ccr config               # 查看配置；带参数修改
+ccr service install      # 注册并启动服务（另有 uninstall）
+ccr profile ls           # 供应商配置
+ccr oauth ls             # OAuth 配置
+ccr update               # 更新后台
+ccr serve --listen 127.0.0.1:8787  # 在前台运行宿主
+```
+
+两个名称共用配置与退出码，已有服务、数据目录和 `CC_REMOTE_*` 环境变量继续使用；旧式 `cc-remote --listen ...` 调用仍兼容。完整用法见 [命令行说明](docs/cli-design.md)。
 
 ### 托管会话
 

@@ -29,6 +29,7 @@ export function basename(path: string): string {
 
 export function dirname(path: string): string {
   const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  if (index === 2 && /^[A-Za-z]:[\\/]/.test(path)) return path.slice(0, 3);
   return index <= 0 ? path.slice(0, index + 1) : path.slice(0, index);
 }
 

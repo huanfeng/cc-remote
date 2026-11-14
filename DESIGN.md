@@ -2,7 +2,7 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-11-13
+- Last refreshed: 2026-11-14
 - Primary product surfaces: session creation, conversation header, configuration, subscription usage, desktop-owned system tray.
 - Evidence reviewed: web/src/App.tsx, style.css, ModelPicker.tsx, SessionStatus.tsx, Usage.tsx; docs/codex.md and docs/architecture.md.
 
@@ -56,6 +56,7 @@
 - Touch users can open the same quota and configuration details.
 
 ## Interaction states
+- Collapsed sidebar: both the welcome page and conversation header retain an explicit expand button, including after restoring saved preferences; the welcome page reuses its existing 48px drag strip.
 - Loading: neutral quota placeholders and existing model loading indicators.
 - Empty: explain absent login, API-key billing or unavailable quota.
 - Error/offline: retain scoped cached readings and mark them stale.
@@ -87,7 +88,23 @@
 ## Interface refinements (2026-10-27)
 - Keep account quota in the topbar as compact text only, including reset countdowns; hide unsupported subscription quota.
 - Retain the established bordered styling for attachment, command and permission controls. Show concise provider-specific permission names, with anchored in-app confirmation for risky choices.
+
+## Session navigation refinements (2026-11-13)
+
+- Evidence: features/header/ModelChips.tsx, features/pickers/QuickSwitch.tsx, features/status/SessionDetails.tsx, features/workspace/SessionHeader.tsx, features/files/FileViewer.tsx and features/sidebar/Sidebar.tsx under web/src. Reuse the existing supplier catalog, switch endpoint, Radix menus and typography tokens.
+- Supplier chips open a directly anchored supplier picker, like model and effort. Keep provider-scoped options, native/default labels, unsupported-host feedback and the backend's confirmation before interrupting live work. Do not route a simple switch through session details.
+- Enabled buttons and menu actions use a pointer cursor; disabled actions retain a noninteractive appearance. Keep visible keyboard focus and existing mobile picker surfaces.
+- Session directories and file-preview paths open a menu: full-path copy, name copy and parent-directory copy. In the desktop client, an absolute path on a loopback host additionally offers opening the local folder, revealing the path in the system file manager and opening a terminal in that folder. Remote host paths remain copyable; do not interpret them as local filesystem targets. Revalidate native operations in Rust and pass paths as arguments/current directories, never shell command text.
+- Project headings use a larger, stronger existing type token and taller hit areas. Add a virtual “In progress / 进行中” group before projects for running, waiting and background work, with project context on every row. Keep original project membership, filtering and archived behavior; derive shortcuts before pagination so older active sessions stay reachable. The virtual group's collapsed state is separate from project path preferences.
+- Verify supplier choices/interruption behavior, local-path validation/command construction, live grouping/search/pagination, typecheck/build and responsive visual states. No new dependencies.
 - The session status popover exposes model, reasoning and supplier controls; supplier changes reuse the existing active-work interruption safeguard.
+
+## Frontend subscription overview (2026-11-14)
+
+- Evidence: web/src/features/status/UsageMonitor.tsx and backend/types.ts. The existing account dropdown hides every other account's current reading.
+- Render all monitored accounts together as compact cards, two columns on wider screens and one on phones. Each card shows provider/account identity, collection or error state, plan, update age and every reported quota; retain stopped accounts and cached stale readings with clear labels. Missing or invalid readings stay unknown.
+- Keep sampling and refresh shared. A card's history action selects its stable account ID and scrolls to the existing history panel; only that panel uses an account selector. Preserve tray account deep links, history ranges, fetch cancellation and legacy-host fallback. Do not fetch separate histories for every overview card.
+- Reuse current bars, warning/success tokens and form controls; no new dependencies. Validate mixed account states, switching history without hiding other accounts, refresh/cadence, account deep links, and desktop/mobile layout.
 
 ## Native tray revision (2026-11-13)
 

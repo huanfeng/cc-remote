@@ -17,7 +17,12 @@ export interface ProjectGroup {
 
 export const projectKey = (cwd: string) => cwd.replace(/\\/g, '/').toLowerCase();
 
-export const busy = (s: Session) => s.status === 'running' || s.status === 'waiting';
+export const busy = (s: Session) => s.status === 'running' || s.status === 'waiting' || (s.activeTasks ?? 0) > 0;
+
+/** A virtual shortcut group; keep project membership and the caller's search/order.
+ * Use the full eligible list before project pagination so older work stays visible.
+ * Archived matches remain searchable in their original project, outside this group. */
+export const inProgressSessions = (ordered: Session[]) => ordered.filter(s => !s.archived && busy(s));
 
 const lastAt = (s: Session) => {
   const at = Date.parse(s.lastConversationAt || s.createdAt || '');
@@ -27,7 +32,7 @@ const lastAt = (s: Session) => {
 /**
  * Groups `ordered` (newest first) by folder, keeping its order. A group shows its
  * first FOLD_KEEP sessions, those with a conversation in the last FOLD_DAYS,
- * running or waiting ones and `keep` (the open one); the rest fold. `fold: false`
+ * running, waiting or background work and `keep` (the open one); the rest fold. `fold: false`
  * (a search) shows everything.
  */
 export function projectGroups(ordered: Session[], now: number, keep: (s: Session) => boolean = () => false, fold = true): ProjectGroup[] {

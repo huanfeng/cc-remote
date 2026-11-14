@@ -40,7 +40,7 @@ export function UsageMeter({ session, mobile }: { session: Session; mobile: bool
           type="button"
           onClick={openStatus}
           aria-label={`${title}: ${summary}`}
-          className={cn('flex h-8 shrink-0 flex-col justify-center gap-[3px] rounded-lg px-2 hover:bg-surface-hover', stale && 'opacity-55')}
+          className={cn('flex cursor-pointer h-8 shrink-0 flex-col justify-center gap-[3px] rounded-lg px-2 hover:bg-surface-hover', stale && 'opacity-55')}
         >
           {windows.map(w => <MeterRow key={w.key} w={w} />)}
         </button>

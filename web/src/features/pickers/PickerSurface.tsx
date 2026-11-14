@@ -94,13 +94,14 @@ export function PickerGroup({ heading, children }: { heading?: ReactNode; childr
   );
 }
 
-export function PickerItem({ option, selected, onSelect, mobile, id }: { option: PickerOption; selected: boolean; onSelect(value: string): void; mobile?: boolean; id?: string }) {
+export function PickerItem({ option, selected, onSelect, mobile, id, disabled }: { option: PickerOption; selected: boolean; onSelect(value: string): void; mobile?: boolean; id?: string; disabled?: boolean }) {
   return (
     <CommandPrimitive.Item
       value={id ?? `opt:${option.value}`}
+      disabled={disabled}
       onSelect={() => onSelect(option.value)}
       className={cn(
-        'flex cursor-default items-start gap-2 rounded-md px-2 py-1.5 text-ui-base outline-none select-none data-[selected=true]:bg-menu-hover',
+        'flex cursor-pointer data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-50 items-start gap-2 rounded-md px-2 py-1.5 text-ui-base outline-none select-none data-[selected=true]:bg-menu-hover',
         mobile && 'min-h-11 items-center px-3',
       )}
     >

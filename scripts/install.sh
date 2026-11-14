@@ -279,3 +279,4 @@ else
 	"$BIN" service status || true
 fi
 say "done: cc-remote $TAG"
+say "commands: ccr (terminal), ccr status, ccr --help; cc-remote works the same"

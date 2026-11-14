@@ -23,7 +23,7 @@ type profileList struct {
 	ConfiguredDefaults map[string]string `json:"configuredDefaults"`
 }
 
-// RunProfile is `cc-remote profile`: list the suppliers new sessions can use
+// RunProfile is `ccr profile`: list the suppliers new sessions can use
 // and choose which one is the default for the web and ccr alike.
 func RunProfile(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
@@ -64,7 +64,7 @@ func RunProfile(args []string, defaultDataDir string, ensureHost func(dataDir, h
 }
 
 func profileUsage() string {
-	return i18n.T(`usage: cc-remote profile <command> [--app claude|codex]
+	return i18n.T(`usage: ccr profile <command> [--app claude|codex]
 
   ls                  list the suppliers new sessions can use; * marks the default
   default             show the default supplier
@@ -73,7 +73,7 @@ func profileUsage() string {
   default follow      no choice of its own: follow the CC-Switch current provider
 
 The default applies to new sessions only; existing ones keep their supplier.
-`, `用法：cc-remote profile <命令> [--app claude|codex]
+`, `用法：ccr profile <命令> [--app claude|codex]
 
   ls                  列出新会话可用的供应商，* 标记默认项
   default             显示默认供应商
@@ -172,7 +172,7 @@ func matchProfile(list profileList, app, want string) (string, error) {
 	case 1:
 		return hit[0].ID, nil
 	case 0:
-		return "", i18n.Errorf("no supplier named %q (see: cc-remote profile ls)", "没有名为 %q 的供应商（见：cc-remote profile ls）", want)
+		return "", i18n.Errorf("no supplier named %q (see: ccr profile ls)", "没有名为 %q 的供应商（见：ccr profile ls）", want)
 	}
 	return "", i18n.Errorf("%q matches several suppliers; use the id", "%q 对应多个供应商，请改用 id", want)
 }

@@ -1,11 +1,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { monitorRuns, windowKey, historyWindows } from '../src/features/status/monitorMath.ts';
+import { monitorAccountName, monitorAccountState, monitorRuns, windowKey, historyWindows } from '../src/features/status/monitorMath.ts';
 import { HttpBackend } from '../src/backend/http/httpBackend.ts';
 
 const window = { name: 'primary', percent: 42, windowMinutes: 300 };
 const at = minutes => new Date(Date.UTC(2026,10,12,0,minutes)).toISOString();
 const box = {width:600,height:200,padLeft:20,padRight:10,padTop:10,padBottom:20};
+
+test('account names show the provider once and preserve custom names', () => {
+  assert.equal(monitorAccountName({provider:'claude', name:'Claude · 本机登录'}), 'Claude · 本机登录');
+  assert.equal(monitorAccountName({provider:'codex', name:'Codex · 本机登录'}), 'Codex · 本机登录');
+  assert.equal(monitorAccountName({provider:'claude', name:'工作账号'}), 'Claude · 工作账号');
+  assert.equal(monitorAccountName({provider:'claude', name:'Claude Team'}), 'Claude · Claude Team');
+  assert.equal(monitorAccountName({provider:'claude', name:' Claude  ·  本机登录 '}), 'Claude  ·  本机登录');
+  assert.equal(monitorAccountName({provider:'codex', name:'Codex'}), 'Codex');
+});
+
+test('account overview distinguishes stopped, failed, stale, missing and current readings', () => {
+  const current = { active:true, available:true, fetchedAt:at(0), identityKnown:false, windows:[window] };
+  assert.equal(monitorAccountState(current), 'ready');
+  assert.equal(monitorAccountState({...current, active:false, error:'expired'}), 'stopped');
+  assert.equal(monitorAccountState({...current, stale:true, error:'expired'}), 'error');
+  assert.equal(monitorAccountState({...current, stale:true}), 'stale');
+  assert.equal(monitorAccountState({...current, available:false}), 'unavailable');
+  assert.equal(monitorAccountState({...current, available:false, fetchedAt:undefined, windows:[]}), 'pending');
+  assert.equal(current.windows[0].percent, 42);
+});
 
 test('monitor charts preserve failure and sleep gaps and never fabricate zero readings', () => {
   const history = { hours:24, points:[

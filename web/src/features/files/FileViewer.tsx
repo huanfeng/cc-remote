@@ -5,7 +5,7 @@
 // stack; a new `path` from the surface store is pushed onto it as well.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { ArrowLeft, Check, Copy, Download, FileCode2, FileImage, FileText, FileWarning, X } from 'lucide-react';
+import { ArrowLeft, Download, FileCode2, FileImage, FileText, FileWarning, X } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import type { FileContent } from '@/backend/types';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -14,13 +14,13 @@ import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/components/lib/utils';
 import { basename, dirname, type FileRef } from '@/domain/filePaths';
-import { copyText } from '@/domain/clipboard';
 import { useIsMobile } from '@/lib/hooks';
 import { t } from '@/lib/i18n';
 import { Markdown, MarkdownFiles } from '@/features/markdown/Markdown';
 import { MarkdownImages, useImageResolver } from '@/features/markdown/images';
 import { CodeView } from './CodeView';
 import { ImageView } from './ImageView';
+import { PathMenu } from './PathMenu';
 import { MAX_RENDER_BYTES, dirOf, formatBytes, shikiLang, splitLine, svgDataUrl, viewKind } from './fileView';
 
 type Entry = { path: string; base?: string[] };
@@ -190,7 +190,7 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
             ))}
           </div>
         )}
-        <CopyPathButton path={shownPath} />
+        <PathMenu path={shownPath} />
         {file && <IconButton label={t('Download', '下载')} disabled={saving} onClick={() => void download()}>{saving ? <Spinner /> : <Download />}</IconButton>}
         <DialogPrimitive.Close asChild>
           <Button variant="ghost" size="icon-md" aria-label={t('Close', '关闭')} className={cn('text-foreground-subtle hover:text-foreground', mobile && 'size-9')}><X /></Button>
@@ -244,14 +244,6 @@ function DownloadButton({ saving, onClick }: { saving: boolean; onClick: () => v
       {saving ? <Spinner /> : <Download />}{saving ? t('Preparing…', '准备中…') : t('Download', '下载')}
     </Button>
   );
-}
-
-function CopyPathButton({ path }: { path: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try { await copyText(path); setCopied(true); window.setTimeout(() => setCopied(false), 1600); } catch { /* the path stays visible to select */ }
-  };
-  return <IconButton label={copied ? t('Path copied', '路径已复制') : t('Copy path', '复制路径')} onClick={() => void copy()}>{copied ? <Check /> : <Copy />}</IconButton>;
 }
 
 function IconButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {

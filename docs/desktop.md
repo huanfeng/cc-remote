@@ -25,8 +25,13 @@ Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号�
 | 本机服务 | — | 「本机服务」：查看状态、启动 / 停止 / 重启、一键连接（令牌从服务的数据目录读取） |
 | 窗口 | 浏览器标签页 | Windows / Linux 使用系统标题栏，首次启动也能拖动、最小化和最大化；macOS 保留原生红绿灯；在宿主列表里 Ctrl+点击在新窗口打开 |
 | 链接 | 新标签页 | 在系统浏览器中打开 |
+| 路径菜单 | 复制完整路径、名称或上级目录 | 连接本机回环地址的宿主时，还可打开目录、在文件管理器中定位、在该目录打开终端 |
 
 令牌和草稿保存在应用的 WebView 存储里（Windows：`%LOCALAPPDATA%\io.github.huanfeng.ccremote`）。通过明文 `http://` 连接其它电脑上的宿主时，令牌会在网络中明文传输，只应在可信网络中这样使用。
+
+会话顶栏的供应商可直接点击切换，操作方式与模型选择一致；如果会话仍在执行，会先确认中断。目录标签和文件预览里的路径按钮打开操作菜单。系统路径操作仅对 `localhost`、`127.x.x.x` 或 `::1` 的本机宿主显示，远程宿主提供复制操作；目录必须在客户端电脑上实际存在。
+
+左侧项目名称使用更大的加粗文字，列表顶部的「进行中」集中显示运行中、等待输入和仍有后台任务的会话。这些会话同时保留在原项目下，可以按标题或路径筛选。
 
 ## 结构
 
@@ -35,6 +40,7 @@ Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号�
 - `desktop/src-tauri/src/net.rs`：HTTP 转发。请求体就是 invoke 的原始字节，方法、地址和请求头放在 `x-cc-meta` 请求头里（百分号编码的 JSON）；回复是 `[元数据长度 u32 大端][元数据 JSON][响应体]`。页面不能设置 `Origin`、`Host`、`Cookie` 等请求头。
 - `desktop/src-tauri/src/ws.rs`：WebSocket 转发，事件经 Channel 回到页面（二进制帧原样，其余为 JSON）。
 - `desktop/src-tauri/src/service.rs`：调用本机安装的 `cc-remote`（先找服务安装目录里的副本，再找 PATH）：`service status --json`、`service start|stop|restart`，以及读取数据目录里的 `access-token`。
+- `desktop/src-tauri/src/paths.rs`、`web/src/platform/pathActions.ts`：本机路径菜单，校验回环宿主、已有绝对路径及本机驱动器，使用独立参数和工作目录调用系统程序。
 - `desktop/src-tauri/src/usage_tray/`：Tauri 托盘、缓存读取、收藏持久化、历史导航；`panel.rs` 使用 wind-ui-rust 渲染原生用量窗口，`hover.rs` 管理独立 UI 线程和悬停生命周期。
 
 ## 开发

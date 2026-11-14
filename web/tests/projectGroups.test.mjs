@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FOLD_KEEP, projectGroups } from '../src/features/sidebar/projectGroups.ts';
+import { FOLD_KEEP, busy, inProgressSessions, projectGroups } from '../src/features/sidebar/projectGroups.ts';
 
 const NOW = Date.UTC(2026, 10, 8);
 const day = 86_400_000;
@@ -49,4 +49,40 @@ test('folders differing only in case and slashes are one project', () => {
   const groups = projectGroups([session('x', 'C:\\Repo', 1), session('y', 'c:/repo', 2)], NOW);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].cwd, 'C:\\Repo');
+});
+
+test('in-progress shortcuts retain order and project membership for running, waiting and background work', () => {
+  const list = [
+    session('idle', '/one', 0, { status: 'idle' }),
+    session('waiting', '/one', 1, { status: 'waiting' }),
+    session('running', '/two', 2, { status: 'running' }),
+    session('background', '/one', 30, { status: 'completed', activeTasks: 2 }),
+    session('done', '/two', 31, { status: 'completed', activeTasks: 0 }),
+    session('failed', '/two', 32, { status: 'failed' }),
+  ];
+  assert.deepEqual(ids(inProgressSessions(list)), ['waiting', 'running', 'background']);
+  assert.equal(inProgressSessions(list)[0], list[1], 'shortcuts reuse the original sessions');
+  const grouped = projectGroups(list, NOW).flatMap(g => [...g.shown, ...g.folded]);
+  assert.deepEqual(new Set(ids(grouped)), new Set(ids(list)), 'virtual rows do not move or remove project rows');
+  assert.equal(busy(list[3]), true, 'background work must not be archived as idle');
+});
+
+test('in-progress shortcuts exclude archived sessions even when search makes them eligible', () => {
+  const archived = session('archived match', '/p', 1, { status: 'running', archived: true });
+  const match = session('matching work', '/p', 2, { status: 'waiting' });
+  const other = session('other work', '/other', 3, { status: 'running' });
+  const matched = [archived, match]; // The caller has applied its title/path search.
+  assert.deepEqual(ids(inProgressSessions(matched)), ['matching work']);
+  assert.deepEqual(ids(projectGroups(matched, NOW, undefined, false)[0].shown), ['archived match', 'matching work']);
+  assert.deepEqual(ids(inProgressSessions([other])), ['other work'], 'shortcuts follow the supplied search scope');
+});
+
+test('in-progress shortcuts find work beyond the project page and keep older background work unfolded', () => {
+  const list = Array.from({ length: 205 }, (_, i) => session(`idle-${i}`, '/p', 10 + i));
+  const older = session('older work', '/p', 300, { status: 'completed', activeTasks: 1 });
+  list.push(older);
+  assert.deepEqual(ids(inProgressSessions(list)), ['older work']);
+  const [project] = projectGroups(list, NOW);
+  assert.ok(project.shown.includes(older), 'active background work stays visible in its project too');
+  assert.equal(list.length, 206, 'building shortcuts does not mutate the source');
 });

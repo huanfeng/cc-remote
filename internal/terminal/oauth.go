@@ -23,7 +23,7 @@ type doer interface {
 	do(method, path string, body any, out any) error
 }
 
-// RunOAuth is `cc-remote oauth`: list, add, replace the token of, rename and
+// RunOAuth is `ccr oauth`: list, add, replace the token of, rename and
 // remove the OAuth tokens kept on the host. It talks to the running host, so
 // the file is only ever written by one process.
 func RunOAuth(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error) error {
@@ -71,7 +71,7 @@ func RunOAuth(args []string, defaultDataDir string, ensureHost func(dataDir, hos
 }
 
 func oauthUsage() string {
-	return i18n.T(`usage: cc-remote oauth <command> [flags]
+	return i18n.T(`usage: ccr oauth <command> [flags]
 
 Manage the OAuth tokens (from "claude setup-token") kept on the host. A session
 that picks one runs with the native Claude Code configuration and only that login.
@@ -85,7 +85,7 @@ that picks one runs with the native Claude Code configuration and only that logi
   rm NAME                  remove (sessions using it must pick another configuration)
 
 NAME may also be the id shown by ls. Use it with: ccr --new --profile oauth:<id>
-`, `用法：cc-remote oauth <命令> [参数]
+`, `用法：ccr oauth <命令> [参数]
 
 管理保存在宿主上的 OAuth 令牌（由 "claude setup-token" 生成）。选用其中一项的会话
 沿用原生 Claude Code 配置，只替换登录令牌。
@@ -141,7 +141,7 @@ func runOAuth(api doer, out io.Writer, sub string, names []string, token func() 
 		case 1:
 			return hit[0], nil
 		case 0:
-			return oauthItem{}, i18n.Errorf("no OAuth token named %q (see: cc-remote oauth ls)", "没有名为 %q 的 OAuth 令牌（见：cc-remote oauth ls）", name)
+			return oauthItem{}, i18n.Errorf("no OAuth token named %q (see: ccr oauth ls)", "没有名为 %q 的 OAuth 令牌（见：ccr oauth ls）", name)
 		}
 		return oauthItem{}, i18n.Errorf("%q matches several tokens; use the id", "%q 对应多个令牌，请改用 id", name)
 	}
@@ -155,7 +155,7 @@ func runOAuth(api doer, out io.Writer, sub string, names []string, token func() 
 	switch sub {
 	case "ls", "list":
 		if len(list.Profiles) == 0 {
-			fmt.Fprintln(out, i18n.T("No OAuth tokens. Add one: cc-remote oauth add NAME", "还没有 OAuth 令牌。添加：cc-remote oauth add 名称"))
+			fmt.Fprintln(out, i18n.T("No OAuth tokens. Add one: ccr oauth add NAME", "还没有 OAuth 令牌。添加：ccr oauth add 名称"))
 		}
 		for _, p := range list.Profiles {
 			fmt.Fprintf(out, "%s\t%s\n", p.ID, p.Name)

@@ -18,6 +18,7 @@ import { providerName, providerOf } from '@/domain/providers';
 import { contextReading } from '@/domain/contextReading';
 import { modeLabel, statusLabel, statusTone, toneDot } from '@/features/session/status';
 import { permissionLabel, shortModel } from '@/features/pickers/options';
+import { SupplierQuickSwitch } from '@/features/pickers/SupplierQuickSwitch';
 import { QuickSwitch, type QuickKind } from '@/features/pickers/QuickSwitch';
 
 const EMPTY: never[] = [];
@@ -25,11 +26,11 @@ const EMPTY: never[] = [];
 export function SessionStatusPopover({ session, children }: { session: Session; children: ReactNode }) {
   const mobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [quick, setQuick] = useState<QuickKind | null>(null);
-  const switchTo = (k: QuickKind) => { setOpen(false); requestAnimationFrame(() => setQuick(k)); };
+  const [quick, setQuick] = useState<QuickKind | 'supplier' | null>(null);
+  const switchTo = (k: QuickKind | 'supplier') => { setOpen(false); requestAnimationFrame(() => setQuick(k)); };
 
   const trigger = (
-    <button type="button" className="inline-flex min-w-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40" aria-label={t('Session status', '会话状态')}>
+    <button type="button" className="inline-flex cursor-pointer min-w-0 items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/40" aria-label={t('Session status', '会话状态')}>
       {children}
     </button>
   );
@@ -56,15 +57,19 @@ export function SessionStatusPopover({ session, children }: { session: Session; 
     </Popover>
   );
 
-  return (
+  const anchor = <span className="inline-flex min-w-0">{surface}</span>;
+  return <>
     <QuickSwitch
-      session={session} kind={quick ?? 'model'} open={!!quick} onOpenChange={o => { if (!o) setQuick(null); }} mobile={mobile}
-      anchor={<span className="inline-flex min-w-0">{surface}</span>}
+      session={session} kind={quick === 'effort' ? 'effort' : 'model'} open={quick === 'model' || quick === 'effort'} onOpenChange={o => { if (!o) setQuick(null); }} mobile={mobile}
+      anchor={quick !== 'supplier' ? anchor : undefined}
     />
-  );
+    <SupplierQuickSwitch session={session} open={quick === 'supplier'} onOpenChange={o => { if (!o) setQuick(null); }} mobile={mobile}
+      anchor={quick === 'supplier' ? anchor : undefined} />
+  </>;
+
 }
 
-function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session; mobile: boolean; onSwitch(k: QuickKind): void; onDone(): void }) {
+function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session; mobile: boolean; onSwitch(k: QuickKind | 'supplier'): void; onDone(): void }) {
   const open = useApp(x => x.open);
   const events = useTranscripts(x => x.byKey[`session:${s.id}`]?.events) ?? EMPTY;
   const provider = providerOf(s);
@@ -85,7 +90,7 @@ function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session
     <div className="flex flex-col">
       <dl className="flex flex-col">
         <Row label={t('Agent', '代理')}>{providerName(provider)} · {modeLabel(s)}{terminal && !s.online ? ` · ${t('not running', '未运行')}` : ''}</Row>
-        {s.profileName && <Row label={t('Supplier', '供应商')}>{s.profileName}</Row>}
+        <Row label={t('Supplier', '供应商')} action={<SwitchLink mobile={mobile} onClick={() => onSwitch('supplier')} />}>{s.profileName || s.profileId || t('Host configuration', '宿主原生配置')}</Row>
         <Row label={t('Status', '状态')}>
           <span className="inline-flex items-center gap-1.5">
             <span className={cn('size-1.5 rounded-full', toneDot[statusTone(s)])} />

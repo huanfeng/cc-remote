@@ -19,6 +19,7 @@ import {
   ConfirmDialog, CopyButton, ErrorText, SimpleSelect, errorMessage, profileLabel, profilesFor, supplierOptions, useProfileCatalog,
 } from '@/features/dialogs/common';
 import { EffortField, ModelField, PermissionField } from '@/features/dialogs/pickers';
+import { PathMenu } from '@/features/files/PathMenu';
 import { compactNumber, costText, durationText, agoText } from './usageMath';
 
 type Overrides = { model: string; effort: string; permissionMode: string };
@@ -88,7 +89,7 @@ function Details({ session: s, onDirty, onDeleted }: { session: Session; onDirty
           </InfoRow>
           <InfoRow label={t('Engine', '引擎')}>{providerName(provider)} · {modeLabel(s)}</InfoRow>
           <InfoRow label={t('Project directory', '项目目录')} mono>
-            <span className="flex items-start gap-1"><span className="min-w-0 flex-1 break-all">{s.cwd}</span><CopyButton text={s.cwd} className="-my-1" /></span>
+            <span className="flex items-start gap-1"><span className="min-w-0 flex-1 break-all">{s.cwd}</span><span className="-my-1 shrink-0"><PathMenu path={s.cwd} kind="directory" /></span></span>
           </InfoRow>
           <InfoRow label={t('Created', '创建时间')}>{when(s.createdAt)}</InfoRow>
           <InfoRow label={t('Last conversation', '最后对话')} title={time.title}>

@@ -1,7 +1,22 @@
-import type { MonitorHistory, MonitorWindow } from '../../backend/types.ts';
+import type { MonitorAccount, MonitorHistory, MonitorWindow } from '../../backend/types.ts';
+import { providerName } from '../../domain/providers.ts';
 import { lineRuns, type ChartBox } from './usageMath.ts';
 
 export const windowKey = (w: MonitorWindow) => JSON.stringify([w.name, w.windowMinutes ?? 0]);
+
+export function monitorAccountName(account: Pick<MonitorAccount, 'provider' | 'name'>) {
+  const provider = providerName(account.provider), name = account.name.trim();
+  return new RegExp(`^${provider}(?:\\s*·|$)`, 'i').test(name) ? name : `${provider} · ${name}`;
+}
+
+/** Collection and freshness are independent of quota size and confirmed identity. */
+export function monitorAccountState(account: MonitorAccount) {
+  if (!account.active) return 'stopped';
+  if (account.error) return 'error';
+  if (account.stale) return 'stale';
+  if (account.available && account.fetchedAt) return 'ready';
+  return account.fetchedAt ? 'unavailable' : 'pending';
+}
 
 /** Split explicitly failed/missing readings as well as sleep/offline gaps. */
 export function monitorRuns(history: MonitorHistory, key: string, start: number, end: number, box: ChartBox, intervalMinutes: number) {

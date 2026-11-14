@@ -380,6 +380,7 @@ namespace CCRemote {
             Write-Host "repeat this installer to update the backend and desktop; an open desktop client uses the update after exiting from its tray and reopening"
         }
         Write-Host "done: cc-remote $tag"
+        Write-Host "commands: ccr (terminal), ccr status, ccr --help; cc-remote works the same"
     } finally {
         # The only recursive cleanup target is our own GUID directory under TEMP.
         if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($tmp)).TrimEnd('\', '/') -eq [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')) {

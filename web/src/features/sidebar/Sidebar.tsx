@@ -24,7 +24,7 @@ import { hostProviders, providerName } from '@/domain/providers';
 import { folderName, sessionMeta, shortPath, statusLabel, statusTone, toneDot } from '@/features/session/status';
 import { HostSwitcher } from './HostSwitcher';
 import { useNativeSessions } from './useNativeSessions';
-import { busy, projectGroups } from './projectGroups';
+import { busy, inProgressSessions, projectGroups } from './projectGroups';
 
 const PAGE = 200;
 
@@ -163,6 +163,8 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   // Groups whose older sessions are unfolded; per visit, like Codex's "show more".
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // A virtual section has no project path and must not write project preferences.
+  const [progressCollapsed, setProgressCollapsed] = useState(false);
   const now = useNow(30_000);
   const currentKey = selectionKey(selection);
 
@@ -173,6 +175,8 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
     [matched, query],
   );
   const archived = useMemo(() => (query ? [] : conversationOrder(matched.filter(s => s.archived))), [matched, query]);
+  const inProgress = useMemo(() => inProgressSessions(ordered), [ordered]);
+  const isProgressCollapsed = !query && progressCollapsed;
   const groups = useMemo(
     () => projectGroups(ordered.slice(0, limit), now, s => currentKey === `session:${s.id}`, !query),
     [ordered, limit, now, currentKey, query],
@@ -192,6 +196,22 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   };
   return (
     <div className="flex flex-col gap-2">
+      {inProgress.length > 0 && (
+        <section aria-label={t('In progress', '进行中')}>
+          <button
+            type="button"
+            onClick={() => setProgressCollapsed(o => !o)}
+            aria-expanded={!isProgressCollapsed}
+            title={t('Running, waiting for input, or working in the background', '正在运行、等待输入或有后台任务的会话')}
+            className={cn('flex w-full items-center gap-1 rounded-md px-2 text-left text-ui-sm font-semibold text-foreground-subtle hover:text-foreground', mobile ? 'h-8' : 'h-7')}
+          >
+            <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', isProgressCollapsed && '-rotate-90')} />
+            <span>{t('In progress', '进行中')}</span>
+            <span className="ml-auto text-ui-xs font-normal text-foreground-subtlest">{inProgress.length}</span>
+          </button>
+          {!isProgressCollapsed && <div className="flex flex-col gap-px">{inProgress.map(s => row(s, true))}</div>}
+        </section>
+      )}
       {groups.map(g => {
         // Collapsed state is kept per host; a search opens every group.
         const stored = hostKey(g.key);
@@ -206,9 +226,9 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
                 onClick={() => toggleGroup(stored, !isCollapsed)}
                 title={g.cwd}
                 aria-expanded={!isCollapsed}
-                className={cn('flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-ui-xs font-medium text-foreground-subtlest hover:text-foreground-subtle', mobile ? 'h-8' : 'h-6', canArchive && 'pr-7')}
+                className={cn('flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-ui-sm font-semibold text-foreground-subtle hover:text-foreground', mobile ? 'h-8' : 'h-7', canArchive && 'pr-7')}
               >
-                <ChevronDown className={cn('size-3 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
+                <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
                 <span className="truncate">{folderName(g.cwd)}</span>
                 <span className={cn('ml-auto', !mobile && 'opacity-0 group-hover/head:opacity-100')}>{g.shown.length + g.folded.length}</span>
               </button>
@@ -334,7 +354,7 @@ function SessionRow({ session: s, active, mobile, showFolder }: { session: Sessi
         </div>
         <div className="flex items-center gap-1.5 text-ui-xs text-foreground-subtlest">
           {s.mode === 'terminal' && <SquareTerminal className="size-3 shrink-0" aria-label={t('Terminal', '终端')} />}
-          <span className="truncate">{showFolder ? `${folderName(s.cwd)} · ${sessionMeta(s)}` : sessionMeta(s)}</span>
+          <span className="truncate" title={showFolder ? s.cwd : undefined}>{showFolder ? `${folderName(s.cwd)} · ${sessionMeta(s)}` : sessionMeta(s)}</span>
           {s.archived && !showFolder && <span className="shrink-0">· {t('Archived', '已归档')}</span>}
           {tone === 'waiting' && <span className="shrink-0 text-warning">· {statusLabel(s.status)}</span>}
           {queued > 0 && <span className="shrink-0">· {t(`${queued} queued`, `${queued} 条排队`)}</span>}

@@ -66,7 +66,7 @@ Backend only, Linux / macOS:
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
 ```
 
-Each entry downloads the latest stable release, verifies SHA256, installs and starts the background service, and creates the `ccr` command. Backend-only entries and `cc-remote update` update only the backend. Repeat the full installation command to update the desktop client too.
+Each entry downloads the latest stable release, verifies SHA256, installs and starts the background service, and creates the `ccr` command. Backend-only entries and `ccr update` update only the backend. Repeat the full installation command to update the desktop client too.
 
 To pass options (for example, to allow LAN access):
 
@@ -113,6 +113,8 @@ Claude Code opens in the terminal and the session appears in the web UI. Press `
 
 ### Terminal sessions (ccr)
 
+`ccr` and `cc-remote` are interchangeable names for the same command. Both open this project's session picker without arguments. Use `ccr --help` for help and `ccr serve` to run the host in the foreground.
+
 ```sh
 ccr                      # pick one of this directory's terminal sessions (Enter: the latest with no terminal attached), or start one
 ccr ls                   # recent terminal sessions; pick one to attach
@@ -122,7 +124,25 @@ ccr --resume <id>        # continue a Claude Code session as a terminal session 
 ccr -c                   # continue this directory's most recent Claude Code session
 ```
 
-Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. `ccr` also takes Claude Code's options: `ccr --add-dir ../lib --model sonnet` starts a terminal session with them, and `cc-remote -- claude [options]` does the same. The older shared mode (Claude Code ran in your terminal and the web joined over Channels) was removed; existing shared sessions became terminal sessions and resume their context the next time you use them.
+Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. `ccr` also takes Claude Code's options: `ccr --add-dir ../lib --model sonnet` starts a terminal session with them. To run native Claude directly, use `ccr claude -- [options]`. The older shared mode was removed; existing shared sessions became terminal sessions and resume their context the next time you use them.
+
+The session picker shows status, model, supplier, project and attached terminal counts, with arrow navigation, numeric selection, filtering and refresh. Supplier entries use at most two lines, including cached quota, reset countdowns and reading age when available. Use `ccr session status` to look up a session whose title matches a command name.
+
+### Host management
+
+```sh
+ccr status               # service and host status
+ccr start                # also stop / restart
+ccr logs -f              # follow host logs
+ccr config               # show configuration; pass flags to change it
+ccr service install      # register and start the service; also uninstall
+ccr profile ls           # supplier configurations
+ccr oauth ls             # OAuth configurations
+ccr update               # update the backend
+ccr serve --listen 127.0.0.1:8787  # run the host in the foreground
+```
+
+Both names share configuration and exit codes. Existing services, data directories, `CC_REMOTE_*` variables and legacy `cc-remote --listen ...` calls remain supported. See the [CLI specification](docs/cli-design.md) (Chinese).
 
 ### Managed sessions
 

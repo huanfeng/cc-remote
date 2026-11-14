@@ -2,7 +2,7 @@
 
 ## 宿主命令行参数
 
-直接运行 `cc-remote [参数]` 启动宿主（Web/API）。服务模式下这些参数由 `cc-remote service install/config` 保存和传入。
+运行 `ccr serve [参数]` 在前台启动宿主（Web/API）。`ccr` 与 `cc-remote` 完全等价，无参数时进入终端会话。服务模式下宿主参数由 `ccr service install/config` 保存和传入；旧式 `cc-remote --listen ...` 调用继续兼容。
 
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
@@ -67,8 +67,8 @@
 `--listen` 可重复或逗号分隔，每个地址单独监听，任一地址失败即报错退出：
 
 ```sh
-cc-remote --listen 127.0.0.1:8787 --listen 192.168.1.10:8787
-cc-remote --listen 127.0.0.1:8787,lan:8787
+ccr serve --listen 127.0.0.1:8787 --listen 192.168.1.10:8787
+ccr serve --listen 127.0.0.1:8787,lan:8787
 ```
 
 | 写法 | 含义 |
@@ -115,7 +115,7 @@ CC_REMOTE_LANG=en ccr ls                # 本次命令用英文
 
 ```sh
 cc-remote service config --allow-origin https://ccr.example.com   # 后台服务：立即生效，整体替换列表（多个用逗号分隔，"" 清空）
-cc-remote --allow-origin https://ccr.example.com                  # 前台运行
+ccr serve --allow-origin https://ccr.example.com                  # 前台运行
 ```
 
 部署步骤、HTTPS 要求，以及内网穿透（端口会变化的文本地址）的用法见 [standalone.md](standalone.md)。

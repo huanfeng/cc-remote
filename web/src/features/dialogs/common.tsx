@@ -9,7 +9,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/components/lib/utils';
 import { useBackend } from '@/backend/backend';
-import type { ProfileCatalog, Provider, SupplierProfile } from '@/backend/types';
+import type { ProfileCatalog } from '@/backend/types';
 import { copyText } from '@/domain/clipboard';
 import { t } from '@/lib/i18n';
 
@@ -121,24 +121,4 @@ export function useProfileCatalog() {
   return { catalog, error, reload: () => setVersion(v => v + 1) };
 }
 
-export const profilesFor = (catalog: ProfileCatalog | undefined, app: Provider): SupplierProfile[] =>
-  catalog?.profiles.filter(p => p.app === app) ?? [];
-
-export const profileLabel = (p: { name: string; kind?: string }) => (p.kind === 'oauth' && !/oauth/i.test(p.name) ? `${p.name} · OAuth` : p.name);
-
-/** What "default" resolves to for app: a profile, the native configuration, or a profile that is gone. */
-export function defaultSupplierLabel(catalog: ProfileCatalog | undefined, app: Provider): string {
-  const id = catalog?.defaultProfiles[app];
-  if (!id || id === '@native') return t('Default · native configuration', '默认 · 原生配置');
-  const p = profilesFor(catalog, app).find(x => x.id === id);
-  return p ? t(`Default · ${profileLabel(p)}`, `默认 · ${profileLabel(p)}`) : t('Default · unavailable', '默认 · 已不可用');
-}
-
-/** The supplier choices for a new or resumed session. */
-export function supplierOptions(catalog: ProfileCatalog | undefined, app: Provider, resuming = false): Option[] {
-  return [
-    { value: '', label: resuming ? t('Keep the session configuration', '沿用原会话配置') : defaultSupplierLabel(catalog, app) },
-    { value: '@native', label: t('Native host configuration', '宿主原生配置') },
-    ...profilesFor(catalog, app).map(p => ({ value: p.id, label: profileLabel(p) })),
-  ];
-}
+export { profilesFor, profileLabel, defaultSupplierLabel, supplierOptions } from '@/features/pickers/supplierSwitch';

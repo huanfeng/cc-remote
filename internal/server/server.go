@@ -174,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/status/summary", s.statusSummary)
 	mux.HandleFunc("GET /api/usage", s.usage)
+	mux.HandleFunc("GET /api/profiles/usage", s.profileUsageAPI)
 	mux.HandleFunc("GET /api/usage/history", s.usageHistory)
 	mux.HandleFunc("GET /api/usage/monitor", s.monitorAPI)
 	mux.HandleFunc("POST /api/usage/monitor/refresh", s.monitorRefreshAPI)

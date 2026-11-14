@@ -1,11 +1,12 @@
 // Shown when no session is selected (desktop): start something, or pick up
 // where you left off. Codex-style: one calm centred column.
 import { useMemo } from 'react';
-import { ArrowUpRight, FolderGit2, Plus, SquareTerminal } from 'lucide-react';
+import { ArrowUpRight, FolderGit2, PanelLeftOpen, Plus, SquareTerminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { select, useApp } from '@/store/app';
 import { t, lang } from '@/lib/i18n';
+import { usePrefs } from '@/lib/prefs';
 import { conversationTime } from '@/domain/conversationTime';
 import { recentProjects } from '@/domain/recentProjects';
 import { sessionMeta, shortPath, statusTone, toneDot } from '@/features/session/status';
@@ -15,12 +16,20 @@ export function EmptyState() {
   const sessions = useApp(s => s.sessions);
   const info = useApp(s => s.info);
   const open = useApp(s => s.open);
+  const sidebarCollapsed = usePrefs(s => s.sidebarCollapsed);
+  const setPrefs = usePrefs(s => s.set);
   const attention = sessions.filter(s => s.status === 'waiting' || s.status === 'running');
   const projects = useMemo(() => recentProjects(sessions.map(s => ({ cwd: s.cwd, updatedAt: s.lastConversationAt ?? s.updatedAt })), 4), [sessions]);
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-tauri-drag-region>
-      <div className="h-12 shrink-0" data-tauri-drag-region />
+      <div className="flex h-12 shrink-0 items-center px-3" data-tauri-drag-region>
+        {sidebarCollapsed && (
+          <Button variant="ghost" size="icon-sm" aria-label={t('Expand sidebar', '展开侧栏')} onClick={() => setPrefs({ sidebarCollapsed: false })} className="platform-mac-desktop:ml-16">
+            <PanelLeftOpen className="size-4" />
+          </Button>
+        )}
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-2xl flex-col gap-8 px-6 pb-16 pt-[12vh]">
           <div className="flex flex-col gap-2">

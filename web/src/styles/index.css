@@ -76,6 +76,15 @@ body {
 }
 
 /* A visible ring only for keyboard focus; pointer focus stays quiet. */
+@layer base {
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="tab"]:not([aria-disabled="true"]):not([data-disabled]),
+  summary {
+    cursor: pointer;
+  }
+}
+
 :where(button, a, [role="button"], [role="menuitem"], [role="option"], [role="tab"], input, textarea, select, [tabindex]):focus-visible {
   outline: 1.5px solid color-mix(in srgb, var(--color-foreground) 22%, transparent);
   outline-offset: 0;

@@ -17,9 +17,8 @@ import { t } from '@/lib/i18n';
 import { shortPath, statusLabel, statusTone, tonePill } from '@/features/session/status';
 import { SessionStatusPopover } from '@/features/header/SessionStatusPopover';
 import { Chip, ModelChips } from '@/features/header/ModelChips';
-import { copyText } from '@/domain/clipboard';
-import { toast } from '@/components/ui/toast';
 import { UsageMeter } from '@/features/header/UsageMeter';
+import { PathMenu } from '@/features/files/PathMenu';
 
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
@@ -166,22 +165,20 @@ function rememberView(views: Record<string, boolean>, id: string, on: boolean): 
   return next;
 }
 
-/** Working folder: shortened in the header, full path on hover, click copies it. */
+/** Working folder: shortened in the header, with copy and native path actions. */
 function PathChip({ cwd }: { cwd: string }) {
-  const copy = () => copyText(cwd).then(
-    () => toast(t('Path copied', '路径已复制')),
-    () => toast(t('Could not copy the path', '无法复制路径')),
-  );
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <Chip icon={<FolderOpen />} className="hidden max-w-56 shrink lg:inline-flex" aria-label={t(`Folder: ${cwd}. Copy`, `目录：${cwd}，点击复制`)} onClick={() => void copy()}>
-          {shortPath(cwd)}
-        </Chip>
-      </TooltipTrigger>
+      <PathMenu path={cwd} kind="directory">
+        <TooltipTrigger asChild>
+          <Chip icon={<FolderOpen />} className="hidden max-w-56 shrink lg:inline-flex" aria-label={t(`Folder actions: ${cwd}`, `目录操作：${cwd}`)}>
+            {shortPath(cwd)}
+          </Chip>
+        </TooltipTrigger>
+      </PathMenu>
       <TooltipContent className="max-w-[32rem] break-all">
         <div className="font-mono">{cwd}</div>
-        <div className="opacity-60">{t('Click to copy', '点击复制')}</div>
+        <div className="opacity-60">{t('Click for path actions', '点击打开路径菜单')}</div>
       </TooltipContent>
     </Tooltip>
   );

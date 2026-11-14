@@ -32,55 +32,64 @@ import (
 	"cc-remote/internal/service"
 	"cc-remote/internal/store"
 	"cc-remote/internal/terminal"
-	"cc-remote/internal/update"
 	webui "cc-remote/web"
 )
 
 // version is replaced at build time: go build -ldflags "-X main.version=1.2.3".
 var version = "dev"
 
-const usageEN = `CC Remote: remote web UI for Claude Code.
+const usageEN = `CC Remote · ccr (cc-remote is an equivalent name)
 
-usage:
-  cc-remote [host flags]       hold the host here (the service usually does this)
-  ccr [args] [-- claude ...]   the terminal side: use Claude Code held by the host
-  cc-remote claude [args]      native Claude Code here, with a supplier applied
+Usage:
+  ccr                         attach to this directory's session, or start one
+  ccr --resume [ID]            resume Claude Code (-r); -c continues the latest
+  ccr ls                      choose a recent terminal session
+  ccr --new --model sonnet     start a new terminal session
+  ccr -- "prompt"              start with a first message
+  ccr claude -- [arguments]    native Claude Code with a supplier applied
 
-commands:
+Management:
   status / start / stop / restart / logs / config
-                               host service operations (same as "service <op>")
-  service                      full service management (also install/uninstall)
-  alias                        install/uninstall/status the ccr launcher
-  attach, a                    the old name of ccr: connect to a held session
-  ccr                          the launcher above; "ccr claude" runs plain claude
-  claude                       native Claude Code, bypassing the host
-  oauth                        manage OAuth tokens kept on the host (ls/add/token/rename/rm)
-  profile                      list suppliers / choose the default for new sessions
-  update                       update cc-remote to the latest release
-  version / help               version information / this help
+                              local host service operations
+  service install|uninstall   register or remove the background service
+  serve [host flags]          run the host in this terminal (serve --help)
+  profile ls|default          list suppliers or choose the default
+  oauth ls|add|token|rename|rm manage OAuth logins
+  update                      update CC Remote
+  session [arguments]         explicit terminal entry; session --help for options
+  attach, a                   explicitly attach to an existing session
+  help / version              show help / CCR version
 
-host flags:
+Use "ccr <command> --help" for options. --host affects session/profile/OAuth
+connections; service management always acts locally. Select a title matching a
+command with "ccr session <title>".
+
 `
 
-const usageZH = `CC Remote：Claude Code 的远程 Web 界面。
+const usageZH = `CC Remote · ccr（cc-remote 是完全等价的名称）
 
 用法：
-  cc-remote [宿主参数]         在当前终端持有宿主（通常由服务代持）
-  ccr [参数] [-- claude 参数]  终端侧入口：使用宿主持有的 Claude Code
-  cc-remote claude [参数]      原生 Claude Code，应用供应商配置后直连
+  ccr                         接入当前目录的会话，没有则新建
+  ccr --resume [ID]            恢复 Claude Code 会话（-r）；-c 继续最近会话
+  ccr ls                      选择最近的终端会话
+  ccr --new --model sonnet     新建终端会话
+  ccr -- "提示词"              新建并发送第一条消息
+  ccr claude -- [参数]         直连原生 Claude Code，并应用供应商配置
 
-命令：
+管理：
   status / start / stop / restart / logs / config
-                               宿主服务操作（等同 "service <操作>"）
-  service                      完整服务管理（含 install/uninstall）
-  alias                        安装/卸载/查看 ccr 启动器
-  attach, a                    ccr 的旧名：接入宿主持有的会话
-  ccr                          上述启动器；"ccr claude" 直连原生 claude
-  claude                       原生 Claude Code，不经宿主
-  oauth                        管理宿主上的 OAuth 令牌（ls/add/token/rename/rm）
-  profile                      列出供应商 / 设置新会话的默认供应商
-  update                       把 cc-remote 更新到最新版本
-  version / help               显示版本信息 / 本帮助
+                              本机宿主服务操作
+  service install|uninstall   安装或卸载后台服务
+  serve [宿主参数]            前台运行宿主（serve --help 查看参数）
+  profile ls|default          列出供应商或设置默认供应商
+  oauth ls|add|token|rename|rm 管理 OAuth 登录
+  update                      更新 CC Remote
+  session [参数]              显式终端入口；session --help 查看会话参数
+  attach, a                   明确接入已有会话
+  help / version              查看帮助 / CCR 版本
+
+使用 ccr <命令> --help 查看参数。--host 用于会话、供应商和 OAuth 连接；
+服务管理始终作用于本机。与命令同名的会话标题请用 ccr session <标题>。
 
 `
 
@@ -106,12 +115,6 @@ func runCCR(args []string) error {
 	return terminal.CCR(args, config.DefaultDataDir(), channel.EnsureHost)
 }
 
-// isCCR reports whether the executable was invoked under the ccr alias name.
-func isCCR(argv0 string) bool {
-	base := filepath.Base(strings.ReplaceAll(argv0, `\`, "/"))
-	return strings.EqualFold(strings.TrimSuffix(base, filepath.Ext(base)), "ccr")
-}
-
 // cliLanguage is the language of commands run by hand: CC_REMOTE_LANG, else
 // the installed service's setting, else the system language.
 func cliLanguage() i18n.Lang {
@@ -125,10 +128,14 @@ func cliLanguage() i18n.Lang {
 }
 
 func run() error {
+	args := os.Args[1:]
+	for len(args) > 0 && args[0] == "ccr" {
+		args = args[1:]
+	}
 	// Hooks and internal subcommands run often and print nothing for a
 	// person to read: dispatch them before cliLanguage reads service.json.
-	if len(os.Args) > 1 && !isCCR(os.Args[0]) {
-		switch os.Args[1] {
+	if route := routeCLI(args); internalCommand(route.command) {
+		switch route.command {
 		case "hook":
 			return claude.RunHook()
 		case "permission-mcp":
@@ -146,82 +153,11 @@ func run() error {
 		}
 	}
 	i18n.Set(cliLanguage())
-	if isCCR(os.Args[0]) {
-		return runCCR(os.Args[1:])
-	}
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "version", "--version":
-			fmt.Printf("cc-remote %s\n%s %s/%s\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-			return nil
-		case "help", "-h", "--help", "-help":
-			fs, _ := hostFlags()
-			fs.SetOutput(os.Stdout)
-			fs.Usage()
-			return nil
-		case "service":
-			return service.Main(os.Args[2:], version)
-		case "status", "start", "stop", "restart", "logs", "config":
-			// The frequent service operations are worth one shorter path.
-			return service.Main(append([]string{os.Args[1]}, os.Args[2:]...), version)
-		case "alias":
-			return service.AliasMain(os.Args[2:])
-		case "update":
-			return update.Run(version, os.Args[2:])
-		case "attach", "a":
-			return terminal.Attach(os.Args[2:], config.DefaultDataDir())
-		case "ccr":
-			return runCCR(os.Args[2:])
-		case "claude":
-			return terminal.RunClaudeDirect(os.Args[2:], "", config.DefaultDataDir(), channel.EnsureHost)
-		case "oauth":
-			return terminal.RunOAuth(os.Args[2:], config.DefaultDataDir(), channel.EnsureHost)
-		case "profile":
-			return terminal.RunProfile(os.Args[2:], config.DefaultDataDir(), channel.EnsureHost)
-		}
-	}
-	if len(os.Args) <= 1 {
-		// The host runs as a service or in another terminal; a bare command
-		// should orient, not silently occupy the port.
-		fs, _ := hostFlags()
-		fs.SetOutput(os.Stdout)
-		fmt.Fprint(os.Stdout, i18n.T(`cc-remote runs the host; subcommands do the rest:
-
-  cc-remote service install   register and start the background host
-  ccr                         use Claude Code here; "ccr claude" runs it plain
-  cc-remote claude            native Claude Code with a supplier applied
-  cc-remote attach            connect this terminal to a held session
-  cc-remote update            update to the latest release
-
-Run with --listen and flags to hold the host in this terminal.
-`, `cc-remote 运行宿主；其余功能走子命令：
-
-  cc-remote service install   注册并启动后台宿主服务
-  ccr                         在终端使用 Claude Code；"ccr claude" 直连原生
-  cc-remote claude            直连原生 Claude Code（应用供应商配置）
-  cc-remote attach            把当前终端接入宿主持有的会话
-  cc-remote update            更新到最新版本
-
-带 --listen 等参数运行即可在当前终端持有宿主。
-`))
-		fs.Usage()
+	err := runCLI(args)
+	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
-	for i, arg := range os.Args[1:] {
-		if arg == "--" {
-			pos := i + 1
-			if pos+1 >= len(os.Args) {
-				return i18n.Errorf("usage: cc-remote [--data-dir directory] -- claude [arguments]", "用法：cc-remote [--data-dir 目录] -- claude [参数]")
-			}
-			// cc-remote [--host H] [--data-dir D] -- claude [options]: like
-			// ccr, Claude Code starts with the options in a terminal session
-			// (the host runs its own configured Claude Code executable).
-			args := append([]string{}, os.Args[1:pos]...)
-			args = append(args, "--")
-			return runCCR(append(args, os.Args[pos+2:]...))
-		}
-	}
-	return runHost(os.Args[1:])
+	return err
 }
 
 type hostOptions struct {
@@ -233,7 +169,7 @@ type hostOptions struct {
 }
 
 func hostFlags() (*flag.FlagSet, *hostOptions) {
-	fs := flag.NewFlagSet("cc-remote", flag.ExitOnError)
+	fs := flag.NewFlagSet("ccr serve", flag.ContinueOnError)
 	o := &hostOptions{}
 	fs.Var(&o.listen, "listen", i18n.T("HTTP listen address, repeatable or comma separated (default 127.0.0.1:8787; lan:PORT = all private IPv4 addresses, all:PORT = 0.0.0.0)", "HTTP 监听地址，可重复或用逗号分隔（默认 127.0.0.1:8787；lan:PORT = 所有私有 IPv4 地址，all:PORT = 0.0.0.0）"))
 	o.dataDir = fs.String("data-dir", config.DefaultDataDir(), i18n.T("SQLite and access-token directory (or CC_REMOTE_DATA_DIR)", "SQLite 数据库和访问令牌所在目录（或 CC_REMOTE_DATA_DIR）"))
@@ -252,7 +188,7 @@ func hostFlags() (*flag.FlagSet, *hostOptions) {
 	o.lang = fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language), zh or en (or CC_REMOTE_LANG)", "提示信息和 Web 界面的语言：auto（跟随系统）、zh 或 en（或 CC_REMOTE_LANG）"))
 	o.serviceManager = fs.String("service-manager", "", i18n.T("internal: set by the background service (schtasks, systemd, launchd)", "内部使用：由后台服务设置（schtasks、systemd、launchd）"))
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), i18n.T(usageEN, usageZH))
+		fmt.Fprint(fs.Output(), i18n.T("usage: ccr serve [host flags]\n\n", "用法：ccr serve [宿主参数]\n\n"))
 		fs.PrintDefaults()
 	}
 	return fs, o
@@ -310,7 +246,12 @@ func runHost(argv []string) error {
 		i18n.Set(l)
 	}
 	fs, opts := hostFlags()
-	_ = fs.Parse(argv)
+	if err := fs.Parse(argv); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
 	// Under a service manager service.json is the source of truth, so a
 	// restart applies "service config" changes without re-registering.
 	var started *service.Config

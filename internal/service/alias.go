@@ -9,9 +9,7 @@ import (
 	"runtime"
 	"strings"
 
-	"cc-remote/internal/config"
 	"cc-remote/internal/i18n"
-	"cc-remote/internal/listen"
 )
 
 type aliasOptions struct {
@@ -20,16 +18,16 @@ type aliasOptions struct {
 }
 
 func aliasUsage() string {
-	return i18n.T(`usage: cc-remote alias <install|uninstall|status> [--dir D]
+	return i18n.T(`usage: ccr alias <install|uninstall|status> [--dir D]
 
 "ccr" runs "cc-remote ccr": see "ccr --help".
-`, `用法：cc-remote alias <install|uninstall|status> [--dir 目录]
+`, `用法：ccr alias <install|uninstall|status> [--dir 目录]
 
 "ccr" 等同于 "cc-remote ccr"：见 "ccr --help"。
 `)
 }
 
-// AliasMain runs "cc-remote alias ...".
+// AliasMain runs "ccr alias ...".
 func AliasMain(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Print(aliasUsage())
@@ -71,21 +69,16 @@ func aliasPath(dir string) (string, error) {
 	return filepath.Join(dir, name), nil
 }
 
-// aliasTarget returns the executable and the cc-remote flags ccr passes:
-// the installed service copy with its data dir and host when present.
+// aliasTarget returns the stable executable for the unified launcher.
+// Connection defaults are resolved by the shared Go entry.
 func aliasTarget(out io.Writer) (string, []string, error) {
 	cfg, _ := LoadConfig("")
 	if cfg != nil && cfg.Exe != "" {
 		if _, err := os.Stat(cfg.Exe); err == nil {
-			var flags []string
-			if !samePath(cfg.DataDir, config.DefaultDataDir()) {
-				flags = append(flags, "--data-dir", cfg.DataDir)
-			}
-			// ProbeURLs only yields loopback URLs; ccr refuses other hosts.
-			if urls := listen.ProbeURLs(cfg.Listen); len(urls) > 0 && urls[0] != "http://127.0.0.1:8787" {
-				flags = append(flags, "--host", urls[0])
-			}
-			return cfg.Exe, flags, nil
+			// The shared Go entry resolves defaults for both command names.
+			// Keeping configuration out of the wrapper also makes config changes
+			// effective without reinstalling the launcher.
+			return cfg.Exe, nil, nil
 		}
 	}
 	exe, err := os.Executable()
@@ -109,7 +102,7 @@ func AliasScript(goos, exe string, flags []string) string {
 	for _, f := range flags {
 		parts = append(parts, ShellQuote(f))
 	}
-	return "#!/bin/sh\n# ccr: cc-remote terminal session launcher\nexec " + strings.Join(parts, " ") + " \"$@\"\n"
+	return "#!/bin/sh\n# ccr: CC Remote unified command launcher\nexec " + strings.Join(parts, " ") + " \"$@\"\n"
 }
 
 // aliasInstalled reports whether the default ccr launcher exists.

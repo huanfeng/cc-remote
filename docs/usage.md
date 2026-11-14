@@ -15,6 +15,8 @@
 
 ### 用 ccr 启动
 
+`ccr` 与 `cc-remote` 共用全部行为，无参数均选择当前目录会话。帮助使用 `ccr --help`，前台宿主使用 `ccr serve`，后台管理使用 `ccr status/start/stop/restart/config/logs` 与 `ccr service ...`。
+
 `ccr` 的用法和 `claude` 一样，只是 Claude Code 由宿主运行：
 
 ```sh
@@ -23,15 +25,18 @@ ccr --model sonnet --add-dir ../lib   # 带 Claude Code 参数新建终端会话
 ccr "修复登录页"                       # 只有提示词时是「接入指定会话」；新建并发送请写 ccr -- "修复登录页"
 ccr --resume <会话 ID>                # 以终端会话继续 Claude Code 会话（Claude Code 退出时提示的命令，把 claude 换成 ccr）
 ccr -c                                # 继续当前目录最近的会话
-cc-remote --data-dir /path/to/data -- claude --add-dir ../lib   # 同 ccr --，使用非默认数据目录
+ccr --data-dir /path/to/data --add-dir ../lib   # 使用非默认数据目录
 ```
 
 - 当前目录已有终端会话时，`ccr` 列出它们（状态、已接入的终端数、最近活动）让你选择：回车选最近一个没有终端接入的会话，都有终端接入时回车新建，`0` 新建。
+- 交互终端使用紧凑双行列表：显示模型、供应商、短 ID，进行中的会话排在前面；支持方向键、编号加回车、`/` 筛选、`r` 刷新和 Esc 取消。非交互终端使用编号文本列表，EOF 不会自动新建会话。
+- 供应商选择每项最多两行，显示已有缓存中的已用额度、重置倒计时和采集时间，例如 `5h 24% ↺2h · 7d 67% ↺3d · 采集2m前`。`r` 只重读缓存；没有用量或后台较旧时仍可正常选择配置。
+- 与管理命令同名的会话（如 `status`）使用 `ccr session status` 或 `ccr attach status`。旧的 `cc-remote` 无参数帮助入口已改为与 `ccr` 一样选择会话，查看帮助请加 `--help`。
 - 接入一个已有终端接入的会话前会先确认：两个终端画面同步，输入会进入同一个 Claude Code。
 - 在 Claude Code 还没信任过的目录（`~/.claude.json` 里没有它或上级目录的信任记录）新建会话时，`ccr` 先问是否信任，和直接运行 `claude` 时的信任对话框一样：目录里的设置可以运行命令（hooks、MCP 服务器），克隆来的陌生仓库请先确认再信任。已信任的目录不再询问。
 - 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
 - `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
-- 宿主运行它自己配置的 Claude Code，`cc-remote -- claude` 里的 `claude` 只是占位。
+- 宿主持有的终端会话运行它配置的 Claude Code。`ccr claude -- [参数]` 则在当前终端运行原生 Claude，应用所选供应商。
 - 接入本机宿主时，Claude Code 输出里提到的本机文件（绝对路径，如 `C:\Users\me\shot.png`、`/home/me/app/main.go`）可以点击打开：`ccr` 把它们标成终端超链接（OSC 8）。只在已知支持的终端里启用（Windows Terminal、VS Code、iTerm2、WezTerm、kitty、Ghostty、Alacritty、JetBrains、VTE 系终端），tmux / screen 里不启用；超链接不占位置，画面不变。用 `CC_REMOTE_HYPERLINKS=1` 强制开启、`=0` 关闭（同时关闭下面的点击打开）。
 - Claude Code 的全屏界面会接管鼠标（点击用来展开工具调用等），终端此时不会自己打开链接。所以 `ccr` 会记住当前画面：**Ctrl+点击**（与 Windows Terminal 打开链接的习惯一致）落在本机存在的文件路径上时，由 `ccr` 用默认程序打开该文件，这次点击不再交给 Claude Code；普通点击照常交给 Claude Code（展开工具调用、在输入框里定位等）。这适用于任何终端；工具调用里的相对路径（如 `Update(web/src/App.tsx)`）按会话目录查找，被折到下一行的长路径点任意一段都可以。其它点击、拖动和滚轮也照常交给 Claude Code。
 - 旧的共享终端（Claude Code 在你的终端里运行、网页经 Channels 接入）已移除；之前的共享会话已自动转为终端会话，下次发送消息或用 `ccr` 接入时恢复原来的上下文。
