@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
+
+func makePickerRaw(fd int) (*term.State, error) { return term.MakeRaw(fd) }
 
 func pickerInputReady(timeout time.Duration) (bool, error) {
 	if stdin.Buffered() > 0 {

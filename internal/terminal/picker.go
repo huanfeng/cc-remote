@@ -71,8 +71,27 @@ func clipText(s string, width int) string {
 	}
 	return b.String() + "…"
 }
-func itemLines(item pickerItem, width int) [2]string {
-	return [2]string{clipText(item.lines[0], width), clipText(item.lines[1], width)}
+func pickerNumberWidth(items []pickerItem) int {
+	width := 1
+	for _, item := range items {
+		number, _, _ := strings.Cut(item.lines[0], " ")
+		if _, err := strconv.Atoi(number); err == nil {
+			width = max(width, len(number))
+		}
+	}
+	return width
+}
+
+func itemLines(item pickerItem, width, numberWidth int) [2]string {
+	first, second := printable(item.lines[0]), printable(item.lines[1])
+	number, title, ok := strings.Cut(first, " ")
+	if _, err := strconv.Atoi(number); ok && err == nil {
+		first = fmt.Sprintf("%-*s  %s", numberWidth, number, strings.TrimLeft(title, " "))
+		if second != "" {
+			second = strings.Repeat(" ", numberWidth+2) + second
+		}
+	}
+	return [2]string{clipText(first, width), clipText(second, width)}
 }
 func shortDuration(d time.Duration) string {
 	if d <= 0 {
@@ -205,23 +224,27 @@ func sessionItems(list []remoteSession, create bool) ([]pickerItem, string) {
 func pickItems(items []pickerItem, def string, refresh pickerRefresh, updates <-chan []pickerItem) (string, error) {
 	interactive := pickerInteractive()
 	if !interactive {
+		numberWidth := pickerNumberWidth(items)
 		for _, item := range items {
-			lines := itemLines(item, 120)
+			lines := itemLines(item, 118, numberWidth)
 			mark := "  "
 			if item.id == def {
 				mark = "* "
 			}
 			fmt.Println(mark + lines[0])
 			if lines[1] != "" {
-				fmt.Println("     " + lines[1])
+				fmt.Println("  " + lines[1])
 			}
 		}
-		fmt.Print(i18n.T("Number (Enter: default): ", "选择编号（回车=默认）："))
+		fmt.Print(i18n.T("Number (Enter: default, q: quit): ", "选择编号（回车=默认，q退出）："))
 		line, err := stdin.ReadString('\n')
 		if err != nil && !(err == io.EOF && strings.TrimSpace(line) != "") {
 			return "", errPickerCancelled
 		}
 		line = strings.TrimSpace(line)
+		if line == "q" {
+			return "", errPickerCancelled
+		}
 		if line == "" {
 			return def, nil
 		}
@@ -233,7 +256,7 @@ func pickItems(items []pickerItem, def string, refresh pickerRefresh, updates <-
 		}
 		return "", i18n.Errorf("invalid choice", "无效的选择")
 	}
-	state, err := term.MakeRaw(int(os.Stdin.Fd()))
+	state, err := makePickerRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		return "", err
 	}
@@ -278,29 +301,34 @@ func pickItems(items []pickerItem, def string, refresh pickerRefresh, updates <-
 		var lines []string
 		group := ""
 		color := os.Getenv("NO_COLOR") == ""
+		numberWidth := pickerNumberWidth(items)
 		for _, item := range rows[start:end] {
 			if item.group != "" && item.group != group {
 				lines = append(lines, item.group)
 				group = item.group
 			}
-			text := itemLines(item, width-3)
-			prefix := "  "
-			if item.id == selected {
-				prefix = "› "
-			}
-			mark := ""
-			if item.id == def {
-				mark = " *"
-			}
-			a := clipText(prefix+text[0]+mark, width)
-			if color && item.id == selected {
-				a = "\x1b[7m" + a + "\x1b[0m"
-			} else if color && item.warning {
-				a = "\x1b[33m" + a + "\x1b[0m"
-			}
-			lines = append(lines, a)
-			if text[1] != "" {
-				lines = append(lines, "  "+text[1])
+			text := itemLines(item, width-2, numberWidth)
+			for i, line := range text {
+				if i == 1 && line == "" {
+					continue
+				}
+				prefix, mark := "  ", ""
+				if i == 0 {
+					if item.id == selected {
+						prefix = "› "
+					}
+					if item.id == def {
+						mark = " *"
+						line = clipText(line, width-4)
+					}
+				}
+				a := clipText(prefix+line+mark, width)
+				if color && item.id == selected {
+					a = "\x1b[7m" + a + "\x1b[0m"
+				} else if color && item.warning && i == 0 {
+					a = "\x1b[33m" + a + "\x1b[0m"
+				}
+				lines = append(lines, a)
 			}
 		}
 		if len(rows) == 0 {
@@ -309,7 +337,7 @@ func pickItems(items []pickerItem, def string, refresh pickerRefresh, updates <-
 		if searching {
 			lines = append(lines, "/ "+filter)
 		} else {
-			lines = append(lines, i18n.T("↑↓ Enter · / search · r refresh · Esc cancel", "↑↓ Enter确认 · /筛选 · r刷新 · Esc取消")+" "+input)
+			lines = append(lines, i18n.T("↑↓ Enter · / search · r refresh · q/Esc quit", "↑↓ Enter确认 · /筛选 · r刷新 · q/Esc退出")+" "+input)
 		}
 		if message != "" {
 			lines = append(lines, message)
@@ -342,6 +370,9 @@ func pickItems(items []pickerItem, def string, refresh pickerRefresh, updates <-
 			if err != nil {
 				return "", err
 			}
+		}
+		if key == "q" && !searching {
+			return "", errPickerCancelled
 		}
 		switch key {
 		case "update":

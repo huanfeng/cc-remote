@@ -126,7 +126,7 @@ ccr -c                   # continue this directory's most recent Claude Code ses
 
 Terminal and web share one Claude Code process the host holds; detaching (`Ctrl+]`) or closing the web page does not stop it. When Claude Code exits it prints `claude --resume <id>`: replace `claude` with `ccr` to continue that session on the host. `ccr` also takes Claude Code's options: `ccr --add-dir ../lib --model sonnet` starts a terminal session with them. To run native Claude directly, use `ccr claude -- [options]`. The older shared mode was removed; existing shared sessions became terminal sessions and resume their context the next time you use them.
 
-The session picker shows status, model, supplier, project and attached terminal counts, with arrow navigation, numeric selection, filtering and refresh. Supplier entries use at most two lines, including cached quota, reset countdowns and reading age when available. Use `ccr session status` to look up a session whose title matches a command name.
+The session picker shows status, model, supplier, project and attached terminal counts, with arrow navigation, numeric selection, filtering, refresh and `q` / Esc to quit (`q` remains text while filtering). Supplier entries use at most two lines, including cached quota, reset countdowns and reading age when available. Use `ccr session status` to look up a session whose title matches a command name.
 
 ### Host management
 

@@ -6,9 +6,29 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/term"
 )
 
 var readPickerConsoleInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReadConsoleInputW")
+
+func makePickerRaw(fd int) (*term.State, error) {
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+	// x/term enables VT input, which turns ConPTY arrows into ESC [ A/B
+	// character records. Our reader needs native virtual-key records instead.
+	var mode uint32
+	err = windows.GetConsoleMode(windows.Handle(fd), &mode)
+	if err == nil {
+		err = windows.SetConsoleMode(windows.Handle(fd), mode&^windows.ENABLE_VIRTUAL_TERMINAL_INPUT)
+	}
+	if err != nil {
+		_ = term.Restore(fd, state)
+		return nil, err
+	}
+	return state, nil
+}
 
 // Reading console records avoids a background stdin reader stealing later PTY
 // input, and distinguishes a lone Escape from arrow keys without a timeout.

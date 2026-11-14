@@ -2,12 +2,38 @@ package terminal
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/term"
 )
+
+type pickerTestResult struct {
+	ID           string
+	Error        string
+	ModeRestored bool
+}
+
+func pickerTestChild() {
+	before, _ := term.GetState(int(os.Stdin.Fd()))
+	id, err := pickItems([]pickerItem{
+		{id: "alpha", lines: [2]string{"1  item Alpha", "details"}, search: "item Alpha"},
+		{id: "beta", lines: [2]string{"2  item Beta", "details"}, search: "item Beta query"},
+	}, "alpha", nil, nil)
+	after, _ := term.GetState(int(os.Stdin.Fd()))
+	result := pickerTestResult{ID: id, ModeRestored: before != nil && after != nil && reflect.DeepEqual(before, after)}
+	if err != nil {
+		result.Error = err.Error()
+	}
+	data, _ := json.Marshal(result)
+	_ = os.WriteFile(os.Getenv("CC_REMOTE_PICKER_RESULT"), data, 0600)
+}
 
 func TestPickerEOFDoesNotChooseDefault(t *testing.T) {
 	old := stdin
@@ -28,9 +54,41 @@ func TestPickerFormattingIsSafeAndTwoLines(t *testing.T) {
 		t.Fatal(text)
 	}
 	item := pickerItem{id: "1", lines: [2]string{"危险\x1b[31m名字很长", text}}
-	for _, line := range itemLines(item, 12) {
+	for _, line := range itemLines(item, 12, 1) {
 		if strings.ContainsAny(line, "\x1b\n\r") || displayWidth(line) > 12 {
 			t.Fatal(line)
+		}
+	}
+}
+
+func TestPickerNumberAndDetailsAlignment(t *testing.T) {
+	items := []pickerItem{
+		{lines: [2]string{"1  ● 执行中  修复登录页", "Claude · Sonnet · 工作账号"}},
+		{lines: [2]string{"12  ○ 就绪  更新文档", "D:\\项目 · Claude"}},
+		{lines: [2]string{"0  + 新建终端会话", ""}},
+		{lines: [2]string{"2  工作账号 · OAuth", "已用 5h 24% ↺2h"}},
+		{lines: [2]string{"10  团队 API · API", "无订阅额度"}},
+	}
+	want := [][2]string{
+		{"1   ● 执行中  修复登录页", "    Claude · Sonnet · 工作账号"},
+		{"12  ○ 就绪  更新文档", "    D:\\项目 · Claude"},
+		{"0   + 新建终端会话", ""},
+		{"2   工作账号 · OAuth", "    已用 5h 24% ↺2h"},
+		{"10  团队 API · API", "    无订阅额度"},
+	}
+	numberWidth := pickerNumberWidth(items)
+	for i, item := range items {
+		if got := itemLines(item, 80, numberWidth); got != want[i] {
+			t.Fatalf("item %d: got %q, want %q", i, got, want[i])
+		}
+		// The column width belongs to the full list, so filtering out two-digit
+		// numbers does not move the remaining titles or details.
+		for _, width := range []int{1, 4, 8, 12} {
+			for _, line := range itemLines(item, width, numberWidth) {
+				if displayWidth(line) > width || strings.ContainsAny(line, "\r\n\x1b") {
+					t.Fatalf("width %d: %q", width, line)
+				}
+			}
 		}
 	}
 }
@@ -75,6 +133,22 @@ func TestChooseEOFNeverCreatesSession(t *testing.T) {
 	})
 	if created || !errors.Is(err, errPickerCancelled) {
 		t.Fatalf("EOF created=%v err=%v", created, err)
+	}
+}
+
+func TestPickerQNeverCreatesSession(t *testing.T) {
+	old := stdin
+	defer func() { stdin = old }()
+	for _, input := range []string{"q\n", "q"} {
+		stdin = bufio.NewReader(strings.NewReader(input))
+		created := false
+		_, err := choose(nil, func() (remoteSession, error) {
+			created = true
+			return remoteSession{}, nil
+		})
+		if created || !errors.Is(err, errPickerCancelled) {
+			t.Fatalf("q created=%v err=%v", created, err)
+		}
 	}
 }
 

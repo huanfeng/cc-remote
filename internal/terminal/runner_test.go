@@ -14,6 +14,10 @@ import (
 // The test binary doubles as a fake interactive Claude: in raw mode it shows
 // the folder trust dialog, then reports what it receives.
 func TestMain(m *testing.M) {
+	if os.Getenv("CC_REMOTE_PICKER_CHILD") == "1" {
+		pickerTestChild()
+		return
+	}
 	if os.Getenv("CC_REMOTE_TERMINAL_CHILD") == "1" {
 		child()
 		return
