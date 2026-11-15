@@ -2,7 +2,7 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-11-14
+- Last refreshed: 2026-11-15
 - Primary product surfaces: session creation, conversation header, configuration, subscription usage, desktop-owned system tray.
 - Evidence reviewed: web/src/App.tsx, style.css, ModelPicker.tsx, SessionStatus.tsx, Usage.tsx; docs/codex.md and docs/architecture.md.
 
@@ -10,6 +10,19 @@
 - Calm, compact, practical remote coding workspace; reuse existing colors and controls.
 - Trust comes from showing reported execution settings separately from pending choices.
 - Avoid unnecessary panels, decorative elements and implementation details in the main flow.
+- Application mark: two separate uppercase C letterforms, following the user's revised choice of the CC monogram. Keep a visible gap between them rather than interlocking their strokes. Retain the dark green tile (`#222c27`) and light green mark (`#d6ebbc`); use matching rounded strokes that remain recognizable at 16–32 px. Draw the letters as vector outlines without a font dependency. Source and regeneration notes: docs/brand.md.
+- The `logo` host preset follows the application mark. Empty host icons use it; preserve explicitly chosen device/code presets, custom text and emoji. Keep web, host-generated favicons, desktop bundles and the native tray consistent.
+
+## Public introduction and onboarding (2026-11-15)
+
+- Evidence: README.md, README.en.md, docs/usage.md, docs/desktop.md, docs/codex.md, web/public/icon.svg and the existing Pages workflow. The user wants clearer promotion and first-use guidance. The current Pages root is a working client with browser-local host credentials; keep its URL and storage origin unchanged.
+- Audience: developers already using Claude Code or Codex who want to continue work from a phone/browser or compare subscription accounts. Lead with the job and an existing product screenshot, then a concrete installation path. Explain that execution stays on the user's host and remote access needs a network connection; do not promise hosted execution or universal terminal handoff.
+- README hierarchy: value proposition, a few concrete use cases, platform/provider scope, three-step first use, everyday commands, task-oriented documentation and concise troubleshooting. Keep Chinese and English equivalent; move operational detail into linked guides.
+- A static introduction lives at `/about/`, with English at `/about/en/`; the existing web client stays at `/`. Use the current dark green icon, warm neutral surfaces, green accents, system fonts and the supplied screenshots (identified as interface examples). Avoid fabricated usage metrics, testimonials, gradients and external tracking or fonts.
+- Landing-page hierarchy: product navigation, task-focused headline and install/docs actions, screenshot, a short terminal-to-phone workflow, capabilities with accurate Claude/Codex scope, OS-specific installation commands, and guide links. No authentication or host/token forms. No local/session storage access.
+- Responsive/accessibility: readable single-column phone layout, no horizontal page overflow, visible keyboard focus, semantic headings/navigation, meaningful image alternatives, selectable wrapped commands and copy feedback with a non-clipboard fallback. Copy controls must be keyboard operable; use no decorative motion.
+- Implementation: buildless HTML/CSS/JS, no new dependencies. A small Node build step stages the introduction and existing images under the Pages artifact's `about/` directory only. Preserve the existing client build, API behavior and release archives. Verify relative links, both languages, command content, keyboard/copy interactions, desktop/mobile screenshots and existing standalone build.
+- Assumption: add a companion introduction rather than replacing the client's established public URL. No open questions block the documentation work.
 
 ## Product goals
 - Switch Claude and Codex within the same projects with minimal repeated input.

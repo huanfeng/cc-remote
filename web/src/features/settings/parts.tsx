@@ -1,12 +1,12 @@
 // Shared settings building blocks: the dirty-state context the page uses for
 // its unsaved-change guard, section headers and the host glyphs.
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type ComponentType, type ReactNode } from 'react';
 import {
   Cloud, Code2, Database, FlaskConical, Gamepad2, Globe, Home, Laptop, Monitor, Package, Rocket, Server, Shield, Star, SquareTerminal, Zap,
-  type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/components/lib/utils';
 import { t } from '@/lib/i18n';
+import { iconURL } from '@/lib/hostIcon';
 
 /**
  * Sections report unsaved edits here; leaving the section or the page asks
@@ -41,7 +41,12 @@ export function GroupTitle({ children }: { children: ReactNode }) {
   return <h3 className="mb-2 mt-6 px-1 text-ui-sm font-medium text-foreground-subtle first:mt-0">{children}</h3>;
 }
 
-export const HOST_ICONS: Record<string, { icon: LucideIcon; label: () => string }> = {
+function LogoGlyph({ className }: { className?: string }) {
+  return <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className={className} />;
+}
+
+export const HOST_ICONS: Record<string, { icon: ComponentType<{ className?: string }>; label: () => string }> = {
+  logo: { icon: LogoGlyph, label: () => 'CC Remote' },
   laptop: { icon: Laptop, label: () => t('Laptop', '笔记本') },
   desktop: { icon: Monitor, label: () => t('Desktop', '台式机') },
   server: { icon: Server, label: () => t('Server', '服务器') },
@@ -62,7 +67,10 @@ export const HOST_ICONS: Record<string, { icon: LucideIcon; label: () => string 
 
 /** The host's glyph on its colour: a preset icon, or a few characters / an emoji. */
 export function HostGlyph({ icon, color, className }: { icon: string; color: string; className?: string }) {
-  const preset = HOST_ICONS[icon || 'code'];
+  if (!icon || icon === 'logo') {
+    return <img src={iconURL(color, 'logo')} alt="" className={cn('size-8 shrink-0 rounded-lg', className)} />;
+  }
+  const preset = HOST_ICONS[icon];
   // The host colour is user data, not a theme colour.
   return (
     <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg text-white', className)} style={{ background: color }}>

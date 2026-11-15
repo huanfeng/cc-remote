@@ -87,7 +87,7 @@ export function IconChoices({ value, onChange, color, auto, mobile }: { value: s
       <div role="radiogroup" aria-label={t('Icon', '图标')} className="flex flex-wrap gap-1.5">
         <button type="button" role="radio" aria-checked={!value} title={t("The host's own icon", '宿主自己的图标')} onClick={() => onChange('')}
           className={cn(item, 'w-auto gap-1.5 px-1.5 text-ui-xs text-foreground-subtle', !value ? 'border-foreground/50' : 'border-border/70 hover:bg-surface-hover')}>
-          <HostGlyph icon={auto || 'code'} color={color} className="size-5 rounded-md [&_svg]:size-3" />{t('Host', '宿主')}
+          <HostGlyph icon={auto || 'logo'} color={color} className="size-5 rounded-md [&_svg]:size-3" />{t('Host', '宿主')}
         </button>
         {Object.entries(HOST_ICONS).map(([key, { icon: Icon, label }]) => {
           const on = value === key;

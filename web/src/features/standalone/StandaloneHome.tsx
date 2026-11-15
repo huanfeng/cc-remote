@@ -53,7 +53,7 @@ export function StandaloneHome() {
       <AuthFrame wide>
         <div className="flex flex-col gap-5">
           <div className="pr-20">
-            <HostGlyph icon="code" color="#293c2e" className="size-11 rounded-xl [&_svg]:size-5" />
+            <HostGlyph icon="logo" color="#293c2e" className="size-11 rounded-xl [&_svg]:size-5" />
             <h1 className="mt-3 text-ui-xl font-semibold tracking-tight">CC Remote</h1>
             <p className="mt-1 text-ui-sm leading-5 text-foreground-subtle">
               {DESKTOP
@@ -93,7 +93,7 @@ export function StandaloneHome() {
       <div className="flex flex-col gap-5">
         <span className="text-ui-xs font-medium text-foreground-subtlest">CC Remote</span>
         <div className="flex items-center gap-3">
-          <HostGlyph icon={shownIcon(host) || 'code'} color={shownColor(host)} className="size-10 rounded-xl" />
+          <HostGlyph icon={shownIcon(host) || 'logo'} color={shownColor(host)} className="size-10 rounded-xl" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-ui-lg font-semibold">{shownName(host)}</div>
             <div className="truncate text-ui-sm text-foreground-subtlest">{shownAddress(host.entry || host.url, hidden)}</div>
@@ -129,7 +129,7 @@ export function StandaloneHome() {
             {others.map(x => (
               <button key={x.id} type="button" onClick={() => switchHost(x.id)}
                 className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-hover max-md:py-2.5">
-                <HostGlyph icon={shownIcon(x) || 'code'} color={shownColor(x)} className="size-6 rounded-md [&_svg]:size-3.5" />
+                <HostGlyph icon={shownIcon(x) || 'logo'} color={shownColor(x)} className="size-6 rounded-md [&_svg]:size-3.5" />
                 <span className="min-w-0 flex-1 truncate text-ui-base">{shownName(x)}</span>
                 <span className="max-w-[45%] truncate text-ui-xs text-foreground-subtlest">{shownAddress(x.entry || x.url, hidden)}</span>
               </button>

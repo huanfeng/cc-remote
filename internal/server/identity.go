@@ -84,9 +84,9 @@ func (s *Server) hostIcon(hex, icon string) string {
 		_ = json.Unmarshal(b, &presets)
 	}
 	glyph, ok := presets[icon]
-	if icon == "" || ok {
+	if icon == "" || icon == "logo" || ok {
 		if glyph == "" {
-			glyph = presets["code"]
+			glyph = presets["logo"]
 		}
 		if glyph == "" {
 			glyph = logoGlyph
@@ -100,7 +100,7 @@ func (s *Server) hostIcon(hex, icon string) string {
 
 const (
 	glyphColor = "#d6ebbc"
-	logoGlyph  = `<path d="M76 60 40 96l36 36M116 60l36 36-36 36"/>`
+	logoGlyph  = `<path d="M80 66C70 56 52 56 42 68C30 82 30 110 42 124C52 136 70 136 80 126M160 66C150 56 132 56 122 68C110 82 110 110 122 124C132 136 150 136 160 126"/>`
 )
 
 // iconFontSize fits a text icon: the more characters, the smaller. Variation

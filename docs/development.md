@@ -36,6 +36,8 @@ pnpm --dir web run dev
 
 前端的设计约定见 `web/CONVENTIONS.md`，第三方来源与许可见 `web/NOTICE.md`。
 
+应用图标的源文件、宿主预设和桌面格式生成方式见[图标与品牌资源](brand.md)。
+
 ## 测试
 
 ```sh

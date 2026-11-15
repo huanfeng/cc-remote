@@ -1,5 +1,5 @@
 // A host's icon as an image: its glyph on its colour, for the tab icon. The
-// glyph is a preset of public/host-icons.json (the logo, "code", by default) or
+// glyph is a preset of public/host-icons.json ("logo" by default) or
 // a few characters or an emoji drawn as text. internal/server/identity.go draws
 // the same SVG for the host's own page before it loads, from the same file.
 import presetsJson from '../../public/host-icons.json?raw';
@@ -29,7 +29,7 @@ const escape = (text: string) => text.replace(/[&<>"']/g, c => ESCAPES[c]);
 export function iconSvg(color: string, icon = ''): string {
   const fill = /^#[0-9a-f]{6}$/i.test(color) ? color : '#293c2e';
   const glyph = !icon || isPresetIcon(icon)
-    ? `<g fill="none" stroke="${GLYPH_COLOR}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">${GLYPHS[icon || 'code']}</g>`
+    ? `<g fill="none" stroke="${GLYPH_COLOR}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">${GLYPHS[icon || 'logo']}</g>`
     : `<text x="96" y="100" text-anchor="middle" dominant-baseline="central" font-family="system-ui,-apple-system,'Segoe UI',sans-serif" font-weight="700" font-size="${iconFontSize(icon)}" fill="${GLYPH_COLOR}">${escape(icon)}</text>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="44" fill="${fill}"/>${glyph}</svg>`;
 }

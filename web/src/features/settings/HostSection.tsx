@@ -149,7 +149,7 @@ function IconChoices({ value, color, onChange, mobile }: { value: string; color:
     <div className="flex flex-col gap-3">
       <div role="radiogroup" aria-label={t('Icon', '图标')} className="flex flex-wrap gap-1.5">
         {Object.entries(HOST_ICONS).map(([key, { icon: Icon, label }]) => {
-          const on = (value || 'laptop') === key;
+          const on = (value || 'logo') === key;
           return (
             <button key={key} type="button" role="radio" aria-checked={on} aria-label={label()} title={label()} onClick={() => onChange(key)}
               className={cn('flex size-9 items-center justify-center rounded-lg border transition-colors max-md:size-10', on ? 'border-transparent text-white' : 'border-border/70 text-foreground-subtle hover:bg-surface-hover hover:text-foreground')}

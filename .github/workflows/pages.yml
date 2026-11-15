@@ -34,6 +34,10 @@ jobs:
         env:
           # The version the page shows: the tag, or (another ref) the commit git describes.
           CC_REMOTE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      - name: Test and add bilingual project introduction at /about/
+        run: |
+          node --test scripts/tests/site.test.mjs
+          node scripts/build-site.mjs
       - uses: actions/upload-pages-artifact@v5
         with:
           path: web/dist-standalone

@@ -62,7 +62,7 @@ func TestHostIcon(t *testing.T) {
 	s.cfg.Assets = fstest.MapFS{
 		"index.html":           {Data: []byte(`<!doctype html><html lang="zh-CN"><head><link rel="icon" href="/icon.svg"/><title>CC Remote</title></head></html>`)},
 		"manifest.webmanifest": {Data: []byte(`{"name":"CC Remote","icons":[{"src":"/icon.svg"}]}`)},
-		"host-icons.json":      {Data: []byte(`{"code":"<path d=\"logo\"/>","server":"<rect id=\"server\"/>"}`)},
+		"host-icons.json":      {Data: []byte(`{"logo":"<path d=\"logo\"/>","code":"<path d=\"code\"/>","server":"<rect id=\"server\"/>"}`)},
 	}
 	get := func(path string) string {
 		resp, err := http.Get(ts.URL + path)
@@ -77,6 +77,8 @@ func TestHostIcon(t *testing.T) {
 		t.Fatalf("default icon %s", icon)
 	}
 	for _, c := range []struct{ icon, page, svg string }{
+		{"logo", `href="/host-icon.svg?c=0f5e5c&amp;i=logo"`, `<path d="logo"/>`},
+		{"code", `href="/host-icon.svg?c=0f5e5c&amp;i=code"`, `<path d="code"/>`},
 		{"server", `href="/host-icon.svg?c=0f5e5c&amp;i=server"`, `<rect id="server"/>`},
 		{"<P1>", `data-host-icon="&lt;P1&gt;"`, `font-size="50" fill="#d6ebbc">&lt;P1&gt;</text>`},
 		{"👩‍💻", `data-host-icon="👩‍💻"`, `font-size="112"`},
@@ -97,5 +99,18 @@ func TestHostIcon(t *testing.T) {
 	_, b := request(t, ts, "GET", "/api/info", nil, testToken)
 	if !strings.Contains(string(b), `"icon":"👩‍💻"`) {
 		t.Fatalf("info %s", b)
+	}
+}
+
+// Minimal/older frontend assets still get a brand icon; selecting a named
+// preset remains distinct from using the default logo.
+func TestHostLogoWithoutPresets(t *testing.T) {
+	s, _, _ := setup(t, nil)
+	s.cfg.Assets = fstest.MapFS{}
+	for _, icon := range []string{"", "logo"} {
+		svg := s.hostIcon("#0f5e5c", icon)
+		if !strings.Contains(svg, logoGlyph) || strings.Contains(svg, "<text") {
+			t.Fatalf("%q did not fall back to the brand: %s", icon, svg)
+		}
 	}
 }

@@ -29,6 +29,10 @@
 cc-remote service config --allow-origin https://huanfeng.github.io
 ```
 
+项目介绍与安装指引位于 <https://huanfeng.github.io/cc-remote/about/>，英文版为 `/about/en/`。宣传页不读取宿主列表或令牌；根路径继续提供网页客户端，已有连接与浏览器存储不迁移。
+
+Pages 构建在独立前端完成后运行 `node scripts/build-site.mjs`，只向构建产物添加 `about/`。本地预览也可运行此命令；不修改宿主内嵌网页、客户端前端或独立网页 Release ZIP。
+
 需要了解的两点：
 
 - **同源范围**：`huanfeng.github.io` 下的所有页面（该账号其它仓库的 Pages）与本前端同源，理论上可以读取它的本地存储，也就能读到保存的令牌；宿主允许这个来源后，这些页面也能调用宿主 API。介意的话请部署到自己的域名。

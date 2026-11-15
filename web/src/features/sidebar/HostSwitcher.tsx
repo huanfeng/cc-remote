@@ -39,7 +39,7 @@ export function HostSwitcher() {
 
   const identity = (
     <>
-      <HostGlyph icon={id.icon || 'code'} color={id.color} className="size-6 rounded-md [&_svg]:size-3.5 [&_span]:text-ui-xs" />
+      <HostGlyph icon={id.icon || 'logo'} color={id.color} className="size-6 rounded-md [&_svg]:size-3.5 [&_span]:text-ui-xs" />
       <span className="min-w-0">
         <span className="block truncate text-ui-base font-medium leading-tight">{id.name}</span>
         <span className="block truncate text-ui-xs leading-tight text-foreground-subtlest" title={onLan ? t('On the home network', '走内网') : undefined}>{meta}</span>
@@ -119,7 +119,7 @@ function HostMenu({ identity }: { identity: ReactNode }) {
                 {/* The mock's demo hosts have no page to open: a link only for saved ones. */}
                 <a href={demo ? '#' : hostLink(h.id)} onClick={e => (demo ? (e.preventDefault(), pick(e, h)) : pick(e, h))}
                   aria-current={h.id === currentId || undefined} className={cn(row, 'min-w-0 flex-1 py-1.5 max-md:py-2.5')}>
-                  <HostGlyph icon={h.icon || 'code'} color={h.color} className="size-6 rounded-md [&_svg]:size-3.5 [&_span]:text-ui-xs" />
+                  <HostGlyph icon={h.icon || 'logo'} color={h.color} className="size-6 rounded-md [&_svg]:size-3.5 [&_span]:text-ui-xs" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{h.name}</span>
                     <span className="block truncate text-ui-xs text-foreground-subtlest" title={details(h)}>{address(h)}</span>

@@ -1,242 +1,166 @@
-简体中文 | [English](README.en.md)
+<p align="center"><img src="web/public/icon.svg" alt="CC Remote" width="72" height="72"></p>
 
-# CC Remote
+<h1 align="center">CC Remote</h1>
 
-在手机、浏览器或桌面客户端上使用本机的 Claude Code 和 Codex，用轻量原生托盘查看订阅额度。Claude Code 支持终端与网页接力，Codex 支持托管会话。
+<p align="center"><strong>离开电脑，继续你的 AI 编程会话。</strong></p>
 
-[![CI](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg)](https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/huanfeng/cc-remote?include_prereleases)](https://github.com/huanfeng/cc-remote/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">在自己的电脑上运行 Claude Code 和 Codex，在终端、浏览器、手机与 Windows 客户端中管理任务。</p>
 
 <p align="center">
-  <img src="docs/images/desktop.png" alt="CC Remote 桌面端界面" width="74%">
-  &nbsp;
-  <img src="docs/images/mobile.png" alt="CC Remote 手机端界面" width="22%">
+  <a href="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml"><img src="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/huanfeng/cc-remote/releases"><img src="https://img.shields.io/github/v/release/huanfeng/cc-remote" alt="最新正式版"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
 </p>
 
-CC Remote 的后台是一个运行在你电脑上的小型宿主程序（单个可执行文件），调用本机已登录的 Claude Code CLI 或 Codex app-server，提供可在手机上使用的 Web 界面（PWA）。Windows x64 还提供内置系统托盘的 Tauri 桌面客户端；会话、账号和历史由后台统一管理。
+<p align="center">
+  简体中文 · <a href="README.en.md">English</a><br>
+  <a href="#快速开始">快速开始</a> · <a href="docs/getting-started.md">首次使用指南</a> · <a href="https://huanfeng.github.io/cc-remote/about/">项目主页</a> · <a href="https://huanfeng.github.io/cc-remote/">打开网页客户端</a> · <a href="https://github.com/huanfeng/cc-remote/releases/latest">下载</a>
+</p>
 
-## 功能特性
+<p align="center">
+  <img src="docs/images/desktop.png" alt="桌面端界面示例：会话、工具结果与待回答问题" width="74%">
+  &nbsp;
+  <img src="docs/images/mobile.png" alt="手机端界面示例：查看任务并继续对话" width="22%">
+</p>
+<p align="center"><sub>界面示例；实际样式以当前版本为准。</sub></p>
 
-- **供应商配置选择与切换**：直接只读读取 CC-Switch 数据，支持 `ccr` 和 Web 在新建、恢复会话时选择供应商，以及会话内确认中断后切换并恢复上下文。见 [供应商配置说明](docs/supplier-profiles.md)。
-- **Codex 托管会话**：新建时选择 Codex，支持流式回复、工具过程、网页审批与提问、排队、停止、恢复线程和原生历史导入；模型、推理强度与沙箱默认设置独立保存。见 [Codex 使用说明](docs/codex.md)。
-- **桌面客户端**：Tauri 原生窗口支持多宿主连接、本机服务管理和订阅历史；Windows x64 可一键安装与更新后台和内置托盘的客户端。见 [桌面应用](docs/desktop.md)。
-- **终端与网页接力**：在项目里运行 `ccr`，宿主持有一个交互式 Claude Code，本地终端接入使用；按 `Ctrl+]` 离开后它继续运行，网页和手机可以接着发消息，再运行 `ccr` 就接回来。子 agent 等长任务不会因为切换而中断。网页也可以切换到终端视图，直接操作完整的 Claude Code 界面，手机上有专门的输入框和按键行。
-- **网页托管会话**：直接在网页新建会话、指定项目目录，多个会话并行执行，关掉浏览器任务也不会停。
-- **审批、提问、计划都能在网页回答**：工具权限审批、AskUserQuestion 选项、计划确认以卡片呈现；终端会话中网页和终端谁先答谁生效。
-- **按会话设置模型与权限模式**：支持全部权限模式（含 `bypassPermissions`，需二次确认）和推理强度，不改动你的 `~/.claude/settings.json`。
-- **附件**：粘贴、拖放或选择文件发送给 Claude，图片带缩略图预览。
-- **查看宿主上的文件**：消息和工具卡片里提到的文件路径可以直接点开；Markdown 渲染查看（相对链接、图片可用），代码按语言高亮并显示行号，图片直接预览。
-- **后台服务、开机自启**：一条命令注册为当前用户的系统服务（Windows 计划任务 / systemd / launchd），附带 `ccr` 快捷命令。
-- **状态与用量统计**：服务状态面板显示运行情况、费用、tokens、近 14 天趋势和日志。
-- **订阅监控与原生托盘**：后台每 10 / 30 分钟采样多个官方登录与 Claude OAuth 授权，按账号保留额度历史；[桌面托盘](docs/desktop.md)常驻模式与 Windows 原生悬停不加载 WebView，悬停显示 wind-ui-rust 原生用量面板，点击打开主窗口时才按需创建 WebView。见[订阅监控](docs/subscription-monitor.md)。
-- **为手机设计**：响应式布局、抽屉式会话列表，可安装为 PWA。
-- **多台宿主**：每台宿主自带网页；也可以用一个独立网页前端添加、切换多台宿主——直接用公共实例 <https://huanfeng.github.io/cc-remote/>，或部署到 Vercel、Cloudflare Pages；端口会变化的内网穿透可通过文本地址接入（见[独立网页前端](docs/standalone.md)）。
-- **刷新不丢状态**：当前会话、未发送的草稿和附件、未提交的回答在刷新后自动恢复。
+## 把任务带走，把执行留在自己的电脑上
+
+在项目里运行 `ccr` 开始 Claude Code 会话，离开时按 `Ctrl+]` 断开。任务继续在宿主上运行；从手机查看进度、回答审批或继续发消息，回到电脑后再用 `ccr` 接回来。
+
+也可以直接在网页或客户端新建 Claude Code / Codex 托管会话：选择项目、发送任务、并行处理多个会话。关闭浏览器不会停止后台任务。
+
+- **离开工位也能接着做**：查看回复、工具过程和文件，回答审批、提问与计划确认；手机可安装为 PWA。
+- **一个界面管理多个项目和宿主**：按项目浏览会话，优先查看进行中的任务，在多台电脑之间切换。
+- **保留熟悉的工作方式**：Claude Code 支持原生终端与网页接力；Codex 支持托管会话和本机历史导入。
+- **账号与额度一起看**：读取 CC-Switch 供应商配置，选择或切换 Claude 供应商；多个订阅账号的额度、重置时间和采样历史集中展示。
+- **Windows 托盘随手查看**：悬停查看原生用量面板，点击打开客户端；无需打开主窗口即可查看多个账号的额度。
+
+后台是一个自托管的可执行程序，会话在你的宿主电脑上执行。使用哪个模型、账号与权限，由本机 CLI 配置和会话设置决定；模型请求仍会发往相应提供方。
+
+## 先选适合你的入口
+
+| 你想做什么 | 使用方式 |
+| --- | --- |
+| Windows 客户端和用量托盘 | 下方 **Windows 完整安装**，支持 x64 |
+| Linux / macOS 或 Windows ARM64 宿主 | 安装后台，使用它自带的网页 |
+| 在手机上接着处理任务 | 先安装宿主，再按[手机连接指南](docs/getting-started.md#用手机或另一台电脑连接)配置网络 |
+| 用同一个网页连接多台宿主 | [打开公共网页客户端](https://huanfeng.github.io/cc-remote/)，先阅读[连接要求](docs/standalone.md) |
+
+> 网页客户端需要连接你自己的、正在运行的宿主；公共页面不提供云端计算或预置账号。默认监听地址只允许本机访问。
 
 ## 快速开始
 
-**前提**：按需安装并登录 [Claude Code](https://code.claude.com/docs)（`claude auth login`）或 [Codex CLI](https://developers.openai.com/codex/cli)（`codex login`）。后台支持 Windows、Linux 和 macOS；原生客户端与托盘目前发布 Windows x64 包。
+### 1. 准备本机 CLI
 
-### 1. 安装
+在**运行宿主的同一个系统账户**下，按需安装并登录 [Claude Code](https://code.claude.com/docs) 或 [Codex CLI](https://developers.openai.com/codex/cli)。只使用其中一个时，安装对应 CLI 即可。
 
-Windows x64 完整安装（PowerShell 5.1 / 7，推荐）：
+```sh
+claude auth login  # 使用 Claude Code
+codex login        # 使用 Codex
+```
+
+### 2. 安装 CC Remote
+
+**Windows x64：后台 + 桌面客户端 + 内置托盘**（PowerShell 5.1 / 7）：
 
 ```powershell
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
 ```
 
-一次安装后台服务和内置托盘的 Tauri 客户端，创建开始菜单快捷方式。安装后以 `--tray` 模式启动客户端，不创建 WebView；悬停显示原生用量面板，点击托盘才打开客户端 WebView。**以后重复执行同一命令即可一起更新**，保留已有配置、账号与历史。已打开的客户端从托盘菜单退出后重新打开即可使用新版。
-
-需要托盘在登录 Windows 时自启：
-
-```powershell
-& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1))) -AutoStart
-```
-
-仅安装后台（Windows x64 / ARM64）：
-
-```powershell
-irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 | iex
-```
-
-仅安装后台（Linux / macOS）：
+**Linux / macOS：后台 + 网页界面**：
 
 ```sh
 curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh
 ```
 
-以上入口都会下载最新正式版、校验 SHA256、注册并启动后台服务，同时创建 `ccr` 命令。后台专用入口重复执行只更新后台；`ccr update` 也只更新后台。客户端和托盘请重复执行完整安装入口。
-
-需要传参数时（例如允许局域网访问）：
-
-```powershell
-& ([scriptblock]::Create((irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1))) -Listen lan:8787
-```
-
-```sh
-curl -fsSL https://github.com/huanfeng/cc-remote/releases/latest/download/install.sh | sh -s -- --listen lan:8787
-```
-
-其它参数：`-Version` / `--version`、`-Lang` / `--lang`、`-NoService` / `--no-service`、`-NoAlias` / `--no-alias`、`-DryRun` / `--dry-run`。完整安装入口另有 `-NoLaunch`（不启动或重启托盘）；`-AutoStart` 为可选项，更新会保留已有自启设置。详见 [发布与安装](docs/release.md)。
-
-界面语言：命令行输出和网页默认跟随系统语言（中文或英文）。安装时可用 `-Lang zh` / `--lang en`（或环境变量 `CC_REMOTE_LANG`）指定，之后用 `cc-remote service config --lang zh|en|auto` 修改；网页还可以在设置里为当前浏览器单独选择语言。详见 [docs/configuration.md](docs/configuration.md#界面语言)。
-
-### 2. 打开客户端或网页
-
-完整安装后可从开始菜单打开 **CC Remote**，在「本机服务」里一键连接；从托盘打开「详细历史」也会启动客户端并连接本机后台。远程宿主仍需填写其地址和访问令牌。
-
-浏览器打开 <http://127.0.0.1:8787>，输入访问令牌。令牌在首次启动时生成，保存在数据目录的 `access-token` 文件中：
+<details>
+<summary>Windows 仅安装后台（x64 / ARM64）</summary>
 
 ```powershell
-# Windows
-Get-Content "$env:APPDATA\cc-remote\access-token"
+irm https://github.com/huanfeng/cc-remote/releases/latest/download/install.ps1 | iex
 ```
 
-```sh
-# Linux
-cat "${XDG_CONFIG_HOME:-$HOME/.config}/cc-remote/access-token"
-# macOS
-cat "$HOME/Library/Application Support/cc-remote/access-token"
-```
+</details>
 
-### 3. 在项目里运行 `ccr`（Claude Code）
+安装脚本下载最新正式版、校验 SHA256、注册并启动当前用户的后台服务，同时创建 `ccr` 命令。安装后找不到 `ccr` 时，新开一个终端即可。
+
+### 3. 开始第一个任务
+
+**Windows 客户端**：点击托盘图标或从开始菜单打开 **CC Remote**，在「本机服务」中连接。
+
+**浏览器**：打开 <http://127.0.0.1:8787>，按[首次使用指南](docs/getting-started.md#浏览器连接与访问令牌)读取本机访问令牌并连接。然后点「新建」，选择 Claude Code 或 Codex，以及**宿主上已有的项目目录**。
+
+**Claude Code 终端接力**：在项目目录运行：
 
 ```sh
 cd your-project
 ccr
+# Ctrl+] 断开，任务继续运行；再次运行 ccr 接回。
 ```
 
-终端里打开的是原生 Claude Code 界面，同时会话出现在网页列表中。按 `Ctrl+]` 断开，Claude Code 继续在宿主上运行。（安装后若找不到 `ccr`，请新开一个终端。）
+本机跑通后，再连接手机：[局域网访问、远程访问与连接排查](docs/getting-started.md#用手机或另一台电脑连接)。
 
-## 使用
+## 支持范围
 
-### 终端会话（ccr）
+| 能力 | Claude Code | Codex |
+| --- | --- | --- |
+| 网页 / 桌面客户端新建托管会话 | 支持 | 支持 |
+| 流式回复、工具过程、审批与提问 | 支持 | 支持 |
+| 读取本机历史并导入继续 | 支持 | 支持 |
+| `ccr` 终端与网页接力、网页终端视图 | 支持 | 暂不支持 |
+| 官方订阅额度 | 支持的官方登录 / OAuth 账号 | 本机官方登录账号 |
 
-`ccr` 和 `cc-remote` 完全等价，文档统一使用短名称。两者无参数均进入当前项目的会话选择；查看帮助使用 `ccr --help`，前台运行后台使用 `ccr serve`。
+后台支持 **Windows、Linux、macOS**；原生客户端发布包和图形化悬停托盘目前提供 **Windows x64**。订阅额度由提供方实际返回，API Key / 第三方配置不保证有订阅读数。更多边界见 [Codex](docs/codex.md)、[订阅监控](docs/subscription-monitor.md)和[已知限制](docs/architecture.md#已知限制)。
+
+## 日常只需几个命令
+
+`ccr` 和 `cc-remote` 是同一个入口，以下用短名称：
 
 ```sh
-ccr                      # 选择当前目录的终端会话接入（回车 = 最近一个没有终端接入的），没有就新建
-ccr ls                   # 列出最近的终端会话，选择一个接入
-ccr <ID前缀或标题>        # 接入指定会话
-ccr --new --model sonnet # 在当前目录新建（可选 --title、--effort、--permission-mode）
-ccr --resume <会话ID>    # 以终端会话继续 Claude Code 会话（不带 ID 则从当前目录的会话中选择）
-ccr -c                   # 继续当前目录最近的 Claude Code 会话
+ccr                    # 选择当前项目会话，没有则新建
+ccr ls                 # 浏览并接入最近的终端会话
+ccr --resume <会话ID>  # 恢复 Claude Code 会话
+ccr -c                 # 继续当前目录最近的 Claude Code 会话
+ccr status             # 查看后台状态
+ccr logs -f            # 查看后台日志
+ccr update             # 仅更新命令行与后台
 ```
 
-Claude Code 退出时提示的 `claude --resume <会话ID>`，把 `claude` 换成 `ccr` 就会在宿主上继续这个会话。
+列表支持上下键、编号加回车、`/` 筛选、`r` 刷新和 `q` / Esc 退出。完整用法见[使用说明](docs/usage.md)。
 
-终端和网页使用同一个 Claude Code 进程和上下文；断开终端或关闭网页都不会停止它。`Ctrl+L` 让终端整屏重画。可以用 `ccr attach`（缩写 `ccr a`）明确接入，也可以用 `ccr --host URL <会话>` 指定宿主。
+**更新客户端和托盘**：重新执行 Windows 完整安装命令；保留配置、账号与历史。运行中的客户端从托盘菜单退出并重新打开后使用新版。
 
-`ccr` 也接受 Claude Code 的参数：`ccr --add-dir ../lib --model sonnet` 带这些参数新建终端会话。直接运行原生 Claude 使用 `ccr claude -- [参数]`，例如 `ccr claude -- --resume ID`。旧的共享终端（Claude Code 在当前终端里运行、网页经 Channels 接入）已移除，原有的共享会话自动转为终端会话，下次使用时恢复上下文。
+## 按你的下一步找文档
 
-会话选择器显示状态、模型、供应商、项目和接入数，支持方向键、编号、筛选、刷新及 `q` / Esc 退出（筛选中 `q` 作为文本输入）。供应商列表每项最多两行，附带可用的缓存额度、重置倒计时与采集时间；没有订阅额度时仍可正常选择。若会话标题恰好叫 `status` 等子命令名称，用 `ccr session status` 查询。
-
-### 后台管理
-
-```sh
-ccr status               # 查看服务和宿主状态
-ccr start                # 启动服务（另有 stop / restart）
-ccr logs -f              # 跟随后台日志
-ccr config               # 查看配置；带参数修改
-ccr service install      # 注册并启动服务（另有 uninstall）
-ccr profile ls           # 供应商配置
-ccr oauth ls             # OAuth 配置
-ccr update               # 更新后台
-ccr serve --listen 127.0.0.1:8787  # 在前台运行宿主
-```
-
-两个名称共用配置与退出码，已有服务、数据目录和 `CC_REMOTE_*` 环境变量继续使用；旧式 `cc-remote --listen ...` 调用仍兼容。完整用法见 [命令行说明](docs/cli-design.md)。
-
-### 托管会话
-
-在网页或客户端点「新建」，选择 Claude Code 或 Codex，填写名称和宿主上已存在的项目目录即可。执行中可以继续发消息排队，也可停止当前一轮。「终端历史」可浏览并导入对应供应商的本机历史；Codex 的模型、推理强度和沙箱设置独立保存。
-
-更多：网页命令（`/model`、`/effort`、`/status` 等）、附件、查看文件、设置对话框、刷新恢复，见 [docs/usage.md](docs/usage.md)。
-
-### 连接与网络
-
-CC Remote 只在宿主上提供一个 **HTTP 服务**（默认 `127.0.0.1:8787`），浏览器能连到这个地址就能用。它**不处理** HTTPS 证书、内网穿透、域名、端口映射这类网络问题——这些属于你自己的网络环境，按需搭配现成工具即可。
-
-| 场景 | 做法 |
+| 我想…… | 阅读 |
 | --- | --- |
-| 本机 | 默认即可，打开 <http://127.0.0.1:8787> |
-| 同一局域网（手机、另一台电脑） | 监听局域网地址（见下），访问 `http://<电脑的局域网 IP>:8787` |
-| 外网 / 不在同一网络 | 自行选择：VPN 类组网（Tailscale、ZeroTier、WireGuard 等）、隧道（Cloudflare Tunnel、frp 等）或 HTTPS 反向代理（Caddy、nginx 等） |
-
-让局域网设备访问：
-
-```sh
-cc-remote service config --listen 127.0.0.1:8787,lan:8787
-```
-
-> 访问令牌等同于在你电脑上执行代码的权限，且局域网访问是明文 HTTP。只在可信网络中使用，或放在 HTTPS 反向代理 / 隧道之后，并在代理层加一道认证。详见 [docs/security.md](docs/security.md)。
-
-连不上时，按从近到远的顺序排查：
-
-1. **本机**：宿主上打开 `http://127.0.0.1:8787`。打不开说明服务没起来，看 `cc-remote service status` 和 `cc-remote service logs`。
-2. **局域网**：确认已按上面配置 `lan:8787`，用的是宿主当前的局域网 IP（DHCP 换 IP 后需重启服务），系统防火墙放行了该端口，两台设备在同一网段（访客 Wi-Fi、路由器的「AP 隔离」会阻止设备互访）。
-3. **外网**：先确认局域网能通，再排查你的隧道 / 代理 / VPN。经反向代理访问提示「不允许跨站访问」时，代理需要保留原始 `Host` 或传 `X-Forwarded-Host`，配置示例见 [docs/security.md](docs/security.md#反向代理)。
-
-前两步之外的网络搭建不在本项目的支持范围内，相关问题请参考所用工具的文档。
-
-### 服务管理
-
-| 命令 | 作用 |
-| --- | --- |
-| `cc-remote service install` | 安装并启动服务（重复执行即重装） |
-| `cc-remote service status` | 查看运行状态 |
-| `cc-remote service logs -f` | 查看 / 跟踪日志 |
-| `cc-remote service restart` | 重启（另有 `start` / `stop`） |
-| `cc-remote service config` | 查看或修改监听地址、允许的网页前端、环境变量等（监听地址和网页前端无需重启；其它设置等会话空闲后自动重启，`--force` 立即重启） |
-| `cc-remote service uninstall` | 卸载服务（保留数据） |
-| `cc-remote update` | 更新后台，会话空闲后自动重启（`--check` 只检查，`--force` 立即重启）；客户端与托盘重复执行完整安装入口更新 |
-
-## 配置与文档
-
-| 文档 | 内容 |
-| --- | --- |
-| [docs/usage.md](docs/usage.md) | 详细使用说明 |
-| [docs/desktop.md](docs/desktop.md) | Tauri 桌面客户端与本机服务 |
-| [docs/subscription-monitor.md](docs/subscription-monitor.md) | 多账号订阅监控、采样历史与账号连续性 |
-| [docs/codex.md](docs/codex.md) | Codex 托管会话与原生历史导入 |
-| [docs/supplier-profiles.md](docs/supplier-profiles.md) | CC-Switch 配置读取、供应商选择与切换 |
-| [docs/configuration.md](docs/configuration.md) | 命令行参数、数据目录、环境变量、监听地址、服务环境、权限与模型偏好 |
-| [docs/standalone.md](docs/standalone.md) | 独立网页前端：部署（GitHub Pages / Vercel / Cloudflare）、HTTPS、内网穿透入口 |
-| [docs/security.md](docs/security.md) | 安全模型与建议 |
-| [docs/architecture.md](docs/architecture.md) | 工作原理与已知限制 |
-| [docs/release.md](docs/release.md) | 安装脚本参数、更新、卸载、发版与故障排查 |
-| [docs/development.md](docs/development.md) | 从源码构建、测试与 CI |
+| 从安装到完成第一个任务 | [首次使用指南](docs/getting-started.md) |
+| 用手机连接、找到令牌、排查连不上 | [连接与排查](docs/getting-started.md#用手机或另一台电脑连接) |
+| 学会会话、审批、附件与文件查看 | [使用说明](docs/usage.md) |
+| 使用 Codex 或继续原生历史 | [Codex 指南](docs/codex.md) |
+| 选择 / 切换 CC-Switch 供应商 | [供应商配置](docs/supplier-profiles.md) |
+| 查看多账号额度和历史 | [订阅监控](docs/subscription-monitor.md) |
+| 使用桌面客户端、托盘与本机路径菜单 | [桌面应用](docs/desktop.md) |
+| 配置代理、模型、服务环境或监听地址 | [配置说明](docs/configuration.md) |
+| 部署独立网页、配置 HTTPS 或反向代理 | [独立网页](docs/standalone.md) · [安全说明](docs/security.md) |
+| 手动下载、更新或卸载 | [发布与安装](docs/release.md) |
+| 从源码构建、开发或贡献 | [开发指南](docs/development.md) · [架构](docs/architecture.md) |
 
 ## 常见问题
 
-**服务里的会话报 `API Error: 403 Request not allowed`，但终端里直接运行 `claude` 正常？**
-后台服务不加载 shell 配置，你在 `$PROFILE` / `~/.bashrc` 里设置的代理不会生效。在已设好代理的终端执行 `cc-remote service config --capture-env`，或用 `--env HTTPS_PROXY=...` 显式设置。
+**手机能直接打开本机的 `127.0.0.1:8787` 吗？** 不能，手机上的 `127.0.0.1` 指向手机自己。请使用宿主电脑的局域网地址或配置好的远程地址，见[连接指南](docs/getting-started.md#用手机或另一台电脑连接)。
 
-**令牌在哪里？忘了怎么办？**
-在数据目录的 `access-token` 文件里（路径见上文「快速开始」）。删除该文件并重启服务会生成新令牌。
+**关掉浏览器或断开终端，任务还在吗？** 只要宿主及其会话进程仍在运行，任务就会继续。`Ctrl+]` 是断开终端；停止任务请在会话中使用停止操作。
 
-**Windows 上服务看不到我的数据 / `ccr` 连不上？**
-如果你在 MSIX 打包的应用（部分桌面 AI 客户端）内置终端里运行过 cc-remote，`%APPDATA%` 会被虚拟化到该应用的私有目录。请在普通 PowerShell / cmd 中运行 `ccr` 和 `cc-remote`。
+**终端能用，服务里却报错？** 后台服务不加载 shell 配置，CLI 路径、账号与代理环境可能不同。按[连接与环境排查](docs/getting-started.md#遇到问题时)检查。
 
-**终端会话里网页没有出现提问 / 计划卡片？**
-该功能依赖 Claude Code 的 Hook。设置了 `disableAllHooks` 或组织策略只允许托管 Hook 时，提问和计划确认只能在终端作答。
+> 访问令牌拥有在宿主上执行代码的权限。默认仅监听本机；局域网 HTTP 是明文连接，远程访问请配置可信网络或 HTTPS，并妥善保管令牌。见[安全说明](docs/security.md)。
 
-## 从源码构建
+## 参与项目
 
-需要 Go 1.26+、Node.js 22 和 pnpm（`corepack enable`）：
+使用中遇到问题，请在 [Issues](https://github.com/huanfeng/cc-remote/issues) 提供版本、系统、复现步骤和去除敏感信息的日志；功能建议和改进也欢迎提交。开发前请阅读[开发指南](docs/development.md)。
 
-```sh
-cd web
-corepack enable
-pnpm install --frozen-lockfile
-pnpm run build
-cd ..
-go build -o cc-remote ./cmd/cc-remote
-```
+如果 CC Remote 帮你把任务从工位带到了手机上，欢迎分享项目地址，或点一个 Star，让更多使用 Claude Code / Codex 的人找到它。
 
-测试、开发服务器和 CI 说明见 [docs/development.md](docs/development.md)。
-
-## 许可证
-
-[MIT](LICENSE)
+[MIT License](LICENSE)
