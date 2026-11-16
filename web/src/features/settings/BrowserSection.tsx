@@ -11,6 +11,8 @@ import { notifySupported } from '@/domain/notify';
 import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { SimpleSelect } from '@/features/dialogs/common';
 import { GroupTitle, SectionHeader } from './parts';
+import { DesktopUpdateSettings } from './DesktopUpdate';
+import { DESKTOP } from '@/platform/desktop';
 
 export function BrowserSection({ mobile }: { mobile: boolean }) {
   const set = usePrefs(s => s.set);
@@ -20,7 +22,8 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
   const [language] = useState(langOverride());
   return (
     <div>
-      {!mobile && <SectionHeader title={t('This browser', '本浏览器')} description={t('Stored in this browser only.', '只保存在此浏览器中。')} />}
+      {!mobile && <SectionHeader title={DESKTOP ? t('This app', '本应用') : t('This browser', '本浏览器')} description={t('Preferences are stored locally.', '偏好设置保存在本地。')} />}
+      <DesktopUpdateSettings />
 
       <GroupTitle>{t('Appearance', '外观')}</GroupTitle>
       <GroupCard>

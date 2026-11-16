@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$StageDir,
-    [Parameter(Mandatory = $true)][string]$OutputDir
+    [Parameter(Mandatory = $true)][string]$OutputDir,
+    [switch]$UpdaterEnabled
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -29,6 +30,9 @@ For installation and future updates of the backend and desktop app, run in Power
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
 This creates Start Menu shortcuts and starts the desktop app in tray mode. Add
 -AutoStart using the parameter syntax documented in desktop.md for sign-in startup.
+Signed releases also check for desktop updates automatically. Use Settings > This app
+or the tray's update menu to download and install. The local backend updates separately.
+Updating a manually extracted client through the app registers an NSIS installation.
 
 To use this extracted archive manually:
 1. Run cc-remote.exe service install to install or update the local backend.
@@ -41,5 +45,10 @@ The desktop client requires WebView2. Manual archive use does not register tray 
 '@ | Set-Content -LiteralPath (Join-Path $portableDir 'START-HERE.txt') -Encoding utf8
 
 Copy-Item -LiteralPath $installers[0].FullName -Destination (Join-Path $OutputDir "cc-remote-desktop_${Version}_windows_amd64-setup.exe")
+if ($UpdaterEnabled) {
+    $signature = "$($installers[0].FullName).sig"
+    if (-not (Test-Path -LiteralPath $signature)) { throw 'Missing signed desktop updater artifact' }
+    Copy-Item -LiteralPath $signature -Destination (Join-Path $OutputDir "cc-remote-desktop_${Version}_windows_amd64-setup.exe.sig")
+}
 Compress-Archive -Path (Join-Path $portableDir '*') -DestinationPath (Join-Path $OutputDir "cc-remote-desktop_${Version}_windows_amd64.zip") -CompressionLevel Optimal
 Get-ChildItem -LiteralPath $OutputDir

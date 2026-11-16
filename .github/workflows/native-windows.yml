@@ -10,6 +10,15 @@ on:
         required: false
         type: string
         default: native-windows-amd64
+      updater-enabled:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -57,6 +66,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/native-version.mjs $env:VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Configure signed desktop updates
+        if: inputs.updater-enabled
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) { throw 'Set the TAURI_SIGNING_PRIVATE_KEY repository secret before releasing' }
+          node scripts/desktop-updater.mjs config desktop/src-tauri/updater.release.json $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build frontend for native tests and backend
         working-directory: web
         run: |
@@ -76,11 +94,23 @@ jobs:
         run: go build -trimpath -ldflags "-s -w -X main.version=$env:VERSION" -o dist/native/cc-remote.exe ./cmd/cc-remote
       - name: Build Tauri installer
         working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         # Invoke the CLI directly so PowerShell's pnpm.ps1 shim cannot consume
         # the -- separator intended for Cargo.
-        run: node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis -- --locked
+        run: |
+          $configArgs = @()
+          if ('${{ inputs.updater-enabled }}' -eq 'true') { $configArgs = @('--config', 'src-tauri/updater.release.json') }
+          node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis @configArgs -- --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package installer and portable archives
-        run: ./scripts/package-native.ps1 -Version $env:VERSION -StageDir "$env:RUNNER_TEMP/native-stage" -OutputDir "$env:GITHUB_WORKSPACE/out-native"
+        run: ./scripts/package-native.ps1 -Version $env:VERSION -StageDir "$env:RUNNER_TEMP/native-stage" -OutputDir "$env:GITHUB_WORKSPACE/out-native" -UpdaterEnabled:('${{ inputs.updater-enabled }}' -eq 'true')
+      - name: Generate desktop updater manifest
+        if: inputs.updater-enabled
+        run: |
+          node scripts/desktop-updater.mjs manifest out-native/latest.json $env:GITHUB_REPOSITORY $env:VERSION "out-native/cc-remote-desktop_$($env:VERSION)_windows_amd64-setup.exe.sig"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name }}

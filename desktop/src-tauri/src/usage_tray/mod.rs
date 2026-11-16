@@ -166,6 +166,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &tauri::menu::MenuItem::with_id(app, "open", "打开 CC Remote", true, None::<&str>)?,
             &tauri::menu::MenuItem::with_id(app, "refresh", "刷新用量", true, None::<&str>)?,
             &tauri::menu::MenuItem::with_id(app, "history", "全部用量历史", true, None::<&str>)?,
+            &tauri::menu::MenuItem::with_id(app, "update", "检查桌面端更新", true, None::<&str>)?,
             &tauri::menu::PredefinedMenuItem::separator(app)?,
             &tauri::menu::MenuItem::with_id(
                 app,
@@ -185,6 +186,13 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = request_refresh(app);
             }
             "history" => open_history(app, None),
+            "update" => {
+                show_main(app);
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::update::desktop_update_check(app).await;
+                });
+            }
             "quit" => app.exit(0),
             _ => {}
         })

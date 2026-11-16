@@ -4,6 +4,12 @@
 
 ## 发布新版本
 
+### v0.31.0 更新内容
+
+- Windows x64 桌面端支持应用内更新：启动后自动检查最新正式版，并提供设置页和托盘菜单的手动检查入口。
+- 更新显示下载进度，确认后安装并重启桌面客户端；签名和绑定版本校验阻止被篡改的更新包。后台服务继续独立运行和更新。
+- 发布流水线生成签名安装包与 `latest.json`，兼容完整安装入口和便携目录。旧版客户端需先手动升级到此版本，后续版本可在应用内更新。
+
 ### v0.30.2 更新内容
 
 - 更新中英文 README，按平台整理一键安装、首次连接、会话接力和更新指引，补充双语入门指南。
@@ -65,6 +71,7 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 | 文件 | 内容 |
 | --- | --- |
 | `cc-remote-desktop_<版本>_windows_amd64-setup.exe` | Windows x64 Tauri 客户端 NSIS 安装包；后台需另外安装 |
+| `cc-remote-desktop_<版本>_windows_amd64-setup.exe.sig` / `latest.json` | 桌面更新签名与更新清单；安装前验证签名及绑定版本 |
 | `cc-remote-desktop_<版本>_windows_amd64.zip` | Windows x64 便携包：后台、内置托盘的 Tauri 客户端、使用说明和许可证 |
 | `cc-remote_<版本>_windows_amd64.zip` / `_windows_arm64.zip` | `cc-remote.exe`、`README.md`、`LICENSE` |
 | `cc-remote_<版本>_linux_{amd64,arm64}.tar.gz` | `cc-remote`（可执行）、`README.md`、`LICENSE` |
@@ -82,7 +89,29 @@ GitHub 不为个人账户下的私有仓库提供 artifact attestations（实测
 
 Release 使用标签对应的版本；原生任务成功后才发布，避免只发布后台的半成品版本。安装包和 ZIP 与原有后台、独立网页一起进入同一个 Release、校验清单和来源证明。后台安装脚本和 `cc-remote update` 继续按 `cc-remote_` 前缀选择后台归档。
 
-当前原生发布范围为 Windows x64，未配置代码签名或客户端内自动更新。推荐通过下方完整安装入口安装和更新后台与客户端；NSIS 安装包只安装客户端，手动使用便携包时按 `START-HERE.txt` 安装后台，再运行托盘。Windows ARM64、macOS 和 Linux 仍发布原有后台归档，暂不发布原生客户端和托盘。
+当前原生发布范围为 Windows x64。桌面客户端支持签名校验的应用内更新（包括内置托盘），启动 15 秒后检查最新正式版，此后每六小时检查；用户确认后下载安装并重启客户端。后台仍通过完整安装入口或 `cc-remote update` 独立更新。Windows ARM64、macOS 和 Linux 暂不发布原生客户端。更新签名与 Windows Authenticode 代码签名不同，当前仍未配置后者。
+
+### 首次启用桌面自动更新
+
+按照 [Tauri 官方更新说明](https://v2.tauri.app/plugin/updater/)生成一对长期保留的密钥，在 `desktop/` 运行（将输出路径替换为仓库外的安全备份目录）：
+
+```powershell
+pnpm tauri signer generate -w C:\secure-backup\cc-remote-updater.key
+```
+
+在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置：
+
+- Secret `TAURI_SIGNING_PRIVATE_KEY`：私钥文件的完整内容，不是本机文件路径。
+- Secret `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：生成私钥时的密码；无密码可不设置。
+- Variable `TAURI_UPDATER_PUBLIC_KEY`：`.key.pub` 文件的完整内容（Tauri 输出的 base64 文本）。
+
+私钥和密码不能提交到 Git；请独立备份。客户端信任发布时嵌入的公钥，后续发布必须继续使用同一密钥对。Release 缺失配置时会失败，普通 CI 与本地无密钥构建仍可运行，但手动检查会说明该构建未启用更新验证。
+
+流水线生成临时 `updater.release.json` 配置，启用 `createUpdaterArtifacts` 和 `requireSignedVersion`，随 NSIS 安装包发布同名 `.exe.sig` 和 `latest.json`。清单使用 `windows-x86_64` 平台键、签名文件内容和带版本的安装包 URL；签名同时绑定版本，防止清单把旧安装包冒充新版本。检查地址为当前仓库的 `releases/latest/download/latest.json`，预发布不会进入此通道。
+
+已有旧版客户端没有自动更新入口，需先通过完整安装脚本或新版安装包升级一次。脚本安装目录、自定义目录和便携目录都会作为安装目标传给 NSIS；便携客户端首次应用内更新会转换为 NSIS 管理的安装。更新只替换客户端，保留宿主后台、账号和历史，安装时客户端短暂退出。纯托盘模式也会检查并发出系统通知，可从托盘菜单「检查桌面端更新」打开安装提示。
+
+首次签名发布后，应在测试机器上验证一次从该版本到下一签名版本的完整检查、下载、安装与重启；本地单元测试无法代替真实跨版本安装。
 
 ## 凭据
 

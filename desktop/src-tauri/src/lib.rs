@@ -6,6 +6,7 @@ mod history;
 mod net;
 mod paths;
 mod service;
+mod update;
 mod usage_tray;
 mod ws;
 
@@ -33,10 +34,12 @@ pub fn run() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(net::Net::new())
         .manage(ws::Sockets::default())
         .setup(|app| {
             usage_tray::setup(app)?;
+            update::setup(app.handle());
             if !std::env::args().any(|arg| arg == "--tray") {
                 usage_tray::show_main(app.handle());
             }
@@ -56,6 +59,9 @@ pub fn run() {
             service::local_service_action,
             history::take_usage_history_request,
             service::usage_history_connection,
+            update::desktop_update_status,
+            update::desktop_update_check,
+            update::desktop_update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the CC Remote desktop app");

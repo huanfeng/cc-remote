@@ -43,9 +43,15 @@ Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号�
 - `desktop/src-tauri/src/paths.rs`、`web/src/platform/pathActions.ts`：本机路径菜单，校验回环宿主、已有绝对路径及本机驱动器，使用独立参数和工作目录调用系统程序。
 - `desktop/src-tauri/src/usage_tray/`：Tauri 托盘、缓存读取、收藏持久化、历史导航；`panel.rs` 使用 wind-ui-rust 渲染原生用量窗口，`hover.rs` 管理独立 UI 线程和悬停生命周期。
 
+## 桌面端更新
+
+Windows x64 正式签名版本在启动 15 秒后检查新正式版，此后每六小时检查一次。发现更新会显示客户端提示和系统通知；「设置 → 本应用 → 桌面端更新」及托盘菜单「检查桌面端更新」也可手动检查。点击「下载并安装」确认后显示进度，签名校验通过才安装并重启。检查失败和下载失败可重试。
+
+更新覆盖当前客户端所在目录，保留偏好设置；便携版首次应用内更新会转为 NSIS 管理的安装。此操作更新桌面端和内置托盘，宿主后台继续运行，需要单独更新。首次接入该功能前的客户端需手动升级一次。发布者配置见 [发布文档](release.md#首次启用桌面自动更新)。
+
 ## 开发
 
-需要 Rust（MSVC 工具链）、Node 22 和 pnpm；Windows 需要 WebView2 运行时（Windows 11 自带）。
+需要 Rust 1.90 或更新版本（Windows 使用 MSVC 工具链）、Node 22 和 pnpm；Windows 需要 WebView2 运行时（Windows 11 自带）。
 
 ```sh
 cd web

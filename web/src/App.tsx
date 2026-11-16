@@ -32,6 +32,7 @@ import { StandaloneHome } from '@/features/standalone/StandaloneHome';
 import { DESKTOP, DesktopSocket } from '@/platform/desktop';
 import { installUsageHistoryNavigation } from '@/platform/usageHistory';
 import { isUsageHistory } from '@/domain/usageHistoryRoute';
+import { DesktopUpdateNotice } from '@/features/settings/DesktopUpdate';
 
 const env = import.meta.env;
 const mockMode = (env.DEV || env.VITE_MOCK === '1') && typeof location !== 'undefined' && new URLSearchParams(location.search).has('mock');
@@ -43,7 +44,7 @@ export function App() {
   useEffect(() => trackVisualViewport(), []);
   useEffect(() => scopeDraftsToHost(), []);
   useEffect(() => { installUsageHistoryNavigation(); }, []);
-  return mockMode ? <MockApp /> : <HostApp />;
+  return <><DesktopUpdateNotice />{mockMode ? <MockApp /> : <HostApp />}</>;
 }
 
 /** The demo: MockBackend and its saved-host list, loaded on demand so builds without the flag leave them out. */

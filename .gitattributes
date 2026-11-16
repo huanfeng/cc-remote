@@ -1,0 +1,2 @@
+# Preserve the exact bytes covered by the updater test signature on every OS.
+desktop/src-tauri/tests/fixtures/update.txt -text

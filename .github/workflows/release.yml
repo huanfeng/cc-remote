@@ -168,6 +168,10 @@ jobs:
     with:
       version: ${{ needs.meta.outputs.version }}
       artifact-name: pkg-native-windows-amd64
+      updater-enabled: true
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
   release:
     needs: [meta, web, build, native-windows]
