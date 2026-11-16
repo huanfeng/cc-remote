@@ -2,9 +2,9 @@
 
 <h1 align="center">CC Remote</h1>
 
-<p align="center"><strong>Step away from your desk. Keep your coding session going.</strong></p>
+<p align="center"><strong>Manage Claude Code sessions across multiple servers from one web page.</strong></p>
 
-<p align="center">Run Claude Code and Codex on your own computer. Manage tasks from a terminal, browser, phone or Windows client.</p>
+<p align="center">Work remotely, switch providers while keeping your conversation, and manage official OAuth tokens and subscription usage.</p>
 
 <p align="center">
   <a href="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml"><img src="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -24,19 +24,40 @@
 </p>
 <p align="center"><sub>Interface examples; appearance may differ in the current release.</sub></p>
 
-## Take the task with you. Keep it running on your computer.
+## Main features
 
-Run `ccr` in a project to start a Claude Code session. Press `Ctrl+]` when you leave: the task keeps running on the host. Check progress, answer approvals or send another message from your phone, then reconnect with `ccr` when you return.
+### 1. Manage sessions across servers from the web
 
-You can also start Claude Code or Codex managed sessions directly in the web or desktop client. Choose a project, send a task and work across several sessions. Closing the browser does not stop background tasks.
+Add your home computer, workstation and remote servers to one web client. Switch between servers and browse sessions by project. Start Claude Code sessions, continue conversations, read streaming replies and tool activity, and respond to approvals and questions from a desktop or phone browser.
 
-- **Continue away from your desk**: read replies, tool activity and files; answer approvals, questions and plan confirmations. Install the mobile web UI as a PWA.
-- **Manage projects and hosts together**: browse sessions by project, find active work first and switch between your computers.
-- **Keep familiar workflows**: Claude Code supports native terminal/web handoff; Codex supports managed sessions and local history import.
-- **See accounts and quotas together**: read CC-Switch profiles, select or switch Claude suppliers, and compare subscription readings, reset times and history across accounts.
-- **Check usage from the Windows tray**: hover for the native usage panel and click to open the client. Compare account quotas without opening the main window.
+Each server runs its own CC Remote backend and session processes. Closing the web page leaves tasks running on the server. Remote access requires a **reachable network address, HTTPS and an access token**. A standalone web client also needs its origin allowed by each server.
 
-The backend is a self-hosted executable. Sessions run on your host, using its CLI configuration and session settings for models, accounts and permissions. Model requests still go to the configured provider.
+See the [connection guide](docs/getting-started.en.md#connect-a-phone-or-another-computer) and [standalone web client and HTTPS setup](docs/standalone.md) (Chinese).
+
+### 2. Switch providers while keeping your session
+
+Read **CC-Switch** profiles directly from the server. Choose a provider when creating a session, or change the provider for an existing Claude Code session. CC Remote keeps the session ID and conversation history, stops the old process, and automatically resumes with the new provider when you send the next message.
+
+Each session can use its own provider, and you can set a default for new sessions. Switching during an active task asks you to confirm the interruption. The previous request is not automatically sent again.
+
+See [provider selection and switching](docs/supplier-profiles.md) (Chinese).
+
+### 3. Manage official Claude Code OAuth tokens and usage
+
+Add, rename, replace or remove **OAuth tokens** for multiple official accounts, then choose an account for each session through the provider selector. Generate tokens with `claude setup-token` and store them on the corresponding server. Sessions retain the server's native model, plugin, hook, MCP and permission settings.
+
+Compare accounts' **5-hour and weekly subscription quotas, reset times and usage history**. The backend collects readings even when the web page or desktop client is closed. The Windows tray also provides a quick view of account quotas.
+
+See [OAuth token setup](docs/supplier-profiles.md#oauth-令牌配置) and [subscription usage monitoring](docs/subscription-monitor.md) (Chinese).
+
+## More ways to work
+
+- **Terminal/web handoff**: run `ccr` in a project to start a Claude Code session. Press `Ctrl+]` to detach, continue from the web, and reconnect with `ccr` later.
+- **Windows desktop client**: keep several servers open in independent tabs, with back, forward, refresh and in-app updates. Hover over the built-in tray to check usage.
+- **Mobile and PWA**: follow tasks, send messages and answer approvals from your phone, or install the web UI as a PWA.
+- **Codex sessions**: start managed sessions and import local history to continue it. See the support table below for details.
+
+CC Remote is self-hosted. Sessions use the CLI and configuration on your server; model requests go to your chosen provider.
 
 ## Choose your starting point
 
@@ -129,7 +150,7 @@ ccr update             # update the CLI and backend only
 
 Lists support arrow keys, numbers plus Enter, `/` to filter, `r` to refresh and `q` / Esc to quit. See [usage](docs/usage.md) (Chinese).
 
-**To update the client and tray**, repeat the Windows full installation command. Configuration, accounts and history are kept. Exit the running client from its tray menu and reopen it to use the new version.
+**To update the client and tray**, signed stable builds check automatically. Download and install updates from **… → About & updates**, Settings or the tray menu. You can also repeat the Windows full installation command; configuration, accounts and history are kept. `ccr update` updates the CLI and backend separately. See the [desktop guide](docs/desktop.md) (Chinese).
 
 ## Find your next step
 
@@ -141,7 +162,7 @@ The first-use guide is available in English; detailed reference docs are current
 | Find my token, connect a phone or troubleshoot | [Connection guide](docs/getting-started.en.md#connect-a-phone-or-another-computer) |
 | Use sessions, approvals, attachments and file previews | [Usage](docs/usage.md) |
 | Use Codex or continue local history | [Codex guide](docs/codex.md) |
-| Select / switch CC-Switch supplier profiles | [Supplier profiles](docs/supplier-profiles.md) |
+| Switch providers while keeping a session, or configure official OAuth tokens | [Supplier profiles](docs/supplier-profiles.md) |
 | Compare account quotas and history | [Subscription monitoring](docs/subscription-monitor.md) |
 | Use the desktop app, tray and local path menu | [Desktop app](docs/desktop.md) |
 | Configure proxies, models, services or listen addresses | [Configuration](docs/configuration.md) |
