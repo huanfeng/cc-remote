@@ -12,6 +12,7 @@ import { checkHost, connectError, currentHost, findHost, rememberHost, reopen, u
 import { t } from '@/lib/i18n';
 import { ErrorText, errorMessage } from '@/features/dialogs/common';
 import { INSTALL_COMMAND, localServiceAction, localServiceStatus, localServiceToken, type LocalService, type ServiceAction } from '@/platform/localService';
+import { DESKTOP_TAB } from '@/platform/desktop';
 
 export function useLocalService() {
   const [service, setService] = useState<LocalService>();
@@ -85,7 +86,7 @@ export function LocalServicePanel({ className, connectLabel }: { className?: str
   const { service, busy, error, refresh, act, connect } = useLocalService();
   const loading = busy === 'status' && !service;
   const version = service?.available ? service.status?.version || service.config?.version : undefined;
-  const isCurrent = !!(service?.available && service.url && currentHost && findHost(service.url.replace(/\/+$/, ''))?.id === currentHost.id);
+  const isCurrent = !!(DESKTOP_TAB && service?.available && service.url && currentHost && findHost(service.url.replace(/\/+$/, ''))?.id === currentHost.id);
 
   let tone: 'ok' | 'off' | 'none' = 'none';
   let line = t('Checking…', '正在检查…');

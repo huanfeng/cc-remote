@@ -30,7 +30,7 @@ For installation and future updates of the backend and desktop app, run in Power
 irm https://github.com/huanfeng/cc-remote/releases/latest/download/install-desktop.ps1 | iex
 This creates Start Menu shortcuts and starts the desktop app in tray mode. Add
 -AutoStart using the parameter syntax documented in desktop.md for sign-in startup.
-Signed releases also check for desktop updates automatically. Use Settings > This app
+Signed releases also check for desktop updates automatically. Use Settings > About & updates
 or the tray's update menu to download and install. The local backend updates separately.
 Updating a manually extracted client through the app registers an NSIS installation.
 

@@ -29,10 +29,12 @@ import { useConnection } from '@/features/auth/connection';
 import { ConnectingScreen, LoginScreen } from '@/features/auth/LoginScreen';
 import { PlainHttpBanner } from '@/features/auth/PlainHttpBanner';
 import { StandaloneHome } from '@/features/standalone/StandaloneHome';
-import { DESKTOP, DesktopSocket } from '@/platform/desktop';
+import { DESKTOP, DESKTOP_TAB, DesktopSocket } from '@/platform/desktop';
+import { installDesktopTabNavigation } from '@/platform/desktopTabs';
+import { DesktopWorkspace } from '@/app/DesktopWorkspace';
 import { installUsageHistoryNavigation } from '@/platform/usageHistory';
 import { isUsageHistory } from '@/domain/usageHistoryRoute';
-import { DesktopUpdateNotice } from '@/features/settings/DesktopUpdate';
+import { DesktopAboutDialog, DesktopUpdateNotice } from '@/features/settings/DesktopUpdate';
 
 const env = import.meta.env;
 const mockMode = (env.DEV || env.VITE_MOCK === '1') && typeof location !== 'undefined' && new URLSearchParams(location.search).has('mock');
@@ -42,9 +44,11 @@ const RETRY_MS = 10_000;
 export function App() {
   useApplyTheme();
   useEffect(() => trackVisualViewport(), []);
-  useEffect(() => scopeDraftsToHost(), []);
+  useEffect(() => DESKTOP && !DESKTOP_TAB ? undefined : scopeDraftsToHost(), []);
   useEffect(() => { installUsageHistoryNavigation(); }, []);
-  return <><DesktopUpdateNotice />{mockMode ? <MockApp /> : <HostApp />}</>;
+  useEffect(() => installDesktopTabNavigation(), []);
+  if (DESKTOP && !DESKTOP_TAB) return <DesktopWorkspace />;
+  return <><DesktopUpdateNotice /><DesktopAboutDialog />{mockMode ? <MockApp /> : <HostApp />}</>;
 }
 
 /** The demo: MockBackend and its saved-host list, loaded on demand so builds without the flag leave them out. */
@@ -118,7 +122,7 @@ function HostApp() {
 function Connected({ backend }: { backend: Backend }) {
   const info = useApp(s => s.info);
   // The session list poll failed: shown until the next poll answers.
-  const [offline, setOffline] = useState('');
+  const offline = useConnection(s => s.offline);
 
   useEffect(() => {
     const openHistory = () => { if (isUsageHistory(location.hash)) useApp.getState().open({ type: 'status' }); };
@@ -129,7 +133,7 @@ function Connected({ backend }: { backend: Backend }) {
 
   useEffect(() => {
     let live = true;
-    setOffline('');
+    useConnection.setState({ offline: '' });
     if (!useApp.getState().info) {
       backend.info()
         .then(i => { if (live) useApp.getState().setInfo(i); })
@@ -137,12 +141,12 @@ function Connected({ backend }: { backend: Backend }) {
     }
     const stop = backend.watchSessions(s => {
       useApp.getState().setSessions(s);
-      setOffline('');
+      useConnection.setState({ offline: '' });
       // Sessions gone from the host (deleted here or elsewhere) release their cache and draft.
       releaseMissing(new Set(s.map(x => x.id)));
     }, e => {
       if (!live) return;
-      setOffline(e.status ? e.message : connectError());
+      useConnection.setState({ offline: e.status ? e.message : connectError() });
       // The list stopped answering: on the standalone page the host may have moved (LAN, tunnel port).
       if (!STANDALONE || e.status) return;
       void relocateHost().then(moved => { if (live && typeof moved === 'string') toast(moved); });

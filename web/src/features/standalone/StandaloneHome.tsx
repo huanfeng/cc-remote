@@ -19,6 +19,7 @@ import { HostFormDialog } from './HostForm';
 import { AllowHint, HideAddressesButton, useHiddenAddresses } from './parts';
 import { DESKTOP } from '@/platform/desktop';
 import { LocalServicePanel } from '@/features/desktop/LocalService';
+import { openDesktopAbout } from '@/platform/desktopUpdate';
 
 /** The desktop app's card for the service on this computer. */
 function ThisComputer() {
@@ -30,7 +31,7 @@ function ThisComputer() {
   );
 }
 
-export function StandaloneHome() {
+export function StandaloneHome({ choose = false }: { choose?: boolean }) {
   const [form, setForm] = useState<'' | 'add' | 'edit'>('');
   const safety = useSafetyAck();
   const [hidden, setHidden] = useHiddenAddresses();
@@ -40,7 +41,7 @@ export function StandaloneHome() {
   const retrying = useConnection(s => s.retrying);
   const token = useConnection(s => s.token);
   const retry = useConnection(s => s.retry);
-  const host = currentHost;
+  const host = choose ? undefined : currentHost;
   const others = loadHosts().hosts.filter(x => x.id !== host?.id);
   const big = cn(mobile && 'h-10');
 
@@ -62,6 +63,14 @@ export function StandaloneHome() {
             </p>
           </div>
           {DESKTOP && <ThisComputer />}
+          {choose && others.length > 0 && <div className="flex flex-col gap-1">
+            <span className="mb-1 text-ui-xs font-medium text-foreground-subtlest">{t('Open a host in a tab', '在标签页中打开宿主')}</span>
+            {others.map(x => <button key={x.id} type="button" onClick={() => switchHost(x.id)} className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-surface-hover">
+              <HostGlyph icon={shownIcon(x) || 'logo'} color={shownColor(x)} className="size-6 rounded-md [&_svg]:size-3.5" />
+              <span className="min-w-0 flex-1 truncate text-ui-sm">{shownName(x)}</span><ArrowRight className="size-3.5 text-foreground-subtle" />
+            </button>)}
+          </div>}
+          {DESKTOP && <Button variant="ghost" className="self-start" onClick={openDesktopAbout}>{t('About & updates', '关于与更新')}</Button>}
           {!DESKTOP && <ol className="flex flex-col gap-2 text-ui-sm">
             {[
               t('Run a cc-remote host on the computer with Claude Code.', '在装有 Claude Code 的电脑上运行 cc-remote 宿主。'),
@@ -122,6 +131,7 @@ export function StandaloneHome() {
         </div>
 
         {DESKTOP && <ThisComputer />}
+        {DESKTOP && <Button variant="ghost" className="self-start" onClick={openDesktopAbout}>{t('About & updates', '关于与更新')}</Button>}
 
         {others.length > 0 && (
           <div className="flex flex-col gap-1">

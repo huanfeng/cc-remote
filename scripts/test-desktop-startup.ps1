@@ -24,7 +24,7 @@ try {
         Start-Sleep -Milliseconds 500
         $process.Refresh()
         if ($process.HasExited) { throw 'Opening the main window exited the desktop.' }
-        if ($process.MainWindowTitle -ne 'CC Remote') { continue }
+        if ($process.MainWindowTitle -notmatch 'CC Remote v\d+\.\d+\.\d+') { continue }
         if (-not $process.Responding) { throw 'Main window is not responding after opening from tray mode.' }
         $webviews = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($process.Id)" | Where-Object Name -like '*webview*')
         if ($webviews.Count) { $ready = $true; break }

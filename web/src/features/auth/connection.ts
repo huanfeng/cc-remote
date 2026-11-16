@@ -14,6 +14,8 @@ interface Connection {
   token: string;
   phase: Phase;
   error: string;
+  /** Polling can lose a ready host without dropping its sessions or drafts. */
+  offline: string;
   /** No answer yet (not a refused token): App tries again every 10 s. */
   retrying: boolean;
   /** Bumped to connect again with the same token. */
@@ -38,6 +40,7 @@ export const useConnection = create<Connection>()((set, get) => ({
   token: initial,
   phase: initial ? 'connecting' : 'signed-out',
   error: '',
+  offline: '',
   retrying: false,
   attempt: 0,
   signIn: token => {
@@ -47,7 +50,7 @@ export const useConnection = create<Connection>()((set, get) => ({
   },
   // The last error stays shown while the next try runs.
   retry: () => set(s => ({ attempt: s.attempt + 1, phase: s.token ? 'connecting' : 'signed-out' })),
-  connected: () => { saveToken(get().token); set({ phase: 'ready', error: '', retrying: false }); },
+  connected: () => { saveToken(get().token); set({ phase: 'ready', error: '', offline: '', retrying: false }); },
   failed: (error, retrying) => set({ phase: 'signed-out', error, retrying }),
   unauthorized: () => {
     if (!get().token) return;

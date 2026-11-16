@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State, WebviewWindow};
+use tauri::{Manager, State, Webview};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,7 +36,7 @@ pub struct Requests(pub Mutex<Option<HistoryRequest>>);
 pub fn receive(app: &tauri::AppHandle, args: Vec<String>) {
     if let Some(request) = HistoryRequest::from_args(args) {
         *app.state::<Requests>().0.lock().unwrap() = Some(request);
-        if let Some(window) = app.get_webview_window("main") {
+        if let Some(window) = app.get_window("main") {
             use tauri::Emitter;
             let _ = window.emit("usage-history-requested", ());
         }
@@ -45,7 +45,7 @@ pub fn receive(app: &tauri::AppHandle, args: Vec<String>) {
 
 #[tauri::command]
 pub fn take_usage_history_request(
-    window: WebviewWindow,
+    window: Webview,
     requests: State<'_, Requests>,
 ) -> Option<HistoryRequest> {
     if window.label() != "main" {

@@ -2,16 +2,20 @@
 // desktop`) in a native window. It holds several hosts like the standalone page,
 // talks to them from Rust (net.rs, ws.rs) and manages the cc-remote service on
 // this computer (service.rs).
+mod about;
 mod history;
 mod net;
 mod paths;
 mod service;
+mod tabs;
 mod update;
 mod usage_tray;
 mod ws;
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(about::Requests::default())
+        .manage(tabs::Tabs::default())
         .manage(history::Requests(std::sync::Mutex::new(
             history::HistoryRequest::from_args(std::env::args()),
         )))
@@ -25,7 +29,7 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                // Old frameless state must not override the system title bar.
+                // Window decorations follow current config, never old saved state.
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::all()
                         & !tauri_plugin_window_state::StateFlags::DECORATIONS,
@@ -45,8 +49,15 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(usage_tray::window_event)
+        .on_window_event(|window, event| {
+            usage_tray::window_event(window, event);
+            tabs::window_event(window, event);
+        })
         .invoke_handler(tauri::generate_handler![
+            tabs::desktop_tab_open,
+            tabs::desktop_tab_activate,
+            tabs::desktop_tab_close,
+            tabs::desktop_tab_layout,
             paths::open_local_path,
             net::http_request,
             net::http_abort,
@@ -58,6 +69,7 @@ pub fn run() {
             service::local_service_token,
             service::local_service_action,
             history::take_usage_history_request,
+            about::take_desktop_about_request,
             service::usage_history_connection,
             update::desktop_update_status,
             update::desktop_update_check,

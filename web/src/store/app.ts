@@ -21,7 +21,7 @@ export type Surface =
   | { type: 'attach'; id: string }
   | null;
 
-export type SettingsSection = 'defaults' | 'oauth' | 'host' | 'browser' | 'computer';
+export type SettingsSection = 'defaults' | 'oauth' | 'host' | 'browser' | 'computer' | 'about';
 export type SidebarTab = 'sessions' | 'history';
 
 interface AppState {

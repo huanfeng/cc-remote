@@ -11,7 +11,6 @@ import { notifySupported } from '@/domain/notify';
 import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { SimpleSelect } from '@/features/dialogs/common';
 import { GroupTitle, SectionHeader } from './parts';
-import { DesktopUpdateSettings } from './DesktopUpdate';
 import { DESKTOP } from '@/platform/desktop';
 
 export function BrowserSection({ mobile }: { mobile: boolean }) {
@@ -23,7 +22,6 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
   return (
     <div>
       {!mobile && <SectionHeader title={DESKTOP ? t('This app', '本应用') : t('This browser', '本浏览器')} description={t('Preferences are stored locally.', '偏好设置保存在本地。')} />}
-      <DesktopUpdateSettings />
 
       <GroupTitle>{t('Appearance', '外观')}</GroupTitle>
       <GroupCard>

@@ -1,13 +1,13 @@
 // Saved host connections. The standalone page (a static site, `vite build --mode
-// standalone`) and the desktop app keep a list of hosts and talk to one at a
-// time; each host must allow the page's origin (cc-remote --allow-origin). The
+// standalone`) and the desktop app keep a list of hosts. Each page/WebView
+// talks to one host; the browser needs its origin allowed (cc-remote --allow-origin). The
 // host-served page is the same app with STANDALONE false: one host, relative
 // URLs, plain storage keys. Ported from the old client's hosts.ts: LAN
 // switching, relocation that only follows a port change, per-host storage keys,
 // `?host=` per tab, tokens.
 import { create } from 'zustand';
 import { lang, t } from './i18n';
-import { DESKTOP } from '@/platform/desktop';
+import { DESKTOP, DESKTOP_TAB } from '@/platform/desktop';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -143,7 +143,11 @@ const hostURL = (id: string | undefined) => {
 };
 
 /** The link that opens a host in a tab of its own. */
-export const hostLink = (id: string) => hostURL(id);
+export const hostLink = (id: string) => {
+  const url = new URL(hostURL(id), location.href);
+  url.searchParams.delete('desktop-tab');
+  return url.pathname + url.search;
+};
 
 /** The host this page works with; undefined until one is added (or on a host's own page). */
 export const currentHost: HostEntry | undefined = STANDALONE && browser ? (() => {
@@ -152,7 +156,7 @@ export const currentHost: HostEntry | undefined = STANDALONE && browser ? (() =>
   return list.hosts.find(x => x.id === named) || list.hosts.find(x => x.id === list.current) || list.hosts[0];
 })() : undefined;
 // The address names the host the page opened, so a reload stays on it.
-if (STANDALONE && browser && hostURL(currentHost?.id) !== location.pathname + location.search) {
+if (STANDALONE && browser && (!DESKTOP || DESKTOP_TAB) && hostURL(currentHost?.id) !== location.pathname + location.search) {
   history.replaceState(history.state, '', hostURL(currentHost?.id) + location.hash);
 }
 
@@ -243,7 +247,7 @@ function moveToLan(on: boolean) {
 
 /** While on the outside address: checks the home-network one when the page opens, comes
  * back into view, the network changes, and every two minutes; moves there when it answers. */
-if (STANDALONE && browser && currentHost?.lan && !onLan) {
+if (STANDALONE && browser && (!DESKTOP || DESKTOP_TAB) && currentHost?.lan && !onLan) {
   const host = currentHost;
   let checked = 0;
   const check = () => {
@@ -306,17 +310,25 @@ export function relocateHost(): Promise<boolean | string> {
  * the old host. replaceState fires no hashchange, so the old host's page does not record
  * an empty selection on its way out. */
 export function reopen(id = currentHost?.id, hash = '') {
+  if (DESKTOP && id && (!DESKTOP_TAB || id !== currentHost?.id)) {
+    void import('@/platform/desktopTabs').then(({ requestDesktopHost }) => requestDesktopHost(id, hash));
+    return;
+  }
   leaving = true;
   history.replaceState(null, '', hostURL(id) + hash);
   location.reload();
 }
 
-/** Opens another host in this tab, and makes it the one new tabs open: the page reloads
- * so nothing of the old host stays in memory. */
+/** Opens or activates a desktop server tab. In browsers, reload this page to
+ * discard the previous host's state. Also remembers the default for new pages. */
 export function switchHost(id: string) {
   const list = loadHosts();
   if (!list.hosts.some(x => x.id === id)) return;
   saveHosts({ ...list, current: id });
+  if (DESKTOP) {
+    void import('@/platform/desktopTabs').then(({ requestDesktopHost }) => requestDesktopHost(id));
+    return;
+  }
   reopen(id);
 }
 

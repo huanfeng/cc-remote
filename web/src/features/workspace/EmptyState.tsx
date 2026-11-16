@@ -22,10 +22,10 @@ export function EmptyState() {
   const projects = useMemo(() => recentProjects(sessions.map(s => ({ cwd: s.cwd, updatedAt: s.lastConversationAt ?? s.updatedAt })), 4), [sessions]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-tauri-drag-region>
-      <div className="flex h-12 shrink-0 items-center px-3" data-tauri-drag-region>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-12 shrink-0 items-center px-3">
         {sidebarCollapsed && (
-          <Button variant="ghost" size="icon-sm" aria-label={t('Expand sidebar', '展开侧栏')} onClick={() => setPrefs({ sidebarCollapsed: false })} className="platform-mac-desktop:ml-16">
+          <Button variant="ghost" size="icon-sm" aria-label={t('Expand sidebar', '展开侧栏')} onClick={() => setPrefs({ sidebarCollapsed: false })}>
             <PanelLeftOpen className="size-4" />
           </Button>
         )}

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 test('desktop HTTP forwarding leaves Tauri IPC on the native fetch path', async () => {
   const native = [], commands = [];
-  const original = {window:globalThis.window,document:globalThis.document,location:globalThis.location,isTauri:globalThis.isTauri};
+  const original = {window:globalThis.window,document:globalThis.document,location:globalThis.location,isTauri:globalThis.isTauri,MutationObserver:globalThis.MutationObserver};
+  const titles = [];
+  let titleChanged;
   const encode = new TextEncoder();
   const metadata = encode.encode(JSON.stringify({status:200,statusText:'OK',headers:[['content-type','application/json']]}));
   const body = encode.encode('{"accounts":[]}');
@@ -12,10 +14,13 @@ test('desktop HTTP forwarding leaves Tauri IPC on the native fetch path', async 
   try {
     globalThis.isTauri = true;
     globalThis.location = new URL('http://tauri.localhost/');
-    globalThis.document = {documentElement:{classList:{add(){}}},addEventListener(){}};
+    globalThis.document = {head:{},title:'CC Remote',documentElement:{classList:{add(){}}},addEventListener(){}};
+    globalThis.MutationObserver = class { constructor(callback){titleChanged=callback;} observe(){} };
     globalThis.window = {
       fetch:async input => {native.push(String(input));return new Response('{}');},
-      __TAURI_INTERNALS__:{metadata:{currentWindow:{label:'main'}},invoke:async cmd => {
+      __TAURI_INTERNALS__:{metadata:{currentWindow:{label:'main'}},invoke:async (cmd,args) => {
+        if(cmd==='plugin:app|version') return '0.31.0';
+        if(cmd==='plugin:window|set_title'){titles.push(args.value);return;}
         commands.push(cmd);
         if(commands.length>2) throw new Error('IPC recursively forwarded to itself');
         // The real Tauri runtime implements invoke through a fetch to this URL.
@@ -32,6 +37,12 @@ test('desktop HTTP forwarding leaves Tauri IPC on the native fetch path', async 
     await window.fetch('https://ipc.localhost/plugin:event|listen');
     assert.equal(commands.length,1);
     assert.equal(native.length,3);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(titles,['CC Remote v0.31.0']);
+    document.title='(2) Workstation · CC Remote';
+    titleChanged();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(titles.at(-1),'(2) Workstation · CC Remote v0.31.0');
   } finally {
     for(const [key,value] of Object.entries(original)){if(value===undefined) delete globalThis[key];else globalThis[key]=value;}
   }

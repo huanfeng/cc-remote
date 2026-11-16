@@ -41,6 +41,7 @@ pub struct UsageTray {
 enum WindowAction {
     ShowMain,
     History(Option<String>),
+    About { check_updates: bool },
 }
 
 fn window_action(app: &tauri::AppHandle, action: WindowAction) {
@@ -102,7 +103,7 @@ pub fn show_main(app: &tauri::AppHandle) {
 }
 
 fn show_main_now(app: &tauri::AppHandle) -> Result<(), String> {
-    let window = if let Some(window) = app.get_webview_window("main") {
+    let window = if let Some(window) = app.get_window("main") {
         window
     } else {
         let config = app
@@ -114,8 +115,11 @@ fn show_main_now(app: &tauri::AppHandle) -> Result<(), String> {
             .ok_or("主窗口配置不存在")?;
         tauri::WebviewWindowBuilder::from_config(app, config)
             .map_err(|e| e.to_string())?
+            .title(format!("CC Remote v{}", app.package_info().version))
             .build()
             .map_err(|e| e.to_string())?
+            .as_ref()
+            .window()
     };
     window.unminimize().map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
@@ -136,6 +140,24 @@ fn open_history_now(app: &tauri::AppHandle, account: Option<String>) -> Result<(
     show_main_now(app)?;
     let _ = app.emit_to("main", "usage-history-requested", ());
     app.state::<UsageTray>().hover.suppress(true);
+    Ok(())
+}
+
+fn open_about(app: &tauri::AppHandle, check_updates: bool) {
+    app.state::<UsageTray>().hover.suppress(true);
+    window_action(app, WindowAction::About { check_updates });
+}
+
+fn open_about_now(app: &tauri::AppHandle, check_updates: bool) -> Result<(), String> {
+    app.state::<crate::about::Requests>().request();
+    show_main_now(app)?;
+    let _ = app.emit_to("main", "desktop-about-requested", ());
+    if check_updates {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            crate::update::desktop_update_check(app).await;
+        });
+    }
     Ok(())
 }
 
@@ -167,6 +189,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &tauri::menu::MenuItem::with_id(app, "refresh", "刷新用量", true, None::<&str>)?,
             &tauri::menu::MenuItem::with_id(app, "history", "全部用量历史", true, None::<&str>)?,
             &tauri::menu::MenuItem::with_id(app, "update", "检查桌面端更新", true, None::<&str>)?,
+            &tauri::menu::MenuItem::with_id(app, "about", "关于与更新", true, None::<&str>)?,
             &tauri::menu::PredefinedMenuItem::separator(app)?,
             &tauri::menu::MenuItem::with_id(
                 app,
@@ -186,13 +209,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = request_refresh(app);
             }
             "history" => open_history(app, None),
-            "update" => {
-                show_main(app);
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    crate::update::desktop_update_check(app).await;
-                });
-            }
+            "update" => open_about(app, true),
+            "about" => open_about(app, false),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -245,6 +263,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let result = match action {
                     WindowAction::ShowMain => show_main_now(&handle),
                     WindowAction::History(account) => open_history_now(&handle, account),
+                    WindowAction::About { check_updates } => open_about_now(&handle, check_updates),
                 };
                 if let Err(error) = result {
                     handle.state::<UsageTray>().hover.suppress(false);

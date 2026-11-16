@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { DESKTOP } from './desktop';
-import { checkHost, connectError, currentHost, rememberHost, reopen } from '@/lib/hosts';
+import { DESKTOP, DESKTOP_TAB } from './desktop';
+import { requestDesktopHost } from './desktopTabs';
+import { checkHost, connectError, rememberHost } from '@/lib/hosts';
 import { lang, t } from '@/lib/i18n';
 import { toast } from '@/components/ui/toast';
-import { useApp } from '@/store/app';
 import { usageHistoryHash } from '@/domain/usageHistoryRoute';
 
 type HistoryRequest = { host?: string; dataDir?: string; account?: string };
@@ -12,7 +12,7 @@ let installed = false;
 
 /** Install once for the app lifetime, including React StrictMode's effect replay. */
 export function installUsageHistoryNavigation() {
-  if (!DESKTOP || installed || getCurrentWindow().label !== 'main') return;
+  if (!DESKTOP || DESKTOP_TAB || installed || getCurrentWindow().label !== 'main') return;
   installed = true;
   let pending = false;
   let running = false;
@@ -30,14 +30,9 @@ export function installUsageHistoryNavigation() {
         if (!info.ok) throw new Error(connectError(info.status));
         const host = rememberHost({ url: connection.url, token: connection.token, name: info.name, color: info.color, icon: info.icon });
         const hash = usageHistoryHash(connection.account);
-        if (currentHost?.id === host.id && currentHost.token === connection.token) {
-          location.hash = hash;
-          useApp.getState().open({ type: 'status' });
-        } else {
-          // Changing hosts always creates a fresh backend, even when only the token changed.
-          reopen(host.id, hash);
-          return;
-        }
+        // The shell never becomes a host page. Credentials may have changed,
+        // so an existing tab must rebuild its backend before opening history.
+        requestDesktopHost(host.id, hash, true);
       }
     } catch (error) {
       toast(t('Could not open usage history: ', '无法打开用量历史：') + (error instanceof Error ? error.message : String(error)));

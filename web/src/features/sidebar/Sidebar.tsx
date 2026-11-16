@@ -39,10 +39,10 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
 
   return (
     <div data-sidebar className="flex h-full min-h-0 flex-col bg-background-win-alt text-foreground">
-      {/* Brand / host row. On desktop it doubles as the window drag region. */}
-      <div data-tauri-drag-region className={cn('flex shrink-0 items-center gap-1 px-2', mobile ? 'h-14 pt-safe' : 'h-12 platform-mac-desktop:pl-[78px]')}>
+      {/* Brand / host row; the desktop workspace owns the window title bar. */}
+      <div className={cn('flex shrink-0 items-center gap-1 px-2', mobile ? 'h-14 pt-safe' : 'h-12')}>
         <HostSwitcher />
-        <div className="flex-1" data-tauri-drag-region />
+        <div className="flex-1" />
         {!mobile && (
           <Tooltip>
             <TooltipTrigger asChild>

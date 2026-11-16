@@ -10,8 +10,10 @@
 // - window controls, links opening in the browser, Ctrl+click on a host opening
 //   a second window.
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { desktopWindowTitle } from '../domain/desktopTitle.ts';
 
 export type DesktopPlatform = 'windows' | 'linux' | 'mac';
 
@@ -27,6 +29,8 @@ declare global {
 }
 
 export const DESKTOP = typeof window !== 'undefined' && isTauri();
+/** Each server runs in its own native Webview; only the containing page owns chrome. */
+export const DESKTOP_TAB = DESKTOP ? new URLSearchParams(location.search).get('desktop-tab') : null;
 
 function platformOf(): DesktopPlatform {
   const ua = navigator.userAgent;
@@ -39,7 +43,9 @@ const abortError = () => new DOMException('The operation was aborted.', 'AbortEr
 
 // ---- fetch ----
 
-let nextRequest = 1;
+// A refreshed Webview keeps its native label. Avoid IDs colliding with an
+// earlier page's late abort/response while its transports are being released.
+let nextRequest = Math.floor(Math.random() * 2 ** 40);
 type ReplyMeta = { status: number; statusText: string; url: string; headers: [string, string][] };
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 
@@ -152,26 +158,40 @@ export class DesktopSocket {
 const openExternal = (url: string) => { void invoke('plugin:opener|open_url', { url }).catch(() => undefined); };
 
 let nextWindow = 1;
+let appVersion: string | undefined;
 /** A page of this app in a second window (Ctrl+click on a host). */
 function openWindow(url: string) {
   const label = `host-${Date.now().toString(36)}-${nextWindow++}`;
+  const target = new URL(url, location.href);
+  // A host link made inside a child inherits its query. A new top-level
+  // window owns a fresh workspace rather than masquerading as that child.
+  target.searchParams.delete('desktop-tab');
   new WebviewWindow(label, {
-    url, title: 'CC Remote', width: 1200, height: 800, minWidth: 720, minHeight: 480,
-    decorations: true, ...(platformOf() === 'mac' ? { titleBarStyle: 'overlay', hiddenTitle: true } : {}),
+    url: target.pathname + target.search + target.hash, title: desktopWindowTitle('CC Remote', appVersion), width: 1200, height: 800, minWidth: 720, minHeight: 480,
+    decorations: platformOf() === 'mac', ...(platformOf() === 'mac' ? { titleBarStyle: 'overlay', hiddenTitle: true } : {}),
   });
 }
 
 function installLinks() {
   // Links to other sites open in the browser; the webview would otherwise navigate away from the app.
-  document.addEventListener('click', e => {
-    if (e.defaultPrevented || e.button !== 0) return;
+  const followLink = (e: MouseEvent) => {
+    if (e.defaultPrevented || (e.type === 'auxclick' ? e.button !== 1 : e.button !== 0)) return;
     const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
     if (!a || a.hasAttribute('download')) return;
     const url = new URL(a.href, location.href);
-    if (url.origin === location.origin || !/^(https?|mailto):$/.test(url.protocol)) return;
+    if (url.origin === location.origin) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1 || a.target === '_blank') {
+        e.preventDefault();
+        openWindow(url.href);
+      }
+      return;
+    }
+    if (!/^(https?|mailto):$/.test(url.protocol)) return;
     e.preventDefault();
     openExternal(url.href);
-  }, true);
+  };
+  document.addEventListener('click', followLink, true);
+  document.addEventListener('auxclick', followLink, true);
   window.open = ((url?: string | URL) => {
     if (!url) return null;
     const target = new URL(String(url), location.href);
@@ -193,8 +213,26 @@ function installBridge() {
   document.documentElement.classList.add('desktop-shell', `platform-${platform}-desktop`);
 }
 
+function installWindowTitle() {
+  const win = getCurrentWindow();
+  let previous = '';
+  let writes = Promise.resolve();
+  const update = () => {
+    if (!appVersion) return;
+    const title = desktopWindowTitle(document.title, appVersion);
+    if (title === previous) return;
+    previous = title;
+    // Serialize host/badge changes so a slower earlier IPC cannot win.
+    writes = writes.then(() => win.setTitle(title)).catch(() => undefined);
+  };
+  const observer = new MutationObserver(update);
+  observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+  void getVersion().then(version => { appVersion = version; update(); }).catch(() => undefined);
+}
+
 if (DESKTOP) {
   installBridge();
   installFetch();
   installLinks();
+  if (!DESKTOP_TAB) installWindowTitle();
 }

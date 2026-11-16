@@ -1,55 +1,45 @@
-// Per-browser preferences and UI layout state, persisted in localStorage.
-// Storage can throw (private mode, quota): zustand's persist swallows it and
-// the app keeps working with defaults.
+// Shared preferences follow storage across tabs and desktop Webviews. Sidebar
+// layout stays local to each mounted view; unavailable storage remains optional.
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { decodePreferences, mergePreferencePatch, type PreferenceValues } from '../domain/preferences.ts';
+export type { ThemePref, Palette, SendKey } from '../domain/preferences.ts';
 
-export type ThemePref = 'system' | 'light' | 'dark';
-export type Palette = 'graphite' | 'default';
-export type SendKey = 'enter' | 'mod-enter';
-
-interface Prefs {
-  theme: ThemePref;
-  palette: Palette;
-  sendKey: SendKey;
-  sidebarCollapsed: boolean;
-  sidebarWidth: number;
-  /** Project groups collapsed in the session list, by hostKey(folder). */
-  collapsedProjects: Record<string, boolean>;
-  toolsExpanded: boolean;
-  /** Terminal sessions shown as the terminal rather than the chat view. */
-  terminalView: Record<string, boolean>;
-  terminalZoom: number;
-  terminalFit: boolean;
-  newSessionMode: 'terminal' | 'managed';
-  /** Dismissed recaps, as `${sessionId}:${seq}`. */
-  hiddenRecaps: string[];
-  notify: { on: boolean; waiting: boolean; done: boolean; failed: boolean };
-  set: (patch: Partial<Omit<Prefs, 'set'>>) => void;
+interface Prefs extends PreferenceValues {
+  set: (patch: Partial<PreferenceValues>) => void;
 }
 
 export const SIDEBAR_MIN = 220;
 export const SIDEBAR_MAX = 480;
 export const SIDEBAR_DEFAULT = 272;
 
-export const usePrefs = create<Prefs>()(
-  persist(
-    set => ({
-      theme: 'system',
-      palette: 'graphite',
-      sendKey: 'enter',
-      sidebarCollapsed: false,
-      sidebarWidth: SIDEBAR_DEFAULT,
-      collapsedProjects: {},
-      toolsExpanded: false,
-      terminalView: {},
-      terminalZoom: 1,
-      terminalFit: false,
-      newSessionMode: 'terminal',
-      hiddenRecaps: [],
-      notify: { on: false, waiting: true, done: true, failed: true },
-      set: patch => set(patch),
-    }),
-    { name: 'ccn-prefs', version: 2, migrate: (s: any) => ({ ...s, hiddenRecaps: [] }) },
-  ),
-);
+const KEY = 'ccn-prefs';
+const defaults: PreferenceValues = {
+  theme: 'system', palette: 'graphite', sendKey: 'enter',
+  sidebarCollapsed: false, sidebarWidth: SIDEBAR_DEFAULT,
+  collapsedProjects: {}, toolsExpanded: false, terminalView: {},
+  terminalZoom: 1, terminalFit: false, newSessionMode: 'terminal',
+  hiddenRecaps: [], notify: { on: false, waiting: true, done: true, failed: true },
+};
+function read() {
+  try { const raw = localStorage.getItem(KEY); return raw ? decodePreferences(raw, defaults) : undefined; }
+  catch { return; }
+}
+
+export const usePrefs = create<Prefs>()((set, get) => ({
+  ...(read() ?? defaults),
+  set: patch => {
+    const next = mergePreferencePatch(get(), read() ?? get(), patch);
+    set(next);
+    try { localStorage.setItem(KEY, JSON.stringify({ state: next, version: 2 })); }
+    catch { /* Storage unavailable or full: retain in-memory preferences. */ }
+  },
+}));
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', event => {
+    if (event.key !== KEY && event.key !== null) return;
+    // Re-read instead of trusting an older queued event. Memory-only updates
+    // prevent a storage event -> persistence -> storage event loop.
+    usePrefs.setState(mergePreferencePatch(usePrefs.getState(), read() ?? defaults, {}));
+  });
+}

@@ -43,7 +43,6 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
 
   return (
     <header
-      data-tauri-drag-region
       className={cn('flex shrink-0 items-center gap-1 border-b border-border/60 bg-background', mobile ? 'h-12 px-1 pt-safe' : 'h-12 px-3')}
     >
       {mobile ? (
@@ -56,12 +55,12 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
           </Button>
         </>
       ) : sidebarCollapsed ? (
-        <Button variant="ghost" size="icon-sm" aria-label={t('Expand sidebar', '展开侧栏')} onClick={() => setPrefs({ sidebarCollapsed: false })} className="platform-mac-desktop:ml-16">
+        <Button variant="ghost" size="icon-sm" aria-label={t('Expand sidebar', '展开侧栏')} onClick={() => setPrefs({ sidebarCollapsed: false })}>
           <PanelLeftOpen className="size-4" />
         </Button>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region>
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <h1 className="truncate text-ui-lg font-medium">{session.title}</h1>

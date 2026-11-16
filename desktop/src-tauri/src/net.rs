@@ -20,17 +20,34 @@ use tokio::sync::oneshot;
 
 pub struct Net {
     client: reqwest::Client,
-    inflight: Mutex<HashMap<u64, oneshot::Sender<()>>>,
+    inflight: Mutex<HashMap<(String, u64), oneshot::Sender<()>>>,
 }
 
 impl Net {
+    pub fn close_window(&self, label: &str) {
+        self.inflight
+            .lock()
+            .unwrap()
+            .retain(|(owner, _), _| owner != label && !crate::tabs::owns(label, owner));
+    }
+
+    pub fn close_view(&self, label: &str) {
+        self.inflight
+            .lock()
+            .unwrap()
+            .retain(|(owner, _), _| owner != label);
+    }
+
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .user_agent(concat!("cc-remote-desktop/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("HTTP client");
-        Net { client, inflight: Mutex::new(HashMap::new()) }
+        Net {
+            client,
+            inflight: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -58,18 +75,29 @@ struct ReplyMeta {
 fn forbidden(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "origin" | "host" | "content-length" | "connection" | "cookie" | "referer" | "transfer-encoding"
+        "origin"
+            | "host"
+            | "content-length"
+            | "connection"
+            | "cookie"
+            | "referer"
+            | "transfer-encoding"
     )
 }
 
 #[tauri::command]
-pub async fn http_request(request: Request<'_>, net: State<'_, Net>) -> Result<Response, String> {
+pub async fn http_request<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
+    request: Request<'_>,
+    net: State<'_, Net>,
+) -> Result<Response, String> {
     let raw = request
         .headers()
         .get("x-cc-meta")
         .and_then(|v| v.to_str().ok())
         .ok_or("missing request meta")?;
-    let meta: Meta = serde_json::from_str(&percent_decode_str(raw).decode_utf8_lossy()).map_err(|e| e.to_string())?;
+    let meta: Meta = serde_json::from_str(&percent_decode_str(raw).decode_utf8_lossy())
+        .map_err(|e| e.to_string())?;
     let url = reqwest::Url::parse(&meta.url).map_err(|e| e.to_string())?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(format!("unsupported address: {}", meta.url));
@@ -90,8 +118,8 @@ pub async fn http_request(request: Request<'_>, net: State<'_, Net>) -> Result<R
     }
 
     let (abort, aborted) = oneshot::channel();
-    net.inflight.lock().unwrap().insert(meta.id, abort);
-    let id = meta.id;
+    let id = (webview.label().to_string(), meta.id);
+    net.inflight.lock().unwrap().insert(id.clone(), abort);
     let result = tokio::select! {
         r = async {
             let response = builder.send().await?;
@@ -125,8 +153,13 @@ pub async fn http_request(request: Request<'_>, net: State<'_, Net>) -> Result<R
 }
 
 #[tauri::command]
-pub fn http_abort(id: u64, net: State<'_, Net>) {
-    if let Some(abort) = net.inflight.lock().unwrap().remove(&id) {
+pub fn http_abort<R: tauri::Runtime>(webview: tauri::Webview<R>, id: u64, net: State<'_, Net>) {
+    if let Some(abort) = net
+        .inflight
+        .lock()
+        .unwrap()
+        .remove(&(webview.label().to_string(), id))
+    {
         let _ = abort.send(());
     }
 }
@@ -145,4 +178,63 @@ fn describe(err: reqwest::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn destroyed_window_releases_shell_and_tabs_without_a_webview_registry() {
+        let net = Net::new();
+        let mut replies = Vec::new();
+        for owner in [
+            "host-1",
+            "tab-host-1-a",
+            "tab-host-1-b",
+            "host-12",
+            "tab-host-12-a",
+            "main",
+            "tab-main-a",
+        ] {
+            let (tx, rx) = oneshot::channel();
+            net.inflight.lock().unwrap().insert((owner.into(), 1), tx);
+            replies.push(rx);
+        }
+        net.close_window("host-1");
+        for (i, rx) in replies.iter_mut().enumerate() {
+            assert_eq!(
+                rx.try_recv(),
+                Err(if i < 3 {
+                    oneshot::error::TryRecvError::Closed
+                } else {
+                    oneshot::error::TryRecvError::Empty
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn closing_one_tab_aborts_only_its_requests_even_with_equal_ids() {
+        let net = Net::new();
+        let (first, mut first_rx) = oneshot::channel();
+        let (second, mut second_rx) = oneshot::channel();
+        net.inflight
+            .lock()
+            .unwrap()
+            .insert(("tab-main-a".into(), 1), first);
+        net.inflight
+            .lock()
+            .unwrap()
+            .insert(("tab-main-b".into(), 1), second);
+        net.close_view("tab-main-a");
+        assert_eq!(
+            first_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        );
+        assert_eq!(
+            second_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        );
+    }
 }
