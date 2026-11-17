@@ -104,7 +104,6 @@ export interface Session {
   mode?: SessionMode;
   online?: boolean;
   attached?: number;
-  usageLimit?: string;
   claudeSessionId?: string;
   permissionMode?: string;
   model?: string;

@@ -64,6 +64,9 @@ type terminalSession struct {
 	viewedAt  time.Time         // the web last showed this session (polling with viewing=1)
 	away      bool              // Claude Code was told nobody looks (focus out)
 	started   time.Time         // tasks recorded before this belong to an earlier Claude Code
+	usageKey  string
+	usageID   string
+	usageGone time.Time
 }
 
 type terminalQueued struct {
@@ -380,7 +383,7 @@ func (s *Server) terminalWithdrawLocked(w http.ResponseWriter, r *http.Request, 
 func (s *Server) awaitNoDialog(ts *terminalSession) bool {
 	for {
 		s.mu.Lock()
-		open := terminalUsageLimit(ts.runner.Screen()) != ""
+		open := terminal.ParseUsageLimit(ts.runner.Screen()) != nil
 		if x, err := s.store.Get(ts.id); err == nil && x.Status == "waiting" {
 			open = true
 		}
@@ -500,10 +503,12 @@ const dialogGrace = 2 * time.Second
 // Approvals of subagents (whose dialogs may wait behind the main screen) are
 // left to their hooks.
 func (s *Server) watchDialogs(ts *terminalSession) {
-	shown := dialogShown(ts.runner.Screen())
+	screen := ts.runner.Screen()
+	shown := dialogShown(screen)
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.syncUsageMenuLocked(ts, terminal.ParseUsageLimit(screen), now)
 	for id, p := range s.requests {
 		if p.connection == ts.conn && p.onScreen && p.dialogStep(shown, now) {
 			s.finishSharedLocked(id, p, "terminal")
@@ -1165,8 +1170,7 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 		return
 	}
 	x.Attached = ts.runner.Attached()
-	x.UsageLimit = terminalUsageLimit(ts.runner.Screen())
-	if x.UsageLimit != "" {
+	if terminal.ParseUsageLimit(ts.runner.Screen()) != nil || s.requests[ts.usageID] != nil {
 		x.Status = "waiting"
 	}
 	live := store.LiveStatus{}

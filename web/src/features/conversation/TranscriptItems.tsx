@@ -3,6 +3,7 @@ import { memo, useMemo } from 'react';
 import type { ToolCall, TranscriptItem } from '@/domain/toolGroups';
 import { parseCodexStatus } from '@/domain/codexStatus';
 import { QuestionCard } from '@/features/requests/QuestionCard';
+import { UsageLimitCard } from '@/features/requests/UsageLimitCard';
 import { PlanCard } from '@/features/requests/PlanCard';
 import { useWholeCall } from '@/features/requests/wholeCall';
 import { findPlan } from '@/domain/planSource';
@@ -31,7 +32,7 @@ function SpecialCard({ call }: { call: ToolCall }) {
     extra: source?.truncated && source.seq ? [source.seq] : [],
   } : {});
   const props = { call, request, session, interaction: interactions.get(call.seq), mobile, loading };
-  return <div className="my-1 rounded-xl" data-call-id={call.id || undefined}>{plan ? <PlanCard {...props} source={source} /> : <QuestionCard {...props} />}</div>;
+  return <div className="my-1 rounded-xl" data-call-id={call.id || undefined}>{call.name === 'UsageLimit' ? <UsageLimitCard {...props} /> : plan ? <PlanCard {...props} source={source} /> : <QuestionCard {...props} />}</div>;
 }
 
 const Item = memo(function Item({ item, nested }: { item: TranscriptItem; nested: boolean }) {

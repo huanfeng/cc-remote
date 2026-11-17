@@ -257,6 +257,9 @@ func (s *Server) finishSharedLocked(id string, p *pending, status string) {
 	delete(s.requests, id)
 	if s.store.Resolve(id, status) == nil {
 		s.interactionEventLocked(id, p, status, answer{})
+		if p.usageMenu != nil {
+			s.usageResultLocked(id, p, status, "")
+		}
 	}
 	select {
 	case p.channel <- answer{Decision: "terminal"}:
@@ -272,6 +275,9 @@ func (s *Server) finishSharedLocked(id string, p *pending, status string) {
 // event kind in the message list.
 func (s *Server) interactionEventLocked(id string, p *pending, outcome string, a answer) {
 	payload := map[string]any{"id": id, "toolName": p.toolName, "outcome": outcome, "decision": a.Decision}
+	if p.usageMenu != nil {
+		payload["input"], payload["answers"] = p.usageMenu, a.Answers
+	}
 	if p.toolName == "AskUserQuestion" {
 		var input struct {
 			Questions json.RawMessage `json:"questions"`

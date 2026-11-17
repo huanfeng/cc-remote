@@ -12,7 +12,7 @@ import { t } from '@/lib/i18n';
 import { RequestShell, type RequestTone } from './RequestShell';
 import { useRequest } from './drafts';
 
-export type Interaction = { outcome: string; decision?: string; mode?: string };
+export type Interaction = { outcome: string; decision?: string; mode?: string; answers?: Record<string, string> };
 
 const CLARIFY = 'The user wants to clarify these questions.';
 

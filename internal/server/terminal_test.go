@@ -103,6 +103,7 @@ func fakeTerminal() {
 	ctrlC := 0
 	dropped := false
 	ignored := false
+	usageShown, usageSelected := false, 1
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
@@ -111,6 +112,19 @@ func fakeTerminal() {
 		pending = append(pending, buf[:n]...)
 		for len(pending) > 0 {
 			switch {
+			case usageShown && len(pending) >= 3 && (bytes.HasPrefix(pending, []byte("\x1b[A")) || bytes.HasPrefix(pending, []byte("\x1b[B"))):
+				if pending[2] == 'A' {
+					usageSelected--
+				} else {
+					usageSelected++
+				}
+				pending = pending[3:]
+			case usageShown && pending[0] == '\r':
+				pending = pending[1:]
+				logKey(fmt.Sprintf("USAGE:%d", usageSelected))
+				usageShown = false
+				os.Stdout.WriteString("\x1b[H\x1b[2J" + rule + "\r\n❯ \r\n" + rule + "\r\n")
+				hook("Stop", nil)
 			case bytes.HasPrefix(pending, []byte("\x1b[200~")):
 				end := bytes.Index(pending, []byte("\x1b[201~"))
 				if end < 0 {
@@ -139,6 +153,12 @@ func fakeTerminal() {
 				}
 				box("")
 				hook("UserPromptSubmit", map[string]string{"prompt": wrap(text)})
+				if text == "/usage-limit-test" {
+					turn(text)
+					usageShown, usageSelected = true, 1
+					os.Stdout.WriteString("\x1b[H\x1b[2J" + strings.ReplaceAll(usageTestScreen, "\n", "\r\n"))
+					continue
+				}
 				if text == "/clear" {
 					id = "00000000-0000-4000-8000-00000000c1ea"
 					hook("SessionStart", map[string]string{"source": "clear"})

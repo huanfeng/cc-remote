@@ -26,6 +26,7 @@ import (
 	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
+	"cc-remote/internal/terminal"
 )
 
 type Runner func(context.Context, claude.Options, func(claude.Event) error) error
@@ -88,6 +89,7 @@ type pending struct {
 	connection *channelConnection
 	toolName   string
 	input      json.RawMessage
+	usageMenu  *terminal.UsageLimitMenu
 	// The transcript call it asks about, when the transcript shows which: only
 	// that call's result ends it (an identical earlier call's must not). A
 	// subagent's or an ambiguous call is left to its hook, which reads the
@@ -1122,6 +1124,10 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requests[id]
 	if !ok || p.ctx.Err() != nil {
 		fail(w, 409, s.lang(r).T("The request was already handled or has expired", "请求已处理或已失效"))
+		return
+	}
+	if p.usageMenu != nil {
+		s.resolveUsageLimitLocked(w, r, id, p, a)
 		return
 	}
 	status := "resolved"

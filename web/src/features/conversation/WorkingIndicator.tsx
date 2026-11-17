@@ -8,21 +8,8 @@ import { isCompacting } from '@/domain/toolGroups';
 import { providerName, providerOf } from '@/domain/providers';
 import { useApp } from '@/store/app';
 import { t } from '@/lib/i18n';
-import { usePrefs } from '@/lib/prefs';
 
 export const WorkingIndicator = memo(function WorkingIndicator({ session, events }: { session: Session; events: SessionEvent[] }) {
-  if (session.usageLimit) {
-    return (
-      <div className="mt-4 rounded-lg border border-border p-4 text-ui-sm" role="status" aria-live="polite">
-        <p className="font-medium">{t('Usage limit reached · waiting for your choice', '用量已达上限 · 等待你选择')}</p>
-        <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-foreground-subtle">{session.usageLimit}</pre>
-        <button type="button" className="mt-3 text-icon-blue hover:underline" onClick={() => {
-          const prefs = usePrefs.getState();
-          prefs.set({ terminalView: { ...prefs.terminalView, [session.id]: true } });
-        }}>{t('Open terminal to choose', '打开终端选择处理方式')}</button>
-      </div>
-    );
-  }
   const running = session.status === 'running';
   const background = session.activeTasks ?? 0;
   if (running) {

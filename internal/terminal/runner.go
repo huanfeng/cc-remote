@@ -279,8 +279,15 @@ func (r *Runner) Input() (string, bool) {
 // Screen is the screen text without trailing blank rows, for diagnostics.
 func (r *Runner) Screen() string {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.screenLocked()
+}
+
+func (r *Runner) screenLocked() string {
+	if r.scr == nil {
+		return ""
+	}
 	lines := r.scr.lines()
-	r.mu.Unlock()
 	for len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}

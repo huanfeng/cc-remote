@@ -180,19 +180,20 @@ export function placeRequests<R extends PendingRequest>(items: readonly Transcri
 }
 
 /** The host's interaction record ("web", "handoff", "terminal", "expired" plus decision and mode) per special call. */
-export function interactionsByCall(items: readonly TranscriptItem[], events: readonly TranscriptEvent[]): Map<number, { outcome: string; decision?: string; mode?: string }> {
+export function interactionsByCall(items: readonly TranscriptItem[], events: readonly TranscriptEvent[]): Map<number, { outcome: string; decision?: string; mode?: string; answers?: Record<string, string> }> {
   const calls = items.flatMap(item => item.type === 'special' ? [item.call] : []);
-  const out = new Map<number, { outcome: string; decision?: string; mode?: string }>();
+  const out = new Map<number, { outcome: string; decision?: string; mode?: string; answers?: Record<string, string> }>();
   for (const event of events) {
     const p = event.payload;
     if (event.kind !== 'interaction' || !p?.toolName) continue;
     let owner: ToolCall | undefined;
     for (const call of calls) {
       if (call.seq >= event.seq || call.name !== p.toolName) continue;
+      if (call.name === 'UsageLimit' && p.id !== call.id) continue;
       if (call.name === 'AskUserQuestion' && p.input && questionKey(call.input) !== questionKey(p.input)) continue;
       owner = call;
     }
-    if (owner) out.set(owner.seq, { outcome: String(p.outcome || event.text || ''), decision: p.decision, mode: p.mode });
+    if (owner) out.set(owner.seq, { outcome: String(p.outcome || event.text || ''), decision: p.decision, mode: p.mode, ...(p.answers ? { answers: p.answers } : {}) });
   }
   return out;
 }
