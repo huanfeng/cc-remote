@@ -60,6 +60,7 @@ type outgoing struct {
 	store.QueuedMessage
 	prompt   string
 	deferred bool // hold at the host until the preceding task ends
+	recorded bool // already in the history (sent with nothing ahead of it); never listed as queued
 }
 
 type sessionRuntime struct {
@@ -271,7 +272,9 @@ func (s *Server) turnOutputLocked(rt *sessionRuntime) {
 		m := rt.sent[0]
 		rt.sent = rt.sent[1:]
 		rt.early = &m
-		s.recordLocked(rt, m)
+		if !m.recorded {
+			s.recordLocked(rt, m)
+		}
 		return
 	}
 	if !rt.stopping {
@@ -287,11 +290,15 @@ func (s *Server) recordLocked(rt *sessionRuntime, m outgoing) {
 
 // queuedMessages lists messages Claude has not started yet, for the web.
 func (rt *sessionRuntime) queuedMessages() []store.QueuedMessage {
-	out := make([]store.QueuedMessage, len(rt.sent))
+	out := make([]store.QueuedMessage, 0, len(rt.sent)+len(rt.uncertain))
 	for i, m := range rt.sent {
-		out[i] = m.QueuedMessage
-		out[i].Editable = m.deferred && i >= len(rt.sent)-rt.unwritten && m.Delivery == ""
-		out[i].CanSendNow = out[i].Editable && rt.turn && rt.approvals == 0 && !rt.steering && (rt.provider != "codex" || len(m.Payload) == 0)
+		if m.recorded {
+			continue
+		}
+		q := m.QueuedMessage
+		q.Editable = m.deferred && i >= len(rt.sent)-rt.unwritten && m.Delivery == ""
+		q.CanSendNow = q.Editable && rt.turn && rt.approvals == 0 && !rt.steering && (rt.provider != "codex" || len(m.Payload) == 0)
+		out = append(out, q)
 	}
 	return append(out, rt.uncertain...)
 }
@@ -299,6 +306,12 @@ func (rt *sessionRuntime) queuedMessages() []store.QueuedMessage {
 // enqueueLocked accepts a web message; it reports whether it waits behind other work.
 func (s *Server) enqueueLocked(rt *sessionRuntime, m outgoing) bool {
 	waiting := rt.turn || len(rt.sent) > 0 || rt.proc == nil
+	// Nothing ahead of it: it is a plain send, not a queued message. It enters the
+	// conversation now instead of sitting in the queue until Claude echoes it.
+	if !rt.turn && len(rt.sent) == 0 && !rt.steering && rt.approvals == 0 {
+		m.deferred, m.recorded = false, true
+		s.recordLocked(rt, m)
+	}
 	rt.sent = append(rt.sent, m)
 	rt.unwritten++
 	s.busyLocked(rt)
@@ -357,7 +370,9 @@ func (s *Server) replay(rt *sessionRuntime, content string) {
 	written := rt.sent[:len(rt.sent)-rt.unwritten]
 	n := replayCount(written, content)
 	for _, m := range written[:n] {
-		s.recordLocked(rt, m)
+		if !m.recorded {
+			s.recordLocked(rt, m)
+		}
 	}
 	rt.sent = rt.sent[n:]
 }

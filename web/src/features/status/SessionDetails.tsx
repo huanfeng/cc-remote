@@ -108,7 +108,7 @@ function Details({ session: s, onDirty, onDeleted }: { session: Session; onDirty
       <Section title={t('Current execution', '当前执行')}>
         <GroupCard>
           <InfoRow label={t('Activity', '当前活动')}>{s.live?.activity || <Muted>{t('Not reported', '未报告')}</Muted>}</InfoRow>
-          <InfoRow label={t('Queued messages', '排队消息')}>{s.queued?.length ?? 0}</InfoRow>
+          <InfoRow label={t('Queued messages', '排队消息')}>{s.queued?.filter(m => !m.sending).length ?? 0}</InfoRow>
           <InfoRow label={t('Background tasks', '后台任务')}>{s.activeTasks ?? 0}</InfoRow>
           {s.live && s.live.contextSize > 0 && (
             <InfoRow label={t('Context', '上下文')}>

@@ -250,6 +250,28 @@ func eventTexts(st *store.Store, id string) []string {
 	return out
 }
 
+// A message sent to an idle terminal session is a plain send: the host marks it
+// "sending" so the web shows it in the conversation instead of the queue.
+func TestTerminalLoneMessageIsMarkedSending(t *testing.T) {
+	s, base, _, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	if code, b := call(t, base, "POST", "/api/sessions/"+x.ID+"/messages", map[string]any{"text": "solo", "defer": true, "sendId": "queued-0001"}); code != 202 {
+		t.Fatalf("send: %d %s", code, b)
+	}
+	s.mu.Lock()
+	var got []store.QueuedMessage
+	for _, q := range s.terminals[x.ID].queued {
+		got = append(got, q.message)
+	}
+	s.mu.Unlock()
+	// The echo may already have removed it; only a still-queued one is checked.
+	for _, m := range got {
+		if !m.Sending || m.Editable {
+			t.Fatalf("lone message not marked sending: %+v", m)
+		}
+	}
+}
+
 // A terminal session needs the trust confirmation; web messages reach Claude
 // Code as one paste, enter the history from the transcript, and drive the
 // status through the hooks; stop presses Esc, then Ctrl+C.

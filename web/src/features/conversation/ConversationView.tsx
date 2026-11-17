@@ -88,7 +88,18 @@ function Empty({ session, native }: { session: Session; native?: Provider }) {
 export function ConversationView({ tkey, session, transcript, native, mobile }: ConversationViewProps) {
   const backend = useBackend();
   const { scrollRef, contentRef, scrollToBottom, stopScroll } = useStickToBottom({ initial: 'instant', resize: 'instant' });
-  const events = transcript.events;
+  // A message sent with nothing ahead of it is in the conversation at once, before the
+  // transcript shows it; the host drops it from `queued` when the real event arrives.
+  const sending = session.queued;
+  const events = useMemo(() => {
+    const pending = native ? [] : (sending ?? []).filter(m => m.sending);
+    if (!pending.length) return transcript.events;
+    const last = transcript.events.at(-1)?.seq ?? 0;
+    const at = new Date().toISOString();
+    return [...transcript.events, ...pending.map((m, i) => ({
+      seq: last + i + 1, kind: 'user', text: m.text, payload: m.payload, createdAt: at,
+    }))];
+  }, [transcript.events, sending, native]);
   const running = !native && session.status === 'running';
   const live = !native && (session.status === 'running' || session.status === 'waiting');
   const lastSeq = events.at(-1)?.seq ?? 0;

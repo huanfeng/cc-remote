@@ -84,6 +84,8 @@ export interface PendingMessage {
   editable?: boolean;
   canSendNow?: boolean;
   delivery?: 'pending' | 'unknown' | string;
+  /** A plain send nothing was ahead of: shown in the conversation, not in the queue. */
+  sending?: boolean;
 }
 
 export interface Session {

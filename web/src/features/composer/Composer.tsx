@@ -340,7 +340,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   };
 
   const reading = contextReading(provider, session.live, transcript.events);
-  const queued = session.queued ?? [];
+  const queued = (session.queued ?? []).filter(m => !m.sending);
   const suggestion = session.live?.suggestion;
   const showSuggestion = !!suggestion && !running && session.status !== 'waiting' && !text && !attachments.length;
 

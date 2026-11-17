@@ -759,6 +759,8 @@ func (s *Server) terminalMessageLocked(w http.ResponseWriter, r *http.Request, x
 	}
 	// Local commands (/compact, /clear) never show up as a prompt: not queued.
 	if !strings.HasPrefix(prompt, "/") {
+		// status "running" here means nothing was ahead of it (see above).
+		message.Sending = status == "running"
 		ts.queued = append(ts.queued, terminalQueued{text: prompt, message: message})
 	}
 	respond(w, 202, map[string]string{"status": status})

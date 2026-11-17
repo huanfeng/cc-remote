@@ -69,6 +69,33 @@ func TestDeferredQueueEditsInPlaceAndPreservesAttachments(t *testing.T) {
 	}
 }
 
+// A message with nothing ahead of it is a plain send: it is in the conversation
+// at once and never listed as queued, and Claude's echo does not record it twice.
+func TestLoneMessageEntersHistoryImmediatelyAndIsNotQueued(t *testing.T) {
+	s, ts, st, procs := withFakeProc(t)
+	x := createSession(t, ts)
+	base := "/api/sessions/" + x.ID
+	if c, b := request(t, ts, "POST", base+"/messages", map[string]any{"text": "solo", "defer": true, "sendId": "queued-0001"}, testToken); c != 202 {
+		t.Fatalf("send %d %s", c, b)
+	}
+	p := <-procs
+	if got := strings.Join(userTexts(st, x.ID), ","); got != "solo" {
+		t.Fatalf("history before the echo %q", got)
+	}
+	s.mu.Lock()
+	items := s.procs[x.ID].queuedMessages()
+	s.mu.Unlock()
+	if len(items) != 0 {
+		t.Fatalf("lone message listed as queued: %+v", items)
+	}
+	await(t, func() bool { return len(p.sentCopy()) == 1 })
+	p.replay("solo")
+	p.result(nil)
+	if got := strings.Join(userTexts(st, x.ID), ","); got != "solo" {
+		t.Fatalf("history after the echo %q", got)
+	}
+}
+
 func TestDeferredQueueWithdrawReturnsOriginalAndDeleteIsScoped(t *testing.T) {
 	s, ts, _, procs := withFakeProc(t)
 	x := createSession(t, ts)

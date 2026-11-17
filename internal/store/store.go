@@ -72,12 +72,15 @@ type LiveStatus struct {
 // QueuedMessage is a sent message Claude has not started yet; it becomes a
 // "user" event with the same text and payload when its turn starts.
 type QueuedMessage struct {
-	ID         string          `json:"id,omitempty"`
-	Editable   bool            `json:"editable,omitempty"`
-	CanSendNow bool            `json:"canSendNow,omitempty"`
-	Delivery   string          `json:"delivery,omitempty"`
-	Text       string          `json:"text"`
-	Payload    json.RawMessage `json:"payload,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Editable   bool   `json:"editable,omitempty"`
+	CanSendNow bool   `json:"canSendNow,omitempty"`
+	Delivery   string `json:"delivery,omitempty"`
+	// Sending: nothing was ahead of it, so it is a plain send the transcript has
+	// not shown yet. Clients show it in the conversation, not in the queue.
+	Sending bool            `json:"sending,omitempty"`
+	Text    string          `json:"text"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 type Event struct {

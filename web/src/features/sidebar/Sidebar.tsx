@@ -376,7 +376,7 @@ function SessionRow({ session: s, active, mobile, showFolder }: { session: Sessi
   const time = conversationTime(s, Date.now(), lang);
   const canExit = hasFeature(info, 'queueControls') && (s.online || s.status === 'running');
   const canArchive = hasFeature(info, 'archive');
-  const queued = s.queued?.length ?? 0;
+  const queued = s.queued?.filter(m => !m.sending).length ?? 0;
   const choose = () => select({ kind: 'session', id: s.id });
   return (
     <div

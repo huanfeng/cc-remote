@@ -83,7 +83,7 @@ function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session
   const modelPending = !!s.model && !terminal && !!live?.modelId && !sameModel(s.model, live.modelId, live.model);
   const effortPending = !!s.effort && !terminal && !!live?.effort && s.effort !== live.effort;
   const permPending = !!s.permissionMode && !!live?.permissionMode && s.permissionMode !== live.permissionMode;
-  const queued = s.queued?.length ?? 0;
+  const queued = s.queued?.filter(m => !m.sending).length ?? 0;
   const tasks = s.activeTasks ?? 0;
 
   return (
