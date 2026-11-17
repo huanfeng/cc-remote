@@ -380,7 +380,7 @@ func (s *Server) terminalWithdrawLocked(w http.ResponseWriter, r *http.Request, 
 func (s *Server) awaitNoDialog(ts *terminalSession) bool {
 	for {
 		s.mu.Lock()
-		open := false
+		open := terminalUsageLimit(ts.runner.Screen()) != ""
 		if x, err := s.store.Get(ts.id); err == nil && x.Status == "waiting" {
 			open = true
 		}
@@ -1165,6 +1165,10 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 		return
 	}
 	x.Attached = ts.runner.Attached()
+	x.UsageLimit = terminalUsageLimit(ts.runner.Screen())
+	if x.UsageLimit != "" {
+		x.Status = "waiting"
+	}
 	live := store.LiveStatus{}
 	if ts.live != nil {
 		live = *ts.live
