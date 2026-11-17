@@ -12,7 +12,7 @@ import {
 import { cn } from '@/components/lib/utils';
 import { useBackend, type Backend } from '@/backend/backend';
 import type { NativeSession, Provider, Session } from '@/backend/types';
-import { hasFeature, select, selectionKey, useApp } from '@/store/app';
+import { hasFeature, select, selectionKey, useApp, type Surface } from '@/store/app';
 import { releaseSession, useTranscripts } from '@/store/transcripts';
 import { usePrefs } from '@/lib/prefs';
 import { hostKey } from '@/lib/hosts';
@@ -24,7 +24,7 @@ import { hostProviders, providerName } from '@/domain/providers';
 import { folderName, sessionMeta, shortPath, statusLabel, statusTone, toneDot } from '@/features/session/status';
 import { HostSwitcher } from './HostSwitcher';
 import { useNativeSessions } from './useNativeSessions';
-import { busy, inProgressSessions, projectGroups } from './projectGroups';
+import { busy, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
 
 const PAGE = 200;
 
@@ -34,6 +34,7 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
   const open = useApp(s => s.open);
   const setPrefs = usePrefs(s => s.set);
   const cached = useTranscripts(s => Object.keys(s.byKey).length);
+  const canArchive = useApp(s => hasFeature(s.info, 'archive'));
   const [query, setQuery] = useState('');
   const mobile = variant === 'mobile';
 
@@ -69,6 +70,7 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
         <TabButton mobile={mobile} active={tab === 'sessions'} onClick={() => set({ sidebarTab: 'sessions' })}>{t('Sessions', '会话')}</TabButton>
         <TabButton mobile={mobile} active={tab === 'history'} onClick={() => set({ sidebarTab: 'history' })}>{t('Terminal history', '终端历史')}</TabButton>
         <div className="flex-1" />
+        {canArchive && <GlobalMenu mobile={mobile} />}
         {cached > 0 && (
           <span className="px-1 text-ui-xs text-foreground-subtlest" title={t('Conversations kept in memory for instant switching', '保存在内存中、可即时切换的会话')}>
             {t(`${cached} cached`, `已缓存 ${cached}`)}
@@ -99,6 +101,27 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
         <FooterButton mobile={mobile} icon={<Activity className="size-4" />} label={t('Host status', '宿主状态')} onClick={() => open({ type: 'status' })} />
       </div>
     </div>
+  );
+}
+
+/** Host-wide actions, next to the tabs: archive every idle session of every project. */
+function GlobalMenu({ mobile }: { mobile: boolean }) {
+  const backend = useBackend();
+  const sessions = useApp(s => s.sessions);
+  const idle = useMemo(() => sessions.filter(s => !s.archived && !busy(s)), [sessions]);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-xs'} aria-label={t('All sessions actions', '全部会话操作')} className="text-foreground-subtlest">
+          <MoreHorizontal className="size-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem disabled={!idle.length} onSelect={() => void archiveSessions(backend, idle, true)}>
+          <Archive className="size-3.5" /> {t(`Archive all idle sessions (${idle.length})`, `归档全部空闲会话（${idle.length}）`)}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -156,6 +179,7 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   const loaded = useApp(s => s.sessionsLoaded);
   const selection = useApp(s => s.selection);
   const canArchive = useApp(s => hasFeature(s.info, 'archive'));
+  const openSurface = useApp(s => s.open);
   const collapsed = usePrefs(s => s.collapsedProjects);
   const setPrefs = usePrefs(s => s.set);
   const clocks = useRef(new Map<string, number>());
@@ -226,31 +250,52 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
                 onClick={() => toggleGroup(stored, !isCollapsed)}
                 title={g.cwd}
                 aria-expanded={!isCollapsed}
-                className={cn('flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-ui-sm font-semibold text-foreground-subtle hover:text-foreground', mobile ? 'h-8' : 'h-7', canArchive && 'pr-7')}
+                className={cn('flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-ui-sm font-semibold text-foreground-subtle hover:text-foreground', mobile ? 'h-8' : 'h-7', 'pr-12')}
               >
                 <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
                 <span className="truncate">{folderName(g.cwd)}</span>
                 <span className={cn('ml-auto', !mobile && 'opacity-0 group-hover/head:opacity-100')}>{g.shown.length + g.folded.length}</span>
               </button>
-              {canArchive && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={t('Project actions', '项目操作')}
-                      className={cn('absolute right-0.5 text-foreground-subtlest', !mobile && 'opacity-0 focus-visible:opacity-100 group-hover/head:opacity-100 data-[state=open]:opacity-100')}
-                    >
-                      <MoreHorizontal className="size-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem disabled={!idle.length} onSelect={() => void archiveSessions(backend, idle, true)}>
-                      <Archive className="size-3.5" /> {t(`Archive idle sessions (${idle.length})`, `归档空闲会话（${idle.length}）`)}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+              {/* The newest session of the project decides the engine the new one starts with. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('New session in this project', '在此项目新建会话')}
+                    onClick={() => newSessionIn(openSurface, g)}
+                    className={cn('absolute right-6 text-foreground-subtlest', !mobile && 'opacity-0 focus-visible:opacity-100 group-hover/head:opacity-100')}
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('New session in this project', '在此项目新建会话')}</TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('Project actions', '项目操作')}
+                    className={cn('absolute right-0.5 text-foreground-subtlest', !mobile && 'opacity-0 focus-visible:opacity-100 group-hover/head:opacity-100 data-[state=open]:opacity-100')}
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => newSessionIn(openSurface, g)}>
+                    <Plus className="size-3.5" /> {t('New session in this project', '在此项目新建会话')}
+                  </DropdownMenuItem>
+                  {canArchive && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem disabled={!idle.length} onSelect={() => void archiveSessions(backend, idle, true)}>
+                        <Archive className="size-3.5" /> {t(`Archive idle sessions (${idle.length})`, `归档空闲会话（${idle.length}）`)}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             {!isCollapsed && (
               <div className="flex flex-col gap-px">
@@ -292,6 +337,12 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
       )}
     </div>
   );
+}
+
+/** Opens the new-session form with this project's folder (and its newest session's engine) filled in. */
+function newSessionIn(open: (s: Surface) => void, g: ProjectGroup) {
+  const newest = g.shown[0] ?? g.folded[0];
+  open({ type: 'new-session', cwd: g.cwd, provider: newest?.provider });
 }
 
 /** Archives (or brings back) sessions; archiving offers an undo. */

@@ -11,7 +11,8 @@ export type Selection =
   | null;
 
 export type Surface =
-  | { type: 'new-session'; resume?: { id: string; provider: Provider; cwd: string } }
+  // `cwd` (and `provider`) pre-fill the form, e.g. from a project's menu in the sidebar.
+  | { type: 'new-session'; resume?: { id: string; provider: Provider; cwd: string }; cwd?: string; provider?: Provider }
   | { type: 'settings'; section?: SettingsSection }
   | { type: 'status' }
   | { type: 'session-details'; id: string }

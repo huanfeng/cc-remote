@@ -30,10 +30,12 @@ function openCreated(id: string) {
   select({ kind: 'session', id });
 }
 
-export function NewSessionDialog({ open, onOpenChange, mobile, resume }: { open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean; resume?: Resume }) {
+export function NewSessionDialog({ open, onOpenChange, mobile, resume, initialCwd, initialProvider }: {
+  open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean; resume?: Resume; initialCwd?: string; initialProvider?: Provider;
+}) {
   return resume
     ? <ResumeDialog open={open} onOpenChange={onOpenChange} mobile={mobile} resume={resume} />
-    : <CreateDialog open={open} onOpenChange={onOpenChange} mobile={mobile} />;
+    : <CreateDialog open={open} onOpenChange={onOpenChange} mobile={mobile} initialCwd={initialCwd} initialProvider={initialProvider} />;
 }
 
 const absolute = (p: string) => /^([a-z]:[\\/]|\\\\|\/|~[\\/]?)/i.test(p.trim());
@@ -58,17 +60,23 @@ function useRecentProjects() {
   ], 8), [sessions, native]);
 }
 
-function CreateDialog({ open, onOpenChange, mobile }: { open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean }) {
+function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider }: {
+  open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean; initialCwd?: string; initialProvider?: Provider;
+}) {
   const backend = useBackend();
   const info = useApp(s => s.info);
   const setPrefs = usePrefs(s => s.set);
   const providers = hostProviders(info);
   const selected = useApp(s => (s.selection?.kind === 'session' ? s.sessions.find(x => x.id === s.selection!.id) : undefined));
-  const [provider, setProvider] = useState<Provider>(() => (selected?.provider === 'codex' && providers.includes('codex') ? 'codex' : 'claude'));
+  const [provider, setProvider] = useState<Provider>(() => {
+    const preferred = initialProvider ?? selected?.provider;
+    return preferred === 'codex' && providers.includes('codex') ? 'codex' : 'claude';
+  });
   const [mode, setMode] = useState<'terminal' | 'managed'>(() => usePrefs.getState().newSessionMode);
   const [profileId, setProfileId] = useState('');
-  const [cwd, setCwd] = useState('');
-  const [cwdTouched, setCwdTouched] = useState(false);
+  const [cwd, setCwd] = useState(initialCwd ?? '');
+  // A directory handed in by the caller is a choice: never overwritten by the latest-project default.
+  const [cwdTouched, setCwdTouched] = useState(!!initialCwd);
   const [title, setTitle] = useState('');
   const [trust, setTrust] = useState(false);
   // The host answered 428 trust-required: the checkbox is highlighted until ticked.

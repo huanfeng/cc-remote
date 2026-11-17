@@ -21,7 +21,7 @@ const surfaceKey = (s: NonNullable<Surface>) => {
     case 'session-details': case 'tasks': case 'attach': return `${s.type}:${s.id}`;
     // Same key for another file of the session: FileViewer keeps its back stack.
     case 'file': return `file:${s.sessionId}`;
-    case 'new-session': return `new:${s.resume?.id ?? ''}`;
+    case 'new-session': return `new:${s.resume?.id ?? ''}:${s.cwd ?? ''}`;
     default: return s.type;
   }
 };
@@ -49,7 +49,7 @@ export function Surfaces() {
   const common = { open, onOpenChange, mobile };
 
   switch (current.type) {
-    case 'new-session': return <NewSessionDialog key={key} {...common} resume={current.resume} />;
+    case 'new-session': return <NewSessionDialog key={key} {...common} resume={current.resume} initialCwd={current.cwd} initialProvider={current.provider} />;
     case 'settings': return <SettingsPage key={key} {...common} section={current.section} />;
     case 'status': return <StatusPanel key={key} {...common} />;
     case 'session-details': return <SessionDetails key={key} {...common} id={current.id} />;
