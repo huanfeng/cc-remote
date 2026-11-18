@@ -25,6 +25,7 @@ import { TranscriptItems } from './TranscriptItems';
 import { TurnRail } from './TurnRail';
 import { WorkingIndicator } from './WorkingIndicator';
 import { CodexUsageFooter } from './CodexCards';
+import { useCompletionViewed } from '@/features/session/useCompletionViewed';
 
 export interface ConversationViewProps {
   /** Selection key the transcript is cached under (store/transcripts). */
@@ -183,6 +184,15 @@ export function ConversationView({ tkey, session, transcript, native, mobile }: 
 
   // ---- "Jump to latest": shown past 240px from the bottom, hidden again within 40px. ----
   const [away, setAway] = useState(false);
+  const latest = useCallback(() => {
+    const el = scrollRef.current;
+    return {
+      loaded: transcript.loaded && !transcript.error,
+      lastSeq: transcript.events.at(-1)?.seq ?? 0,
+      atBottom: !!el && el.clientHeight > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= HIDE_JUMP,
+    };
+  }, [scrollRef, transcript]);
+  useCompletionViewed(native ? { ...session, status: 'idle' } : session, latest);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;

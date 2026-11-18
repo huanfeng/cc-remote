@@ -13,10 +13,11 @@ import type { Session } from '@/backend/types';
 import { useApp } from '@/store/app';
 import { useTranscripts } from '@/store/transcripts';
 import { useIsMobile } from '@/lib/hooks';
-import { locale, t } from '@/lib/i18n';
+import { lang, locale, t } from '@/lib/i18n';
+import { sessionRetry } from '@/domain/sessionRetry';
 import { providerName, providerOf } from '@/domain/providers';
 import { contextReading } from '@/domain/contextReading';
-import { modeLabel, statusLabel, statusTone, toneDot } from '@/features/session/status';
+import { modeLabel, sessionStatusLabel, statusTone, toneDot } from '@/features/session/status';
 import { permissionLabel, shortModel } from '@/features/pickers/options';
 import { SupplierQuickSwitch } from '@/features/pickers/SupplierQuickSwitch';
 import { QuickSwitch, type QuickKind } from '@/features/pickers/QuickSwitch';
@@ -74,6 +75,7 @@ function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session
   const events = useTranscripts(x => x.byKey[`session:${s.id}`]?.events) ?? EMPTY;
   const provider = providerOf(s);
   const live = s.live;
+  const retry = sessionRetry(s, lang);
   const terminal = s.mode === 'terminal';
   const ctx = contextReading(provider, live, events);
   const n = (v?: number) => (v === undefined ? '—' : v.toLocaleString(locale));
@@ -94,10 +96,11 @@ function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session
         <Row label={t('Status', '状态')}>
           <span className="inline-flex items-center gap-1.5">
             <span className={cn('size-1.5 rounded-full', toneDot[statusTone(s)])} />
-            {statusLabel(s.status, tasks)}
+            {sessionStatusLabel(s)}
           </span>
         </Row>
         {live?.activity && <Row label={t('Activity', '活动')}><span className="line-clamp-2">{live.activity}</span></Row>}
+        {retry && <Row label={t('Connection retry', '连接重试')}><span className="whitespace-pre-wrap break-words text-warning">{retry.message}</span></Row>}
       </dl>
       <Divider />
       <dl className="flex flex-col">

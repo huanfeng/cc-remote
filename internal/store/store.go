@@ -26,6 +26,8 @@ type Session struct {
 	Status                    string `json:"status"`
 	CreatedAt                 string `json:"createdAt"`
 	UpdatedAt                 string `json:"updatedAt"`
+	CompletedAt               string `json:"completedAt,omitempty"`
+	CompletionEventSeq        int64  `json:"completionEventSeq"`
 	LastConversationAt        string `json:"lastConversationAt,omitempty"`
 	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
 	Resume                    bool   `json:"-"`
@@ -56,17 +58,24 @@ type Session struct {
 // LiveStatus is what Claude Code reports to its status line, and the spinner
 // line while it works.
 type LiveStatus struct {
-	PermissionMode string  `json:"permissionMode,omitempty"`
-	Model          string  `json:"model,omitempty"`
-	ModelID        string  `json:"modelId,omitempty"`
-	Effort         string  `json:"effort,omitempty"`
-	CostUSD        float64 `json:"costUSD"`
-	DurationMS     int64   `json:"durationMs"`
-	ContextTokens  int     `json:"contextTokens"`
-	ContextSize    int     `json:"contextSize"`
-	ContextPercent float64 `json:"contextPercent"`
-	Activity       string  `json:"activity,omitempty"`
-	Suggestion     string  `json:"suggestion,omitempty"` // Claude Code's suggested next prompt
+	Retry          *RetryStatus `json:"retry,omitempty"`
+	PermissionMode string       `json:"permissionMode,omitempty"`
+	Model          string       `json:"model,omitempty"`
+	ModelID        string       `json:"modelId,omitempty"`
+	Effort         string       `json:"effort,omitempty"`
+	CostUSD        float64      `json:"costUSD"`
+	DurationMS     int64        `json:"durationMs"`
+	ContextTokens  int          `json:"contextTokens"`
+	ContextSize    int          `json:"contextSize"`
+	ContextPercent float64      `json:"contextPercent"`
+	Activity       string       `json:"activity,omitempty"`
+	Suggestion     string       `json:"suggestion,omitempty"` // Claude Code's suggested next prompt
+}
+
+type RetryStatus struct {
+	Message     string `json:"message"`
+	Attempt     int    `json:"attempt,omitempty"`
+	MaxAttempts int    `json:"maxAttempts,omitempty"`
 }
 
 // QueuedMessage is a sent message Claude has not started yet; it becomes a
@@ -184,6 +193,10 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS session_completion(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,completed_at TEXT NOT NULL,event_seq INTEGER NOT NULL)`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// Sessions synced before transcripts carried task and teammate events
 	// are flagged once, so their first sync does not append those of the
 	// whole history (see TranscriptFlag).
@@ -286,12 +299,12 @@ func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provide
 // added before it runs, so it is always there.
 const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json,archived_at`
 
-const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0)`
+const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0),COALESCE((SELECT completed_at FROM session_completion WHERE session_id=sessions.id),''),COALESCE((SELECT event_seq FROM session_completion WHERE session_id=sessions.id),0)`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.LastConversationAt, &x.ConversationTimeEstimated)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.LastConversationAt, &x.ConversationTimeEstimated, &x.CompletedAt, &x.CompletionEventSeq)
 	if err == nil {
 		x.Archived = archived(x)
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
@@ -334,8 +347,30 @@ func (s *Store) List() ([]Session, error) {
 }
 
 func (s *Store) SetStatus(id, status string) error {
-	_, err := s.db.Exec(`UPDATE sessions SET status=?,updated_at=? WHERE id=?`, status, now(), id)
-	return err
+	if status != "completed" {
+		_, err := s.db.Exec(`UPDATE sessions SET status=?,updated_at=? WHERE id=?`, status, now(), id)
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	at := now()
+	// Preserve the completion identity when a duplicate status notification arrives.
+	// The watermark is the transcript available at completion, not proof that a
+	// terminal's asynchronously imported transcript has already caught up.
+	_, err = tx.Exec(`INSERT INTO session_completion(session_id,completed_at,event_seq)
+SELECT id,?,COALESCE((SELECT MAX(seq) FROM events WHERE session_id=sessions.id),0)
+FROM sessions WHERE id=? AND status!='completed'
+ON CONFLICT(session_id) DO UPDATE SET completed_at=excluded.completed_at,event_seq=excluded.event_seq`, at, id)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE sessions SET status=?,updated_at=? WHERE id=?`, status, at, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) SetResume(id string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET resume=1 WHERE id=?`, id)

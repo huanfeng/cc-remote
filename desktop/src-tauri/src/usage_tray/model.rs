@@ -54,6 +54,45 @@ pub fn provider_label(provider: &str) -> &str {
     }
 }
 
+pub fn account_name(account: &Account) -> String {
+    let provider = provider_label(&account.provider);
+    let name = account.name.trim();
+    let prefixed = name.get(..provider.len()).is_some_and(|prefix| {
+        prefix.eq_ignore_ascii_case(provider)
+            && name[provider.len()..].trim_start().starts_with('·')
+    });
+    if name.eq_ignore_ascii_case(provider) || prefixed {
+        name.into()
+    } else {
+        format!("{provider} · {name}")
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn account_names_show_provider_once_and_preserve_custom_names() {
+        for (provider, name, expected) in [
+            ("claude", "Claude · 本机登录", "Claude · 本机登录"),
+            ("codex", "Codex · 本机登录", "Codex · 本机登录"),
+            ("claude", "工作账号", "Claude · 工作账号"),
+            ("claude", "Claude Team", "Claude · Claude Team"),
+            ("claude", " Claude  ·  本机登录 ", "Claude  ·  本机登录"),
+            ("claude", "claude·本机登录", "claude·本机登录"),
+            ("codex", "Codex", "Codex"),
+        ] {
+            let account = Account {
+                provider: provider.into(),
+                name: name.into(),
+                ..Default::default()
+            };
+            assert_eq!(account_name(&account), expected);
+        }
+    }
+}
+
 pub fn window_label(window: &QuotaWindow) -> String {
     let duration = match window.window_minutes.filter(|m| *m > 0) {
         Some(m) if m % 1440 == 0 => format!("{} 天", m / 1440),

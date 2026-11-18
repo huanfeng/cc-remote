@@ -24,6 +24,10 @@ export const busy = (s: Session) => s.status === 'running' || s.status === 'wait
  * Archived matches remain searchable in their original project, outside this group. */
 export const inProgressSessions = (ordered: Session[]) => ordered.filter(s => !s.archived && busy(s));
 
+/** Bulk idle actions must preserve work whose result still needs attention. */
+export const idleSessions = (sessions: Session[], pending: (s: Session) => boolean) =>
+  sessions.filter(s => !s.archived && !busy(s) && !pending(s));
+
 const lastAt = (s: Session) => {
   const at = Date.parse(s.lastConversationAt || s.createdAt || '');
   return Number.isFinite(at) ? at : 0;

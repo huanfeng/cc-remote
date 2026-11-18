@@ -12,6 +12,7 @@ import (
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
 	"cc-remote/internal/service"
+	"cc-remote/internal/statusline"
 	"cc-remote/internal/terminal"
 	"cc-remote/internal/update"
 )
@@ -205,6 +206,18 @@ func connectionDataDir(command string, args []string, dir string) string {
 }
 
 func runCLI(args []string) error {
+	if len(args) > 0 && args[0] == "statusline" {
+		style := "compact"
+		if len(args) > 1 {
+			style = args[1]
+		}
+		var options *statusline.Options
+		if len(args) > 2 {
+			options = statusline.Decode(args[2])
+		}
+		fmt.Fprintln(os.Stdout, statusline.RenderOptions(os.Stdin, style, statusline.Provider(), options))
+		return nil
+	}
 	route := routeCLI(args)
 	switch route.command {
 	case "help":

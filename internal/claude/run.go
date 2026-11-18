@@ -30,6 +30,7 @@ type Event struct {
 }
 
 type Options struct {
+	ProfileName                                                                            string
 	ProfileEnv                                                                             map[string]string
 	ConfigOverrides                                                                        map[string]any
 	ModelProvider                                                                          string
@@ -180,7 +181,13 @@ func runEnvironment(env []string, o Options) []string {
 		env = replaceEnv(env, "CLAUDE_CONFIG_DIR", o.ConfigDir, runtime.GOOS == "windows")
 	}
 	env = ProfileEnvironment(env, o.ProfileEnv)
+	env = ProfileNameEnvironment(env, o.ProfileName)
 	return env
+}
+
+// Pass the selected supplier label to the local status line without credentials.
+func ProfileNameEnvironment(env []string, name string) []string {
+	return replaceEnv(env, "CC_REMOTE_PROVIDER_NAME", name, runtime.GOOS == "windows")
 }
 
 func replaceEnv(env []string, key, value string, caseInsensitive bool) []string {
@@ -406,7 +413,7 @@ func SupplierEnv(values map[string]string) map[string]string {
 		return nil
 	}
 	env := map[string]string{}
-	keys := []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", OAuthEnvKey, "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"}
+	keys := []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", OAuthEnvKey, "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"}
 	if isOverlay(values) {
 		keys = oauthConflicts
 	}

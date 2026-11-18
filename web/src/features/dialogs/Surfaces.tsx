@@ -10,6 +10,7 @@ import { StatusPanel } from '@/features/status/StatusPanel';
 import { SessionDetails } from '@/features/status/SessionDetails';
 import { TaskPanel } from '@/features/status/TaskPanel';
 import { NewSessionDialog } from './NewSessionDialog';
+import { DeleteSessionSurface } from './DeleteSessionDialog';
 import { AttachDialog } from './AttachDialog';
 import { FileSurface } from './FileSurface';
 import { useNotifications } from './notifications';
@@ -18,7 +19,7 @@ const EXIT_MS = 220;
 
 const surfaceKey = (s: NonNullable<Surface>) => {
   switch (s.type) {
-    case 'session-details': case 'tasks': case 'attach': return `${s.type}:${s.id}`;
+    case 'session-details': case 'delete-session': case 'tasks': case 'attach': return `${s.type}:${s.id}`;
     // Same key for another file of the session: FileViewer keeps its back stack.
     case 'file': return `file:${s.sessionId}`;
     case 'new-session': return `new:${s.resume?.id ?? ''}:${s.cwd ?? ''}`;
@@ -52,6 +53,7 @@ export function Surfaces() {
     case 'new-session': return <NewSessionDialog key={key} {...common} resume={current.resume} initialCwd={current.cwd} initialProvider={current.provider} />;
     case 'settings': return <SettingsPage key={key} {...common} section={current.section} />;
     case 'status': return <StatusPanel key={key} {...common} />;
+    case 'delete-session': return <DeleteSessionSurface key={key} open={open} onOpenChange={onOpenChange} id={current.id} />;
     case 'session-details': return <SessionDetails key={key} {...common} id={current.id} />;
     case 'tasks': return <TaskPanel key={key} {...common} id={current.id} />;
     case 'file': return <FileSurface key={key} {...common} sessionId={current.sessionId} path={current.path} base={current.base} />;

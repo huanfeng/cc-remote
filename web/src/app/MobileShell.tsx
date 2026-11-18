@@ -7,6 +7,7 @@
 // (so Escape closes the drawer instead of reaching the "stop the running
 // turn" listener) and returns focus to the trigger when it closes.
 import { Dialog as DialogPrimitive } from 'radix-ui';
+import { Dialog } from '@/components/ui/dialog';
 import { useApp } from '@/store/app';
 import { t } from '@/lib/i18n';
 import { Sidebar } from '@/features/sidebar/Sidebar';
@@ -19,7 +20,7 @@ export function MobileShell() {
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-background">
       {selection ? <SessionWorkspace mobile /> : <Sidebar variant="mobile" />}
-      <DialogPrimitive.Root open={!!selection && drawerOpen} onOpenChange={open => set({ drawerOpen: open })}>
+      <Dialog open={!!selection && drawerOpen} onOpenChange={open => set({ drawerOpen: open })}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay
             className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[2px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
@@ -32,7 +33,7 @@ export function MobileShell() {
             <Sidebar variant="mobile" onClose={() => set({ drawerOpen: false })} />
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
-      </DialogPrimitive.Root>
+      </Dialog>
     </div>
   );
 }

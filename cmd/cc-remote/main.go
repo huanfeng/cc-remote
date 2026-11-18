@@ -53,7 +53,7 @@ Management:
                               local host service operations
   service install|uninstall   register or remove the background service
   serve [host flags]          run the host in this terminal (serve --help)
-  profile ls|default          list suppliers or choose the default
+  profile ls|add|edit|rm|default  manage suppliers and choose the default
   oauth ls|add|token|rename|rm manage OAuth logins
   update                      update CC Remote
   session [arguments]         explicit terminal entry; session --help for options
@@ -81,7 +81,7 @@ const usageZH = `CC Remote · ccr（cc-remote 是完全等价的名称）
                               本机宿主服务操作
   service install|uninstall   安装或卸载后台服务
   serve [宿主参数]            前台运行宿主（serve --help 查看参数）
-  profile ls|default          列出供应商或设置默认供应商
+  profile ls|add|edit|rm|default  管理供应商或设置默认供应商
   oauth ls|add|token|rename|rm 管理 OAuth 登录
   update                      更新 CC Remote
   session [参数]              显式终端入口；session --help 查看会话参数

@@ -4,40 +4,27 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronRight, FileCog } from 'lucide-react';
-import { cn } from '@/components/lib/utils';
+
+import { FileCog } from 'lucide-react';
+
 import { BackendError, useBackend, type ClaudeSettings } from '@/backend/backend';
 import type { Preferences, Provider } from '@/backend/types';
-import { useApp } from '@/store/app';
 import { t } from '@/lib/i18n';
-import { dangerousPermission, hostProviders, providerName } from '@/domain/providers';
-import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
-import { ErrorText, SimpleSelect, errorMessage, profileLabel, profilesFor, useProfileCatalog } from '@/features/dialogs/common';
+import { dangerousPermission, providerName } from '@/domain/providers';
+import { GroupCard, Row, SurfaceShell } from '@/features/dialogs/SurfaceShell';
+import { ConfirmDialog, ErrorText, SimpleSelect, errorMessage, profileLabel, profilesFor, useProfileCatalog } from '@/features/dialogs/common';
 import { EffortField, ModelField, PermissionField } from '@/features/dialogs/pickers';
-import { GroupTitle, SectionHeader, useGuard, useReportDirty } from './parts';
+import { GroupTitle, SectionHeader, useReportDirty } from './parts';
+import { StatuslineSection } from './StatuslineSection';
 
-export function DefaultsSection({ mobile }: { mobile: boolean }) {
-  const info = useApp(s => s.info);
-  const providers = hostProviders(info);
-  const [provider, setProvider] = useState<Provider>('claude');
-  const guard = useGuard();
+export function DefaultsSection({ mobile, provider = 'claude' }: { mobile: boolean; provider?: Provider }) {
   return (
     <div>
-      {!mobile && <SectionHeader title={t('Session defaults', '会话默认')} description={t('What new sessions start with. Each session can override these in its details.', '新会话的初始配置。每个会话可以在详情里单独覆盖。')} />}
-      {providers.length > 1 && (
-        <div role="tablist" aria-label={t('Provider', '提供方')} className="mb-4 inline-flex rounded-lg bg-surface p-0.5">
-          {providers.map(p => (
-            <button key={p} type="button" role="tab" aria-selected={provider === p} onClick={() => { if (p !== provider) guard(() => setProvider(p)); }}
-              className={cn('h-7 rounded-md px-3 text-ui-sm transition-colors max-md:h-9 max-md:px-4', provider === p ? 'bg-card font-medium text-foreground shadow-sm' : 'text-foreground-subtle hover:text-foreground')}>
-              {providerName(p)}
-            </button>
-          ))}
-        </div>
-      )}
+      {!mobile && <SectionHeader title={provider === 'claude' ? 'Claude Code' : 'Codex'} description={t('Default supplier, model, effort and permissions for new sessions on this server.', '此服务器上新会话使用的供应商、模型、思考强度和权限。')} />}
       <DefaultSupplier key={`s-${provider}`} provider={provider} />
       <RemoteDefaults key={`d-${provider}`} provider={provider} />
-      {provider === 'claude' && <NativeSettings />}
+      {provider === 'claude' && <NativeSettings mobile={mobile} />}
+      {provider === 'claude' && <StatuslineSection mobile={mobile} />}
     </div>
   );
 }
@@ -163,7 +150,7 @@ function RemoteDefaults({ provider }: { provider: Provider }) {
 type NativeDraft = Pick<ClaudeSettings, 'model' | 'effortLevel' | 'permissionMode'>;
 
 /** Claude's own user settings (~/.claude/settings.json), saved with its revision. Collapsed by default. */
-function NativeSettings() {
+function NativeSettings({ mobile }: { mobile: boolean }) {
   const backend = useBackend();
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState<ClaudeSettings>();
@@ -174,21 +161,25 @@ function NativeSettings() {
   const [notice, setNotice] = useState('');
   const [version, setVersion] = useState(0);
   const [loaded, setLoaded] = useState(-1);
+  const [jsonMode, setJsonMode] = useState(false);
+  const [json, setJson] = useState('');
+  const [discard, setDiscard] = useState(false);
 
   // Loads on first open and on Reload; collapsing and reopening keeps the draft.
   useEffect(() => {
-    if (!open || loaded === version) return;
+    if (!open || loaded === version && saved) return;
     setLoaded(version);
     let live = true;
     setError('');
     backend.claudeSettings().then(v => {
       if (!live) return;
-      setSaved(v); setDraft({ model: v.model, effortLevel: v.effortLevel, permissionMode: v.permissionMode }); setConflict(false);
+      setSaved(v); setDraft({ model: v.model, effortLevel: v.effortLevel, permissionMode: v.permissionMode }); setJson(JSON.stringify(v.document ?? {}, null, 2)); setConflict(false);
     }, e => { if (live) setError(errorMessage(e)); });
     return () => { live = false; };
   }, [backend, open, version]);
 
-  const dirty = !!saved && !!draft && (saved.model !== draft.model || saved.effortLevel !== draft.effortLevel || saved.permissionMode !== draft.permissionMode);
+  const dirty = !!saved && !!draft && (saved.model !== draft.model || saved.effortLevel !== draft.effortLevel || saved.permissionMode !== draft.permissionMode || json !== JSON.stringify(saved.document ?? {}, null, 2));
+  const close = () => { if (!busy) { if (dirty) setDiscard(true); else setOpen(false); } };
   useReportDirty('native', dirty);
   const follow = t('Follow Claude default', '跟随 Claude 默认值');
 
@@ -196,11 +187,15 @@ function NativeSettings() {
     if (!saved || !draft) return;
     setBusy(true); setError(''); setNotice(''); setConflict(false);
     try {
+      const document = jsonMode ? JSON.parse(json) as Record<string, unknown> : undefined;
+      if (jsonMode && (!document || typeof document !== 'object' || Array.isArray(document))) throw new Error(t('Expected a JSON object.', '请填写 JSON 对象。'));
+      const mode = document ? (document.permissions as { defaultMode?: string } | undefined)?.defaultMode ?? '' : draft.permissionMode;
       const next = await backend.saveClaudeSettings({
         ...draft, revision: saved.revision,
-        ...(dangerousPermission(draft.permissionMode, 'claude') ? { confirmDangerous: true } : {}),
+        ...(jsonMode ? { document, editDocument: true } : {}),
+        ...(dangerousPermission(mode, 'claude') ? { confirmDangerous: true } : {}),
       });
-      setSaved(next); setDraft({ model: next.model, effortLevel: next.effortLevel, permissionMode: next.permissionMode });
+      setSaved(next); setDraft({ model: next.model, effortLevel: next.effortLevel, permissionMode: next.permissionMode }); setJson(JSON.stringify(next.document ?? {}, null, 2));
       setNotice(t('Written to the Claude user settings.', '已写入 Claude 用户配置。'));
     } catch (e) {
       if (e instanceof BackendError && e.status === 409) setConflict(true);
@@ -211,21 +206,27 @@ function NativeSettings() {
   };
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="mt-6">
-      <CollapsibleTrigger asChild>
-        <button type="button" className="flex w-full items-center gap-1.5 px-1 text-left text-ui-sm font-medium text-foreground-subtle hover:text-foreground max-md:min-h-9">
-          <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
-          {t('Native configuration · Advanced', '原生配置 · 高级')}
-          {dirty && !open && <span className="size-1.5 rounded-full bg-warning" aria-label={t('Unsaved', '未保存')} />}
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
+    <>
+      <GroupTitle>{t('Native configuration', '原生配置')}</GroupTitle>
+      <GroupCard><Row label={t('Claude Code native configuration', 'Claude Code 原生配置')} description={t('Edit user settings in a separate dialog.', '编辑 Claude Code 用户配置，支持表单和 JSON。')} control={<Button variant="outline" onClick={() => setOpen(true)}>{t('Configure', '配置')}</Button>} /></GroupCard>
+      <SurfaceShell open={open} mobile={mobile} onOpenChange={o => { if (!o) close(); }} title={t('Claude Code native configuration', 'Claude Code 原生配置')} className="sm:max-w-3xl sm:h-[min(86vh,760px)]">
         <div className="pt-2">
           {!saved || !draft ? (
             error ? <ErrorText>{error}</ErrorText> : <div className="flex h-24 items-center justify-center"><Spinner className="size-4 text-foreground-subtle" /></div>
           ) : (
             <>
-              <GroupCard>
+              <div className="mb-4 flex gap-2"><Button variant={!jsonMode ? 'secondary' : 'outline'} onClick={() => { if (jsonMode && dirty) { setError(t('Save or revert JSON before switching.', '请先保存或还原 JSON 再切换。')); return; } setJsonMode(false); }}>{t('Form', '表单')}</Button><Button disabled={!saved.document} variant={jsonMode ? 'secondary' : 'outline'} onClick={() => {
+                if (jsonMode) return;
+                const document = { ...saved.document };
+                if (draft.model) document.model = draft.model; else delete document.model;
+                if (draft.effortLevel) document.effortLevel = draft.effortLevel; else delete document.effortLevel;
+                const permissions = { ...(document.permissions as Record<string, unknown> ?? {}) };
+                if (draft.permissionMode) permissions.defaultMode = draft.permissionMode; else delete permissions.defaultMode;
+                if (Object.keys(permissions).length) document.permissions = permissions; else delete document.permissions;
+                setJson(JSON.stringify(document, null, 2)); setJsonMode(true);
+              }}>JSON</Button></div>
+              {jsonMode ? <><p className="mb-3 text-ui-sm text-foreground-subtle">{t('Hidden settings use preservation markers. Their original values stay on the server. Unknown fields are preserved.', '敏感配置和扩展字段以保留标记显示，原值保存在宿主。保留标记或删除标记所在字段均不会清除已有敏感配置。')}</p><textarea disabled={busy} aria-label="Claude Code JSON" spellCheck={false} className="min-h-80 w-full rounded-lg border border-border bg-background p-3 font-mono text-ui-sm" value={json} onChange={e => setJson(e.target.value)} /></> : <GroupCard>
+
                 <div className="flex items-start gap-2.5 px-4 py-3">
                   <FileCog className="mt-0.5 size-4 shrink-0 text-foreground-subtle" />
                   <div className="min-w-0 flex-1">
@@ -242,14 +243,14 @@ function NativeSettings() {
                 />
                 <Row label={t('Default model', '默认模型')} control={<ModelField provider="claude" value={draft.model} inheritLabel={follow} onChange={model => setDraft(d => d && { ...d, model })} />} />
                 <Row label={t('Default effort', '默认推理强度')} control={<EffortField provider="claude" model={draft.model} value={draft.effortLevel} inheritLabel={follow} onChange={effortLevel => setDraft(d => d && { ...d, effortLevel })} />} />
-              </GroupCard>
+              </GroupCard>}
               <p className="mt-2 px-1 text-ui-xs text-foreground-subtlest">
                 {t('Project and organisation policies and launch flags may override these; other Claude settings are kept as they are.', '项目、组织策略及启动参数可能覆盖这些默认值；其它 Claude 配置原样保留。')}
               </p>
               {conflict && <ConflictNotice what={t('settings.json was', 'settings.json 已')} onReload={() => setVersion(v => v + 1)} />}
               <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                 {notice && !dirty && <p role="status" className="mr-auto text-ui-sm text-success">{notice}</p>}
-                <Button variant="ghost" size="lg" disabled={!dirty || busy} onClick={() => setDraft({ model: saved.model, effortLevel: saved.effortLevel, permissionMode: saved.permissionMode })}>{t('Revert', '还原')}</Button>
+                <Button variant="ghost" size="lg" disabled={!dirty || busy} onClick={() => { setDraft({ model: saved.model, effortLevel: saved.effortLevel, permissionMode: saved.permissionMode }); setJson(JSON.stringify(saved.document ?? {}, null, 2)); }}>{t('Revert', '还原')}</Button>
                 <Button size="lg" disabled={!dirty || busy || conflict} onClick={() => void save()}>
                   {busy && <Spinner className="size-3.5" />}
                   {busy ? t('Saving…', '保存中…') : t('Write settings.json', '写入 settings.json')}
@@ -259,8 +260,9 @@ function NativeSettings() {
             </>
           )}
         </div>
-      </CollapsibleContent>
-    </Collapsible>
+      </SurfaceShell>
+      <ConfirmDialog open={discard} onOpenChange={setDiscard} title={t('Discard changes?', '放弃更改？')} confirmLabel={t('Discard', '放弃')} onConfirm={() => { setDiscard(false); setOpen(false); setDraft(saved && { model:saved.model, effortLevel:saved.effortLevel, permissionMode:saved.permissionMode }); setJson(JSON.stringify(saved?.document ?? {}, null, 2)); }} />
+    </>
   );
 }
 

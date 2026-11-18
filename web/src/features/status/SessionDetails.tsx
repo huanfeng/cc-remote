@@ -8,17 +8,18 @@ import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/components/lib/utils';
 import { BackendError, useBackend } from '@/backend/backend';
 import type { Preferences, Session, SessionStats } from '@/backend/types';
-import { select, useApp } from '@/store/app';
+import { useApp } from '@/store/app';
 import { t, lang, locale } from '@/lib/i18n';
 import { dangerousPermission, providerName, providerOf } from '@/domain/providers';
 import { conversationTime } from '@/domain/conversationTime';
-import { modeLabel, statusLabel, statusTone, tonePill } from '@/features/session/status';
+import { modeLabel, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
 import { permissionLabel } from '@/features/pickers';
 import { GroupCard, InfoRow, Section, SurfaceShell } from '@/features/dialogs/SurfaceShell';
 import {
   ConfirmDialog, CopyButton, ErrorText, SimpleSelect, errorMessage, profileLabel, profilesFor, supplierOptions, useProfileCatalog,
 } from '@/features/dialogs/common';
 import { EffortField, ModelField, PermissionField } from '@/features/dialogs/pickers';
+import { DeleteSessionDialog } from '@/features/dialogs/DeleteSessionDialog';
 import { PathMenu } from '@/features/files/PathMenu';
 import { compactNumber, costText, durationText, agoText } from './usageMath';
 
@@ -84,7 +85,7 @@ function Details({ session: s, onDirty, onDeleted }: { session: Session; onDirty
       <Section title={t('Overview', '概况')}>
         <GroupCard>
           <InfoRow label={t('Status', '状态')}>
-            <span className={cn('inline-flex h-5 items-center rounded-full px-2 text-ui-xs font-medium', tonePill[tone])}>{statusLabel(s.status, s.activeTasks)}</span>
+            <span className={cn('inline-flex h-5 items-center rounded-full px-2 text-ui-xs font-medium', tonePill[tone])}>{sessionStatusLabel(s)}</span>
             {s.mode === 'terminal' && <span className="ml-2 text-ui-sm text-foreground-subtle">{s.online ? t('Process running', '进程运行中') : t('Process exited', '进程已退出')}{s.attached ? t(` · ${s.attached} terminal attached`, ` · ${s.attached} 个终端接入`) : ''}</span>}
           </InfoRow>
           <InfoRow label={t('Engine', '引擎')}>{providerName(provider)} · {modeLabel(s)}</InfoRow>
@@ -338,30 +339,7 @@ function Tile({ label, value, tone }: { label: string; value: ReactNode; tone?: 
 }
 
 function ManageSection({ session: s, onDeleted }: { session: Session; onDeleted: () => void }) {
-  const backend = useBackend();
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  // The host refuses (409) to delete a busy session without stop; then the dialog asks to stop first.
-  const [mustStop, setMustStop] = useState(false);
-  const active = mustStop || s.status === 'running' || s.status === 'waiting' || (s.activeTasks ?? 0) > 0 || (s.mode === 'terminal' && !!s.online);
-
-  const remove = async () => {
-    setBusy(true); setError('');
-    try {
-      await backend.deleteSession(s.id, active ? { stop: true } : undefined);
-      setOpen(false);
-      const sel = useApp.getState().selection;
-      if (sel?.kind === 'session' && sel.id === s.id) select(null);
-      onDeleted();
-    } catch (e) {
-      if (e instanceof BackendError && e.status === 409 && !active) setMustStop(true);
-      else setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <Section title={t('Manage', '管理')}>
       <GroupCard className="border-destructive/25">
@@ -373,28 +351,7 @@ function ManageSection({ session: s, onDeleted }: { session: Session; onDeleted:
           <Button variant="destructive" size="lg" onClick={() => setOpen(true)}><Trash2 className="size-3.5" /> {t('Delete…', '删除…')}</Button>
         </div>
       </GroupCard>
-      <ConfirmDialog
-        open={open}
-        onOpenChange={o => { setOpen(o); if (!o) { setError(''); setMustStop(false); } }}
-        title={t(`Delete "${s.title}"?`, `删除「${s.title}」？`)}
-        description={active ? t('This session is still running. It will be stopped first.', '此会话仍在运行，将先停止它。') : undefined}
-        confirmLabel={busy ? t('Deleting…', '删除中…') : active ? t('Stop and delete', '先停止并删除') : t('Delete', '删除')}
-        destructive
-        busy={busy}
-        onConfirm={() => void remove()}
-      >
-        <div className="flex flex-col gap-2 text-ui-sm">
-          <div className="font-medium text-foreground">{t('This deletes:', '将删除：')}</div>
-          <ul className="flex list-disc flex-col gap-1 pl-5 text-foreground-subtle">
-            <li>{t('The conversation recorded by CC Remote', 'CC Remote 记录的对话')}</li>
-            <li>{t('Uploaded attachments and queued messages', '上传的附件和排队消息')}</li>
-            <li>{t('Pending approvals and questions', '待处理的审批和提问')}</li>
-            {active && <li>{t('The running process and its background tasks', '正在运行的进程及其后台任务')}</li>}
-          </ul>
-          <div className="text-foreground-subtlest">{t('Kept: the project directory and the provider history.', '保留：项目目录和提供方的历史记录。')}</div>
-          <ErrorText>{error}</ErrorText>
-        </div>
-      </ConfirmDialog>
+      <DeleteSessionDialog session={s} open={open} onOpenChange={setOpen} onDeleted={onDeleted} />
     </Section>
   );
 }

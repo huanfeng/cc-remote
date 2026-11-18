@@ -360,9 +360,15 @@ func (r *Runner) Suggestion() string {
 // Activity is Claude Code's spinner line while it works, such as
 // "Composing… (8m 33s · ↓ 26.2k tokens)", or "".
 func (r *Runner) Activity() string {
+	activity, _ := r.ActivityState()
+	return activity
+}
+
+// ActivityState reads the activity and retry details from one screen snapshot.
+func (r *Runner) ActivityState() (string, *RetryStatus) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.scr.activity()
+	return r.scr.activityState()
 }
 
 func (r *Runner) read() {

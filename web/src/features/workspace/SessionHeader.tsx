@@ -14,11 +14,14 @@ import type { Session } from '@/backend/types';
 import { select, useApp } from '@/store/app';
 import { usePrefs } from '@/lib/prefs';
 import { t } from '@/lib/i18n';
-import { shortPath, statusLabel, statusTone, tonePill } from '@/features/session/status';
+import { shortPath, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
 import { SessionStatusPopover } from '@/features/header/SessionStatusPopover';
 import { Chip, ModelChips } from '@/features/header/ModelChips';
 import { UsageMeter } from '@/features/header/UsageMeter';
 import { PathMenu } from '@/features/files/PathMenu';
+import { useCompletionRead } from '@/store/completionRead';
+import { displaySession } from '@/domain/completionRead';
+import { hostKey } from '@/lib/hosts';
 
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
@@ -28,7 +31,9 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const toolsExpanded = usePrefs(s => s.toolsExpanded);
   const sendKey = usePrefs(s => s.sendKey);
   const setPrefs = usePrefs(s => s.set);
-  const tone = statusTone(session);
+  const records = useCompletionRead(s => s.records);
+  const display = native ? session : displaySession(session, records[hostKey(session.id)]);
+  const tone = statusTone(display);
   const running = session.status === 'running';
   const tasks = session.activeTasks ?? 0;
   const isTerminal = session.mode === 'terminal';
@@ -37,7 +42,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
 
   const status = (
     <span className={cn('inline-flex h-5 shrink-0 items-center gap-1 rounded-full px-2 text-ui-xs font-medium', tonePill[tone])}>
-      {statusLabel(session.status, tasks)}
+      {sessionStatusLabel(display)}
     </span>
   );
 
@@ -67,7 +72,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
             {!native && !mobile && <SessionStatusPopover session={session}>{status}</SessionStatusPopover>}
           </div>
           {mobile ? (
-            !native && <SessionStatusPopover session={session}><span className="flex items-center gap-1 text-ui-xs text-foreground-subtle">{statusLabel(session.status, tasks)}</span></SessionStatusPopover>
+            !native && <SessionStatusPopover session={session}><span className={cn('flex items-center gap-1 text-ui-xs', tone === 'retrying' ? 'text-warning' : 'text-foreground-subtle')}>{sessionStatusLabel(display)}</span></SessionStatusPopover>
           ) : null}
         </div>
         {!mobile && !native && <ModelChips session={session} />}

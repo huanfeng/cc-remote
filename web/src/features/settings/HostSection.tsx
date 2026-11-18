@@ -59,7 +59,7 @@ export function HostSection({ mobile }: { mobile: boolean }) {
 
   return (
     <div>
-      {!mobile && <SectionHeader title={t('This host', '本宿主')} description={t('How this host appears on every page, and what it runs.', '此宿主在各页面中的外观，以及它运行的组件。')} />}
+      {!mobile && <SectionHeader title={t('Server', '服务器')} description={t('Identity and components of the server you are connected to. Changes apply to all clients connected to it.', '当前所连接服务器的标识与运行组件。修改对连接此服务器的所有客户端生效。')} />}
 
       <GroupTitle>{t('Versions', '版本')}</GroupTitle>
       <GroupCard>

@@ -156,3 +156,64 @@ func TestSessionListCountsActiveTasks(t *testing.T) {
 		t.Fatalf("busy after the tasks finished %v", busy)
 	}
 }
+
+// Exercise the transcript -> stored tasks -> session API path, including a
+// completed main turn whose string-encoded background agent is still working.
+func TestTerminalStringBackgroundTaskLifecycle(t *testing.T) {
+	s, base, st, _ := setupTerminal(t)
+	x := createTerminal(t, base)
+	s.mu.Lock()
+	y, _ := st.Get(x.ID)
+	terminal, err := s.terminalLocked(y)
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(s.cfg.ClaudeConfigDir, "projects", "background-lifecycle")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, terminal.claudeID+".jsonl")
+	appendTranscript(t, path, map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "tool_use", "id": "agent-call", "name": "Agent", "input": map[string]any{"description": "Review changes", "run_in_background": "true"}}}}})
+	appendTranscript(t, path, map[string]any{"type": "user", "message": map[string]any{"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "agent-call", "content": "launched"}}}, "toolUseResult": map[string]any{"status": "async_launched", "agentId": "review-agent"}})
+	s.syncTerminal(terminal)
+	if err := st.SetStatus(x.ID, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	assertActive := func(want int) {
+		t.Helper()
+		code, body := call(t, base, "GET", "/api/sessions/"+x.ID, nil)
+		var response struct {
+			Session store.Session `json:"session"`
+		}
+		if code != 200 || json.Unmarshal(body, &response) != nil || response.Session.Status != "completed" || response.Session.ActiveTasks != want {
+			t.Fatalf("session with %d active tasks: %d %s", want, code, body)
+		}
+		code, body = call(t, base, "GET", "/api/sessions", nil)
+		var list []store.Session
+		if code != 200 || json.Unmarshal(body, &list) != nil {
+			t.Fatalf("session list: %d %s", code, body)
+		}
+		found := false
+		for _, session := range list {
+			if session.ID == x.ID {
+				found = true
+				if session.ActiveTasks != want {
+					t.Fatalf("listed active tasks = %d, want %d", session.ActiveTasks, want)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("session missing from list")
+		}
+	}
+	assertActive(1)
+	code, body := call(t, base, "GET", "/api/sessions/"+x.ID+"/tasks", nil)
+	var tasks []taskInfo
+	if code != 200 || json.Unmarshal(body, &tasks) != nil || len(tasks) != 1 || tasks[0].ID != "review-agent" || tasks[0].Status != "running" {
+		t.Fatalf("running agent: %d %s", code, body)
+	}
+	appendTranscript(t, path, map[string]any{"type": "user", "message": map[string]any{"content": "<task-notification><task-id>review-agent</task-id><tool-use-id>agent-call</tool-use-id><status>completed</status><summary>done</summary></task-notification>"}})
+	s.syncTerminal(terminal)
+	assertActive(0)
+}

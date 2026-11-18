@@ -77,3 +77,50 @@ func str(v any) string {
 	s, _ := v.(string)
 	return s
 }
+
+func TestTranscriptBackgroundFormats(t *testing.T) {
+	for _, tool := range []string{"Agent", "Task", "Bash"} {
+		for _, background := range []string{"true", `"true"`, "false", `"false"`, "null", ""} {
+			t.Run(tool+"/"+background, func(t *testing.T) {
+				var session NativeSession
+				input := `{"description":"Review"}`
+				if background != "" {
+					input = `{"description":"Review","run_in_background":` + background + `}`
+				}
+				call := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"` + tool + `","input":` + input + `}]}}`
+				transcriptEvents([]byte(call), &session)
+				result := `{"status":"async_launched","agentId":"a1"}`
+				want := 1
+				if tool == "Bash" {
+					result = `{"backgroundTaskId":"b1"}`
+					if background != "true" && background != `"true"` {
+						want = 0
+					}
+				}
+				events := transcriptEvents([]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"launched"}]},"toolUseResult":`+result+`}`), &session)
+				starts := 0
+				for _, e := range events {
+					if e.Kind == "status" && e.Text == "task_started" {
+						starts++
+					}
+				}
+				if starts != want {
+					t.Fatalf("task_started count = %d, want %d", starts, want)
+				}
+			})
+		}
+	}
+}
+
+func TestTranscriptForegroundAgentNotStarted(t *testing.T) {
+	for _, input := range []string{`{}`, `{"run_in_background":false}`, `{"run_in_background":"false"}`} {
+		var session NativeSession
+		transcriptEvents([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu1","name":"Agent","input":`+input+`}]}}`), &session)
+		events := transcriptEvents([]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","content":"done"}]},"toolUseResult":{"status":"completed","agentId":"a1"}}`), &session)
+		for _, e := range events {
+			if e.Kind == "status" && e.Text == "task_started" {
+				t.Fatalf("foreground agent counted as background: %s", input)
+			}
+		}
+	}
+}

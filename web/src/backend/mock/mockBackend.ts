@@ -3,7 +3,7 @@
 // approvals unblock the turn, queued messages are delivered after it, and the
 // terminal is a small fake TUI that echoes and answers.
 import { nanoid } from 'nanoid';
-import { BackendError, type Backend, type ClaudeSettings, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
+import { BackendError, type Backend, type ClaudeSettings, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
   Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply,
@@ -69,6 +69,10 @@ export class MockBackend implements Backend {
   }
   private setStatus(id: string, status: Session['status'], activity?: string) {
     const s = this.session(id);
+    if (status === 'completed' && s.status !== 'completed') {
+      s.completedAt = now();
+      s.completionEventSeq = this.events[id]?.at(-1)?.seq ?? 0;
+    }
     s.status = status;
     if (s.live) s.live.activity = activity;
     this.emitList();
@@ -396,6 +400,20 @@ export class MockBackend implements Backend {
   }
   private claude: ClaudeSettings = { model: 'opus', effortLevel: 'high', permissionMode: 'default', revision: 'r3', path: 'C:/Users/Cartech/.claude/settings.json' };
   async claudeSettings() { await latency(); return clone(this.claude); }
+  private statuslineValue: StatuslineSettings = { installed: false, style: '', revision: 's1' };
+  async statusline() { await latency(); return clone(this.statuslineValue); }
+  async saveStatusline(v: { style: StatuslineStyle; revision: string }) {
+    await latency();
+    if (v.revision !== this.statuslineValue.revision) throw new BackendError('Settings changed elsewhere', 409);
+    this.statuslineValue = { installed: true, style: v.style, revision: `${v.revision}+` };
+    return clone(this.statuslineValue);
+  }
+  async removeStatusline(v: { revision: string }) {
+    await latency();
+    if (v.revision !== this.statuslineValue.revision) throw new BackendError('Settings changed elsewhere', 409);
+    this.statuslineValue = { installed: false, style: '', revision: `${v.revision}+` };
+    return clone(this.statuslineValue);
+  }
   async saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }) {
     await latency();
     if (v.revision !== this.claude.revision) throw new BackendError('settings.json 已在别处修改，请刷新后重试。', 409);

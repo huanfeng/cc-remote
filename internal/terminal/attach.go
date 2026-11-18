@@ -33,12 +33,13 @@ import (
 const resetModes = "\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2031l\x1b[?9001l\x1b[<99u\x1b[>4m\x1b[?25h\x1b[0m"
 
 type remoteSession struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Cwd    string `json:"cwd"`
-	Mode   string `json:"mode"`
-	Status string `json:"status"`
-	Online bool   `json:"online"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Cwd         string `json:"cwd"`
+	Mode        string `json:"mode"`
+	Status      string `json:"status"`
+	Online      bool   `json:"online"`
+	ActiveTasks int    `json:"activeTasks,omitempty"`
 	// Attached counts the terminals attached to it now.
 	Attached int `json:"attached"`
 	// UpdatedAt is the last activity (RFC 3339).

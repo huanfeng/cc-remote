@@ -2,16 +2,29 @@
 // live activity, "Compacting context…", or — once the turn ended — the
 // background tasks that outlive it.
 import { memo } from 'react';
-import { LayersIcon } from 'lucide-react';
+import { LayersIcon, TriangleAlertIcon } from 'lucide-react';
 import type { Session, SessionEvent } from '@/backend/types';
 import { isCompacting } from '@/domain/toolGroups';
 import { providerName, providerOf } from '@/domain/providers';
 import { useApp } from '@/store/app';
-import { t } from '@/lib/i18n';
+import { lang, t } from '@/lib/i18n';
+import { sessionRetry } from '@/domain/sessionRetry';
 
 export const WorkingIndicator = memo(function WorkingIndicator({ session, events }: { session: Session; events: SessionEvent[] }) {
   const running = session.status === 'running';
   const background = session.activeTasks ?? 0;
+  const retry = sessionRetry(session, lang);
+  if (retry) {
+    return (
+      <div className="mt-4 flex min-w-0 items-start gap-2 rounded-md bg-warning-surface px-3 py-2 text-warning-surface-foreground" role="status" aria-live="polite">
+        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-ui-base font-medium">{retry.label}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-ui-sm">{retry.message}</p>
+        </div>
+      </div>
+    );
+  }
   if (running) {
     const compacting = isCompacting(events);
     const name = providerName(providerOf(session));

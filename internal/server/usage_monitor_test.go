@@ -196,7 +196,7 @@ func TestMonitorCollectsWithoutAViewerAndCancelsOnShutdown(t *testing.T) {
 	}
 	select {
 	case <-canceled:
-	default:
+	case <-time.After(time.Second):
 		t.Fatal("shutdown left the provider request running")
 	}
 }

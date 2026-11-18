@@ -10,6 +10,7 @@ import { BackendContext, type Backend } from '@/backend/backend';
 import { BackendError } from '@/backend/errors';
 import { HttpBackend } from '@/backend/http/httpBackend';
 import { useApp } from '@/store/app';
+import { useCompletionRead } from '@/store/completionRead';
 import { releaseMissing } from '@/store/transcripts';
 import { STANDALONE, apiBase, connectError, hostKey, relocateHost, useHosts } from '@/lib/hosts';
 import { applyIdentity } from '@/lib/identity';
@@ -140,6 +141,7 @@ function Connected({ backend }: { backend: Backend }) {
         .catch(e => { if (live) toast(t(`Could not reach the host: ${e instanceof Error ? e.message : e}`, `无法连接宿主：${e instanceof Error ? e.message : e}`)); });
     }
     const stop = backend.watchSessions(s => {
+      useCompletionRead.getState().observe(s);
       useApp.getState().setSessions(s);
       useConnection.setState({ offline: '' });
       // Sessions gone from the host (deleted here or elsewhere) release their cache and draft.

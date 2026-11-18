@@ -1,5 +1,13 @@
 # CC-Switch 供应商选择
 
+## 本地供应商配置
+
+新版设置的「供应商配置」支持直接添加 Claude Code / Codex API 供应商，并保留原有 OAuth 账号管理及 CC-Switch 只读导入。API 供应商可配置名称、HTTP(S) 端点、默认模型和认证方式；Claude 支持 API Key / Auth Token，新增自定义配置默认使用 Auth Token（网页和命令行一致），官方 Anthropic 模板使用 API Key，编辑时保留原认证方式。Codex 使用 API Key 与 Responses API。
+
+编辑已有配置时凭据框始终为空，留空表示保留原凭据；列表及保存响应仅返回“已配置凭据”状态。端点不能包含用户名、密码、查询参数或片段。授权信息保存在宿主数据目录的 `supplier-configs.json`，不会写入本地供应商会话快照或回传到设置页。
+
+本地供应商的修改会在托管会话下次安全启动时读取；正在工作的请求不会被立即中断。删除配置后，引用它的会话需要重新选择供应商；不会悄悄回退至其它账号。终端进程需要重新启动或切换供应商后才会使用新配置。旧服务端仍可管理原有 OAuth，新增 API 供应商功能需要更新宿主。
+
 cc-remote 直接只读读取**宿主机器上**的 CC-Switch SQLite 数据库。不再使用 cc-tool，也不需要先导出供应商 JSON。
 
 默认路径：Windows `%USERPROFILE%\.cc-switch\cc-switch.db`，Linux `~/.cc-switch/cc-switch.db`。
@@ -25,6 +33,26 @@ cc-remote service config --env "CC_REMOTE_CC_SWITCH_DB=D:\Config\cc-switch.db"
 - `--profile @native`：明确使用宿主原生配置。非交互恢复且没有指定 `--profile` 时保持原会话配置。
 - 已运行会话：设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。
 - 会话标题下方持续显示所选供应商，新建后尚未发送消息也会显示；名称来自会话保存的配置快照，刷新后保留。
+
+## 命令行管理本地供应商
+
+无需安装 CC-Switch 即可新增、修改、删除 API 供应商，并使用 `profile default` 切换新会话的默认配置。以下命令的 `ccr` 也可写成 `cc-remote`：
+
+```sh
+ccr profile add --app claude --name "My API" --base-url https://api.example.com --auth-type apiKey --model my-model
+ccr profile ls --app claude
+ccr profile default "My API" --app claude
+ccr profile edit "My API" --name "Work API" --base-url https://api.example.com/v1
+ccr profile edit "Work API" --model ""
+ccr profile edit "Work API" --credential-stdin
+ccr profile rm "Work API"
+```
+
+新增时通过隐藏输入、环境变量 `CC_REMOTE_SUPPLIER_CREDENTIAL` 或标准输入提供凭据；`--credential-stdin` 强制读取标准输入，不使用环境变量。凭据不支持命令参数，避免留在进程参数和 shell 历史中。编辑默认保留原凭据，只有显式使用 `--credential-stdin` 才读取新凭据，读取为空仍保留原凭据。输出不显示已有或新输入的凭据。
+
+`add` 必须提供 `--name` 与 `--base-url`，默认认证方式为 `apiKey`；Claude 也支持 `--auth-type authToken`。Codex 使用 `--app codex`，仅支持 API Key 与 Responses API。`edit` 仅修改明确提供的字段，`--name` 重命名，`--model ""` 清除默认模型。
+
+编辑、删除支持完整 ID 或对应应用内唯一名称，完整 ID 优先；同名时必须使用 ID。此处仅管理本地 API 配置，OAuth 使用 `ccr oauth`，CC-Switch 导入项在原程序中管理。所有命令支持 `--host`、`--data-dir`；目标宿主不支持此功能时会提示升级。并发修改会明确报错，请重新查看配置后再执行，不自动覆盖他人的更改。
 
 ## 默认供应商
 
@@ -76,3 +104,33 @@ Claude 读取 API 连接环境变量，按 commonConfigEnabled 合并公共配�
 列表来自运行 cc-remote **宿主进程**的机器，而非浏览器所在机器。Windows 上的 CC-Switch 不会自动出现在 Linux 宿主上；可将其一致性数据库备份放到 Linux 并指定路径。复制前退出 CC-Switch，或使用 SQLite 备份工具，避免遗漏 WAL 中的更新。数据库包含密钥，请通过可信通道传输并限制访问权限。
 
 Linux 无需运行 CC-Switch GUI。此功能只读取配置、启动和恢复会话，不做跨机数据库同步。
+
+### CLI 高级配置
+
+`ccr profile show 名称 --app claude --json` 查看本地 API 供应商的脱敏详情（包括已配置凭据状态），不返回密钥。
+
+新增和修改共用这些参数，只有显式指定的字段才会修改：
+
+- `--website`、`--notes`：网站与备注。
+- Claude：`--haiku-model`、`--sonnet-model`、`--opus-model`、`--timeout-ms`。
+- Codex：`--reasoning-effort`、`--reasoning-summary`、`--verbosity`、`--context-window`、`--auto-compact-token-limit`、`--disable-response-storage=true|false`。
+
+例如：`ccr profile edit 工作 --app claude --opus-model 自定义模型 --timeout-ms 120000`。
+字符串显式传空可清除，数值设为 0 沿用应用配置。已有凭据始终保留，除非显式使用 `--credential-stdin` 更换。高级参数需要支持高级供应商配置的宿主。
+
+
+## 模型与 1M 上下文
+
+请求地址旁的“测试”通过模型列表接口检查认证及连通性，不发送生成请求。模型配置标题旁可获取模型列表；映射按 Sonnet、Opus、Haiku、Fable 各占一行，列为模型角色、显示名称、实际请求模型、1M 声明，默认兜底模型位于映射下方、高级选项之前。
+
+显示名称仅改变模型名称展示，实际请求模型填写供应商模型 ID。Fable 及各角色映射、显示名称均随配置保存和 CC-Switch 导入；命令行可用 `--fable-model` 和 `--sonnet-model-name` 等选项修改。
+
+Claude 的每个映射及默认兜底模型均可声明 1M 上下文。仅在模型支持时勾选，保存格式为模型名末尾的 `[1M]`，兼容 CC-Switch 导入；取消勾选会移除后缀，空模型不能勾选。此声明不会让供应商实际不支持的模型获得更大上下文。Codex 仍使用独立的上下文窗口 Token 数配置。
+
+命令行示例（去掉后缀即可取消声明）：
+
+```powershell
+ccr profile edit 名称 --app claude --sonnet-model 'model-id[1M]' --model 'model-id[1M]'
+```
+
+实现参考：[CC-Switch 模型状态处理](https://github.com/farion1231/cc-switch/blob/main/src/components/providers/forms/hooks/useModelState.ts)、[Claude Code 上下文配置](https://code.claude.com/docs/en/model-config#extended-context)。

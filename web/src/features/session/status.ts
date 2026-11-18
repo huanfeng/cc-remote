@@ -1,10 +1,12 @@
 import type { Session, SessionStatus } from '@/backend/types';
-import { t } from '@/lib/i18n';
+import { lang, t } from '@/lib/i18n';
+import { sessionRetry } from '@/domain/sessionRetry';
 import { providerName, providerOf } from '@/domain/providers';
 
-export type Tone = 'running' | 'waiting' | 'failed' | 'done' | 'idle' | 'interrupted';
+export type Tone = 'running' | 'retrying' | 'waiting' | 'failed' | 'done' | 'idle' | 'interrupted';
 
-export function statusTone(s: Pick<Session, 'status' | 'activeTasks'>): Tone {
+export function statusTone(s: Pick<Session, 'status' | 'activeTasks' | 'live'>): Tone {
+  if (sessionRetry(s)) return 'retrying';
   switch (s.status) {
     case 'running': return 'running';
     case 'waiting': return 'waiting';
@@ -13,6 +15,10 @@ export function statusTone(s: Pick<Session, 'status' | 'activeTasks'>): Tone {
     case 'completed': return (s.activeTasks ?? 0) > 0 ? 'running' : 'done';
     default: return (s.activeTasks ?? 0) > 0 ? 'running' : 'idle';
   }
+}
+
+export function sessionStatusLabel(s: Pick<Session, 'status' | 'activeTasks' | 'live'>): string {
+  return sessionRetry(s, lang)?.label ?? statusLabel(s.status, s.activeTasks);
 }
 
 export function statusLabel(status: SessionStatus | undefined, activeTasks = 0): string {
@@ -33,6 +39,7 @@ export function statusLabel(status: SessionStatus | undefined, activeTasks = 0):
 /** Tailwind classes for the small status dot. */
 export const toneDot: Record<Tone, string> = {
   running: 'bg-icon-blue animate-pulse',
+  retrying: 'bg-warning',
   waiting: 'bg-warning',
   failed: 'bg-destructive',
   interrupted: 'bg-foreground-subtlest',
@@ -43,6 +50,7 @@ export const toneDot: Record<Tone, string> = {
 /** Classes for a status pill (badge). */
 export const tonePill: Record<Tone, string> = {
   running: 'bg-progress-surface text-progress-surface-foreground',
+  retrying: 'bg-warning-surface text-warning-surface-foreground',
   waiting: 'bg-warning-surface text-warning-surface-foreground',
   failed: 'bg-destructive-surface text-destructive-surface-foreground',
   interrupted: 'bg-surface text-foreground-subtle',

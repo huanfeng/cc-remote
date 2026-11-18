@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+func TestProfileNameEnvironmentReplacesPreviousSupplier(t *testing.T) {
+	env := []string{"PATH=/bin", "CC_REMOTE_PROVIDER_NAME=old"}
+	joined := strings.Join(ProfileNameEnvironment(env, "New supplier"), "\n")
+	if strings.Contains(joined, "=old") || !strings.Contains(joined, "CC_REMOTE_PROVIDER_NAME=New supplier") {
+		t.Fatal(joined)
+	}
+	joined = strings.Join(ProfileNameEnvironment(env, ""), "\n")
+	if strings.Contains(joined, "=old") {
+		t.Fatal(joined)
+	}
+}
+
 func TestProfileEnvironmentPreservesHostHooksAndRemovesOldAuth(t *testing.T) {
 	values := map[string]string{"ANTHROPIC_BASE_URL": "https://new.example", "ANTHROPIC_API_KEY": "new-key"}
 	env := ProfileEnvironment([]string{"PATH=/bin", "ANTHROPIC_AUTH_TOKEN=old-token", "ANTHROPIC_MODEL=old-model", "CLAUDE_CODE_OAUTH_TOKEN=old-oauth", "CC_REMOTE_ASK_FILE=private-hook"}, values)
@@ -58,5 +70,19 @@ func TestOAuthOverlayKeepsNativeModelsAndClearsConflicts(t *testing.T) {
 	}
 	if _, touched := settings["ANTHROPIC_MODEL"]; touched {
 		t.Fatal("overlay must not touch model variables")
+	}
+}
+
+func TestSupplierModelNamesClearAcrossSwitch(t *testing.T) {
+	values := SupplierEnv(map[string]string{"ANTHROPIC_DEFAULT_FABLE_MODEL": "new-model", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "New"})
+	if values["ANTHROPIC_DEFAULT_FABLE_MODEL"] != "new-model" || values["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] != "New" {
+		t.Fatal("Fable lost")
+	}
+	for _, role := range []string{"HAIKU", "SONNET", "OPUS"} {
+		key := "ANTHROPIC_DEFAULT_" + role + "_MODEL_NAME"
+		v, ok := values[key]
+		if !ok || v != "" {
+			t.Fatal("previous model display name survives settings merge")
+		}
 	}
 }

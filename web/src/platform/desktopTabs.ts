@@ -4,6 +4,7 @@ import { DESKTOP, DESKTOP_TAB } from './desktop';
 import { DesktopTabHistory } from '@/domain/desktopTabHistory';
 import { isUsageHistory } from '@/domain/usageHistoryRoute';
 import { useApp } from '@/store/app';
+import { dismissOverlayShortcut, overlayHistory } from '@/lib/overlayHistory';
 import { useConnection, type Phase } from '@/features/auth/connection';
 
 export const DESKTOP_OPEN_HOST = 'desktop-open-host';
@@ -44,7 +45,7 @@ export function installDesktopTabNavigation() {
     try { sessionStorage.setItem(storageKey, JSON.stringify(journal)); } catch { /* unavailable */ }
     const connection = useConnection.getState();
     void emitTo(shell(), DESKTOP_TAB_STATE, {
-      label, hash: location.hash, title: document.title, canBack: journal.canBack, canForward: journal.canForward,
+      label, hash: location.hash, title: document.title, canBack: journal.canBack || overlayHistory().hasOpen, canForward: journal.canForward,
       phase: connection.phase, error: connection.error || connection.offline,
       waiting: useApp.getState().sessions.filter(session => session.status === 'waiting').length,
     } satisfies DesktopTabState).catch(console.error);
@@ -59,6 +60,7 @@ export function installDesktopTabNavigation() {
     if (action === 'state') { report(); return; }
     if (action === 'reload') { location.reload(); return; }
     if (action === 'settings') { useApp.getState().open({ type: 'settings' }); return; }
+    if (action === 'back' && overlayHistory().dismiss()) return;
     if (action === 'navigate') {
       if (hash !== undefined) {
         navigate(hash);
@@ -77,6 +79,7 @@ export function installDesktopTabNavigation() {
     }
   };
   const onKey = (event: KeyboardEvent) => {
+    if (dismissOverlayShortcut(event)) return;
     if (event.isComposing) return;
     const modifier = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
@@ -102,10 +105,12 @@ export function installDesktopTabNavigation() {
   window.addEventListener('keydown', onKey, true);
   const stopApp = useApp.subscribe(report);
   const stopConnection = useConnection.subscribe(report);
+  const stopOverlays = overlayHistory().subscribe(report);
   let stopCommands: (() => void) | undefined;
   void listen<DesktopTabCommand>(DESKTOP_TAB_COMMAND, event => command(event.payload), { target: { kind: 'Webview', label } })
     .then(stop => { if (disposed) stop(); else { stopCommands = stop; report(); } }).catch(console.error);
   return () => {
+    stopOverlays();
     disposed = true; observer.disconnect(); stopApp(); stopConnection(); stopCommands?.();
     window.removeEventListener('hashchange', report); window.removeEventListener('keydown', onKey, true);
   };

@@ -147,5 +147,5 @@ func (c *client) supplierEnvironment(explicit string, interactive bool) ([]strin
 	if len(reply.Env) == 0 {
 		return os.Environ(), reply.Name, nil
 	}
-	return claude.ProfileEnvironment(os.Environ(), reply.Env), reply.Name, nil
+	return claude.ProfileNameEnvironment(claude.ProfileEnvironment(os.Environ(), reply.Env), reply.Name), reply.Name, nil
 }

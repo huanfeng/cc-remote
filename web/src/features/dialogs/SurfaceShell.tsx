@@ -68,7 +68,7 @@ export function SurfaceShell(props: SurfaceShellProps) {
 
 function FullFrame({ open, onOpenChange, title, description, bodyClassName, footer, actions, onBack, children }: SurfaceShellProps) {
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Content
           {...(description ? {} : { 'aria-describedby': undefined })}
@@ -99,7 +99,7 @@ function FullFrame({ open, onOpenChange, title, description, bodyClassName, foot
           )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    </Dialog>
   );
 }
 

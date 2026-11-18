@@ -5,6 +5,7 @@
 // usage 60 s), so polling cadence, ETags and 409 resets stay out of the components.
 import { createContext, useContext, useEffect, useState } from 'react';
 import { BackendError } from './errors';
+import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from './supplierConfig';
 import type {
   Attachment, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
@@ -13,6 +14,17 @@ import type {
 } from './types';
 
 export type Unsubscribe = () => void;
+
+export type StatuslineStyle = 'compact' | 'color' | 'multiline';
+export interface StatuslineOptions { order?: string[]; segments: string[]; colors: Record<string, string>; shortLabels?: boolean; bars: boolean; warning: number; critical: number; separator: string }
+export interface StatuslineSettings {
+ options?: StatuslineOptions;
+ capabilities?: { customize?: boolean; shortLabels?: boolean };
+  installed: boolean;
+  style: StatuslineStyle | '';
+  revision: string;
+  hasExisting?: boolean;
+}
 
 export { BackendError };
 export type { Delivery } from './errors';
@@ -26,6 +38,8 @@ export interface UploadOptions {
 
 /** Claude Code's own ~/.claude/settings.json, the "native" layer under CC Remote's defaults. */
 export interface ClaudeSettings {
+  document?: Record<string, unknown>;
+  editDocument?: boolean;
   model: string;
   effortLevel: string;
   permissionMode: string;
@@ -113,10 +127,19 @@ export interface Backend {
   /** confirmDangerous is required when the permission mode is dangerous (dangerousPermission()). */
   savePreferences(provider: Provider, prefs: Preferences & { confirmDangerous?: boolean }): Promise<Preferences>;
   claudeSettings(): Promise<ClaudeSettings>;
+  statusline?(): Promise<StatuslineSettings | null>;
+  saveStatusline?(v: { style: StatuslineStyle; revision: string; options?: StatuslineOptions }): Promise<StatuslineSettings>;
+  removeStatusline?(v: { revision: string }): Promise<StatuslineSettings>;
   saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }): Promise<ClaudeSettings>;
   identity(): Promise<HostIdentity>;
   saveIdentity(v: { name: string; color: string; icon: string }): Promise<HostIdentity>;
   oauthProfiles(): Promise<{ id: string; name: string }[]>;
+  probeSupplier?(v: SupplierProbe): Promise<SupplierProbeResult>;
+  importCCSwitch?(id: string, app: Provider, revision: string): Promise<SupplierConfigs>;
+  setCCSwitchVisibility?(hidden: boolean, revision: string): Promise<SupplierConfigs>;
+  supplierConfigs?(): Promise<SupplierConfigs | null>;
+  saveSupplierConfig?(id: string | undefined, v: SupplierConfigWrite): Promise<SupplierConfigs>;
+  removeSupplierConfig?(id: string, revision: string): Promise<SupplierConfigs>;
   addOAuthProfile(name: string, token: string): Promise<void>;
   /** Replaces the token of an existing entry, keeping its id (PATCH /api/profiles/oauth/{id}). */
   replaceOAuthProfile(id: string, token: string): Promise<void>;

@@ -4,6 +4,7 @@
 // (window event 'cc-locate-call' with { toolUseId }).
 import { useEffect, useState } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
+import { Dialog } from '@/components/ui/dialog';
 import { Bot, ChevronRight, SquareTerminal, Users, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -85,7 +86,7 @@ export function TaskPanel({ open, onOpenChange, mobile, id }: { open: boolean; o
   }
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/20 duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
         <DialogPrimitive.Content
@@ -103,7 +104,7 @@ export function TaskPanel({ open, onOpenChange, mobile, id }: { open: boolean; o
           <div className="min-h-0 flex-1 overflow-y-auto p-2">{body}</div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    </Dialog>
   );
 }
 

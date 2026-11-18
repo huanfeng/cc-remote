@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
@@ -102,6 +103,42 @@ func TestHerdrStateMapping(t *testing.T) {
 		if got := herdrState(status); got != want {
 			t.Errorf("herdrState(%q) = %q, want %q", status, got, want)
 		}
+	}
+}
+
+func TestHerdrBackgroundTasksKeepWorking(t *testing.T) {
+	for _, status := range []string{"completed", "idle", "waiting"} {
+		t.Run(status, func(t *testing.T) {
+			h := &herdrCalls{}
+			b := newTestBridge(h)
+			var x remoteSession
+			if err := json.Unmarshal([]byte(`{"id":"abc12345","online":true,"status":"`+status+`","activeTasks":2}`), &x); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			b.sync(ctx, &x)
+			want := "working"
+			if status == "waiting" {
+				want = "blocked"
+			}
+			if got := argOf(h.all()[0], "--state"); got != want {
+				t.Fatalf("state = %q, want %q", got, want)
+			}
+			if err := json.Unmarshal([]byte(`{"activeTasks":0,"status":"completed"}`), &x); err != nil {
+				t.Fatal(err)
+			}
+			b.sync(ctx, &x)
+			calls := h.all()
+			if got := argOf(calls[len(calls)-1], "--state"); got != "idle" {
+				t.Fatalf("after tasks end = %q", got)
+			}
+			x.Online = false
+			b.sync(ctx, &x)
+			calls = h.all()
+			if calls[len(calls)-1][1] != "release-agent" {
+				t.Fatal("offline session did not release Herdr")
+			}
+		})
 	}
 }
 

@@ -90,8 +90,11 @@ func TestCCSwitchMissingAndInvalidSchema(t *testing.T) {
 	if _, err := db.Exec("ALTER TABLE providers RENAME COLUMN settings_config TO unknown_settings"); err != nil {
 		t.Fatal(err)
 	}
-	if code, _ := request(t, ts, "GET", "/api/profiles", nil, testToken); code != 400 {
-		t.Fatalf("missing required field accepted: %d", code)
+	if _, err := s.ccSwitchProfiles(); err == nil {
+		t.Fatal("invalid import schema accepted")
+	}
+	if code, b := request(t, ts, "GET", "/api/profiles", nil, testToken); code != 200 || !bytes.Contains(b, []byte("cc-switch")) || !bytes.Contains(b, []byte("unavailable")) {
+		t.Fatalf("unavailable import broke combined catalog: %d %s", code, b)
 	}
 }
 

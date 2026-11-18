@@ -30,17 +30,25 @@ func noteLaunch(s *NativeSession, raw json.RawMessage) {
 		ID    string `json:"id"`
 		Name  string `json:"name"`
 		Input struct {
-			Description  string `json:"description"`
-			SubagentType string `json:"subagent_type"`
-			Name         string `json:"name"`
-			To           string `json:"to"`
-			Background   bool   `json:"run_in_background"`
+			Description  string          `json:"description"`
+			SubagentType string          `json:"subagent_type"`
+			Name         string          `json:"name"`
+			To           string          `json:"to"`
+			Background   json.RawMessage `json:"run_in_background"`
 		} `json:"input"`
 	}
 	if json.Unmarshal(raw, &b) != nil || b.Type != "tool_use" || b.ID == "" {
 		return
 	}
-	if b.Name == "Agent" || b.Name == "Task" || b.Input.Background || b.Name == "SendMessage" && b.Input.To != "" && b.Input.To != "*" {
+	// Some transcripts preserve tool inputs as strings ("true"). Decode this
+	// field separately so its representation cannot discard an Agent call.
+	var background bool
+	if json.Unmarshal(b.Input.Background, &background) != nil {
+		var value string
+		_ = json.Unmarshal(b.Input.Background, &value)
+		background = value == "true"
+	}
+	if b.Name == "Agent" || b.Name == "Task" || background || b.Name == "SendMessage" && b.Input.To != "" && b.Input.To != "*" {
 		if s.launches == nil {
 			s.launches = map[string]launch{}
 		}

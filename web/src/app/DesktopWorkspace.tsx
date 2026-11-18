@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { dismissOverlayShortcut, overlayHistory } from '@/lib/overlayHistory';
 import { ArrowLeft, ArrowRight, Info, List, MoreHorizontal, Plus, RotateCw, Settings, Undo2, X } from 'lucide-react';
 import { useHosts } from '@/lib/hosts';
 import { t } from '@/lib/i18n';
@@ -38,6 +39,7 @@ export function DesktopWorkspace() {
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [active, visible]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
+      if (dismissOverlayShortcut(event)) return;
       if (event.isComposing) return;
       const key = event.key.toLowerCase();
       const modifier = event.ctrlKey || event.metaKey;
@@ -48,6 +50,7 @@ export function DesktopWorkspace() {
       }
       if (event.altKey && !modifier && (key === 'arrowleft' || key === 'arrowright')) {
         event.preventDefault();
+        if (key === 'arrowleft' && overlayHistory().dismiss()) return;
         if (selected && visible) void sendDesktopTabCommand({ action: key === 'arrowleft' ? 'back' : 'forward' });
         return;
       }

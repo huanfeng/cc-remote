@@ -195,7 +195,11 @@ func (o *oscStatus) sync(_ context.Context, x *remoteSession) {
 		o.report("clear")
 		return
 	}
-	o.report(oscState(x.Status))
+	state := oscState(x.Status)
+	if x.ActiveTasks > 0 && (x.Status == "completed" || x.Status == "idle") {
+		state = "working"
+	}
+	o.report(state)
 }
 
 // close clears the record: the terminal is no longer attached to anything.

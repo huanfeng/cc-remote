@@ -52,6 +52,7 @@ See [OAuth token setup](docs/supplier-profiles.md#oauth-令牌配置) and [subsc
 
 ## More ways to work
 
+- **Claude Code status line**: one-click setup under Settings → Claude Code, with compact, color and multiline styles. Shows available provider, model, effort, context usage, session cost and 5-hour / 7-day limits. Missing fields are hidden; uninstall restores the previous configuration. See the [official schema](https://code.claude.com/docs/en/statusline).
 - **Terminal/web handoff**: run `ccr` in a project to start a Claude Code session. Press `Ctrl+]` to detach, continue from the web, and reconnect with `ccr` later.
 - **Windows desktop client**: keep several servers open in independent tabs, with back, forward, refresh and in-app updates. Hover over the built-in tray to check usage.
 - **Mobile and PWA**: follow tasks, send messages and answer approvals from your phone, or install the web UI as a PWA.

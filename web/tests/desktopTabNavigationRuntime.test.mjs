@@ -15,6 +15,7 @@ test('tab route traversal keeps forward history despite synchronous store subscr
   globalThis.__desktopNavigationTest=h;
   globalThis.location={get hash(){return url.hash;},set hash(value){url.hash=value;},get pathname(){return url.pathname;},get search(){return url.search;},replace:value=>{url.href=new URL(value,url).href;},reload(){}};
   globalThis.window={addEventListener:(event,callback)=>listeners.set(event,callback),removeEventListener:event=>listeners.delete(event)};
+  window.history={state:null,pushState(state){this.state=state;},back(){this.state=null;listeners.get('popstate')?.({state:null});}};
   globalThis.document={head:{},title:'A · CC Remote'};
   globalThis.MutationObserver=class {observe(){}disconnect(){}};
   globalThis.sessionStorage={getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)};
@@ -30,12 +31,27 @@ test('tab route traversal keeps forward history despite synchronous store subscr
   const hook=registerHooks({resolve(specifier,context,next){
     if(mocks[specifier])return{url:mocks[specifier],shortCircuit:true};
     if(specifier.startsWith('@/domain/'))return{url:new URL('../src/domain/'+specifier.slice('@/domain/'.length)+'.ts',import.meta.url).href,shortCircuit:true};
+    if(specifier === '@/lib/overlayHistory')return{url:new URL('../src/lib/overlayHistory.ts',import.meta.url).href,shortCircuit:true};
     return next(specifier,context);
   }});
   let stop;
   try {
     const {installDesktopTabNavigation}=await import('../src/platform/desktopTabs.ts');
     stop=installDesktopTabNavigation();await new Promise(resolve=>setImmediate(resolve));
+    const {overlayHistory}=await import('../src/lib/overlayHistory.ts');
+    let remove,closed=0;
+    remove=overlayHistory().add(()=>{closed++;remove();});
+    assert.equal(events.at(-1).payload.canBack,true,'dialog enables titlebar Back even with empty route journal');
+    const key={key:'w',ctrlKey:true,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;}};
+    const before=events.length;
+    listeners.get('keydown')(key);
+    assert.equal(closed,1);assert.equal(key.prevented,true);assert.equal(key.stopped,true);
+    assert.ok(events.slice(before).every(event=>event.payload.action!=='close'),'dialog Ctrl+W must not emit native tab-close');
+    listeners.get('keydown')(key);
+    assert.equal(events.at(-1).payload.action,'close','without dialog Ctrl+W still closes native tab');
+    remove=overlayHistory().add(()=>{closed++;remove();});
+    command({payload:{action:'back'}});
+    assert.equal(closed,2);assert.equal(location.hash,'#/s/a','native Back dismisses dialog before route journal');
     location.hash='#/s/b';listeners.get('hashchange')();
     location.hash='#/s/c';listeners.get('hashchange')();
     command({payload:{action:'back'}});

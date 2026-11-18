@@ -125,6 +125,15 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	// An OAuth snapshot holds no token, so a replaced or removed token must
 	// still change the key or the old process keeps running with the old one.
 	key := launchKey{x.ClaudeSessionID, opts.PermissionMode, opts.Model, opts.Effort, x.ProfileJSON + tokenFingerprint(opts.ProfileEnv[claude.OAuthEnvKey], profileErr)}
+	if strings.HasPrefix(x.ProfileID, localSupplierPrefix) {
+		// Local snapshots contain no credentials: include resolved connection settings
+		// so edits and removals restart the process at the next safe launch.
+		resolved, _ := json.Marshal(struct {
+			Env    map[string]string
+			Config map[string]any
+		}{opts.ProfileEnv, opts.ConfigOverrides})
+		key.profile += tokenFingerprint(string(resolved), profileErr)
+	}
 	if rt := s.procs[x.ID]; rt != nil {
 		if x.Provider == "codex" && rt.key.claudeID == key.claudeID && rt.key.permissionMode == key.permissionMode && rt.key.profile == key.profile {
 			if proc, ok := rt.proc.(interface{ Configure(string, string) }); ok {

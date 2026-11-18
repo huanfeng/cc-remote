@@ -42,13 +42,32 @@ func (p supplierProfile) snapshot() string {
 	if p.Settings.Kind == oauthKind {
 		p.Settings.Env = nil // the token is looked up at launch, never copied into the session
 	}
+	if p.Settings.Kind == localSupplierKind {
+		p.Settings.Env = nil
+		p.Settings.Auth = nil
+		p.Settings.ConfigOverrides = nil
+	}
 	b, _ := json.Marshal(p)
 	return string(b)
 }
 func (s *Server) profileCatalog() (profileFile, error) {
-	f, err := s.ccSwitchProfiles()
+	state, _, stateErr := readCCSwitchState(s.cfg.DataDir)
+	if stateErr != nil {
+		return profileFile{}, errors.New("无法读取 CC-Switch 显示设置")
+	}
+	f := profileFile{Version: 1, DefaultProfiles: map[string]string{}, Profiles: []supplierProfile{}}
+	var err error
+	if !state.Hidden {
+		f, err = s.ccSwitchProfiles()
+	} else {
+		for app, id := range state.Defaults {
+			f.DefaultProfiles[app] = id
+		}
+	}
 	if err != nil {
-		return f, err
+		// Imported providers are an independent source: discard partial imports
+		// but keep native, OAuth and locally managed providers usable.
+		f = profileFile{Version: 1, Source: "cc-switch", DefaultProfiles: map[string]string{}, Profiles: []supplierProfile{}, Unavailable: []unavailableProfile{{"cc-switch", "CC-Switch", "claude", "无法读取 CC-Switch 供应商配置"}}}
 	}
 	entries, err := loadOAuthEntries(s.cfg.DataDir)
 	if err != nil {
@@ -57,12 +76,25 @@ func (s *Server) profileCatalog() (profileFile, error) {
 	for _, e := range entries {
 		f.Profiles = append(f.Profiles, e.profile())
 	}
+	local, localErr := s.localSupplierProfiles()
+	if localErr != nil {
+		f.Unavailable = append(f.Unavailable, unavailableProfile{"local", "Local", "claude", "无法读取本地供应商配置"})
+	} else {
+		f.Profiles = append(f.Profiles, local...)
+	}
 	f.ConfiguredDefaults, err = loadDefaultProfiles(s.cfg.DataDir)
 	if err != nil {
 		f.Unavailable = append(f.Unavailable, unavailableProfile{"default", "default", "claude", "无法读取默认供应商设置"})
 	}
 	for app, id := range f.ConfiguredDefaults {
 		if id != "" {
+			if state.Hidden && strings.HasPrefix(id, "ccswitch:") {
+				id = state.Defaults[app]
+				if id == "" {
+					id = "@native"
+				}
+				f.ConfiguredDefaults[app] = id
+			}
 			f.DefaultProfiles[app] = id
 		}
 	}
@@ -182,6 +214,16 @@ func (s *Server) sessionProfile(x store.Session) (supplierProfile, error) {
 		}
 		p.Settings.Env = map[string]string{claude.OAuthEnvKey: entry.Token}
 	}
+	if p.Settings.Kind == localSupplierKind {
+		fresh, err := s.resolveLocalSupplier(p.ID)
+		if err != nil {
+			return p, err
+		}
+		if fresh.App != p.App {
+			return p, errors.New("供应商类型不匹配")
+		}
+		p = fresh
+	}
 	return p, p.validate()
 }
 func (s *Server) profileOptions(x store.Session, o *claude.Options) error {
@@ -192,6 +234,7 @@ func (s *Server) profileOptions(x store.Session, o *claude.Options) error {
 	if p.ID == "" {
 		return nil
 	}
+	o.ProfileName = p.Name
 	if p.App == "claude" {
 		o.ProfileEnv = claude.SupplierEnv(p.Settings.Env)
 		if x.Model == "" && p.Settings.Kind != oauthKind {

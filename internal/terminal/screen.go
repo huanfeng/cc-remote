@@ -468,11 +468,60 @@ func (s *screen) rule(y int) bool {
 // "✽ Composing… (8m 33s · ↓ 26.2k tokens · esc to interrupt)".
 var activityLine = regexp.MustCompile(`^\s*\S\s+(\p{Lu}[\p{L}'-]*(?: [\p{L}'-]+)*…)\s*(?:\((.*)\))?\s*$`)
 
+// RetryStatus is a live upstream retry shown by Claude Code, not a PTY disconnect.
+type RetryStatus struct {
+	Message     string `json:"message"`
+	Attempt     int    `json:"attempt,omitempty"`
+	MaxAttempts int    `json:"maxAttempts,omitempty"`
+}
+
+var retrySpinner = regexp.MustCompile(`^\s*[✻✽✢✶✳✲*]\s+(.+)$`)
+var retryWord = regexp.MustCompile(`(?i)\bretrying(?:…|\.{3}|\s+in\b)`)
+var retryAttempt = regexp.MustCompile(`(?i)\battempt\s+(\d+)\s*/\s*(\d+)\b`)
+
 // activity is the spinner line on the screen, without the key hint, or "".
 func (s *screen) activity() string {
+	activity, _ := s.activityState()
+	return activity
+}
+
+func (s *screen) activityState() (string, *RetryStatus) {
 	lines := s.lines()
 	for y := len(lines) - 1; y >= 0; y-- {
 		line := lines[y]
+		if retrySpinner.MatchString(line) {
+			candidate := line
+			// Join physical wraps without inserting spaces inside words/error codes.
+			for next := y + 1; next < len(lines) && next <= y+7; next++ {
+				continuation := strings.TrimSpace(lines[next])
+				if continuation == "" || retrySpinner.MatchString(lines[next]) || strings.HasPrefix(continuation, "❯") || strings.Contains(continuation, "──") {
+					break
+				}
+				width := 0
+				for _, r := range lines[next-1] {
+					width += runeWidth(r)
+				}
+				if width >= s.cols-1 {
+					// lines() trims spaces, including a wrapping word separator.
+					candidate += strings.Repeat(" ", max(0, s.cols-width)) + lines[next]
+				} else if strings.HasPrefix(continuation, "·") || strings.HasPrefix(strings.ToLower(continuation), "attempt ") {
+					candidate += " " + continuation
+				} else {
+					break
+				}
+			}
+			if match := retrySpinner.FindStringSubmatch(candidate); match != nil && retryWord.MatchString(match[1]) {
+				retry := &RetryStatus{Message: strings.TrimSpace(match[1])}
+				if attempts := retryAttempt.FindStringSubmatch(retry.Message); attempts != nil {
+					attempt, e1 := strconv.Atoi(attempts[1])
+					limit, e2 := strconv.Atoi(attempts[2])
+					if e1 == nil && e2 == nil && attempt > 0 && limit >= attempt {
+						retry.Attempt, retry.MaxAttempts = attempt, limit
+					}
+				}
+				return retry.Message, retry
+			}
+		}
 		if strings.Contains(line, "(") && !strings.Contains(line, ")") && y+1 < len(lines) {
 			line += lines[y+1] // wrapped on a narrow terminal
 		}
@@ -487,9 +536,9 @@ func (s *screen) activity() string {
 			}
 		}
 		if len(parts) == 0 {
-			return m[1]
+			return m[1], nil
 		}
-		return m[1] + " (" + strings.Join(parts, " · ") + ")"
+		return m[1] + " (" + strings.Join(parts, " · ") + ")", nil
 	}
-	return ""
+	return "", nil
 }

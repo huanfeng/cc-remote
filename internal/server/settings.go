@@ -19,11 +19,13 @@ import (
 
 // Only expose editable preferences. The rest of settings.json may contain secrets.
 type claudeSettings struct {
-	Model          string `json:"model"`
-	Effort         string `json:"effortLevel"`
-	PermissionMode string `json:"permissionMode"`
-	Revision       string `json:"revision"`
-	Path           string `json:"path,omitempty"`
+	Document       map[string]json.RawMessage `json:"document"`
+	EditDocument   bool                       `json:"editDocument,omitempty"`
+	Model          string                     `json:"model"`
+	Effort         string                     `json:"effortLevel"`
+	PermissionMode string                     `json:"permissionMode"`
+	Revision       string                     `json:"revision"`
+	Path           string                     `json:"path,omitempty"`
 	// Required when newly selecting bypassPermissions, dontAsk or auto.
 	ConfirmDangerous bool `json:"confirmDangerous,omitempty"`
 }
@@ -62,6 +64,7 @@ func (s *Server) settingsSnapshot(v map[string]json.RawMessage, b []byte) claude
 	var permissions map[string]json.RawMessage
 	_ = json.Unmarshal(v["permissions"], &permissions)
 	_ = json.Unmarshal(permissions["defaultMode"], &x.PermissionMode)
+	x.Document = redactNativeDocument(v)
 	return x
 }
 
@@ -97,6 +100,50 @@ func (s *Server) saveSettings(l i18n.Lang, x claudeSettings) (claudeSettings, er
 		return x, errConfirmDangerous(l)
 	}
 	b := before
+	if x.EditDocument {
+		if x.Document == nil {
+			return x, l.Errorf("Expected a JSON object", "请填写 JSON 对象")
+		}
+		doc := restoreNativeDocument(x.Document, v)
+		for _, key := range []string{"model", "effortLevel"} {
+			if value, ok := doc[key]; ok {
+				var text string
+				if json.Unmarshal(value, &text) != nil || string(value) == "null" {
+					return x, l.Errorf("Expected string settings", "模型和思考强度必须为字符串")
+				}
+			}
+		}
+		if value, ok := doc["permissions"]; ok {
+			var permissions map[string]json.RawMessage
+			if json.Unmarshal(value, &permissions) != nil || permissions == nil {
+				return x, l.Errorf("Expected permissions object", "权限必须为 JSON 对象")
+			}
+			if mode, ok := permissions["defaultMode"]; ok {
+				var text string
+				if json.Unmarshal(mode, &text) != nil || string(mode) == "null" {
+					return x, l.Errorf("Expected permission mode string", "权限模式必须为字符串")
+				}
+			}
+		}
+
+		encoded, marshalErr := json.Marshal(doc)
+		if marshalErr != nil {
+			return x, marshalErr
+		}
+		snapshot := s.settingsSnapshot(doc, encoded)
+		if !validSettings(snapshot, old) {
+			return x, l.Errorf("Invalid Claude settings", "无效的 Claude 设置")
+		}
+		if snapshot.PermissionMode != old.PermissionMode && prefs.Dangerous(snapshot.PermissionMode) && !x.ConfirmDangerous {
+			return x, errConfirmDangerous(l)
+		}
+		b, err = json.MarshalIndent(doc, "", "  ")
+		if err != nil {
+			return x, err
+		}
+		b = append(b, '\n')
+		x.Model, x.Effort, x.PermissionMode = snapshot.Model, snapshot.Effort, snapshot.PermissionMode
+	}
 	for _, edit := range []struct {
 		path     []string
 		old, new string

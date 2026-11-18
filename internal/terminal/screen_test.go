@@ -1,9 +1,94 @@
 package terminal
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestScreenRetryActivity(t *testing.T) {
+	s := newScreen(100, 8)
+	s.write([]byte("\x1b[3;1H✻ Connection dropped (ECONNRESET) · retrying… · attempt 6/10"))
+	if got := s.activity(); got != "Connection dropped (ECONNRESET) · retrying… · attempt 6/10" {
+		t.Fatalf("retry activity missing: %q", got)
+	}
+}
+
+func TestScreenRetryDetailsAndRecovery(t *testing.T) {
+	const message = "Connection dropped (ECONNRESET) · retrying… · attempt 6/10"
+	for _, width := range []int{20, 32, 100} {
+		s := newScreen(width, 12)
+		s.write([]byte("\x1b[3;1H\x1b[33m✻ " + message + "\x1b[m"))
+		activity, retry := s.activityState()
+		if retry == nil || retry.Message != message || retry.Attempt != 6 || retry.MaxAttempts != 10 || activity != message {
+			t.Fatalf("width %d: activity=%q retry=%+v screen=%q", width, activity, retry, s.lines())
+		}
+		s.write([]byte("\x1b[H\x1b[2J✽ Thinking… (2s · esc to interrupt)"))
+		activity, retry = s.activityState()
+		if retry != nil || activity != "Thinking… (2s)" {
+			t.Fatalf("recovery retained retry: %q %+v", activity, retry)
+		}
+		s.write([]byte("\x1b[H\x1b[2J✻ Brewed for 5s"))
+		if activity, retry = s.activityState(); retry != nil || activity != "" {
+			t.Fatalf("completion retained retry: %q %+v", activity, retry)
+		}
+	}
+}
+
+func TestScreenRetryPartialCounterUpdate(t *testing.T) {
+	s := newScreen(100, 8)
+	const prefix = "✻ Connection dropped (ECONNRESET) · retrying… · attempt "
+	s.write([]byte(prefix + "6/10"))
+	s.write([]byte(fmt.Sprintf("\x1b[1;%dH7", len([]rune(prefix))+1)))
+	_, retry := s.activityState()
+	if retry == nil || retry.Attempt != 7 || retry.MaxAttempts != 10 {
+		t.Fatalf("partial update: %+v", retry)
+	}
+}
+
+func TestScreenRetryDoesNotSwallowAdjacentLines(t *testing.T) {
+	s := newScreen(100, 8)
+	const message = "Connection dropped (ECONNRESET) · retrying… · attempt 6/10"
+	s.write([]byte("✻ " + message + "\r\n? for shortcuts"))
+	if _, retry := s.activityState(); retry == nil || retry.Message != message {
+		t.Fatalf("adjacent footer included: %+v", retry)
+	}
+	s.write([]byte("\x1b[H\x1b[2J✽ Thinking…\r\n? for shortcuts"))
+	if activity, retry := s.activityState(); activity != "Thinking…" || retry != nil {
+		t.Fatalf("normal activity changed by footer: %q %+v", activity, retry)
+	}
+}
+
+func TestScreenRetryFormatsAndFalsePositives(t *testing.T) {
+	for _, text := range []string{
+		"✻ API Error: 529 overloaded · retrying in 5s… · attempt 2/10",
+		"✽ Connection dropped (ETIMEDOUT) · retrying... · attempt 10/10",
+		"✻ Retrying…",
+	} {
+		s := newScreen(120, 8)
+		s.write([]byte(text))
+		if _, retry := s.activityState(); retry == nil {
+			t.Fatalf("missing retry: %s", text)
+		}
+	}
+	for _, text := range []string{
+		"Connection dropped (ECONNRESET) · retrying… · attempt 6/10",
+		"● The log contains retrying… · attempt 6/10",
+		"❯ explain retrying… · attempt 6/10",
+		"✻ Retrying the failed tests…",
+	} {
+		s := newScreen(120, 8)
+		s.write([]byte(text))
+		if _, retry := s.activityState(); retry != nil {
+			t.Fatalf("ordinary content treated as retry: %s", text)
+		}
+	}
+	s := newScreen(100, 8)
+	s.write([]byte("✻ Connection dropped · retrying… · attempt 6/10\r\n✽ Composing…"))
+	if activity, retry := s.activityState(); retry != nil || activity != "Composing…" {
+		t.Fatalf("newer activity must supersede old retry: %q %+v", activity, retry)
+	}
+}
 
 func TestScreenFollowsConPTYUpdates(t *testing.T) {
 	s := newScreen(40, 6)

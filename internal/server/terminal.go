@@ -136,6 +136,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	args = append(args, claude.LaunchFlags(opts.PermissionMode, opts.Model, opts.Effort)...)
 	args = append(args, x.ClaudeArgs...)
 	env := claude.ProfileEnvironment(terminal.CleanEnv(os.Environ()), opts.ProfileEnv)
+	env = claude.ProfileNameEnvironment(env, opts.ProfileName)
 	env = append(env, "CC_REMOTE_ASK_FILE="+filepath.Join(dir, "ask.json"), "CC_REMOTE_TERMINAL_FILE="+filepath.Join(dir, "terminal.json"))
 	if s.cfg.ClaudeConfigEnv != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+s.cfg.ClaudeConfigEnv)
@@ -827,6 +828,17 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var closeAfter *sessionRuntime
+	if req.Event == "Stop" {
+		// Import final output before capturing the completed turn's read watermark.
+		s.mu.Unlock()
+		s.syncTerminal(ts)
+		s.mu.Lock()
+		if s.terminals[id] != ts {
+			s.mu.Unlock()
+			fail(w, 409, s.lang(r).T("The terminal session changed", "终端会话已变化"))
+			return
+		}
+	}
 	switch req.Event {
 	case "SessionStart":
 		ts.runner.MarkStarted()
@@ -1177,8 +1189,14 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 	if ts.live != nil {
 		live = *ts.live
 	}
+	// Retry is derived from the current screen, never retained from status-line data.
+	live.Retry = nil
 	if x.Status == "running" {
-		live.Activity = ts.runner.Activity()
+		activity, retry := ts.runner.ActivityState()
+		live.Activity = activity
+		if retry != nil {
+			live.Retry = &store.RetryStatus{Message: retry.Message, Attempt: retry.Attempt, MaxAttempts: retry.MaxAttempts}
+		}
 	} else if len(ts.queued) == 0 {
 		live.Suggestion = ts.runner.Suggestion()
 	}

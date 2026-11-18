@@ -104,6 +104,7 @@ func fakeTerminal() {
 	dropped := false
 	ignored := false
 	usageShown, usageSelected := false, 1
+	retryShown := false
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
@@ -112,6 +113,17 @@ func fakeTerminal() {
 		pending = append(pending, buf[:n]...)
 		for len(pending) > 0 {
 			switch {
+			case retryShown && pending[0] == 'u':
+				pending = pending[1:]
+				os.Stdout.WriteString("\x1b[H\x1b[2J✻ Connection dropped (ECONNRESET) · retrying… · attempt 7/10")
+			case retryShown && pending[0] == 'r':
+				pending = pending[1:]
+				os.Stdout.WriteString("\x1b[H\x1b[2J✽ Thinking…")
+			case retryShown && pending[0] == 'f':
+				pending = pending[1:]
+				retryShown = false
+				os.Stdout.WriteString("\x1b[H\x1b[2J✻ Brewed for 5s")
+				hook("Stop", nil)
 			case usageShown && len(pending) >= 3 && (bytes.HasPrefix(pending, []byte("\x1b[A")) || bytes.HasPrefix(pending, []byte("\x1b[B"))):
 				if pending[2] == 'A' {
 					usageSelected--
@@ -157,6 +169,12 @@ func fakeTerminal() {
 					turn(text)
 					usageShown, usageSelected = true, 1
 					os.Stdout.WriteString("\x1b[H\x1b[2J" + strings.ReplaceAll(usageTestScreen, "\n", "\r\n"))
+					continue
+				}
+				if text == "/retry-status-test" {
+					turn(text)
+					retryShown = true
+					os.Stdout.WriteString("\x1b[H\x1b[2J✻ Connection dropped (ECONNRESET) · retrying… · attempt 6/10")
 					continue
 				}
 				if text == "/clear" {
@@ -311,6 +329,19 @@ func TestTerminalSessionMessagesStatusAndStop(t *testing.T) {
 		return strings.Join(eventTexts(st, x.ID), "|") == "user:hello\nworld|assistant:echo: hello\nworld"
 	})
 	awaitLong(t, func() string { y, _ := st.Get(x.ID); return y.Status }, func() bool { y, _ := st.Get(x.ID); return y.Status == "completed" })
+	completed, err := st.Get(x.ID)
+	if err != nil || completed.CompletedAt == "" {
+		t.Fatalf("completion identity: %+v %v", completed, err)
+	}
+	events, err := st.Events(x.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Kind == "assistant" && event.Seq > completed.CompletionEventSeq {
+			t.Fatalf("final output is outside completion watermark: event=%d watermark=%d", event.Seq, completed.CompletionEventSeq)
+		}
+	}
 	s.mu.Lock()
 	queued := len(s.terminals[x.ID].queued)
 	s.mu.Unlock()

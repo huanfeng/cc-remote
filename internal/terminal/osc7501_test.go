@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,41 @@ func TestOSCStateMapping(t *testing.T) {
 		if got := oscState(status); got != want {
 			t.Errorf("oscState(%q) = %q, want %q", status, got, want)
 		}
+	}
+}
+
+func TestOSCBackgroundTasksKeepWorking(t *testing.T) {
+	for _, status := range []string{"completed", "idle", "waiting"} {
+		t.Run(status, func(t *testing.T) {
+			o, out := newTestOSC()
+			var x remoteSession
+			if err := json.Unmarshal([]byte(`{"online":true,"status":"`+status+`","activeTasks":2}`), &x); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			o.sync(ctx, &x)
+			state := "working"
+			if status == "waiting" {
+				state = "blocked"
+			}
+			if got := out.String(); got != string(oscSequence(state)) {
+				t.Fatalf("state = %q, want %q", got, state)
+			}
+			out.Reset()
+			if err := json.Unmarshal([]byte(`{"activeTasks":0,"status":"completed"}`), &x); err != nil {
+				t.Fatal(err)
+			}
+			o.sync(ctx, &x)
+			if out.String() != string(oscSequence("idle")) {
+				t.Fatalf("after tasks end = %q", out.String())
+			}
+			out.Reset()
+			x.Online = false
+			o.sync(ctx, &x)
+			if out.String() != string(oscSequence("clear")) {
+				t.Fatalf("offline state = %q", out.String())
+			}
+		})
 	}
 }
 

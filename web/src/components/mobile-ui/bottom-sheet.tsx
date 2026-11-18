@@ -1,5 +1,6 @@
 import type { BottomSheetProps, BottomSheetContentProps } from "@/components/mobile-ui/contract.js";
 import * as React from "react";
+import { OverlayDepth, useOverlayDialog } from '../lib/overlay-dialog';
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { cn } from "@/components/lib/utils.js";
@@ -9,7 +10,8 @@ import { cn } from "@/components/lib/utils.js";
  * 用于远控设备页的多连接选择、任务首页的新建任务工作区选择等二级选择。
  */
 function BottomSheet(props: BottomSheetProps) {
-  return <DialogPrimitive.Root data-slot="bottom-sheet" {...props} />;
+  const { depth, ...overlay } = useOverlayDialog(props);
+  return <OverlayDepth.Provider value={depth}><DialogPrimitive.Root data-slot="bottom-sheet" {...props} {...overlay} /></OverlayDepth.Provider>;
 }
 
 function BottomSheetTrigger(props: React.ComponentProps<typeof DialogPrimitive.Trigger>) {

@@ -1,11 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FOLD_KEEP, busy, inProgressSessions, projectGroups } from '../src/features/sidebar/projectGroups.ts';
+import { FOLD_KEEP, busy, idleSessions, inProgressSessions, projectGroups } from '../src/features/sidebar/projectGroups.ts';
+import { isCompletionPending } from '../src/domain/completionRead.ts';
 
 const NOW = Date.UTC(2026, 10, 8);
 const day = 86_400_000;
 const session = (id, cwd, daysAgo, extra = {}) => ({ id, cwd, title: id, updatedAt: '', lastConversationAt: new Date(NOW - daysAgo * day).toISOString(), ...extra });
 const ids = list => list.map(s => s.id);
+
+test('bulk idle archive preserves unread results and active work, then accepts viewed results', () => {
+  const done = session('done', '/p', 1, { status: 'completed', completedAt: 'turn-1' });
+  const list = [done, session('idle', '/p', 2, { status: 'idle' }), session('run', '/p', 3, { status: 'running' }),
+    session('background', '/p', 4, { status: 'completed', activeTasks: 1 }), session('archived', '/p', 5, { archived: true })];
+  assert.deepEqual(ids(idleSessions(list, s => isCompletionPending(s, { completedAt: 'turn-1', viewedAt: '' }))), ['idle']);
+  assert.deepEqual(ids(idleSessions(list, s => isCompletionPending(s, { completedAt: 'turn-1', viewedAt: 'turn-1' }))), ['done', 'idle']);
+});
 
 test('groups keep their order and fold old sessions past the first few', () => {
   const busy = Array.from({ length: 12 }, (_, i) => session(`a${i}`, 'D:\\work\\big', 10 + i));

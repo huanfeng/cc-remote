@@ -1,11 +1,13 @@
 import * as React from "react";
+import { OverlayDepth, useOverlayDialog } from '../lib/overlay-dialog';
 import type { VariantProps } from "class-variance-authority";
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui";
 import { cn } from "../lib/utils.js";
 import { buttonVariants } from "./button.js";
 
 function AlertDialog({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />;
+  const { depth, ...overlay } = useOverlayDialog(props);
+  return <OverlayDepth.Provider value={depth}><AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} {...overlay} /></OverlayDepth.Provider>;
 }
 
 function AlertDialogTrigger({

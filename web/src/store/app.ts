@@ -3,6 +3,7 @@
 // URL hash (#/s/<id>, #/native/<id>, #/native-codex/<id>) so reloads, links
 // and the phone's back button all work; this store mirrors it.
 import { create } from 'zustand';
+import { overlayHistory } from '@/lib/overlayHistory';
 import type { HostInfo, Provider, Session } from '@/backend/types';
 
 export type Selection =
@@ -16,13 +17,14 @@ export type Surface =
   | { type: 'settings'; section?: SettingsSection }
   | { type: 'status' }
   | { type: 'session-details'; id: string }
+  | { type: 'delete-session'; id: string }
   | { type: 'tasks'; id: string }
   | { type: 'file'; sessionId: string; path: string; base?: string[] }
   | { type: 'palette' }
   | { type: 'attach'; id: string }
   | null;
 
-export type SettingsSection = 'defaults' | 'oauth' | 'host' | 'browser' | 'computer' | 'about';
+export type SettingsSection = 'claude' | 'codex' | 'suppliers' | 'defaults' | 'oauth' | 'host' | 'browser' | 'computer' | 'about';
 export type SidebarTab = 'sessions' | 'history';
 
 interface AppState {
@@ -76,9 +78,11 @@ export const selectionKey = (s: Selection) =>
 
 /** Navigates by changing the hash; the hashchange listener updates the store. */
 export function select(s: Selection) {
-  const hash = selectionHash(s);
-  if (location.hash !== hash) location.hash = hash;
-  useApp.setState({ selection: s, drawerOpen: false });
+  overlayHistory().afterClose(() => {
+    const hash = selectionHash(s);
+    if (location.hash !== hash) location.hash = hash;
+    useApp.setState({ selection: s, drawerOpen: false });
+  });
 }
 
 if (typeof window !== 'undefined') {

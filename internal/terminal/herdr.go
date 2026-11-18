@@ -106,6 +106,9 @@ func (b *herdrBridge) sync(ctx context.Context, x *remoteSession) {
 		return
 	}
 	state, title := herdrState(x.Status), herdrText(x.Title)
+	if x.ActiveTasks > 0 && (x.Status == "completed" || x.Status == "idle") {
+		state = "working"
+	}
 	if state == b.sent && b.metaSent && title == b.title {
 		return
 	}

@@ -64,6 +64,8 @@ export interface LiveStatus {
   contextSize: number;
   contextPercent: number;
   activity?: string;
+  /** The CLI is retrying its upstream API request; separate from the browser's terminal connection. */
+  retry?: { message: string; attempt?: number; maxAttempts?: number };
   suggestion?: string;
   permissionMode?: string;
 }
@@ -101,6 +103,9 @@ export interface Session {
   lastConversationAt?: string;
   conversationTimeEstimated?: boolean;
   updatedAt: string;
+  /** Identity and transcript watermark of the latest successful completion. */
+  completedAt?: string;
+  completionEventSeq?: number;
   mode?: SessionMode;
   online?: boolean;
   attached?: number;

@@ -3,7 +3,7 @@
 // who sets the size; on phones a key bar and an input bar replace the
 // keyboard the screen would otherwise need. See terminalEngine.ts for the
 // connection and size logic.
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, Copy, Minus, MonitorSmartphone, Plus, RotateCw, Smartphone } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import type { Session } from '@/backend/types';
@@ -17,6 +17,7 @@ import { t } from '@/lib/i18n';
 import { createTerminalEngine, initialUi, type TerminalEngine, type TerminalUi } from './terminalEngine';
 import { MAX_ATTEMPTS, PHONE_KEYS, pastePayload, stepZoom } from './terminalSize';
 import './terminal.css';
+import { useCompletionViewed } from '@/features/session/useCompletionViewed';
 
 export function TerminalView({ session, mobile }: { session: Session; mobile: boolean }) {
   const backend = useBackend();
@@ -29,6 +30,16 @@ export function TerminalView({ session, mobile }: { session: Session; mobile: bo
   const fitRef = useRef(fitDevice); fitRef.current = fitDevice;
   const [ui, setUi] = useState<TerminalUi>(() => initialUi(mobile, fitDevice));
   const sessionId = session.id;
+  const latest = useCallback(() => {
+    const el = box.current;
+    const ready = ui.state === 'open' && !!engine.current?.latestOutputVisible(session.completedAt ?? '');
+    return {
+      loaded: ready,
+      lastSeq: ready ? session.completionEventSeq ?? 0 : 0,
+      atBottom: ready && !!el && el.clientHeight > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= 40,
+    };
+  }, [session.completedAt, session.completionEventSeq, ui.state]);
+  useCompletionViewed(session, latest);
 
   useEffect(() => {
     if (!box.current || !screen.current) return;

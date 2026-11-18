@@ -42,6 +42,39 @@ const ev = (seq, kind = 'assistant') => ({ seq, kind, text: `e${seq}`, createdAt
 const fast = { sessions: 15, transcript: 15, usage: 15 };
 const make = (host, extra = {}) => new HttpBackend({ baseUrl: '', token: 'tok', lang: 'en', fetch: host.fetch, intervals: fast, ...extra });
 
+test('statusline: older hosts return unsupported without blocking settings or sessions', async () => {
+  for (const reply of [
+    { status: 404, body: { error: 'not found' } },
+    { status: 405, body: { error: 'method not allowed' } },
+    { status: 200, body: { legacy: true } },
+  ]) {
+    const host = fakeHost((m, p) => p === '/api/statusline' ? reply : p === '/api/claude/settings' ? { model: 'opus', revision: 'old' } : []);
+    const b = make(host);
+    assert.equal(await b.statusline(), null);
+    assert.equal((await b.claudeSettings()).model, 'opus');
+    assert.deepEqual(await b.preferences('claude'), []);
+    b.dispose();
+  }
+  const b = new HttpBackend({ baseUrl: '', token: 'tok', lang: 'en', fetch: async () => new Response('<html>old host</html>') });
+  assert.equal(await b.statusline(), null);
+  b.dispose();
+});
+
+test('statusline: saves style and uninstalls using the host revision', async () => {
+  const state = { installed: true, style: 'color', revision: 'r2' };
+  const host = fakeHost(() => state);
+  const b = make(host);
+  assert.deepEqual(await b.statusline(), state);
+  assert.deepEqual(await b.saveStatusline({ style: 'color', revision: 'r1', extra: 'omit' }), state);
+  await b.removeStatusline({ revision: 'r2' });
+  assert.deepEqual(host.log.map(x => [x.method, x.path, x.body]), [
+    ['GET', '/api/statusline', undefined],
+    ['PUT', '/api/statusline', { style: 'color', revision: 'r1' }],
+    ['DELETE', '/api/statusline', { revision: 'r2' }],
+  ]);
+  b.dispose();
+});
+
 test('client: headers, and a cursorless GET answered 304 returns the cached object itself', async () => {
   const data = { a: [1, 2] };
   const host = fakeHost((m, p, b, h) => (h['If-None-Match'] === '"v1"' ? { status: 304 } : { status: 200, body: data, etag: '"v1"' }));

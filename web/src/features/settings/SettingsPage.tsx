@@ -5,6 +5,7 @@
 // closing, asks first.
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
+import { Dialog } from '@/components/ui/dialog';
 import { ChevronRight, Globe2, HardDrive, Info, KeyRound, Monitor, SlidersHorizontal, X, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/lib/utils';
@@ -14,7 +15,8 @@ import { SurfaceShell } from '@/features/dialogs/SurfaceShell';
 import { ConfirmDialog } from '@/features/dialogs/common';
 import { DirtyContext } from './parts';
 import { DefaultsSection } from './DefaultsSection';
-import { OAuthSection } from './OAuthSection';
+import { SuppliersSection } from './SuppliersSection';
+import { settingsDestination } from './settingsNavigation';
 import { HostSection } from './HostSection';
 import { BrowserSection } from './BrowserSection';
 import { ComputerSection } from './ComputerSection';
@@ -22,18 +24,22 @@ import { DESKTOP } from '@/platform/desktop';
 import { DesktopAboutContent } from './DesktopUpdate';
 
 const SECTIONS: { key: SettingsSection; icon: LucideIcon; title: () => string; hint: () => string }[] = [
-  { key: 'defaults', icon: SlidersHorizontal, title: () => t('Session defaults', '会话默认'), hint: () => t('Supplier, model, effort, permissions', '供应商、模型、推理与权限') },
-  { key: 'oauth', icon: KeyRound, title: () => t('OAuth tokens', 'OAuth 令牌'), hint: () => t('Official logins for sessions', '会话使用的官方登录') },
-  { key: 'host', icon: Monitor, title: () => t('This host', '本宿主'), hint: () => t('Versions, name, colour and icon', '版本、名称、颜色与图标') },
-  { key: 'browser', icon: Globe2, title: () => (DESKTOP ? t('This app', '本应用') : t('This browser', '本浏览器')), hint: () => t('Language, theme, send key, notifications', '语言、主题、发送键、通知') },
+  { key: 'suppliers', icon: KeyRound, title: () => t('Suppliers', '供应商'), hint: () => t('Official OAuth, API connections and imports', '官方 OAuth、API 连接与导入配置') },
+  { key: 'claude', icon: SlidersHorizontal, title: () => 'Claude Code', hint: () => t('Defaults, native settings and status line', '会话默认、原生配置与状态栏') },
+  { key: 'codex', icon: SlidersHorizontal, title: () => 'Codex', hint: () => t('Supplier, model, effort and permissions', '供应商、模型、思考强度与权限') },
+  { key: 'host', icon: Monitor, title: () => t('Server', '服务器'), hint: () => t('Versions, name, colour and icon', '版本、名称、颜色与图标') },
+  { key: 'browser', icon: Globe2, title: () => t('Appearance & interaction', '外观与交互'), hint: () => t('Language, theme, send key, notifications', '语言、主题、发送键、通知') },
   ...(DESKTOP ? [{ key: 'computer' as const, icon: HardDrive, title: () => t('This computer', '本机服务'), hint: () => t('The cc-remote service here', '本机的 cc-remote 服务') }] : []),
   ...(DESKTOP ? [{ key: 'about' as const, icon: Info, title: () => t('About & updates', '关于与更新'), hint: () => t('Desktop version, updates and release notes', '桌面端版本、更新与发布说明') }] : []),
 ];
 
 function Body({ section, mobile }: { section: SettingsSection; mobile: boolean }) {
   switch (section) {
-    case 'defaults': return <DefaultsSection mobile={mobile} />;
-    case 'oauth': return <OAuthSection mobile={mobile} />;
+    case 'defaults':
+    case 'claude': return <DefaultsSection mobile={mobile} provider="claude" />;
+    case 'codex': return <DefaultsSection mobile={mobile} provider="codex" />;
+    case 'oauth':
+    case 'suppliers': return <SuppliersSection mobile={mobile} />;
     case 'host': return <HostSection mobile={mobile} />;
     case 'browser': return <BrowserSection mobile={mobile} />;
     case 'computer': return <ComputerSection mobile={mobile} />;
@@ -43,7 +49,7 @@ function Body({ section, mobile }: { section: SettingsSection; mobile: boolean }
 
 export function SettingsPage({ open, onOpenChange, mobile, section: initial }: { open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean; section?: SettingsSection }) {
   const sections = SECTIONS;
-  const [section, setSection] = useState<SettingsSection | null>(initial ?? (mobile ? null : 'defaults'));
+  const [section, setSection] = useState<SettingsSection | null>(settingsDestination(initial) ?? (mobile ? null : 'suppliers'));
   const dirtyKeys = useRef(new Set<string>());
   const [, force] = useState(0);
   const [pending, setPending] = useState<{ run: () => void } | null>(null);
@@ -107,10 +113,10 @@ export function SettingsPage({ open, onOpenChange, mobile, section: initial }: {
     );
   }
 
-  const active = section ?? 'defaults';
+  const active = section ?? 'suppliers';
   return (
     <DirtyContext.Provider value={ctx}>
-      <DialogPrimitive.Root open={open} onOpenChange={request}>
+      <Dialog open={open} onOpenChange={request}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 isolate z-50 bg-black/60 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
           <DialogPrimitive.Content
@@ -144,7 +150,7 @@ export function SettingsPage({ open, onOpenChange, mobile, section: initial }: {
             </div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
-      </DialogPrimitive.Root>
+      </Dialog>
       {guard}
     </DirtyContext.Provider>
   );

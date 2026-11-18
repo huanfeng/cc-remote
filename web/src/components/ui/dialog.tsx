@@ -1,4 +1,5 @@
 import * as React from "react";
+import { OverlayDepth, useOverlayDialog } from '../lib/overlay-dialog';
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
@@ -12,7 +13,8 @@ function DialogCloseText() {
 }
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+  const { depth, ...overlay } = useOverlayDialog(props);
+  return <OverlayDepth.Provider value={depth}><DialogPrimitive.Root data-slot="dialog" {...props} {...overlay} /></OverlayDepth.Provider>;
 }
 
 function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {

@@ -315,19 +315,15 @@ fn account_card(row: AccountRow, model: Signal<Model>, actions: Sender<Action>) 
                 .height(22)
                 .spacing(6)
                 .child(
-                    text(
-                        format!("{} · {}", provider_label(&a.provider), a.name),
-                        12.0,
-                        22,
-                    )
-                    .font_weight(600)
-                    .weight(1.0)
-                    .tooltip(format!(
-                        "{} · {}\n{}",
-                        a.name,
-                        a.plan.as_deref().unwrap_or("套餐未知"),
-                        updated_text(&a)
-                    )),
+                    text(account_name(&a), 12.0, 22)
+                        .font_weight(600)
+                        .weight(1.0)
+                        .tooltip(format!(
+                            "{} · {}\n{}",
+                            a.name,
+                            a.plan.as_deref().unwrap_or("套餐未知"),
+                            updated_text(&a)
+                        )),
                 )
                 .child(
                     Element::button("历史")

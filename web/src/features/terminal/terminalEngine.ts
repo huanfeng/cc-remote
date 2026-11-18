@@ -32,6 +32,7 @@ export interface TerminalUi {
 }
 
 export interface TerminalEngine {
+  latestOutputVisible(completedAt: string): boolean;
   send(data: string): void;
   redraw(): void;
   /** "Use this window": take the size back. */
@@ -84,6 +85,8 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   let hostSize: { cols: number; rows: number } | undefined;
   let sentKey = '';
   const sent = new SentSizes();
+  let rendered = false;
+  let completionToken = '';
 
   const term = new Terminal({
     fontFamily: monoFont(),
@@ -173,6 +176,8 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   function connect() {
     clearTimeout(retryTimer);
     drop();
+    rendered = false;
+    completionToken = '';
     const g = ++gen;
     if (disposed || exited || refused || document.hidden) return;
     o.onUi({ state: 'connecting' });
@@ -180,7 +185,10 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
     sentKey = '';
     const live = () => !disposed && g === gen;
     const s = backend.openTerminal(sessionId, {
-      onData(chunk) { if (live()) term.write(chunk); },
+      onData(chunk) {
+        const token = completionToken;
+        if (live()) term.write(chunk, () => { if (live() && token === completionToken) rendered = true; });
+      },
       onSize(size) {
         if (!live()) return;
         hostSize = { cols: size.cols, rows: size.rows };
@@ -280,6 +288,16 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   connect();
 
   return {
+    latestOutputVisible: completedAt => {
+      if (!opened) return false;
+      if (completionToken !== completedAt) {
+        completionToken = completedAt;
+        rendered = false;
+        stream?.redraw();
+        return false;
+      }
+      return rendered && term.buffer.active.viewportY >= term.buffer.active.baseY;
+    },
     send: data => { take(); send(data); },
     redraw: () => stream?.redraw(),
     take: () => { if (!controlling && !holding) { setMode(true); layout(); } },

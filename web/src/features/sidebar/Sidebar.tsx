@@ -21,10 +21,12 @@ import { t, lang } from '@/lib/i18n';
 import { useNow } from '@/lib/hooks';
 import { conversationOrder, conversationTime } from '@/domain/conversationTime';
 import { hostProviders, providerName } from '@/domain/providers';
-import { folderName, sessionMeta, shortPath, statusLabel, statusTone, toneDot } from '@/features/session/status';
+import { folderName, sessionMeta, shortPath, sessionStatusLabel, statusTone, toneDot } from '@/features/session/status';
 import { HostSwitcher } from './HostSwitcher';
 import { useNativeSessions } from './useNativeSessions';
-import { busy, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
+import { busy, idleSessions, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
+import { useCompletionRead } from '@/store/completionRead';
+import { displaySession, isCompletionPending } from '@/domain/completionRead';
 
 const PAGE = 200;
 
@@ -108,7 +110,8 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
 function GlobalMenu({ mobile }: { mobile: boolean }) {
   const backend = useBackend();
   const sessions = useApp(s => s.sessions);
-  const idle = useMemo(() => sessions.filter(s => !s.archived && !busy(s)), [sessions]);
+  const records = useCompletionRead(s => s.records);
+  const idle = useMemo(() => idleSessions(sessions, s => isCompletionPending(s, records[hostKey(s.id)])), [sessions, records]);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -176,6 +179,7 @@ function matches(q: string, ...fields: (string | undefined)[]) {
 function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   const backend = useBackend();
   const sessions = useApp(s => s.sessions);
+  const records = useCompletionRead(s => s.records);
   const loaded = useApp(s => s.sessionsLoaded);
   const selection = useApp(s => s.selection);
   const canArchive = useApp(s => hasFeature(s.info, 'archive'));
@@ -189,6 +193,7 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   // A virtual section has no project path and must not write project preferences.
   const [progressCollapsed, setProgressCollapsed] = useState(false);
+  const [doneCollapsed, setDoneCollapsed] = useState(false);
   const now = useNow(30_000);
   const currentKey = selectionKey(selection);
 
@@ -200,6 +205,7 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   );
   const archived = useMemo(() => (query ? [] : conversationOrder(matched.filter(s => s.archived))), [matched, query]);
   const inProgress = useMemo(() => inProgressSessions(ordered), [ordered]);
+  const done = useMemo(() => ordered.filter(s => !s.archived && isCompletionPending(s, records[hostKey(s.id)])), [ordered, records]);
   const isProgressCollapsed = !query && progressCollapsed;
   const groups = useMemo(
     () => projectGroups(ordered.slice(0, limit), now, s => currentKey === `session:${s.id}`, !query),
@@ -236,11 +242,22 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
           {!isProgressCollapsed && <div className="flex flex-col gap-px">{inProgress.map(s => row(s, true))}</div>}
         </section>
       )}
+      {done.length > 0 && (
+        <section aria-label={t('Done — unread', '已完成·待查看')}>
+          <button type="button" onClick={() => setDoneCollapsed(o => !o)} aria-expanded={!!query || !doneCollapsed}
+            className={cn('flex w-full items-center gap-1 rounded-md px-2 text-left text-ui-sm font-semibold text-success hover:text-foreground', mobile ? 'h-8' : 'h-7')}>
+            <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', !query && doneCollapsed && '-rotate-90')} />
+            <span>{t('Done', '已完成')} <span className="font-normal">· {t('Unread', '待查看')}</span></span>
+            <span className="ml-auto text-ui-xs font-normal">{done.length}</span>
+          </button>
+          {(!!query || !doneCollapsed) && <div className="flex flex-col gap-px">{done.map(s => row(s, true))}</div>}
+        </section>
+      )}
       {groups.map(g => {
         // Collapsed state is kept per host; a search opens every group.
         const stored = hostKey(g.key);
         const isCollapsed = !query && !!collapsed[stored];
-        const idle = [...g.shown, ...g.folded].filter(s => !busy(s));
+        const idle = idleSessions([...g.shown, ...g.folded], s => isCompletionPending(s, records[hostKey(s.id)]));
         const open = !!unfolded[g.key];
         return (
           <section key={g.key}>
@@ -366,7 +383,9 @@ async function archiveSessions(backend: Backend, list: Session[], on: boolean) {
   });
 }
 
-function SessionRow({ session: s, active, mobile, showFolder }: { session: Session; active: boolean; mobile: boolean; showFolder?: boolean }) {
+function SessionRow({ session, active, mobile, showFolder }: { session: Session; active: boolean; mobile: boolean; showFolder?: boolean }) {
+  const records = useCompletionRead(st => st.records);
+  const s = displaySession(session, records[hostKey(session.id)]);
   const backend = useBackend();
   const info = useApp(st => st.info);
   const open = useApp(st => st.open);
@@ -396,7 +415,7 @@ function SessionRow({ session: s, active, mobile, showFolder }: { session: Sessi
       )}
     >
       <span className="mt-[7px] flex size-2 shrink-0 items-center justify-center">
-        <span className={cn('size-[7px] rounded-full', toneDot[tone])} title={statusLabel(s.status, s.activeTasks)} />
+        <span className={cn('size-[7px] rounded-full', toneDot[tone])} title={sessionStatusLabel(s)} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
@@ -407,7 +426,7 @@ function SessionRow({ session: s, active, mobile, showFolder }: { session: Sessi
           {s.mode === 'terminal' && <SquareTerminal className="size-3 shrink-0" aria-label={t('Terminal', '终端')} />}
           <span className="truncate" title={showFolder ? s.cwd : undefined}>{showFolder ? `${folderName(s.cwd)} · ${sessionMeta(s)}` : sessionMeta(s)}</span>
           {s.archived && !showFolder && <span className="shrink-0">· {t('Archived', '已归档')}</span>}
-          {tone === 'waiting' && <span className="shrink-0 text-warning">· {statusLabel(s.status)}</span>}
+          {(tone === 'waiting' || tone === 'retrying') && <span className="shrink-0 text-warning">· {sessionStatusLabel(s)}</span>}
           {queued > 0 && <span className="shrink-0">· {t(`${queued} queued`, `${queued} 条排队`)}</span>}
         </div>
       </div>
@@ -442,7 +461,7 @@ function SessionRow({ session: s, active, mobile, showFolder }: { session: Sessi
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={() => open({ type: 'session-details', id: s.id })}>
+          <DropdownMenuItem variant="destructive" onSelect={() => open({ type: 'delete-session', id: s.id })}>
             <Trash2 className="size-3.5" /> {t('Delete…', '删除…')}
           </DropdownMenuItem>
         </DropdownMenuContent>

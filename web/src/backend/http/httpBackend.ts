@@ -6,9 +6,10 @@
 //
 // Plain TypeScript with explicit .ts imports and no React: node --test loads it.
 import type {
-  Backend, ClaudeSettings, TranscriptUpdate, Unsubscribe, UploadOptions,
+  Backend, ClaudeSettings, StatuslineSettings, StatuslineOptions, StatuslineStyle, TranscriptUpdate, Unsubscribe, UploadOptions,
 } from '../backend.ts';
 import { BackendError } from '../errors.ts';
+import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from '../supplierConfig.ts';
 import type {
   Attachment, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
@@ -91,6 +92,32 @@ export class HttpBackend implements Backend {
 
   // ---------- plumbing ----------
   private get<T>(path: string, signal?: AbortSignal) { return this.client.json<T>(path, { signal }); }
+  probeSupplier(v: SupplierProbe): Promise<SupplierProbeResult> {
+    const { id, app, baseUrl, authType, credential } = v;
+    return this.call('POST', '/api/supplier-probe', defined({ id, app, baseUrl, authType, credential }));
+  }
+  importCCSwitch(id: string, app: Provider, revision: string): Promise<SupplierConfigs> {
+    return this.call('POST', '/api/supplier-import/cc-switch', { id, app, revision });
+  }
+  setCCSwitchVisibility(hidden: boolean, revision: string): Promise<SupplierConfigs> {
+    return this.call('PUT', '/api/supplier-import/cc-switch/visibility', { hidden, revision });
+  }
+  async supplierConfigs(): Promise<SupplierConfigs | null> {
+    try {
+      const v = await this.get<SupplierConfigs>('/api/supplier-configs');
+      return v && Array.isArray(v.profiles) && typeof v.revision === 'string' ? v : null;
+    } catch (e) {
+      if (e instanceof SyntaxError || e instanceof BackendError && [404, 405, 501].includes(e.status)) return null;
+      throw e;
+    }
+  }
+  saveSupplierConfig(id: string | undefined, v: SupplierConfigWrite): Promise<SupplierConfigs> {
+    const { name, app, baseUrl, model, authType, credential, revision, website, notes, modelMappings, timeoutMs, codexOptions } = v;
+    return this.call(id ? 'PUT' : 'POST', '/api/supplier-configs' + (id ? '/' + enc(id) : ''), defined({ name, app, baseUrl, model, authType, credential, revision, website, notes, modelMappings, timeoutMs, codexOptions }));
+  }
+  removeSupplierConfig(id: string, revision: string): Promise<SupplierConfigs> {
+    return this.call('DELETE', '/api/supplier-configs/' + enc(id), { revision });
+  }
   private call<T>(method: string, path: string, body?: unknown) { return this.client.json<T>(path, { method, body }); }
   private session(id: string) { return `/api/sessions/${enc(id)}`; }
   private t(en: string, zh: string) { return this.client.t(en, zh); }
@@ -499,9 +526,29 @@ export class HttpBackend implements Backend {
     return withPath(await this.get<ClaudeSettings>('/api/claude/settings'));
   }
 
+  async statusline(): Promise<StatuslineSettings | null> {
+    try {
+      const v = await this.get<StatuslineSettings>('/api/statusline');
+      // Older hosts can return their HTML shell or an older response shape.
+      return v && typeof v.installed === 'boolean' && typeof v.revision === 'string' ? v : null;
+    } catch (e) {
+      if (e instanceof SyntaxError) return null;
+      if (e instanceof BackendError && [404, 405, 501].includes(e.status)) return null;
+      throw e;
+    }
+  }
+
+  async saveStatusline(v: { style: StatuslineStyle; revision: string; options?: StatuslineOptions }): Promise<StatuslineSettings> {
+    return this.call('PUT', '/api/statusline', defined({ style: v.style, revision: v.revision, options: v.options }));
+  }
+
+  async removeStatusline(v: { revision: string }): Promise<StatuslineSettings> {
+    return this.call('DELETE', '/api/statusline', { revision: v.revision });
+  }
+
   async saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }): Promise<ClaudeSettings> {
-    const { model, effortLevel, permissionMode, revision, confirmDangerous } = v;
-    return withPath(await this.call<ClaudeSettings>('PUT', '/api/claude/settings', defined({ model, effortLevel, permissionMode, revision, confirmDangerous })));
+    const { model, effortLevel, permissionMode, revision, confirmDangerous, document, editDocument } = v;
+    return withPath(await this.call<ClaudeSettings>('PUT', '/api/claude/settings', defined({ model, effortLevel, permissionMode, revision, confirmDangerous, document, editDocument })));
   }
 
   async identity() { return withIdentity(await this.get<HostIdentity>('/api/identity')); }
