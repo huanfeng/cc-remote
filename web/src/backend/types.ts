@@ -35,7 +35,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell';
 
 export interface HostInfo {
   version: string;
@@ -448,4 +448,38 @@ export interface TerminalHandlers {
    * is not a terminal, the token was refused, the address is blocked).
    */
   onState(state: TerminalState, detail?: string, opts?: { retry?: boolean }): void;
+}
+
+export interface ProjectShell {
+  id: string;
+  projectKey: string;
+  cwd: string;
+  aliases?: string[];
+  state: 'running' | 'exited' | 'stopped' | 'interrupted';
+  runId?: string;
+  /** This run was opened from a record saved before a daemon restart. */
+  recovered?: boolean;
+}
+
+export interface ProjectShellStart {
+  cwd?: string;
+  shellId?: string;
+  restart?: boolean;
+}
+
+export interface ProjectShellStream extends TerminalStream {
+  send(data: string | Uint8Array): void;
+  take(): void;
+}
+
+export interface ProjectShellHandlers {
+  onData(chunk: Uint8Array, seq: number): void;
+  /** A size without a sequence initializes a new canvas or a reset. */
+  onSize(size: { cols: number; rows: number }, seq?: number): void;
+  /** True if this connection controls the shared input and size. */
+  onControl(held: boolean): void;
+  /** All output and size events up to this point have been delivered. */
+  onReady(seq: number): void;
+  onReset(seq: number): void;
+  onState(state: 'connecting' | 'exited' | 'failed', detail?: string, opts?: { retry?: boolean }): void;
 }

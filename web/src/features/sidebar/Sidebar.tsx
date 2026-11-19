@@ -27,6 +27,7 @@ import { useNativeSessions } from './useNativeSessions';
 import { busy, idleSessions, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
 import { useCompletionRead } from '@/store/completionRead';
 import { displaySession, isCompletionPending } from '@/domain/completionRead';
+import { matchesShellPath, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 
 const PAGE = 200;
 
@@ -178,6 +179,7 @@ function matches(q: string, ...fields: (string | undefined)[]) {
 /** Sessions grouped by project folder, like Codex/ZCode's project sections. */
 function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   const backend = useBackend();
+  const terminal = useProjectShellWorkspace();
   const sessions = useApp(s => s.sessions);
   const records = useCompletionRead(s => s.records);
   const loaded = useApp(s => s.sessionsLoaded);
@@ -211,9 +213,11 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
     () => projectGroups(ordered.slice(0, limit), now, s => currentKey === `session:${s.id}`, !query),
     [ordered, limit, now, currentKey, query],
   );
+  const shellOnlyProjects = terminal.enabled ? terminal.shells.filter(shell =>
+    matches(query, shell.cwd) && !groups.some(g => matchesShellPath(shell, g.cwd))) : [];
 
   if (!loaded) return <ListSkeleton />;
-  if (!ordered.length && !archived.length) {
+  if (!ordered.length && !archived.length && !shellOnlyProjects.length) {
     return <p className="px-2 py-6 text-center text-ui-sm text-foreground-subtlest">{query ? t('No matching sessions', '没有匹配的会话') : t('No sessions yet', '还没有会话')}</p>;
   }
   const row = (s: Session, showFolder?: boolean) => (
@@ -303,6 +307,9 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
                   <DropdownMenuItem onSelect={() => newSessionIn(openSurface, g)}>
                     <Plus className="size-3.5" /> {t('New session in this project', '在此项目新建会话')}
                   </DropdownMenuItem>
+                  {terminal.enabled && !!g.cwd && <DropdownMenuItem onSelect={() => terminal.open({ cwd: g.cwd })}>
+                    <SquareTerminal className="size-3.5" /> {t('Open project terminal', '打开项目终端')}
+                  </DropdownMenuItem>}
                   {canArchive && (
                     <>
                       <DropdownMenuSeparator />
@@ -333,6 +340,15 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
           </section>
         );
       })}
+      {shellOnlyProjects.map(shell => (
+        <button type="button" key={shell.id} title={shell.cwd}
+          className={cn('flex min-w-0 items-center gap-2 rounded-md px-2 text-left text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground', mobile ? 'h-9' : 'h-7')}
+          onClick={() => terminal.open({ cwd: shell.cwd, shellId: shell.id })}>
+          <SquareTerminal className="size-3.5 shrink-0" />
+          <span className="truncate">{folderName(shell.cwd)}</span>
+          <span className="ml-auto shrink-0 text-ui-xs text-foreground-subtlest">{t('Terminal', '终端')}</span>
+        </button>
+      ))}
       {ordered.length > limit && (
         <Button variant="ghost" size="sm" className="self-center" onClick={() => setLimit(l => l + PAGE)}>
           {t(`Show more (${ordered.length - limit})`, `显示更多（${ordered.length - limit}）`)}

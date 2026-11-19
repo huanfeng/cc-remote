@@ -24,7 +24,7 @@ var gzipWriters = sync.Pool{New: func() any { w, _ := gzip.NewWriterLevel(nil, g
 // matters on slow links. Attachments and range requests pass through as is.
 func condensed(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.Header.Get("Range") != "" || strings.Contains(r.URL.Path, "/uploads/") || strings.HasSuffix(r.URL.Path, "/stream") {
+		if r.Method != http.MethodGet || r.Header.Get("Range") != "" || strings.Contains(r.URL.Path, "/uploads/") || strings.HasSuffix(r.URL.Path, "/stream") || strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			next.ServeHTTP(w, r)
 			return
 		}

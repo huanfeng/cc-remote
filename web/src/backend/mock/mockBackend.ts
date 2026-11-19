@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import { BackendError, type Backend, type ClaudeSettings, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
+  ProjectShell, ProjectShellStream,
   Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
 } from '../types';
 import * as fx from './fixtures';
@@ -385,6 +386,12 @@ export class MockBackend implements Backend {
   openTerminal(id: string, h: TerminalHandlers): TerminalStream {
     return new FakeTerminal(this.session(id), h);
   }
+
+  async projectShells(): Promise<ProjectShell[]> { return []; }
+  watchProjectShells(): Unsubscribe { return () => {}; }
+  async startProjectShell(): Promise<ProjectShell> { throw new BackendError('演示宿主未启用项目终端。', 403); }
+  async stopProjectShell(): Promise<void> { throw new BackendError('演示宿主未启用项目终端。', 403); }
+  openProjectShell(): ProjectShellStream { throw new BackendError('演示宿主未启用项目终端。', 403); }
 
   async models({ provider }: { provider: Provider }) { await latency(); return clone(fx.models[provider]); }
   async profiles() { await latency(); return clone(fx.profiles); }

@@ -1,10 +1,12 @@
 export type ThemePref = 'system' | 'light' | 'dark';
 export type Palette = 'graphite' | 'default';
 export type SendKey = 'enter' | 'mod-enter';
+export type ProjectShellShortcut = 'default' | 'alt-f' | 'ctrl-backquote' | 'ctrl-shift-f12' | 'disabled';
 export interface PreferenceValues {
   theme: ThemePref;
   palette: Palette;
   sendKey: SendKey;
+  projectShellShortcut: ProjectShellShortcut;
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   collapsedProjects: Record<string, boolean>;
@@ -63,6 +65,7 @@ export function decodePreferences(raw: string, defaults: PreferenceValues): Pref
     if (!['system', 'light', 'dark'].includes(values.theme)) values.theme = defaults.theme;
     if (!['graphite', 'default'].includes(values.palette)) values.palette = defaults.palette;
     if (!['enter', 'mod-enter'].includes(values.sendKey)) values.sendKey = defaults.sendKey;
+    if (!['default', 'alt-f', 'ctrl-backquote', 'ctrl-shift-f12', 'disabled'].includes(values.projectShellShortcut)) values.projectShellShortcut = defaults.projectShellShortcut;
     if (!['terminal', 'managed'].includes(values.newSessionMode)) values.newSessionMode = defaults.newSessionMode;
     if (envelope.version !== 2) values.hiddenRecaps = [];
     return values;

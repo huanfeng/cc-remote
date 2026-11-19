@@ -12,14 +12,24 @@ import { useApp } from '@/store/app';
 import { t } from '@/lib/i18n';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { SessionWorkspace } from '@/features/workspace/SessionWorkspace';
+import { ProjectShellWorkspace, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { ProjectShellPanel } from '@/features/projectShell/ProjectShellPanel';
 
 export function MobileShell() {
+  return <ProjectShellWorkspace mobile><MobileWorkspace /></ProjectShellWorkspace>;
+}
+
+function MobileWorkspace() {
   const selection = useApp(s => s.selection);
   const drawerOpen = useApp(s => s.drawerOpen);
   const set = useApp(s => s.set);
+  const terminal = useProjectShellWorkspace();
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-background">
-      {selection ? <SessionWorkspace mobile /> : <Sidebar variant="mobile" />}
+      <div className="h-full" inert={!!terminal.target}>
+        {selection ? <SessionWorkspace mobile /> : <Sidebar variant="mobile" />}
+      </div>
+      <ProjectShellPanel mobile />
       <Dialog open={!!selection && drawerOpen} onOpenChange={open => set({ drawerOpen: open })}>
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay
@@ -27,6 +37,7 @@ export function MobileShell() {
           />
           <DialogPrimitive.Content
             aria-describedby={undefined}
+            onCloseAutoFocus={event => { if (terminal.target) event.preventDefault(); }}
             className="fixed inset-y-0 left-0 z-50 w-[min(86vw,22rem)] shadow-xl outline-none data-open:animate-in data-open:slide-in-from-left data-closed:animate-out data-closed:slide-out-to-left duration-200"
           >
             <DialogPrimitive.Title className="sr-only">{t('Sessions', '会话')}</DialogPrimitive.Title>

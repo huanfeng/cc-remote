@@ -57,7 +57,7 @@ func routeCLI(args []string) cliRoute {
 		case "version", "--version":
 			command = "version"
 			args = args[1:]
-		case "session", "serve", "service", "status", "start", "stop", "restart", "logs", "config", "alias", "update", "attach", "a", "claude", "oauth", "profile", "hook", "permission-mcp", "channel", "channel-session-hook", "channel-ask-hook", "terminal-hook", "terminal-status":
+		case "session", "shell", "serve", "service", "status", "start", "stop", "restart", "logs", "config", "alias", "update", "attach", "a", "claude", "oauth", "profile", "hook", "permission-mcp", "channel", "channel-session-hook", "channel-ask-hook", "terminal-hook", "terminal-status":
 			command = args[0]
 			args = args[1:]
 		default:
@@ -68,7 +68,7 @@ func routeCLI(args []string) cliRoute {
 		}
 	}
 	// --host is connection context, not a remote service-management option.
-	if command != "session" && command != "claude" && command != "oauth" && command != "profile" && command != "attach" && command != "a" {
+	if command != "session" && command != "shell" && command != "claude" && command != "oauth" && command != "profile" && command != "attach" && command != "a" {
 		var local []string
 		for i := 0; i < len(context); i++ {
 			name, _, inline := strings.Cut(strings.TrimLeft(context[i], "-"), "=")
@@ -109,7 +109,7 @@ func internalCommand(command string) bool {
 
 func legacyHostFlag(name string) bool {
 	switch name {
-	case "listen", "claude", "codex", "codex-home", "cc-switch-db", "claude-config-dir", "log-file", "allow-insecure-remote", "allow-origin", "lang", "service-manager":
+	case "listen", "claude", "codex", "codex-home", "cc-switch-db", "claude-config-dir", "log-file", "allow-insecure-remote", "allow-origin", "project-shell", "lang", "service-manager":
 		return true
 	}
 	return false
@@ -177,6 +177,8 @@ func connectionDataDir(command string, args []string, dir string) string {
 			own = (strings.HasPrefix(a, "--") || !afterDash) && (own || name == "title" || name == "model" || name == "effort" || name == "permission-mode" || name == "profile")
 		case "claude":
 			own = own || name == "profile" || name == "claude"
+		case "shell":
+			own = own || name == "cwd"
 		case "oauth":
 			own = own || name == "token"
 		case "profile":
@@ -241,6 +243,8 @@ func runCLI(args []string) error {
 	switch route.command {
 	case "attach", "a":
 		return terminal.Attach(args, config.DefaultDataDir())
+	case "shell":
+		return terminal.ProjectShellCLI(args, config.DefaultDataDir(), channel.EnsureHost)
 	case "claude":
 		return terminal.RunClaudeDirect(args, "", config.DefaultDataDir(), channel.EnsureHost)
 	case "oauth":
