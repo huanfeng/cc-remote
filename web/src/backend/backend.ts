@@ -141,8 +141,8 @@ export interface Backend {
   saveSupplierConfig?(id: string | undefined, v: SupplierConfigWrite): Promise<SupplierConfigs>;
   removeSupplierConfig?(id: string, revision: string): Promise<SupplierConfigs>;
   addOAuthProfile(name: string, token: string): Promise<void>;
-  /** Replaces the token of an existing entry, keeping its id (PATCH /api/profiles/oauth/{id}). */
-  replaceOAuthProfile(id: string, token: string): Promise<void>;
+  /** Edits the entry without changing its id; an omitted token keeps the stored credential. */
+  editOAuthProfile(id: string, patch: { name: string; token?: string }): Promise<void>;
   removeOAuthProfile(id: string): Promise<void>;
 
   // Usage and status

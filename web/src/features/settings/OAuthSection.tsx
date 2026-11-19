@@ -63,7 +63,7 @@ export function OAuthSection({ mobile, embedded = false }: { mobile: boolean; em
                     <div className="truncate font-mono text-ui-xs text-foreground-subtlest">{entry.id}</div>
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    <Button variant="outline" size="lg" disabled={busy} onClick={() => setWizard({ replacing: entry })}>{t('Replace', '更换')}</Button>
+                    <Button variant="outline" size="lg" disabled={busy} onClick={() => setWizard({ replacing: entry })}>{t('Edit', '编辑')}</Button>
                     <Button variant="ghost" size="lg" disabled={busy} className="text-destructive hover:text-destructive" onClick={() => setRemoving(entry)}>{t('Delete', '删除')}</Button>
                   </div>
                 </div>
@@ -76,7 +76,7 @@ export function OAuthSection({ mobile, embedded = false }: { mobile: boolean; em
         </>
       )}
       {wizard && <OAuthTokenEditor mobile={mobile} replacing={wizard.replacing} onClose={() => setWizard(undefined)} onSave={async (name, token) => {
-        if (wizard.replacing) await backend.replaceOAuthProfile(wizard.replacing.id, token);
+        if (wizard.replacing) await backend.editOAuthProfile(wizard.replacing.id, { name, ...(token ? { token } : {}) });
         else await backend.addOAuthProfile(name, token);
         void load();
       }} />}

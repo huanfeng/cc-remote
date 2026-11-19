@@ -211,7 +211,14 @@ func (s *Server) oauthAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !validOAuthToken(saved.Token) {
-			fail(w, 400, l.T("Token must be an OAuth token from `claude setup-token` (sk-ant-oat…)", "令牌应是 `claude setup-token` 生成的 OAuth 令牌（sk-ant-oat…）"))
+			switch {
+			case strings.ContainsFunc(saved.Token, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }):
+				fail(w, 400, l.T("OAuth token must not contain whitespace or control characters. Remove spaces and line breaks, then try again.", "OAuth 令牌不能包含空格、换行或控制字符，请检查粘贴的内容后重试。"))
+			case len(saved.Token) > 1024:
+				fail(w, 400, l.T("OAuth token must not exceed 1024 bytes. Check that only the token was pasted.", "OAuth 令牌不能超过 1024 字节，请检查是否粘贴了令牌以外的内容。"))
+			default:
+				fail(w, 400, l.T("Token must be an OAuth token from `claude setup-token` (sk-ant-oat…)", "令牌应是 `claude setup-token` 生成的 OAuth 令牌（sk-ant-oat…）"))
+			}
 			return
 		}
 		for i, e := range entries {

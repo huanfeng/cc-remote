@@ -429,7 +429,12 @@ export class MockBackend implements Backend {
   }
   async oauthProfiles() { await latency(); return clone(this.oauth); }
   async addOAuthProfile(name: string) { await latency(); this.oauth.push({ id: `oauth:${nanoid(4)}`, name }); }
-  async replaceOAuthProfile(id: string) { await latency(); if (!this.oauth.some(o => o.id === id)) throw new BackendError('token not found', 404); }
+  async editOAuthProfile(id: string, patch: { name: string; token?: string }) {
+    await latency();
+    const entry = this.oauth.find(o => o.id === id);
+    if (!entry) throw new BackendError('token not found', 404);
+    entry.name = patch.name;
+  }
   async removeOAuthProfile(id: string) { await latency(); this.oauth = this.oauth.filter(o => o.id !== id); }
 
   watchUsage({ provider }: { provider: Provider }, onChange: (u: UsageReply) => void): Unsubscribe {

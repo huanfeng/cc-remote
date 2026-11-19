@@ -37,6 +37,8 @@
 
 ## Information architecture
 
+- OAuth account editing keeps its stable internal ID, allows name-only edits, and treats a blank edit-token field as keep existing. Display the host's validation detail inline rather than replacing it with a generic request failure. Renaming does not rewrite saved defaults or session snapshots; the editor explains manual reselection where needed.
+
 - Terminal request failures: explicit Claude API error records render as errors and end the current turn as Failed even without a Stop hook. Full selected-model validation diagnostics have a screen fallback. A late Stop cannot hide the failure; retry spinners and quota menus keep their existing states. A new submission clears the failed-turn guard, and held messages are not automatically retried after failure.
 
 - Session task panels place one cross-type Running group above the existing subagent, background-command and teammate groups. Active and pending work appears once at the top with its task type; finished work returns to its type group. Desktop and mobile use the same grouping.

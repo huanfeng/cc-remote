@@ -37,6 +37,27 @@ function fakeHost(routes) {
 
 const FEATURES = ['sendId', 'mentions', 'codex', 'codexSteer', 'queueControls'];
 const info = (features = FEATURES) => ({ version: '1', cwd: '/', claudeAvailable: true, features });
+
+test('OAuth editing keeps the original id and omits an unchanged token on existing hosts', async () => {
+  const host = fakeHost((method, path) => {
+    if (method === 'PATCH' && path === '/api/profiles/oauth/stable-id') return { id: 'oauth:stable-id', name: 'Renamed' };
+  });
+  const backend = make(host);
+  await backend.editOAuthProfile('oauth:stable-id', { name: 'Renamed' });
+  assert.deepEqual(host.log.map(({ method, path, body }) => ({ method, path, body })), [
+    { method: 'PATCH', path: '/api/profiles/oauth/stable-id', body: { name: 'Renamed' } },
+  ]);
+  backend.dispose();
+});
+
+test('OAuth saves preserve detailed validation messages from the host', async () => {
+  const detail = 'OAuth token must not contain spaces or control characters.';
+  const host = fakeHost(() => ({ status: 400, body: { error: detail } }));
+  const backend = make(host);
+  await assert.rejects(backend.addOAuthProfile('Work', 'sk-ant-oat invalid'), error => error instanceof BackendError && error.status === 400 && error.message === detail);
+  await assert.rejects(backend.editOAuthProfile('oauth:stable-id', { name: 'Work', token: 'sk-ant-oat invalid' }), error => error instanceof BackendError && error.message === detail);
+  backend.dispose();
+});
 const session = (id, extra = {}) => ({ id, title: id, cwd: '/w', updatedAt: '2026-11-07T00:00:00Z', status: 'idle', ...extra });
 const ev = (seq, kind = 'assistant') => ({ seq, kind, text: `e${seq}`, createdAt: '2026-11-07T00:00:00Z' });
 const fast = { sessions: 15, transcript: 15, usage: 15 };
@@ -267,8 +288,9 @@ test('request bodies carry only host fields', async () => {
   assert.deepEqual(host.log.find(l => l.path === '/api/requests/r1').body, { decision: 'allow', answers: { q: 'a' } });
   await b.importNative('x', 'codex');
   assert.deepEqual(host.log.find(l => l.path.startsWith('/api/native/sessions/x/import')), { ...host.log.find(l => l.path.startsWith('/api/native/sessions/x/import')), path: '/api/native/sessions/x/import?provider=codex', body: { confirmStopped: true } });
-  await b.replaceOAuthProfile('oauth:ab12', 'sk-ant-oat-x');
+  await b.editOAuthProfile('oauth:ab12', { name: 'Renamed', token: 'sk-ant-oat-x' });
   assert.equal(host.log.find(l => l.method === 'PATCH' && l.path.startsWith('/api/profiles')).path, '/api/profiles/oauth/ab12');
+  assert.deepEqual(host.log.at(-1).body, { name: 'Renamed', token: 'sk-ant-oat-x' });
   await b.savePreferences('codex', { provider: 'codex', permissionMode: 'read-only', model: '', effort: '', revision: 'r1' });
   const put = host.log.find(l => l.method === 'PUT');
   assert.equal(put.path, '/api/preferences?provider=codex');

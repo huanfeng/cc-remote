@@ -106,6 +106,87 @@ func TestOAuthListSurvivesBrokenCatalogAndTokenChangeRekeysLaunch(t *testing.T) 
 	}
 }
 
+func TestOAuthValidationExplainsInvalidTokensWithoutEchoingThem(t *testing.T) {
+	s, ts, _ := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	for _, tc := range []struct {
+		name, token, detail string
+	}{
+		{"space", "sk-ant-oat01-private secret", "whitespace"},
+		{"newline", "sk-ant-oat01-private\nsecret", "whitespace"},
+		{"unicode space", "sk-ant-oat01-private\u00a0secret", "whitespace"},
+		{"control", "sk-ant-oat01-private\x00secret", "control"},
+		{"API key", "sk-ant-api03-private-secret", "claude setup-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, body := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Account", "token": tc.token}, testToken)
+			if code != 400 || !strings.Contains(string(body), tc.detail) || strings.Contains(string(body), "private") || strings.Contains(string(body), "secret") {
+				t.Fatalf("expected safe %q validation detail: %d %s", tc.detail, code, body)
+			}
+		})
+	}
+}
+
+func TestOAuthNameOnlyEditKeepsIdentityCredentialAndReferences(t *testing.T) {
+	s, ts, st := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	code, body := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Original", "token": "sk-ant-oat01-private-secret"}, testToken)
+	var created struct{ ID string }
+	if code != 201 || json.Unmarshal(body, &created) != nil {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	entries, err := loadOAuthEntries(s.cfg.DataDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries: %+v %v", entries, err)
+	}
+	before := entries[0]
+	code, body = request(t, ts, "PUT", "/api/profiles/default", map[string]string{"app": "claude", "profileId": created.ID}, testToken)
+	if code != 200 {
+		t.Fatalf("default: %d %s", code, body)
+	}
+	defaultBefore, err := os.ReadFile(filepath.Join(s.cfg.DataDir, defaultProfilesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, body = request(t, ts, "POST", "/api/sessions", map[string]string{"cwd": t.TempDir(), "profileId": created.ID}, testToken)
+	var session store.Session
+	if code != 201 || json.Unmarshal(body, &session) != nil {
+		t.Fatalf("session: %d %s", code, body)
+	}
+	sessionBefore, err := st.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/profiles/oauth/" + strings.TrimPrefix(created.ID, oauthIDPrefix)
+	code, body = request(t, ts, "PATCH", path, map[string]string{"name": " Renamed "}, testToken)
+	if code != 200 || !strings.Contains(string(body), `"name":"Renamed"`) || !strings.Contains(string(body), created.ID) || strings.Contains(string(body), "private") {
+		t.Fatalf("rename: %d %s", code, body)
+	}
+	entries, err = loadOAuthEntries(s.cfg.DataDir)
+	if err != nil || len(entries) != 1 || entries[0].Name != "Renamed" || entries[0].ID != before.ID || entries[0].Token != before.Token || entries[0].CreatedAt != before.CreatedAt {
+		t.Fatalf("name-only edit changed credential or identity: %+v %v", entries, err)
+	}
+	defaultAfter, err := os.ReadFile(filepath.Join(s.cfg.DataDir, defaultProfilesFile))
+	if err != nil || string(defaultAfter) != string(defaultBefore) {
+		t.Fatal("editing an account must not rewrite the chosen default", err)
+	}
+	sessionAfter, err := st.Get(session.ID)
+	if err != nil || sessionAfter.ProfileID != sessionBefore.ProfileID || sessionAfter.ProfileName != sessionBefore.ProfileName || sessionAfter.ProfileJSON != sessionBefore.ProfileJSON {
+		t.Fatal("editing an account must not rewrite session snapshots", err)
+	}
+	request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Other", "token": "sk-ant-oat01-other"}, testToken)
+	if code, _ = request(t, ts, "PATCH", path, map[string]string{"name": "other"}, testToken); code != 409 {
+		t.Fatal("case-insensitive duplicate-name guard changed", code)
+	}
+	if code, _ = request(t, ts, "PATCH", path, map[string]string{"name": ""}, testToken); code != 400 {
+		t.Fatal("empty name accepted", code)
+	}
+	entries, _ = loadOAuthEntries(s.cfg.DataDir)
+	if entries[0].Name != "Renamed" || entries[0].Token != before.Token {
+		t.Fatal("rejected edit changed saved entry")
+	}
+}
+
 // An OAuth session shows its own account's usage, apart from the host's login.
 func TestOAuthUsageIsReadPerAccount(t *testing.T) {
 	clearProviderEnv(t)

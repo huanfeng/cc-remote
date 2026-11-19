@@ -564,7 +564,7 @@ export class HttpBackend implements Backend {
   // The list names entries "oauth:<id>"; the paths take the bare id.
   private oauthPath(id: string) { return `/api/profiles/oauth/${enc(id.replace(/^oauth:/, ''))}`; }
   async addOAuthProfile(name: string, token: string) { await this.call('POST', '/api/profiles/oauth', { name, token }); }
-  async replaceOAuthProfile(id: string, token: string) { await this.call('PATCH', this.oauthPath(id), { token }); }
+  async editOAuthProfile(id: string, patch: { name: string; token?: string }) { await this.call('PATCH', this.oauthPath(id), defined({ name: patch.name, token: patch.token })); }
   async removeOAuthProfile(id: string) { await this.call('DELETE', this.oauthPath(id)); }
 
   // ---------- usage and status ----------
