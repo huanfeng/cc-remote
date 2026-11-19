@@ -8,8 +8,8 @@ import (
 )
 
 // A failed request can leave Claude Code alive at the prompt without a Stop
-// hook. Explicit transcript diagnostics are preferred; the model validation
-// screen is a fallback for errors Claude Code does not persist.
+// hook. Explicit transcript diagnostics are preferred; model validation and
+// expired-login screens are fallbacks for errors Claude Code does not persist.
 func (s *Server) syncTerminalFailureLocked(ts *terminalSession, events []claude.Event, haveTranscript bool) {
 	if haveTranscript {
 		for _, event := range events[min(ts.errorScan, len(events)):] {
@@ -33,7 +33,11 @@ func (s *Server) syncTerminalFailureLocked(ts *terminalSession, events []claude.
 		return
 	}
 	x, err := s.store.Get(ts.id)
-	if err != nil || x.Status != "running" && x.Status != "completed" {
+	// An idle terminal can show an expired-login footer before its first
+	// submission. Only that complete parsed diagnostic is proactive; stale
+	// model failures in an idle terminal are not a new failed turn.
+	idleLogin := x.Status == "idle" && strings.HasPrefix(message, "Login expired")
+	if err != nil || x.Status != "running" && x.Status != "completed" && !idleLogin {
 		return
 	}
 	if _, retry := ts.runner.ActivityState(); retry != nil {

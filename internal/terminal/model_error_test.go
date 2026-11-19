@@ -7,6 +7,56 @@ import (
 
 const selectedModelError = "There's an issue with the selected model (glm-5.3-flash[1m]). It may not exist or you may not have access to it. Run /model to pick a different model."
 
+func TestScreenLoginExpiredError(t *testing.T) {
+	for _, message := range []string{"Login expired · Please run /login", "Login expired . Please run /login", "Login expired. Please run /login"} {
+		for _, prefix := range []string{"", "● "} {
+			for _, cols := range []int{16, 24, 80} {
+				s := newScreen(cols, 12)
+				s.write([]byte("\x1b[31m" + prefix + message + "\x1b[m\r\n\r\n" + strings.Repeat("─", cols) + "\r\n❯ \r\n" + strings.Repeat("─", cols)))
+				if got, revision := s.modelErrorState(); got != message || revision == 0 {
+					t.Fatalf("width %d %q => %q revision %d", cols, prefix+message, got, revision)
+				}
+			}
+		}
+	}
+}
+
+func TestScreenLoginExpiredNotQuotedOrStale(t *testing.T) {
+	message := "Login expired · Please run /login"
+	for _, output := range []string{
+		"❯ " + message,
+		"● > " + message,
+		"● An example: " + message,
+		"Login expired",
+		"Please run /login",
+		message + "\r\n✽ Thinking…",
+		message + "\r\n✻ API Error: retrying… · attempt 1/10",
+		message + "\r\n● New answer",
+		message + "\r\n❯ New prompt",
+	} {
+		s := newScreen(100, 12)
+		s.write([]byte(output))
+		if got := s.modelError(); got != "" {
+			t.Fatalf("ordinary/stale content became failure: %q => %q", output, got)
+		}
+	}
+}
+
+func TestScreenLoginExpiredPaintRevision(t *testing.T) {
+	s := newScreen(100, 10)
+	message := "Login expired · Please run /login"
+	s.write([]byte(message))
+	_, first := s.modelErrorState()
+	s.write([]byte("\x1b[8;1H? for shortcuts"))
+	if _, footer := s.modelErrorState(); footer != first {
+		t.Fatalf("unrelated footer advanced login diagnostic: %d -> %d", first, footer)
+	}
+	s.write([]byte("\x1b[H\x1b[2J" + message))
+	if got, repaint := s.modelErrorState(); got != message || repaint <= first {
+		t.Fatalf("fresh identical login diagnostic ignored: %q revision %d <= %d", got, repaint, first)
+	}
+}
+
 func TestScreenSelectedModelError(t *testing.T) {
 	for _, cols := range []int{24, 40, 100, 200} {
 		s := newScreen(cols, 20)
