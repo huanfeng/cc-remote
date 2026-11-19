@@ -116,6 +116,13 @@ func fakeTerminal() {
 	dropped := false
 	ignored := false
 	usageShown, usageSelected := false, 1
+	resumeShown, resumeSelected := false, 1
+	resumeDraw := func() {
+		menu := resumeTestScreen
+		menu = strings.Replace(menu, "❯ 1.", "  1.", 1)
+		menu = strings.Replace(menu, fmt.Sprintf("  %d.", resumeSelected), fmt.Sprintf("❯ %d.", resumeSelected), 1)
+		os.Stdout.WriteString("\x1b[H\x1b[2J" + strings.ReplaceAll(menu, "\n", "\r\n"))
+	}
 	retryShown := false
 	modelErrorShown, modelRecovering := false, false
 	for {
@@ -126,6 +133,20 @@ func fakeTerminal() {
 		pending = append(pending, buf[:n]...)
 		for len(pending) > 0 {
 			switch {
+			case resumeShown && len(pending) >= 3 && (bytes.HasPrefix(pending, []byte("\x1b[A")) || bytes.HasPrefix(pending, []byte("\x1b[B"))):
+				if pending[2] == 'A' {
+					resumeSelected = max(1, resumeSelected-1)
+				} else {
+					resumeSelected = min(3, resumeSelected+1)
+				}
+				pending = pending[3:]
+				resumeDraw()
+			case resumeShown && pending[0] == '\r':
+				pending = pending[1:]
+				resumeShown = false
+				logKey(fmt.Sprintf("RESUME:%d", resumeSelected))
+				os.Stdout.WriteString("\x1b[H\x1b[2J" + rule + "\r\n❯ \r\n" + rule + "\r\n")
+				hook("Stop", nil)
 			case modelErrorShown && pending[0] == 's':
 				pending = pending[1:]
 				hook("Stop", nil)
@@ -211,6 +232,12 @@ func fakeTerminal() {
 					turn(text)
 					usageShown, usageSelected = true, 1
 					os.Stdout.WriteString("\x1b[H\x1b[2J" + strings.ReplaceAll(usageTestScreen, "\n", "\r\n"))
+					continue
+				}
+				if text == "/resume-menu-test" {
+					turn(text)
+					resumeShown, resumeSelected = true, 1
+					resumeDraw()
 					continue
 				}
 				if text == "/retry-status-test" {

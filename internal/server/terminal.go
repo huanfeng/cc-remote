@@ -67,6 +67,9 @@ type terminalSession struct {
 	usageKey            string
 	usageID             string
 	usageGone           time.Time
+	resumeKey           string
+	resumeID            string
+	resumeGone          time.Time
 	errorScan           int
 	turnStarted         time.Time
 	turnFailed          bool
@@ -393,7 +396,8 @@ func (s *Server) terminalWithdrawLocked(w http.ResponseWriter, r *http.Request, 
 func (s *Server) awaitNoDialog(ts *terminalSession) bool {
 	for {
 		s.mu.Lock()
-		open := terminal.ParseUsageLimit(ts.runner.Screen()) != nil
+		screen := ts.runner.Screen()
+		open := terminal.ParseUsageLimit(screen) != nil || terminal.ParseResumeMenu(screen) != nil
 		if x, err := s.store.Get(ts.id); err == nil && x.Status == "waiting" {
 			open = true
 		}
@@ -428,8 +432,9 @@ func (s *Server) confirmFirstPrompt(ts *terminalSession, text string, before int
 			}
 			s.mu.Lock()
 			n, waiting := ts.prompts, ts.queuedLocked(text)
+			blocked := terminal.ParseResumeMenu(ts.runner.Screen()) != nil
 			s.mu.Unlock()
-			if n > before || !waiting || ts.runner.Activity() != "" {
+			if n > before || !waiting || blocked || ts.runner.Activity() != "" {
 				return true
 			}
 		}
@@ -519,6 +524,7 @@ func (s *Server) watchDialogs(ts *terminalSession) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.syncUsageMenuLocked(ts, terminal.ParseUsageLimit(screen), now)
+	s.syncResumeMenuLocked(ts, terminal.ParseResumeMenu(screen), now)
 	for id, p := range s.requests {
 		if p.connection == ts.conn && p.onScreen && p.dialogStep(shown, now) {
 			s.finishSharedLocked(id, p, "terminal")
@@ -1198,7 +1204,8 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 		return
 	}
 	x.Attached = ts.runner.Attached()
-	if terminal.ParseUsageLimit(ts.runner.Screen()) != nil || s.requests[ts.usageID] != nil {
+	screen := ts.runner.Screen()
+	if terminal.ParseUsageLimit(screen) != nil || s.requests[ts.usageID] != nil || terminal.ParseResumeMenu(screen) != nil || s.requests[ts.resumeID] != nil {
 		x.Status = "waiting"
 	}
 	live := store.LiveStatus{}

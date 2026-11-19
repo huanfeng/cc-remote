@@ -14,7 +14,9 @@ export type TranscriptItem =
   | { type: 'agent'; key: number; call: ToolCall; items: TranscriptItem[] };
 
 /** Tools that ask the user something; they render as their own card instead of a group row. */
-export const SPECIAL_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'UsageLimit']);
+export const SPECIAL_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode', 'UsageLimit', 'ResumeConversation']);
+/** Synthetic menus are bound to one exact terminal interaction, even if the text repeats. */
+export const TERMINAL_MENU_TOOLS = new Set(['UsageLimit', 'ResumeConversation']);
 
 /** Tools that run a subagent; they render as a card holding the subagent's own transcript. */
 export const AGENT_TOOLS = new Set(['Agent', 'Task']);
@@ -257,7 +259,7 @@ export function linkRequests(items: TranscriptItem[], requests: PendingRequest[]
 export function requestSettled(request: PendingRequest, items: TranscriptItem[]): boolean {
   const created = Date.parse(request.createdAt || '');
   if (Number.isNaN(created)) return false;
-  return items.some(item => item.type === 'special' && item.call.result && sameCall(item.call.name, item.call.input, request.toolName, request.input) && (request.toolName !== 'UsageLimit' || item.call.id === request.id) && Date.parse(item.call.result.createdAt) >= created);
+  return items.some(item => item.type === 'special' && item.call.result && sameCall(item.call.name, item.call.input, request.toolName, request.input) && (!TERMINAL_MENU_TOOLS.has(request.toolName) || item.call.id === request.id) && Date.parse(item.call.result.createdAt) >= created);
 }
 
 /** Identifies an AskUserQuestion call by its question strings (key order differs between hook input and transcript). */
@@ -270,7 +272,7 @@ const sameCall = (name: string, input: any, toolName: string, other: any) => nam
 /** The pending web interaction of a running AskUserQuestion / ExitPlanMode call (ExitPlanMode's transcript input is empty, so it matches by tool). */
 export function requestForCall(call: ToolCall, requests: PendingRequest[]): PendingRequest | undefined {
   if (call.status !== 'running') return undefined;
-  return requests.find(request => request.status === 'pending' && (call.name !== 'UsageLimit' || call.id === request.id) && sameCall(call.name, call.input, request.toolName, request.input));
+  return requests.find(request => request.status === 'pending' && (!TERMINAL_MENU_TOOLS.has(call.name) || call.id === request.id) && sameCall(call.name, call.input, request.toolName, request.input));
 }
 
 /** A pending interaction not yet visible in the transcript, shaped as a running call for QuestionCard. */
@@ -288,7 +290,7 @@ export function linkOutcomes(items: TranscriptItem[], events: TranscriptEvent[])
   for (const event of events) {
     if (event.kind !== 'interaction' || !event.payload?.toolName) continue;
     let owner: ToolCall | undefined;
-    for (const call of calls) if (call.seq < event.seq && (call.name !== 'UsageLimit' || event.payload.id === call.id) && sameCall(call.name, call.input, event.payload.toolName, event.payload.input)) owner = call;
+    for (const call of calls) if (call.seq < event.seq && (!TERMINAL_MENU_TOOLS.has(call.name) || event.payload.id === call.id) && sameCall(call.name, call.input, event.payload.toolName, event.payload.input)) owner = call;
     if (owner) linked.set(owner.seq, String(event.payload.outcome || event.text || ''));
   }
   return linked;

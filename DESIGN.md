@@ -37,7 +37,7 @@
 
 ## Information architecture
 
-- Expired terminal login is an explicit failure with the original /login guidance, including when already idle.
+- Expired terminal login is an explicit failure with the original /login guidance, including when already idle. Resume-cost confirmations become a ResumeConversation request in the web, offering only the live terminal's actual choices. Validate the current menu before sending arrows/Enter and pause queued prompts until it closes.
 
 - OAuth supplier options show cached 5-hour and weekly usage, reset/sample times and stale/error/identity notices. Reuse the CLI's cached summary endpoint once per open selector/form; missing support on older hosts preserves ordinary supplier selection and never invents zero usage.
 

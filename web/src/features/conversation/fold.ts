@@ -3,7 +3,7 @@
 // so node tests import this file directly (tests/conversationFold.test.mjs).
 import { foldCodexActivityEvents, parseCodexStatus } from '../../domain/codexStatus.ts';
 import {
-  groupTranscript, parentOf, questionKey, requestForCall, requestSettled, stabilize,
+  groupTranscript, parentOf, questionKey, requestForCall, requestSettled, stabilize, TERMINAL_MENU_TOOLS,
   type AgentState, type PendingRequest, type ToolCall, type TranscriptEvent, type TranscriptItem,
 } from '../../domain/toolGroups.ts';
 import { t } from '../../lib/i18n.ts';
@@ -189,7 +189,7 @@ export function interactionsByCall(items: readonly TranscriptItem[], events: rea
     let owner: ToolCall | undefined;
     for (const call of calls) {
       if (call.seq >= event.seq || call.name !== p.toolName) continue;
-      if (call.name === 'UsageLimit' && p.id !== call.id) continue;
+      if (TERMINAL_MENU_TOOLS.has(call.name) && p.id !== call.id) continue;
       if (call.name === 'AskUserQuestion' && p.input && questionKey(call.input) !== questionKey(p.input)) continue;
       owner = call;
     }

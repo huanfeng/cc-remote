@@ -90,6 +90,7 @@ type pending struct {
 	toolName   string
 	input      json.RawMessage
 	usageMenu  *terminal.UsageLimitMenu
+	resumeMenu *terminal.ResumeMenu
 	// The transcript call it asks about, when the transcript shows which: only
 	// that call's result ends it (an identical earlier call's must not). A
 	// subagent's or an ambiguous call is left to its hook, which reads the
@@ -1138,6 +1139,10 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.usageMenu != nil {
 		s.resolveUsageLimitLocked(w, r, id, p, a)
+		return
+	}
+	if p.resumeMenu != nil {
+		s.resolveResumeMenuLocked(w, r, id, p, a)
 		return
 	}
 	status := "resolved"
