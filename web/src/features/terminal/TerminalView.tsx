@@ -68,6 +68,7 @@ export function TerminalView({ session, mobile }: { session: Session; mobile: bo
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <TerminalToolbar ui={ui} mobile={mobile} fitDevice={fitDevice} zoom={zoom} engine={engine} />
+      {ui.copyError && <p role="alert" className="shrink-0 bg-warning-surface px-3 py-2 text-ui-sm text-warning-surface-foreground">{ui.copyError}</p>}
       <div className="relative min-h-0 flex-1 bg-terminal-bg">
         <div
           ref={box}

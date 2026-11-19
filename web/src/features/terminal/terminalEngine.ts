@@ -29,6 +29,8 @@ export interface TerminalUi {
   held: boolean;
   controlling: boolean;
   hasSelection: boolean;
+  /** Clipboard access can be denied; keep the selection available for retry. */
+  copyError?: string;
 }
 
 export interface TerminalEngine {
@@ -250,13 +252,61 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   };
 
   term.onData(data => { take(); send(data); });
-  term.onSelectionChange(() => o.onUi({ hasSelection: term.hasSelection() }));
+  let selectionVersion = 0, gestureVersion = 0, selecting = false, copyVersion = 0;
+  let shiftSelectionVersion = 0, shiftSelecting = false;
+  term.onSelectionChange(() => {
+    if (disposed) return;
+    selectionVersion++;
+    o.onUi({ hasSelection: term.hasSelection(), ...(!term.hasSelection() ? { copyError: '' } : {}) });
+  });
   const copySelection = () => {
-    if (!term.hasSelection()) return;
-    void copyText(term.getSelection()).catch(() => {});
-    term.clearSelection();
+    if (disposed || !term.hasSelection()) return;
+    const version = ++copyVersion;
+    void copyText(term.getSelection()).then(() => {
+      if (!disposed && version === copyVersion) o.onUi({ copyError: '' });
+    }, () => {
+      if (!disposed && version === copyVersion) o.onUi({ copyError: t('Could not copy the selection. It is still selected; try the copy button or your system copy shortcut.', '无法复制选中内容。选区已保留，请尝试复制按钮或系统复制快捷键。') });
+    });
   };
+  // Copy after xterm finishes the gesture, not every partial selection while
+  // dragging. The document listener also covers releasing outside the screen.
+  const startSelection = (event: MouseEvent | TouchEvent) => {
+    if ('button' in event && event.button !== 0) return;
+    selecting = true;
+    gestureVersion = selectionVersion;
+  };
+  const finishSelection = () => {
+    if (!selecting) return;
+    selecting = false;
+    const before = gestureVersion;
+    queueMicrotask(() => { if (!disposed && selectionVersion !== before) copySelection(); });
+  };
+  const cancelSelection = () => { selecting = false; };
+  const protectSelection = (event: MouseEvent | PointerEvent) => {
+    if (!term.hasSelection() || event.type !== 'contextmenu' && event.button !== 2) return;
+    // Claude's terminal mouse reporting otherwise receives the right button
+    // before the context menu and clears xterm's selection.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.type === 'contextmenu') copySelection();
+  };
+  screen.addEventListener('pointerdown', protectSelection, true);
+  screen.addEventListener('mousedown', protectSelection, true);
+  screen.addEventListener('mouseup', protectSelection, true);
+  screen.addEventListener('contextmenu', protectSelection, true);
+  screen.addEventListener('mousedown', startSelection, true);
+  screen.addEventListener('touchstart', startSelection, { capture: true, passive: true });
+  document.addEventListener('mouseup', finishSelection, true);
+  document.addEventListener('touchend', finishSelection, true);
+  document.addEventListener('touchcancel', cancelSelection, true);
   term.attachCustomKeyEventHandler(event => {
+    if (event.key === 'Shift') {
+      if (event.type === 'keydown' && !shiftSelecting) { shiftSelecting = true; shiftSelectionVersion = selectionVersion; }
+      if (event.type === 'keyup') {
+        if (shiftSelecting && selectionVersion !== shiftSelectionVersion) copySelection();
+        shiftSelecting = false;
+      }
+    }
     if (event.type !== 'keydown') return true;
     const mod = event.ctrlKey || event.metaKey;
     // Copy a selection instead of interrupting; paste through the browser so IMEs and images work as usual.
@@ -316,6 +366,15 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
       observer.disconnect();
       themeObserver.disconnect();
       document.removeEventListener('visibilitychange', onVisible);
+      screen.removeEventListener('pointerdown', protectSelection, true);
+      screen.removeEventListener('mousedown', protectSelection, true);
+      screen.removeEventListener('mouseup', protectSelection, true);
+      screen.removeEventListener('contextmenu', protectSelection, true);
+      screen.removeEventListener('mousedown', startSelection, true);
+      screen.removeEventListener('touchstart', startSelection, true);
+      document.removeEventListener('mouseup', finishSelection, true);
+      document.removeEventListener('touchend', finishSelection, true);
+      document.removeEventListener('touchcancel', cancelSelection, true);
       term.dispose();
     },
   };

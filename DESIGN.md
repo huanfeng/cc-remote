@@ -37,9 +37,9 @@
 
 ## Information architecture
 
-- Expired terminal login is an explicit failure with the original /login guidance, including when already idle. Resume-cost confirmations become a ResumeConversation request in the web, offering only the live terminal's actual choices. Validate the current menu before sending arrows/Enter and pause queued prompts until it closes.
-
 - OAuth supplier options show cached 5-hour and weekly usage, reset/sample times and stale/error/identity notices. Reuse the CLI's cached summary endpoint once per open selector/form; missing support on older hosts preserves ordinary supplier selection and never invents zero usage.
+- Expired terminal login is an explicit failure with the original /login guidance, including when already idle. Resume-cost confirmations become a ResumeConversation request in the web, offering only the live terminal's actual choices. Validate the current menu before sending arrows/Enter and pause queued prompts until it closes.
+- Terminal selection copies after the selection gesture completes. Right-click with a selection retains and copies it before Claude's mouse handling can clear it; ordinary no-selection terminal input is unchanged. Clipboard failures keep the selection and display retry guidance.
 
 - OAuth account editing keeps its stable internal ID, allows name-only edits, and treats a blank edit-token field as keep existing. Display the host's validation detail inline rather than replacing it with a generic request failure. Renaming does not rewrite saved defaults or session snapshots; the editor explains manual reselection where needed.
 

@@ -44,7 +44,7 @@ test('terminal read readiness waits for each completion redraw and ignores stale
     let handlers, redraws = 0;
     engine = createTerminalEngine({
       backend: { openTerminal: (_id, h) => { handlers = h; return { close() {}, redraw() { redraws++; } }; } },
-      sessionId: 'task', mobile: false, box: { clientWidth: 500, clientHeight: 500 }, screen: { toggleAttribute() {} },
+      sessionId: 'task', mobile: false, box: { clientWidth: 500, clientHeight: 500 }, screen: { toggleAttribute() {}, addEventListener() {}, removeEventListener() {} },
       zoom: () => 1, fitDevice: () => false, onUi() {}, openFile() {},
     });
     handlers.onState('open');
