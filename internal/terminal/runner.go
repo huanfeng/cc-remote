@@ -371,6 +371,15 @@ func (r *Runner) ActivityState() (string, *RetryStatus) {
 	return r.scr.activityState()
 }
 
+// ModelError reads a fatal model-selection diagnostic and its paint revision
+// atomically. Repainting identical diagnostics advances the revision, while
+// unrelated footer output does not. The host owns per-turn deduplication.
+func (r *Runner) ModelError() (string, uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.scr.modelErrorState()
+}
+
 func (r *Runner) read() {
 	buf := make([]byte, 32*1024)
 	for {

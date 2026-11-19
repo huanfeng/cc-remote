@@ -90,6 +90,18 @@ func fakeTerminal() {
 		f.Write(append(append(user, '\n'), append(reply, '\n')...))
 		f.Close()
 	}
+	modelRecord := func(record map[string]any) {
+		record["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+		line, _ := json.Marshal(record)
+		f, _ := os.OpenFile(filepath.Join(dir, id+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if f != nil {
+			_, _ = f.Write(append(line, '\n'))
+			_ = f.Close()
+		}
+	}
+	modelErrorRecord := func() {
+		modelRecord(map[string]any{"type": "assistant", "isApiErrorMessage": true, "error": "invalid_request", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": terminalModelErrorMessage}}}})
+	}
 	// The input box as Claude Code draws it: a "❯" row between two rules.
 	rule := strings.Repeat("─", 40)
 	box := func(text string) {
@@ -105,6 +117,7 @@ func fakeTerminal() {
 	ignored := false
 	usageShown, usageSelected := false, 1
 	retryShown := false
+	modelErrorShown, modelRecovering := false, false
 	for {
 		n, err := os.Stdin.Read(buf)
 		if err != nil {
@@ -113,6 +126,20 @@ func fakeTerminal() {
 		pending = append(pending, buf[:n]...)
 		for len(pending) > 0 {
 			switch {
+			case modelErrorShown && pending[0] == 's':
+				pending = pending[1:]
+				hook("Stop", nil)
+				logKey("MODEL-LATE-STOP")
+			case modelErrorShown && pending[0] == 't':
+				pending = pending[1:]
+				modelErrorRecord()
+				logKey("MODEL-TRANSCRIPT-ERROR")
+			case modelRecovering && pending[0] == 'f':
+				pending = pending[1:]
+				modelRecovering = false
+				modelRecord(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{map[string]any{"type": "text", "text": "recovered response"}}}})
+				os.Stdout.WriteString("\x1b[H\x1b[2J" + rule + "\r\n❯ \r\n" + rule + "\r\n")
+				hook("Stop", nil)
 			case retryShown && pending[0] == 'u':
 				pending = pending[1:]
 				os.Stdout.WriteString("\x1b[H\x1b[2J✻ Connection dropped (ECONNRESET) · retrying… · attempt 7/10")
@@ -165,6 +192,21 @@ func fakeTerminal() {
 				}
 				box("")
 				hook("UserPromptSubmit", map[string]string{"prompt": wrap(text)})
+				if text == "/model-error-test" || text == "/transcript-error-test" || text == "/model-error-recover-test" {
+					modelRecord(map[string]any{"type": "user", "message": map[string]any{"content": text}})
+					modelErrorShown = text != "/model-error-recover-test"
+					modelRecovering = !modelErrorShown
+					switch text {
+					case "/model-error-test":
+						os.Stdout.WriteString("\x1b[H\x1b[2J● " + terminalModelErrorMessage + "\r\n" + rule + "\r\n❯ \r\n" + rule + "\r\n")
+					case "/transcript-error-test":
+						modelErrorRecord()
+						os.Stdout.WriteString("\x1b[H\x1b[2J" + rule + "\r\n❯ \r\n" + rule + "\r\n")
+					case "/model-error-recover-test":
+						os.Stdout.WriteString("\x1b[H\x1b[2J✽ Thinking…")
+					}
+					continue // model errors may return to the prompt without a Stop hook
+				}
 				if text == "/usage-limit-test" {
 					turn(text)
 					usageShown, usageSelected = true, 1

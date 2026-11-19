@@ -45,28 +45,35 @@ type terminalSession struct {
 	id, claudeID string
 	// hookToken is what its hooks authenticate with, for their own endpoints
 	// only: Claude Code and every command it runs can read the hook files.
-	hookToken string
-	runner    *terminal.Runner
-	conn      *channelConnection
-	cleaned   chan struct{}
-	dir       string // per-session config (hook settings, ask.json)
-	send      chan string
-	withdraw  chan chan []string // the writer takes the queued messages back (see withdrawQueued)
-	queued    []terminalQueued   // web messages not yet in the transcript
-	scan      int                // transcript user messages already matched
-	lastStop  time.Time
-	closing   bool
-	prompts   int           // UserPromptSubmit hooks seen
-	confirmed bool          // a web message was seen submitted since Claude Code started
-	wake      chan struct{} // a hook asks for a transcript sync now
-	cwd       string
-	live      *store.LiveStatus // from the status line
-	viewedAt  time.Time         // the web last showed this session (polling with viewing=1)
-	away      bool              // Claude Code was told nobody looks (focus out)
-	started   time.Time         // tasks recorded before this belong to an earlier Claude Code
-	usageKey  string
-	usageID   string
-	usageGone time.Time
+	hookToken           string
+	runner              *terminal.Runner
+	conn                *channelConnection
+	cleaned             chan struct{}
+	dir                 string // per-session config (hook settings, ask.json)
+	send                chan string
+	withdraw            chan chan []string // the writer takes the queued messages back (see withdrawQueued)
+	queued              []terminalQueued   // web messages not yet in the transcript
+	scan                int                // transcript user messages already matched
+	lastStop            time.Time
+	closing             bool
+	prompts             int           // UserPromptSubmit hooks seen
+	confirmed           bool          // a web message was seen submitted since Claude Code started
+	wake                chan struct{} // a hook asks for a transcript sync now
+	cwd                 string
+	live                *store.LiveStatus // from the status line
+	viewedAt            time.Time         // the web last showed this session (polling with viewing=1)
+	away                bool              // Claude Code was told nobody looks (focus out)
+	started             time.Time         // tasks recorded before this belong to an earlier Claude Code
+	usageKey            string
+	usageID             string
+	usageGone           time.Time
+	errorScan           int
+	turnStarted         time.Time
+	turnFailed          bool
+	failureMessage      string
+	ignoredModelError   string
+	ignoredModelVersion uint64
+	pendingError        string
 }
 
 type terminalQueued struct {
@@ -116,6 +123,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 		return nil, err
 	}
 	ts := &terminalSession{cleaned: make(chan struct{}), id: x.ID, claudeID: strings.ToLower(x.ClaudeSessionID), hookToken: newHookToken(), dir: dir, cwd: x.Cwd, started: time.Now(), send: make(chan string, maxQueuedMessages+1), withdraw: make(chan chan []string), wake: make(chan struct{}, 1)}
+	ts.turnStarted = ts.started
 	if err := s.writeTerminalConfig(ts); err != nil {
 		return nil, err
 	}
@@ -123,6 +131,7 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	// Claude Code writes the transcript with the first message: a session
 	// that never got one has nothing to resume.
 	if _, events, err := claude.NativeHistory(s.cfg.ClaudeConfigDir, ts.claudeID); err == nil {
+		ts.errorScan = len(events)
 		args = append(args, "--resume", ts.claudeID)
 		ts.scan = countUsers(events) // web messages match only new transcript entries
 	} else {
@@ -583,13 +592,14 @@ func (s *Server) syncTerminal(ts *terminalSession) {
 	ts.conn.seen = time.Now()
 	s.mu.Unlock()
 	n, events, err := claude.NativeHistory(s.cfg.ClaudeConfigDir, claudeID)
-	if err != nil {
-		return // no transcript before the first message
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ts.claudeID != claudeID || s.terminals[ts.id] != ts {
 		return
+	}
+	if err != nil {
+		s.syncTerminalFailureLocked(ts, nil, false)
+		return // screen-only errors can precede the first transcript record
 	}
 	s.applyTranscriptLocked(ts.conn, n, events)
 	// Web messages leave the queue once the transcript shows them.
@@ -621,7 +631,8 @@ func (s *Server) syncTerminal(ts *terminalSession) {
 			}
 		}
 	}
-	if x, err := s.store.Get(ts.id); err == nil && x.Status != "running" && x.Status != "waiting" {
+	s.syncTerminalFailureLocked(ts, events, true)
+	if x, err := s.store.Get(ts.id); err == nil && x.Status != "running" && x.Status != "waiting" && x.Status != "failed" {
 		s.drainTerminalQueueLocked(ts)
 	}
 }
@@ -849,6 +860,8 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 					delete(s.channels, ts.claudeID)
 				}
 				ts.claudeID, ts.scan = next, -1
+				ts.errorScan = 0
+				s.resetTerminalFailureLocked(ts)
 				// /clear leaves no mark in either transcript: show where the context restarted.
 				if req.Source == "clear" {
 					_, _ = s.store.Append(id, "compact", "", json.RawMessage(`{"clear":true}`))
@@ -872,6 +885,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		if x, err := s.store.Get(id); err == nil && (x.Status == "running" || x.Status == "waiting") {
 			break
 		}
+		s.resetTerminalFailureLocked(ts)
 		ts.popQueuedLocked(req.Prompt)
 		_ = s.store.SetStatus(id, "running")
 	case "PostToolUse":
@@ -886,8 +900,10 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 				ts.runner.Redraw()
 			}()
 		}
-		_ = s.store.SetStatus(id, "completed")
-		s.drainTerminalQueueLocked(ts)
+		if !ts.turnFailed {
+			_ = s.store.SetStatus(id, "completed")
+			s.drainTerminalQueueLocked(ts)
+		}
 	case "Notification":
 		if req.Type == "permission_prompt" || strings.Contains(strings.ToLower(req.Message), "permission") {
 			_ = s.store.SetStatus(id, "waiting")

@@ -15,6 +15,8 @@ import (
 type screen struct {
 	cols, rows  int
 	cells       [][]cell
+	paint       uint64   // monotonically increasing printable output sequence
+	rowPaint    []uint64 // newest paint on each row; follows its cells when scrolled
 	x, y        int
 	dim         bool // SGR 2 (faint) is on
 	pendingWrap bool
@@ -48,6 +50,8 @@ func newScreen(cols, rows int) *screen {
 
 func (s *screen) resize(cols, rows int) {
 	cells := make([][]cell, rows)
+	rowPaint := make([]uint64, rows)
+	copy(rowPaint, s.rowPaint)
 	for y := range cells {
 		cells[y] = blankLine(cols)
 		if y < len(s.cells) {
@@ -55,6 +59,7 @@ func (s *screen) resize(cols, rows int) {
 		}
 	}
 	s.cols, s.rows, s.cells = cols, rows, cells
+	s.rowPaint = rowPaint
 	s.x, s.y = min(s.x, cols-1), min(s.y, rows-1)
 	s.pendingWrap = false
 }
@@ -175,6 +180,8 @@ func (s *screen) print(r rune) {
 		s.lineFeed()
 	}
 	s.cells[s.y][s.x] = cell{r, s.dim}
+	s.paint++
+	s.rowPaint[s.y] = s.paint
 	if w == 2 && s.x+1 < s.cols {
 		s.cells[s.y][s.x+1] = cell{0, s.dim}
 	}
@@ -196,16 +203,20 @@ func (s *screen) lineFeed() {
 func (s *screen) scrollUp(n int) {
 	n = min(n, s.rows)
 	copy(s.cells, s.cells[n:])
+	copy(s.rowPaint, s.rowPaint[n:])
 	for y := s.rows - n; y < s.rows; y++ {
 		s.cells[y] = blankLine(s.cols)
+		s.rowPaint[y] = 0
 	}
 }
 
 func (s *screen) scrollDown(n int) {
 	n = min(n, s.rows)
 	copy(s.cells[n:], s.cells[:s.rows-n])
+	copy(s.rowPaint[n:], s.rowPaint[:s.rows-n])
 	for y := 0; y < n; y++ {
 		s.cells[y] = blankLine(s.cols)
+		s.rowPaint[y] = 0
 	}
 }
 
@@ -291,15 +302,20 @@ func (s *screen) csi(final byte) {
 	case 'L', 'M': // insert / delete lines at the cursor
 		n := min(arg(0, 1), s.rows-s.y)
 		region := s.cells[s.y:]
+		paint := s.rowPaint[s.y:]
 		if final == 'L' {
 			copy(region[n:], region[:len(region)-n])
+			copy(paint[n:], paint[:len(paint)-n])
 			for i := 0; i < n; i++ {
 				region[i] = blankLine(s.cols)
+				paint[i] = 0
 			}
 		} else {
 			copy(region, region[n:])
+			copy(paint, paint[n:])
 			for i := len(region) - n; i < len(region); i++ {
 				region[i] = blankLine(s.cols)
+				paint[i] = 0
 			}
 		}
 	case '@', 'P': // insert / delete characters

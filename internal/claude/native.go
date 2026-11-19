@@ -504,7 +504,7 @@ func transcriptEvents(line []byte, session *NativeSession) []Event {
 			events[i].CreatedAt = stamp
 		}
 		switch events[i].Kind {
-		case "user", "assistant", "tool", "tool_result", "status", "teammate":
+		case "user", "assistant", "error", "tool", "tool_result", "status", "teammate":
 			session.hasConversation = true
 			if t := events[i].CreatedAt; t != "" && (session.ConversationTimeEstimated || nativeAfter(t, session.LastConversationAt)) {
 				session.LastConversationAt, session.ConversationTimeEstimated = t, false
@@ -552,6 +552,9 @@ func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 		Content     json.RawMessage `json:"content"`
 		IsMeta      bool            `json:"isMeta"`
 		IsSidechain bool            `json:"isSidechain"`
+		IsAPIError  bool            `json:"isApiErrorMessage"`
+		APIError    string          `json:"apiError"`
+		Error       string          `json:"error"`
 		Message     struct {
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
@@ -618,6 +621,11 @@ func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 	}
 	var out []Event
 	for _, e := range contentEvents(v.Message.Content, v.Type) {
+		// Synthetic API failures are turn errors, not normal assistant replies.
+		// Quota errors have an interactive terminal menu with its own lifecycle.
+		if e.Kind == "assistant" && v.IsAPIError && v.APIError != "usage_limit_reached" && v.Error != "rate_limit" {
+			e.Kind = "error"
+		}
 		if e.Kind == "user" {
 			e.Text = UnwrapPastes(e.Text)
 			if events, ok := nativeNoticeEvents(e.Text); ok {

@@ -14,6 +14,13 @@
     "core:webview:allow-create-webview-window",
     "window-state:default",
     "notification:default",
-    "opener:allow-open-url"
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "mailto:*" }
+      ]
+    }
   ]
 }

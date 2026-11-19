@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { Dialog } from '@/components/ui/dialog';
-import { Bot, ChevronRight, SquareTerminal, Users, X } from 'lucide-react';
+import { Activity, Bot, ChevronRight, SquareTerminal, Users, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { BottomSheet, BottomSheetContent, BottomSheetTitle } from '@/components/mobile-ui/bottom-sheet';
@@ -18,18 +18,14 @@ import { t } from '@/lib/i18n';
 import { compactNumber, durationText } from './usageMath';
 import { ErrorText, errorMessage } from '@/features/dialogs/common';
 import { TOUCH } from '@/features/dialogs/SurfaceShell';
+import { taskGroups, taskKind as kindOf, taskRunning as running } from '@/domain/taskGroups';
 
-type Kind = 'agent' | 'command' | 'teammate';
-const kindOf = (task: TaskInfo): Kind =>
-  task.taskType === 'local_bash' ? 'command' : task.taskType === 'in_process_teammate' ? 'teammate' : 'agent';
-
-const KINDS: { kind: Kind; label: () => string; icon: typeof Bot }[] = [
-  { kind: 'agent', label: () => t('Subagents', '子代理'), icon: Bot },
-  { kind: 'command', label: () => t('Background commands', '后台命令'), icon: SquareTerminal },
-  { kind: 'teammate', label: () => t('Teammates', '队友'), icon: Users },
-];
-
-const running = (s: string) => s === 'running' || s === 'pending' || s === 'in_progress';
+const KINDS = {
+  running: { label: () => t('Running', '运行中'), icon: Activity },
+  agent: { label: () => t('Subagents', '子代理'), icon: Bot },
+  command: { label: () => t('Background commands', '后台命令'), icon: SquareTerminal },
+  teammate: { label: () => t('Teammates', '队友'), icon: Users },
+};
 
 function statusText(s: string) {
   switch (s) {
@@ -108,7 +104,7 @@ export function TaskPanel({ open, onOpenChange, mobile, id }: { open: boolean; o
   );
 }
 
-function TaskList({ tasks, error, onPick, mobile }: { tasks?: TaskInfo[]; error: string; onPick: (task: TaskInfo) => void; mobile: boolean }) {
+export function TaskList({ tasks, error, onPick, mobile }: { tasks?: TaskInfo[]; error: string; onPick: (task: TaskInfo) => void; mobile: boolean }) {
   useNow(1000);
   if (error && !tasks) return <div className="p-2"><ErrorText>{error}</ErrorText></div>;
   if (!tasks) return <div className="flex h-32 items-center justify-center"><Spinner className="size-5 text-foreground-subtle" /></div>;
@@ -123,16 +119,15 @@ function TaskList({ tasks, error, onPick, mobile }: { tasks?: TaskInfo[]; error:
   }
   return (
     <div className="flex flex-col gap-3">
-      {KINDS.map(({ kind, label, icon: Icon }) => {
-        const list = tasks.filter(x => kindOf(x) === kind);
-        if (!list.length) return null;
+      {taskGroups(tasks).map(({ kind, tasks: list }) => {
+        const { label, icon: Icon } = KINDS[kind];
         return (
           <section key={kind}>
             <h3 className="flex items-center gap-1.5 px-2 pb-1 pt-1 text-ui-xs font-medium text-foreground-subtlest">
               <Icon className="size-3.5" /> {label()} <span className="tabular-nums">{list.length}</span>
             </h3>
             <div className="flex flex-col gap-px">
-              {list.map(task => <TaskRow key={task.id} task={task} onPick={onPick} mobile={mobile} />)}
+              {list.map(task => <TaskRow key={task.id} task={task} onPick={onPick} mobile={mobile} showKind={kind === 'running'} />)}
             </div>
           </section>
         );
@@ -141,11 +136,12 @@ function TaskList({ tasks, error, onPick, mobile }: { tasks?: TaskInfo[]; error:
   );
 }
 
-function TaskRow({ task, onPick, mobile }: { task: TaskInfo; onPick: (task: TaskInfo) => void; mobile: boolean }) {
+function TaskRow({ task, onPick, mobile, showKind }: { task: TaskInfo; onPick: (task: TaskInfo) => void; mobile: boolean; showKind: boolean }) {
   const live = running(task.status);
   const started = Date.parse(task.startedAt);
   const elapsed = task.durationMs ?? (Number.isFinite(started) ? (task.endedAt ? Date.parse(task.endedAt) : Date.now()) - started : NaN);
   const meta = [
+    showKind ? KINDS[kindOf(task)].label() : '',
     task.subagentType,
     task.background ? t('background', '后台') : kindOf(task) === 'agent' ? t('foreground', '前台') : '',
     Number.isFinite(elapsed) ? durationText(elapsed / 1000) : '',

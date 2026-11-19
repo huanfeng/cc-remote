@@ -155,7 +155,13 @@ export class DesktopSocket {
 
 // ---- Links and windows ----
 
-const openExternal = (url: string) => { void invoke('plugin:opener|open_url', { url }).catch(() => undefined); };
+const openExternal = (url: string) => {
+  void invoke('plugin:opener|open_url', { url }).catch(() => {
+    window.alert(navigator.language.startsWith('zh')
+      ? '无法在系统浏览器中打开链接，请检查默认浏览器设置后重试。'
+      : 'Could not open the link. Check your default browser settings and try again.');
+  });
+};
 
 let nextWindow = 1;
 let appVersion: string | undefined;

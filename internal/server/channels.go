@@ -418,6 +418,7 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		_ = s.store.MarkTranscript(c.sessionID, store.TranscriptV2Key)
 	}
 	occurrences := map[string]int{}
+	legacyReplies := map[string]int{}
 	toolNames := map[string]string{}
 	toolInputs := map[string]json.RawMessage{}
 	for _, ev := range events {
@@ -441,9 +442,25 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		key := hex.EncodeToString(hash[:])
 		occurrences[key]++
 		key = fmt.Sprintf("%s%s:%d", c.keyPrefix, key, occurrences[key])
+		if ev.Kind == "assistant" || ev.Kind == "error" {
+			oldHash := sha256.Sum256(append([]byte("assistant\x00"+ev.Text+"\x00"), ev.Payload...))
+			oldKey := hex.EncodeToString(oldHash[:])
+			legacyReplies[oldKey]++
+			oldKey = fmt.Sprintf("%s%s:%d", c.keyPrefix, oldKey, legacyReplies[oldKey])
+			if ev.Kind == "error" && s.store.TranscriptFlag(c.sessionID, oldKey) {
+				// Older hosts imported synthetic API errors as assistant replies.
+				_ = s.store.MarkTranscript(c.sessionID, key)
+				continue
+			}
+		}
 		if c.legacy && (ev.Kind == "status" || ev.Kind == "teammate") {
 			// Old history the earlier host showed without them (teammate
 			// messages as user turns, which the web splits).
+			_ = s.store.MarkTranscript(c.sessionID, key)
+			continue
+		}
+		if ts := s.terminals[c.sessionID]; ev.Kind == "error" && ts != nil && ts.turnFailed && flatText(ev.Text) == flatText(ts.failureMessage) {
+			// A screen-only diagnostic may reach the transcript on a later tick.
 			_ = s.store.MarkTranscript(c.sessionID, key)
 			continue
 		}

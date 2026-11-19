@@ -37,6 +37,11 @@
 
 ## Information architecture
 
+- Terminal request failures: explicit Claude API error records render as errors and end the current turn as Failed even without a Stop hook. Full selected-model validation diagnostics have a screen fallback. A late Stop cannot hide the failure; retry spinners and quota menus keep their existing states. A new submission clears the failed-turn guard, and held messages are not automatically retried after failure.
+
+- Session task panels place one cross-type Running group above the existing subagent, background-command and teammate groups. Active and pending work appears once at the top with its task type; finished work returns to its type group. Desktop and mobile use the same grouping.
+- Desktop HTTP/HTTPS links open in the system browser, including modified clicks and terminal links. In-app routes retain app navigation; failures to launch the browser provide visible feedback.
+
 - Dialog dismissal: browser/phone Back closes the topmost open dialog or mobile drawer before changing the conversation route. Desktop Ctrl/⌘+W closes that same layer before the native tab; unsaved-change confirmation remains effective. Explicit closing removes the temporary history guard, and nested confirmations close before their parent. Browser-reserved tab-closing shortcuts remain controlled by the browser.
 
 - Settings (2026-11-18): dedicated Claude Code and Codex sections contain their own supplier and session defaults; Claude Code additionally contains native settings and status line controls. Suppliers combines official Claude OAuth, local Claude/Codex API connections and read-only CC-Switch imports. Server describes the connected server; Appearance & interaction contains local client preferences. Desktop retains Local service and About & updates. Preserve old defaults/oauth shortcuts via aliases and unsaved-change guards on mobile and desktop.
