@@ -22,6 +22,9 @@ import { PathMenu } from '@/features/files/PathMenu';
 import { useCompletionRead } from '@/store/completionRead';
 import { displaySession } from '@/domain/completionRead';
 import { hostKey } from '@/lib/hosts';
+import { DESKTOP } from '@/platform/desktop';
+import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
 
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
@@ -30,6 +33,8 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const sidebarCollapsed = usePrefs(s => s.sidebarCollapsed);
   const toolsExpanded = usePrefs(s => s.toolsExpanded);
   const sendKey = usePrefs(s => s.sendKey);
+  const shellShortcut = usePrefs(s => s.projectShellShortcut);
+  const shell = useProjectShellWorkspace();
   const setPrefs = usePrefs(s => s.set);
   const records = useCompletionRead(s => s.records);
   const display = native ? session : displaySession(session, records[hostKey(session.id)]);
@@ -80,6 +85,19 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
       </div>
 
       {!native && <UsageMeter session={session} mobile={mobile} />}
+
+      {!native && shell.enabled && !!session.cwd && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} data-project-shell-trigger
+              aria-label={t('Project terminal', '项目终端')} aria-expanded={shell.isOpen(session.cwd)}
+              onClick={() => shell.toggle({ cwd: session.cwd })}>
+              <SquareTerminal className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{[t('Project terminal', '项目终端'), projectShellShortcutLabel(shellShortcut, DESKTOP)].filter(Boolean).join(' · ')}</TooltipContent>
+        </Tooltip>
+      )}
 
       {!native && running && (
         <Tooltip>

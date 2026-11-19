@@ -398,6 +398,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
       <div className="relative">
         <textarea
           ref={box}
+          data-session-composer
           rows={1}
           value={text}
           aria-label={t(`Message to ${providerName(provider)}`, `发送给 ${providerName(provider)} 的消息`)}

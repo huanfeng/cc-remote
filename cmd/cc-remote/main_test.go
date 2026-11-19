@@ -39,6 +39,9 @@ func TestCLIRoute(t *testing.T) {
 		{[]string{"--host", "http://localhost:8999", "profile", "default", "work"}, "profile", []string{"default", "--host", "http://localhost:8999", "work"}},
 		{[]string{"claude", "--", "--help"}, "claude", []string{"--", "--help"}},
 		{[]string{"claude", "--", "-p", "status"}, "claude", []string{"--", "-p", "status"}},
+		{[]string{"--host", "http://localhost:8999", "shell", "attach", "ABC"}, "shell", []string{"--host", "http://localhost:8999", "attach", "ABC"}},
+		{[]string{"--data-dir", "d", "run", "--", "git", "--help"}, "run", []string{"--data-dir", "d", "--", "git", "--help"}},
+		{[]string{"session", "shell"}, "session", []string{"shell"}},
 		{[]string{"ccr", "--data-dir", "d", "terminal-hook"}, "terminal-hook", nil},
 		{[]string{"permission-mcp"}, "permission-mcp", nil},
 		{[]string{"service", "supervise", "--listen", "127.0.0.1:8999", "--service-manager", "schtasks"}, "service", []string{"supervise", "--listen", "127.0.0.1:8999", "--service-manager", "schtasks"}},
@@ -74,6 +77,9 @@ func TestConnectionContextBoundaries(t *testing.T) {
 		{"claude", []string{"--profile", "--data-dir", other}, "8999"},
 		{"oauth", []string{"add", "--token", "--data-dir", "name"}, "8999"},
 		{"profile", []string{"default", "work", "--data-dir", other}, "9000"},
+		{"shell", []string{"attach", "--data-dir", other}, "9000"},
+		{"run", []string{"--cwd", "--data-dir", "git", "--data-dir", other}, "8999"},
+		{"run", []string{"--data-dir", other, "--", "git", "--data-dir", base}, "9000"},
 	} {
 		got := connectionDefaultsFor(tc.command, tc.args)
 		want := append([]string{"--host", "http://127.0.0.1:" + tc.port}, tc.args...)

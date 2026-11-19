@@ -4,19 +4,22 @@ import { useState, useSyncExternalStore } from 'react';
 import { Check } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/components/lib/utils';
-import { usePrefs, type ThemePref } from '@/lib/prefs';
+import { usePrefs, type ProjectShellShortcut, type ThemePref } from '@/lib/prefs';
 import { useSystemDark } from '@/lib/theme';
 import { hostLang, langOverride, setLang, t } from '@/lib/i18n';
 import { notifySupported } from '@/domain/notify';
 import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { SimpleSelect } from '@/features/dialogs/common';
 import { GroupTitle, SectionHeader } from './parts';
+import { DESKTOP } from '@/platform/desktop';
+import { projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
 
 export function BrowserSection({ mobile }: { mobile: boolean }) {
   const set = usePrefs(s => s.set);
   const theme = usePrefs(s => s.theme);
   const palette = usePrefs(s => s.palette);
   const sendKey = usePrefs(s => s.sendKey);
+  const shellShortcut = usePrefs(s => s.projectShellShortcut);
   const [language] = useState(langOverride());
   return (
     <div>
@@ -55,6 +58,18 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
           description={sendKey === 'enter' ? t('Shift+Enter starts a new line.', 'Shift+Enter 换行。') : t('Enter starts a new line.', 'Enter 换行。')}
           control={<SimpleSelect value={sendKey} onChange={v => set({ sendKey: v === 'mod-enter' ? 'mod-enter' : 'enter' })} ariaLabel={t('Send with', '发送键')}
             options={[{ value: 'enter', label: 'Enter' }, { value: 'mod-enter', label: 'Ctrl / ⌘ + Enter' }]} />}
+        />
+        <Row
+          label={t('Project terminal shortcut', '项目终端快捷键')}
+          control={<SimpleSelect value={shellShortcut} onChange={v => set({ projectShellShortcut: v as ProjectShellShortcut })}
+            ariaLabel={t('Project terminal shortcut', '项目终端快捷键')}
+            options={([
+              { value: 'default', label: `${t('Default', '默认')} (${projectShellShortcutLabel('default', DESKTOP)})` },
+              { value: 'ctrl-backquote', label: 'Ctrl+`' },
+              { value: 'alt-f', label: 'Alt+F' },
+              { value: 'ctrl-shift-f12', label: 'Ctrl+Shift+F12' },
+              { value: 'disabled', label: t('Disabled', '禁用') },
+            ] satisfies { value: ProjectShellShortcut; label: string }[])} />}
         />
       </GroupCard>
 

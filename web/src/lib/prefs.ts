@@ -2,7 +2,7 @@
 // layout stays local to each mounted view; unavailable storage remains optional.
 import { create } from 'zustand';
 import { decodePreferences, mergePreferencePatch, type PreferenceValues } from '../domain/preferences.ts';
-export type { ThemePref, Palette, SendKey } from '../domain/preferences.ts';
+export type { ThemePref, Palette, SendKey, ProjectShellShortcut } from '../domain/preferences.ts';
 
 interface Prefs extends PreferenceValues {
   set: (patch: Partial<PreferenceValues>) => void;
@@ -14,7 +14,7 @@ export const SIDEBAR_DEFAULT = 272;
 
 const KEY = 'ccn-prefs';
 const defaults: PreferenceValues = {
-  theme: 'system', palette: 'graphite', sendKey: 'enter',
+  theme: 'system', palette: 'graphite', sendKey: 'enter', projectShellShortcut: 'default',
   sidebarCollapsed: false, sidebarWidth: SIDEBAR_DEFAULT,
   collapsedProjects: {}, toolsExpanded: false, terminalView: {},
   terminalZoom: 1, terminalFit: false, newSessionMode: 'terminal',

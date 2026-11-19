@@ -9,13 +9,15 @@ import { useApp } from '@/store/app';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { SessionWorkspace } from '@/features/workspace/SessionWorkspace';
 import { EmptyState } from '@/features/workspace/EmptyState';
+import { ProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { ProjectShellPanel } from '@/features/projectShell/ProjectShellPanel';
 
 export function DesktopShell() {
   const collapsed = usePrefs(s => s.sidebarCollapsed);
   const width = usePrefs(s => s.sidebarWidth);
   const selection = useApp(s => s.selection);
   return (
-    <div className="flex h-full min-h-0 bg-background-win-alt">
+    <ProjectShellWorkspace><div className="flex h-full min-h-0 bg-background-win-alt">
       <aside
         className={cn('relative shrink-0 overflow-hidden transition-[width] duration-200 ease-out', collapsed && 'w-0')}
         style={collapsed ? undefined : { width }}
@@ -29,8 +31,9 @@ export function DesktopShell() {
       </aside>
       <main className={cn('relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background', 'my-1.5 mr-1.5 rounded-xl border border-border/60 shadow-xs', collapsed && 'ml-1.5')}>
         {selection ? <SessionWorkspace mobile={false} /> : <EmptyState />}
+        <ProjectShellPanel />
       </main>
-    </div>
+    </div></ProjectShellWorkspace>
   );
 }
 

@@ -17,6 +17,7 @@
 | `--allow-insecure-remote` | 关 | 允许 `all:PORT` / `0.0.0.0` / `::` 这类绑定所有网卡的地址 |
 | `--lang` | `auto` | 提示信息和 Web 界面的默认语言：`auto`（跟随系统）、`zh` 或 `en`，见[界面语言](#界面语言) |
 | `--allow-origin` | 空 | 允许访问此宿主的[独立网页前端](standalone.md)来源，如 `https://ccr.example.com`；可重复或逗号分隔。后台服务用 `service config --allow-origin` 设置（立即生效） |
+| `--project-shell` | 开 | 启用项目终端和 `ccr run`。可通过 `--project-shell=false` 或在后台服务配置中设置 `CC_REMOTE_PROJECT_SHELL=0` 关闭 |
 
 其它子命令：`service`、`alias`、`update`、`version`、`attach`、`ccr`，`cc-remote help` 和 `cc-remote service --help` 查看用法。
 

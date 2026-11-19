@@ -13,12 +13,14 @@ import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbe
 import type {
   Attachment, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
+  ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
   UsageReply, UsageMonitor, MonitorHistory,
 } from '../types.ts';
 import { HttpClient, defined, providerQuery, withQuery, type Lang } from './client.ts';
 import { poll, type Poller } from './poll.ts';
 import { HttpTerminalStream, type WebSocketCtor } from './terminal.ts';
+import { HttpProjectShellStream, projectShellRunPath, projectShellsPath } from './projectShell.ts';
 
 /** Events per page: the first tail and each older page. */
 export const PAGE = 200;
@@ -36,7 +38,7 @@ export interface HttpBackendOptions {
   /** null: upload with fetch (the desktop app, whose fetch goes through Rust). */
   XMLHttpRequest?: typeof XMLHttpRequest | null;
   /** Polling periods in ms. */
-  intervals?: Partial<{ sessions: number; transcript: number; usage: number }>;
+  intervals?: Partial<{ sessions: number; transcript: number; usage: number; projectShells: number }>;
 }
 
 const enc = encodeURIComponent;
@@ -48,7 +50,7 @@ export class HttpBackend implements Backend {
   readonly kind = 'http' as const;
   private readonly client: HttpClient;
   private readonly o: HttpBackendOptions;
-  private readonly intervals: { sessions: number; transcript: number; usage: number };
+  private readonly intervals: { sessions: number; transcript: number; usage: number; projectShells: number };
   private disposed = false;
   private infoValue?: HostInfo;
   private infoLoad?: Promise<HostInfo>;
@@ -62,6 +64,7 @@ export class HttpBackend implements Backend {
   /** Watched transcripts, for a poll right after an action on their session. */
   private transcriptPollers = new Map<string, Set<Poller>>();
   private usagePollers = new Set<Poller>();
+  private projectShellWatchers = new Set<Unsubscribe>();
   private streams = new Set<TerminalStream>();
   private assets = new Map<string, Promise<string>>();
   /** Pending requests filtered from the host's reply, keyed by that reply (identity survives a 304). */
@@ -70,7 +73,7 @@ export class HttpBackend implements Backend {
   constructor(o: HttpBackendOptions) {
     this.o = o;
     this.client = new HttpClient({ baseUrl: o.baseUrl, token: o.token, lang: o.lang, onUnauthorized: o.onUnauthorized, fetch: o.fetch });
-    this.intervals = { sessions: 3000, transcript: 1500, usage: 60_000, ...o.intervals };
+    this.intervals = { sessions: 3000, transcript: 1500, usage: 60_000, projectShells: 6000, ...o.intervals };
   }
 
   dispose() {
@@ -83,6 +86,7 @@ export class HttpBackend implements Backend {
     this.transcriptPollers.clear();
     for (const p of this.usagePollers) p.stop();
     this.usagePollers.clear();
+    for (const stop of this.projectShellWatchers) stop();
     for (const s of this.streams) s.close();
     this.streams.clear();
     for (const a of this.assets.values()) void a.then(revoke, () => {});
@@ -498,6 +502,59 @@ export class HttpBackend implements Backend {
       close: () => { streams.delete(stream); inner.close(); },
     };
     streams.add(stream);
+    return stream;
+  }
+
+  projectShells(signal?: AbortSignal) {
+    return this.client.json<ProjectShell[]>(projectShellsPath, { signal });
+  }
+
+  watchProjectShells(onChange: (shells: ProjectShell[]) => void): Unsubscribe {
+    if (this.disposed) return () => {};
+    const abort = new AbortController();
+    let previous: ProjectShell[] | undefined;
+    const watcher = poll(async () => {
+      const shells = await this.projectShells(abort.signal);
+      if (!abort.signal.aborted && shells !== previous) {
+        previous = shells;
+        onChange(shells);
+      }
+    }, this.intervals.projectShells, { pauseHidden: true });
+    const stop = () => {
+      abort.abort();
+      watcher.stop();
+      this.projectShellWatchers.delete(stop);
+    };
+    this.projectShellWatchers.add(stop);
+    return stop;
+  }
+
+  startProjectShell(body: ProjectShellStart, signal?: AbortSignal) {
+    return this.client.json<ProjectShell>(projectShellsPath, { method: 'POST', body, signal });
+  }
+
+  stopProjectShell(shellId: string, runId: string) {
+    return this.client.json<void>(projectShellRunPath(shellId, runId), { method: 'DELETE' });
+  }
+
+  openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream {
+    const Socket = this.o.WebSocket ?? (globalThis.WebSocket as unknown as WebSocketCtor | undefined);
+    if (!Socket) throw new BackendError(this.t('This browser has no WebSocket', '此浏览器不支持 WebSocket'), 0);
+    const inner = new HttpProjectShellStream(this.client, {
+      ...handlers,
+      onState: (state, detail, opts) => {
+        if (state !== 'connecting') this.streams.delete(stream);
+        handlers.onState(state, detail, opts);
+      },
+    }, Socket, projectShellRunPath(shellId, runId), after);
+    const stream: ProjectShellStream = {
+      send: data => inner.send(data),
+      resize: (cols, rows) => inner.resize(cols, rows),
+      redraw: () => inner.redraw(),
+      take: () => inner.take(),
+      close: () => { this.streams.delete(stream); inner.close(); },
+    };
+    this.streams.add(stream);
     return stream;
   }
 

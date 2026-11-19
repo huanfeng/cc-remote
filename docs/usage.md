@@ -2,6 +2,28 @@
 
 本文是 [README](../README.md) 的详细补充。配置项见 [configuration.md](configuration.md)，工作原理与限制见 [architecture.md](architecture.md)。
 
+## 项目终端
+
+项目终端默认可用。终端和 `ccr run` 都以所连接宿主的服务账户权限运行。
+
+从会话标题栏或侧栏项目组打开「项目终端」。同一主机和项目内的会话共用一个默认 Shell。收起面板或断开网页连接后，Shell 仍在后台运行，重新打开即可接回。需要结束进程时，在面板里选择「结束终端」，或执行 `exit`。多个页面可以查看同一终端，输入和尺寸由持有控制权的页面决定。
+
+桌面应用可用 `Alt+F` 开合，Web 使用 `Ctrl` 加反引号。可在界面设置里改键。服务重启后保留项目入口和启动目录，下次打开时启动新 Shell。正在运行的命令和输出缓冲随原进程结束。
+
+### 用 CLI 执行命令和管理项目终端
+
+| 命令 | 行为 |
+| --- | --- |
+| `ccr run -- git status --short` | 在宿主上执行一次命令，转发标准输入、标准输出和错误输出，并返回该命令的退出码 |
+| `ccr shell` | 创建或打开当前项目的默认 Shell，也可以从 Web 接入同一个进程 |
+| `ccr shell ls` | 列出当前宿主记录的 Shell 和状态 |
+| `ccr shell attach [ID]` | 接入正在运行的 Shell，省略 ID 时按当前目录查找 |
+| `ccr shell stop [ID]` | 结束 Shell 进程，省略 ID 时按当前目录查找 |
+
+按 `Ctrl+]` 可以从 CLI 脱离并让 Shell 继续运行。在 Shell 内执行 `exit` 也会结束进程。结束后可用 `ccr shell` 从启动目录重新打开。
+
+使用 `--host` 连接其他主机。如果本机目录在宿主上不存在，在 `run` 或 `shell` 后加 `--cwd` 指定宿主路径。`run` 按原样传递程序名和参数，用到管道或重定向时可以显式调用宿主的 Shell，例如 `ccr run -- sh -c 'printf hello | wc -c'`。
+
 ## 两种会话
 
 | | 终端会话 | 托管会话 |

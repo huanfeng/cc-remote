@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,7 +43,8 @@ type Config struct {
 	ClaudeConfigEnv string
 	// AllowOrigins are standalone web frontends (normalized origins) allowed to
 	// call the API from another site; see cors.go.
-	AllowOrigins []string
+	AllowOrigins        []string
+	DisableProjectShell bool
 	// Language of the host's messages and the web UI (a page can choose its own).
 	Language i18n.Lang
 	Assets   fs.FS
@@ -109,10 +111,12 @@ type Server struct {
 	cfg             Config
 	mu              sync.Mutex
 	switching       map[string]bool
-	downloads       downloadTickets          // links the browser downloads files with (downloads.go)
-	sent            sends                    // messages taken, by the page's send ID (sends.go)
-	mentionIndex    mentionIndex             // files offered after @ in the message box (mentions.go)
-	streamTickets   downloadTickets          // the web's terminal streams, once each (terminal.go)
+	downloads       downloadTickets // links the browser downloads files with (downloads.go)
+	sent            sends           // messages taken, by the page's send ID (sends.go)
+	mentionIndex    mentionIndex    // files offered after @ in the message box (mentions.go)
+	streamTickets   downloadTickets // the web's terminal streams, once each (terminal.go)
+	projectShells   projectShellRegistry
+	projectCommands projectCommandRegistry
 	streamPing      time.Duration            // tests: ping terminal streams this often instead
 	origins         atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
 	reloadMu        sync.Mutex               // one reload at a time, so listen ends up current
@@ -213,6 +217,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/terminals/{id}/status", s.terminalStatus)
 	mux.HandleFunc("GET /api/terminals/{id}/stream", s.terminalStream)
 	mux.HandleFunc("POST /api/terminals/{id}/ticket", s.terminalTicket)
+	mux.HandleFunc("GET /api/project-shells", s.listProjectShells)
+	mux.HandleFunc("POST /api/project-shells", s.startProjectShell)
+	mux.HandleFunc("GET /api/project-shells/run", s.runProjectCommand)
+	mux.HandleFunc("DELETE /api/project-shells/{id}/runs/{run}", s.stopProjectShell)
+	mux.HandleFunc("POST /api/project-shells/{id}/runs/{run}/ticket", s.projectShellTicket)
+	mux.HandleFunc("GET /api/project-shells/{id}/runs/{run}/stream", s.projectShellStream)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", s.message)
 	mux.HandleFunc("POST /api/sessions/{id}/steer", s.steer)
 	mux.HandleFunc("GET /api/sessions/{id}/steer/{sendId}", s.steerStatus)
@@ -251,7 +261,7 @@ func (s *Server) Handler() http.Handler {
 			}
 			// A download's ticket is its credential: the browser saves it without the token.
 			// So is a web terminal stream's: a browser WebSocket cannot send the header.
-			if r.URL.Path != "/api/bridge/request" && r.URL.Path != hostauth.Path && !strings.HasPrefix(r.URL.Path, "/api/download/") && !streamTicket(r) && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) && !s.hookRequest(r) {
+			if r.URL.Path != "/api/bridge/request" && r.URL.Path != hostauth.Path && !strings.HasPrefix(r.URL.Path, "/api/download/") && !streamTicket(r) && !projectShellStreamTicket(r) && !equalToken(r.Header.Get("Authorization"), s.cfg.Token) && !s.hookRequest(r) {
 				fail(w, 401, s.lang(r).T("Invalid access token", "访问凭证无效"))
 				return
 			}
@@ -358,7 +368,11 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		codexBin = "codex"
 	}
 	_, codexErr := exec.LookPath(codexBin)
-	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "codexAvailable": codexErr == nil, "providers": []string{"claude", "codex"}, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon, "features": hostFeatures})
+	features := hostFeatures
+	if s.projectShellEnabled() {
+		features = slices.Concat(features, []string{"project-shell"})
+	}
+	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "codexAvailable": codexErr == nil, "providers": []string{"claude", "codex"}, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon, "features": features})
 }
 
 // language is the host's language (English when unset, as in tests).
@@ -1332,6 +1346,8 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Close(ctx context.Context) error {
+	waitForShells := s.projectShells.shutdown()
+	defer waitForShells(ctx)
 	s.mu.Lock()
 	s.closing = true
 	// Waiting terminal session hooks hold long polls; release them so shutdown does not wait.
@@ -1358,6 +1374,7 @@ func (s *Server) Close(ctx context.Context) error {
 		s.closeTerminalAsync(ts)
 	}
 	s.mu.Unlock()
+	s.projectCommands.shutdown(ctx)
 	if s.monitorDone != nil {
 		select {
 		case <-s.monitorDone:

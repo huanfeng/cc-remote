@@ -9,6 +9,7 @@ import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbe
 import type {
   Attachment, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
+  ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
   UsageHistory, UsageReply, UsageMonitor, MonitorHistory,
 } from './types';
@@ -118,6 +119,11 @@ export interface Backend {
 
   // Terminal
   openTerminal(id: string, handlers: TerminalHandlers): TerminalStream;
+  projectShells(signal?: AbortSignal): Promise<ProjectShell[]>;
+  watchProjectShells(onChange: (shells: ProjectShell[]) => void): Unsubscribe;
+  startProjectShell(body: ProjectShellStart, signal?: AbortSignal): Promise<ProjectShell>;
+  stopProjectShell(shellId: string, runId: string): Promise<void>;
+  openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream;
 
   // Configuration
   models(opts: { provider: Provider; sessionId?: string; refresh?: boolean }): Promise<ModelList>;
