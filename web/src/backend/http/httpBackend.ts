@@ -12,7 +12,7 @@ import { BackendError } from '../errors.ts';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from '../supplierConfig.ts';
 import type {
   Attachment, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
-  NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
+  NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
   UsageReply, UsageMonitor, MonitorHistory,
 } from '../types.ts';
@@ -560,6 +560,16 @@ export class HttpBackend implements Backend {
   async oauthProfiles() {
     const r = await this.get<{ profiles?: { id: string; name: string }[] }>('/api/profiles/oauth');
     return (r?.profiles ?? []).map(p => ({ id: p.id, name: p.name }));
+  }
+  async profileUsage(provider: Provider): Promise<ProfileUsageReply | null> {
+    if (provider !== 'claude') return null;
+    try {
+      const value = await this.get<ProfileUsageReply>('/api/profiles/usage?app=claude');
+      return value && value.profiles && typeof value.profiles === 'object' && !Array.isArray(value.profiles) ? value : null;
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof BackendError && [404, 405, 501].includes(error.status)) return null;
+      throw error;
+    }
   }
   // The list names entries "oauth:<id>"; the paths take the bare id.
   private oauthPath(id: string) { return `/api/profiles/oauth/${enc(id.replace(/^oauth:/, ''))}`; }

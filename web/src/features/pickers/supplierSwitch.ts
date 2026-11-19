@@ -1,9 +1,10 @@
 // Supplier choices shared by creation, details and the anchored quick switch.
-import type { ProfileCatalog, Provider, SupplierProfile, Session } from '../../backend/types.ts';
+import type { ProfileCatalog, ProfileUsageReply, Provider, SupplierProfile, Session } from '../../backend/types.ts';
 import type { Backend } from '../../backend/backend.ts';
 import { BackendError } from '../../backend/errors.ts';
 import { t } from '../../lib/i18n.ts';
 import type { PickerOption } from './options.ts';
+import { supplierUsageFor } from './supplierUsage.ts';
 
 export const profilesFor = (catalog: ProfileCatalog | undefined, app: Provider): SupplierProfile[] =>
   catalog?.profiles.filter(p => p.app === app) ?? [];
@@ -19,11 +20,13 @@ export function defaultSupplierLabel(catalog: ProfileCatalog | undefined, app: P
 }
 
 /** The supplier choices for a new or resumed session. */
-export function supplierOptions(catalog: ProfileCatalog | undefined, app: Provider, resuming = false): PickerOption[] {
+export function supplierOptions(catalog: ProfileCatalog | undefined, app: Provider, resuming = false, usage: ProfileUsageReply | null | undefined = null): PickerOption[] {
+  const description = (id: string) => app === 'claude' ? supplierUsageFor(usage, id) : undefined;
+  const defaultID = catalog?.defaultProfiles[app] || '@native';
   return [
-    { value: '', label: resuming ? t('Keep the session configuration', '沿用原会话配置') : defaultSupplierLabel(catalog, app) },
-    { value: '@native', label: t('Native host configuration', '宿主原生配置') },
-    ...profilesFor(catalog, app).map(p => ({ value: p.id, label: profileLabel(p) })),
+    { value: '', label: resuming ? t('Keep the session configuration', '沿用原会话配置') : defaultSupplierLabel(catalog, app), ...(resuming ? {} : { description: description(defaultID) }) },
+    { value: '@native', label: t('Native host configuration', '宿主原生配置'), description: description('@native') },
+    ...profilesFor(catalog, app).map(p => ({ value: p.id, label: profileLabel(p), description: p.kind === 'oauth' ? description(p.id) : undefined })),
   ];
 }
 

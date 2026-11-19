@@ -241,6 +241,19 @@ export interface ProfileCatalog {
   configuredDefaults?: Partial<Record<Provider, string>>;
 }
 
+/** Cached supplier quota summaries; reading them never probes the provider. */
+export interface ProfileUsageSummary {
+  available: boolean;
+  reason?: string;
+  identityKnown?: boolean;
+  windows: MonitorWindow[];
+  fetchedAt?: string;
+  stale?: boolean;
+  error?: string;
+  shared?: boolean;
+}
+export interface ProfileUsageReply { profiles: Record<string, ProfileUsageSummary> }
+
 export interface UsageWindow {
   percent: number;
   resetsAt?: string;

@@ -10,6 +10,7 @@ import { t } from '@/lib/i18n';
 import { useApp } from '@/store/app';
 import { PickerGroup, PickerItem, PickerList, PickerSurface } from './PickerSurface';
 import { currentSupplierValue, profileLabel, profilesFor, supplierOptions, switchSupplier } from './supplierSwitch';
+import { useSupplierUsage } from './useSupplierUsage';
 
 export function SupplierQuickSwitch({ session, open, onOpenChange, trigger, anchor, mobile }: {
   session: Session; open: boolean; onOpenChange(open: boolean): void; trigger?: ReactNode; anchor?: ReactNode; mobile?: boolean;
@@ -37,10 +38,11 @@ export function SupplierQuickSwitch({ session, open, onOpenChange, trigger, anch
     return () => { live = false; };
   }, [backend, session.id, open, version]);
   const provider = providerOf(session);
+  const usage = useSupplierUsage(provider, open);
   const current = currentSupplierValue(session);
   const currentProfile = profilesFor(catalog, provider).find(p => p.id === current);
   const missing = !!current && current !== '@native' && !currentProfile;
-  const options = supplierOptions(catalog, provider);
+  const options = supplierOptions(catalog, provider, false, usage);
   const run = async (value: string, force = false) => {
     if (pending.current || (!force && value === current)) return;
     pending.current = true; setBusy(true); setError('');

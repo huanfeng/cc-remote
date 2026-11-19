@@ -118,7 +118,7 @@ export function PickerItem({ option, selected, onSelect, mobile, id, disabled }:
             )}>{option.tag}</span>
           )}
         </span>
-        {option.description && <span className="truncate text-ui-sm text-foreground-subtle">{option.description}</span>}
+        {option.description && <span title={option.description} className="whitespace-normal break-words text-ui-sm text-foreground-subtle">{option.description}</span>}
       </span>
     </CommandPrimitive.Item>
   );

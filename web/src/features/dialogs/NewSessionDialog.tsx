@@ -20,6 +20,7 @@ import { matchProjects, projectKey, projectName, recentProjects } from '@/domain
 import { shortPath } from '@/features/session/status';
 import { SurfaceShell } from './SurfaceShell';
 import { ErrorText, SimpleSelect, errorMessage, supplierOptions, useProfileCatalog } from './common';
+import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
 import { EffortField, ModelField, PermissionField } from './pickers';
 
 type Resume = { id: string; provider: Provider; cwd: string };
@@ -87,6 +88,7 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const { catalog } = useProfileCatalog();
+  const supplierUsage = useSupplierUsage(provider, open);
   const recent = useRecentProjects();
 
   // A folder the host already trusts needs no tick: the host decides (428 trust-required otherwise).
@@ -228,7 +230,7 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
         </Field>
 
         <Field label={t('Supplier', '供应商')} hint={t('Kept for this session when the default changes.', '默认项改变后，此会话仍保留所选配置。')}>
-          <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, provider)} disabled={!catalog} className="w-full" ariaLabel={t('Supplier', '供应商')} />
+          <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, provider, false, supplierUsage)} disabled={!catalog} className="w-full" ariaLabel={t('Supplier', '供应商')} />
           {catalog?.found === false && <p className="text-ui-sm text-foreground-subtlest">{t('CC-Switch database not found on this host.', '此宿主未找到 CC-Switch 数据库。')}</p>}
         </Field>
 
@@ -284,6 +286,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
   const [busy, setBusy] = useState<'' | 'terminal' | 'import'>('');
   const [error, setError] = useState('');
   const { catalog } = useProfileCatalog();
+  const supplierUsage = useSupplierUsage(resume.provider, open);
   const claude = resume.provider !== 'codex';
   const canPick = !!catalog?.capabilities?.resumeSelection;
 
@@ -337,7 +340,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
         </div>
         {canPick && (
           <Field label={t('Supplier', '供应商')}>
-            <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, resume.provider, true)} className="w-full" ariaLabel={t('Supplier', '供应商')} />
+            <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, resume.provider, true, supplierUsage)} className="w-full" ariaLabel={t('Supplier', '供应商')} />
           </Field>
         )}
         <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border/70 px-3 py-2.5 max-md:min-h-11">

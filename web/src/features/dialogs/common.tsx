@@ -85,11 +85,13 @@ export function SimpleSelect({ value, onChange, options, disabled, className, ar
   return (
     <Select value={toSelect(value)} onValueChange={v => onChange(fromSelect(v))} disabled={disabled}>
       <SelectTrigger size={size} aria-label={ariaLabel} className={cn('w-56 min-w-0 justify-between max-sm:w-full', className)}>
-        <SelectValue placeholder={placeholder} />
+        <SelectValue placeholder={placeholder}>{options.find(option => option.value === value)?.label}</SelectValue>
       </SelectTrigger>
       <SelectContent position="popper" align="end">
         {options.map(o => (
-          <SelectItem key={o.value || NONE} value={toSelect(o.value)} disabled={o.disabled}>{o.label}</SelectItem>
+          <SelectItem key={o.value || NONE} value={toSelect(o.value)} disabled={o.disabled}>
+            <span className="flex min-w-0 flex-col"><span>{o.label}</span>{o.description && <span className="whitespace-normal break-words text-ui-xs text-foreground-subtle">{o.description}</span>}</span>
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>

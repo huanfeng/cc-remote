@@ -8,7 +8,7 @@ import { BackendError } from './errors';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from './supplierConfig';
 import type {
   Attachment, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
-  NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, Provider, RequestAnswer, SendRequest, Session,
+  NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
   UsageHistory, UsageReply, UsageMonitor, MonitorHistory,
 } from './types';
@@ -122,6 +122,7 @@ export interface Backend {
   // Configuration
   models(opts: { provider: Provider; sessionId?: string; refresh?: boolean }): Promise<ModelList>;
   profiles(): Promise<ProfileCatalog>;
+  profileUsage?(provider: Provider): Promise<ProfileUsageReply | null>;
   setDefaultProfile(app: Provider, profileId: string): Promise<void>;
   preferences(provider: Provider): Promise<Preferences>;
   /** confirmDangerous is required when the permission mode is dangerous (dangerousPermission()). */

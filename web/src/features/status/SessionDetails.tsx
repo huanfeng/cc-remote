@@ -10,6 +10,7 @@ import { BackendError, useBackend } from '@/backend/backend';
 import type { Preferences, Session, SessionStats } from '@/backend/types';
 import { useApp } from '@/store/app';
 import { t, lang, locale } from '@/lib/i18n';
+import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
 import { dangerousPermission, providerName, providerOf } from '@/domain/providers';
 import { conversationTime } from '@/domain/conversationTime';
 import { modeLabel, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
@@ -140,6 +141,7 @@ function IdRow({ label, value }: { label: string; value: string }) {
 function SupplierSection({ session: s }: { session: Session }) {
   const backend = useBackend();
   const provider = providerOf(s);
+  const supplierUsage = useSupplierUsage(provider);
   const { catalog, error: catalogError } = useProfileCatalog();
   const [chosen, setChosen] = useState(s.profileId ?? '');
   const [busy, setBusy] = useState(false);
@@ -151,7 +153,7 @@ function SupplierSection({ session: s }: { session: Session }) {
   if (catalogError) return null;
   if (catalog && !catalog.capabilities?.switchSupplier) return null;
   const current = profilesFor(catalog, provider).find(p => p.id === s.profileId);
-  const options = supplierOptions(catalog, provider);
+  const options = supplierOptions(catalog, provider, false, supplierUsage);
   if (s.profileId && !options.some(o => o.value === s.profileId)) options.push({ value: s.profileId, label: t(`Unavailable · ${s.profileId}`, `不可用 · ${s.profileId}`) });
 
   const run = async (withForce = false) => {

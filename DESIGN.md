@@ -37,6 +37,8 @@
 
 ## Information architecture
 
+- OAuth supplier options show cached 5-hour and weekly usage, reset/sample times and stale/error/identity notices. Reuse the CLI's cached summary endpoint once per open selector/form; missing support on older hosts preserves ordinary supplier selection and never invents zero usage.
+
 - OAuth account editing keeps its stable internal ID, allows name-only edits, and treats a blank edit-token field as keep existing. Display the host's validation detail inline rather than replacing it with a generic request failure. Renaming does not rewrite saved defaults or session snapshots; the editor explains manual reselection where needed.
 
 - Terminal request failures: explicit Claude API error records render as errors and end the current turn as Failed even without a Stop hook. Full selected-model validation diagnostics have a screen fallback. A late Stop cannot hide the failure; retry spinners and quota menus keep their existing states. A new submission clears the failed-turn guard, and held messages are not automatically retried after failure.

@@ -6,7 +6,7 @@ import { nanoid } from 'nanoid';
 import { BackendError, type Backend, type ClaudeSettings, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
-  Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply,
+  Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
 } from '../types';
 import * as fx from './fixtures';
 import { dangerousPermission } from '@/domain/providers';
@@ -428,6 +428,17 @@ export class MockBackend implements Backend {
     return clone(this.identityValue);
   }
   async oauthProfiles() { await latency(); return clone(this.oauth); }
+  async profileUsage(provider: Provider): Promise<ProfileUsageReply | null> {
+    if (provider !== 'claude') return null;
+    await latency();
+    const usage = fx.usage.claude;
+    const windows = [
+      { ...usage.usage?.fiveHour, name: '5h', windowMinutes: 300 },
+      { ...usage.usage?.weekly, name: '7d', windowMinutes: 10080 },
+    ].filter((window): window is typeof window & { percent: number } => typeof window.percent === 'number');
+    const summary = { available: true, identityKnown: true, windows, fetchedAt: now() };
+    return { profiles: Object.fromEntries(['@native', ...this.oauth.map(entry => entry.id)].map(id => [id, clone(summary)])) };
+  }
   async addOAuthProfile(name: string) { await latency(); this.oauth.push({ id: `oauth:${nanoid(4)}`, name }); }
   async editOAuthProfile(id: string, patch: { name: string; token?: string }) {
     await latency();
