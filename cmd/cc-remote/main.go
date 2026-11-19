@@ -47,6 +47,7 @@ Usage:
   ccr --new --model sonnet     start a new terminal session
   ccr -- "prompt"              start with a first message
   ccr claude -- [arguments]    native Claude Code with a supplier applied
+  ccr run -- command [args]   run a command on the host and return its exit code
   ccr shell                   open this project's interactive shell
   ccr shell ls|attach|stop    list, attach to or stop project shells
 
@@ -62,7 +63,7 @@ Management:
   attach, a                   explicitly attach to an existing session
   help / version              show help / CCR version
 
-Use "ccr <command> --help" for options. --host affects session, shell, profile and OAuth
+Use "ccr <command> --help" for options. --host affects session, shell, run, profile and OAuth
 connections; service management always acts locally. Select a title matching a
 command with "ccr session <title>".
 
@@ -77,6 +78,7 @@ const usageZH = `CC Remote · ccr（cc-remote 是完全等价的名称）
   ccr --new --model sonnet     新建终端会话
   ccr -- "提示词"              新建并发送第一条消息
   ccr claude -- [参数]         直连原生 Claude Code，并应用供应商配置
+  ccr run -- 命令 [参数]       在宿主执行命令并返回其退出码
   ccr shell                   打开当前项目的交互式终端
   ccr shell ls|attach|stop    列出、接入或结束项目终端
 
@@ -92,7 +94,7 @@ const usageZH = `CC Remote · ccr（cc-remote 是完全等价的名称）
   attach, a                   明确接入已有会话
   help / version              查看帮助 / CCR 版本
 
-使用 ccr <命令> --help 查看参数。--host 用于会话、项目终端、供应商和 OAuth 连接；
+使用 ccr <命令> --help 查看参数。--host 用于会话、项目终端、命令、供应商和 OAuth 连接；
 服务管理始终作用于本机。与命令同名的会话标题请用 ccr session <标题>。
 
 `
@@ -107,6 +109,10 @@ func main() {
 	var exit service.ExitError
 	if errors.As(err, &exit) {
 		os.Exit(exit.Code)
+	}
+	var commandExit terminal.ProjectCommandExitError
+	if errors.As(err, &commandExit) {
+		os.Exit(commandExit.ExitCode())
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -189,7 +195,7 @@ func hostFlags() (*flag.FlagSet, *hostOptions) {
 	o.configDir = fs.String("claude-config-dir", "", i18n.T("Claude config directory (defaults to CLAUDE_CONFIG_DIR or ~/.claude)", "Claude 配置目录（默认取 CLAUDE_CONFIG_DIR 或 ~/.claude）"))
 	o.logFile = fs.String("log-file", "", i18n.T("also write logs to this file (rotated at 10 MiB, one backup)", "同时把日志写入此文件（满 10 MiB 轮转，保留一份备份）"))
 	o.allowInsecureRemote = fs.Bool("allow-insecure-remote", false, i18n.T("allow all:/0.0.0.0/:: listen addresses (plain HTTP on every interface)", "允许 all:/0.0.0.0/:: 监听地址（在所有网卡上提供明文 HTTP）"))
-	o.projectShell = fs.Bool("project-shell", true, i18n.T("enable project shells (set CC_REMOTE_PROJECT_SHELL=0 to disable)", "启用项目终端（设置 CC_REMOTE_PROJECT_SHELL=0 可关闭）"))
+	o.projectShell = fs.Bool("project-shell", true, i18n.T("enable project shells and host commands (set CC_REMOTE_PROJECT_SHELL=0 to disable)", "启用项目终端和宿主命令（设置 CC_REMOTE_PROJECT_SHELL=0 可关闭）"))
 	fs.Var(&o.allowOrigin, "allow-origin", i18n.T("origin of a standalone web frontend allowed to use this host, such as https://ccr.example.com; repeatable or comma separated (or CC_REMOTE_ALLOW_ORIGINS)", "允许使用此宿主的独立网页前端来源，例如 https://ccr.example.com；可重复或用逗号分隔（或 CC_REMOTE_ALLOW_ORIGINS）"))
 	o.lang = fs.String("lang", "", i18n.T("language of messages and the web UI: auto (system language), zh or en (or CC_REMOTE_LANG)", "提示信息和 Web 界面的语言：auto（跟随系统）、zh 或 en（或 CC_REMOTE_LANG）"))
 	o.serviceManager = fs.String("service-manager", "", i18n.T("internal: set by the background service (schtasks, systemd, launchd)", "内部使用：由后台服务设置（schtasks、systemd、launchd）"))

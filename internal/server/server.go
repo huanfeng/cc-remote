@@ -117,6 +117,7 @@ type Server struct {
 	mentionIndex    mentionIndex    // files offered after @ in the message box (mentions.go)
 	streamTickets   downloadTickets // the web's terminal streams, once each (terminal.go)
 	projectShells   projectShellRegistry
+	projectCommands projectCommandRegistry
 	streamPing      time.Duration            // tests: ping terminal streams this often instead
 	origins         atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
 	reloadMu        sync.Mutex               // one reload at a time, so listen ends up current
@@ -219,6 +220,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/terminals/{id}/ticket", s.terminalTicket)
 	mux.HandleFunc("GET /api/project-shells", s.listProjectShells)
 	mux.HandleFunc("POST /api/project-shells", s.startProjectShell)
+	mux.HandleFunc("GET /api/project-shells/run", s.runProjectCommand)
 	mux.HandleFunc("DELETE /api/project-shells/{id}/runs/{run}", s.stopProjectShell)
 	mux.HandleFunc("POST /api/project-shells/{id}/runs/{run}/ticket", s.projectShellTicket)
 	mux.HandleFunc("GET /api/project-shells/{id}/runs/{run}/stream", s.projectShellStream)
@@ -1377,6 +1379,7 @@ func (s *Server) Close(ctx context.Context) error {
 		s.closeTerminalAsync(ts)
 	}
 	s.mu.Unlock()
+	s.projectCommands.shutdown(ctx)
 	if s.monitorDone != nil {
 		select {
 		case <-s.monitorDone:
