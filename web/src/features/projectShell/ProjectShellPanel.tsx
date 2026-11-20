@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronLeft, MoreHorizontal, Square, SquareTerminal } from 'lucide-react';
+import { ChevronDown, ChevronLeft, GripHorizontal, MoreHorizontal, MoveDiagonal2, Square, SquareTerminal } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import type { ProjectShell } from '@/backend/types';
 import { cn } from '@/components/lib/utils';
@@ -12,14 +12,25 @@ import { useResolvedDark } from '@/lib/theme';
 import { useApp } from '@/store/app';
 import { createProjectShellTerminal, initialShellTerminalState } from './projectShellTerminal';
 import { shellPathKey, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
+import { useProjectShellFrame } from './useProjectShellFrame';
+
+const resizeHandles = [
+  ['n', 'inset-x-2 top-0 h-1.5 cursor-ns-resize'],
+  ['e', 'inset-y-2 right-0 w-1.5 cursor-ew-resize'],
+  ['s', 'inset-x-2 bottom-0 h-1.5 cursor-ns-resize'],
+  ['w', 'inset-y-2 left-0 w-1.5 cursor-ew-resize'],
+  ['ne', 'right-0 top-0 size-2.5 cursor-nesw-resize'],
+  ['nw', 'left-0 top-0 size-2.5 cursor-nwse-resize'],
+  ['sw', 'bottom-0 left-0 size-2.5 cursor-nesw-resize'],
+] as const;
 
 export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
-  const { target } = useProjectShellWorkspace();
-  if (!target) return null;
-  return <Panel key={target.shellId ?? shellPathKey(target.cwd)} {...{ target, mobile }} />;
+  const { target, retainedTarget } = useProjectShellWorkspace();
+  if (!retainedTarget) return null;
+  return <Panel key={retainedTarget.shellId ?? shellPathKey(retainedTarget.cwd)} target={retainedTarget} visible={!!target} mobile={mobile} />;
 }
 
-function Panel({ target, mobile }: { target: ProjectShellTarget; mobile: boolean }) {
+function Panel({ target, mobile, visible }: { target: ProjectShellTarget; mobile: boolean; visible: boolean }) {
   const backend = useBackend();
   const { close, remember } = useProjectShellWorkspace();
   const hostName = useApp(s => s.info?.name);
@@ -29,6 +40,7 @@ function Panel({ target, mobile }: { target: ProjectShellTarget; mobile: boolean
   const [exit, setExit] = useState<'exited' | 'stopped'>();
   const request = useRef<AbortController>(null);
   const region = useRef<HTMLElement>(null);
+  const { frame, handlers, reset } = useProjectShellFrame(region, !mobile);
 
   const start = useCallback((restart?: boolean) => {
     request.current?.abort();
@@ -48,8 +60,8 @@ function Panel({ target, mobile }: { target: ProjectShellTarget; mobile: boolean
   }, [backend, remember, target]);
 
   useLayoutEffect(() => {
-    region.current?.focus();
-  }, []);
+    if (visible && !shell?.runId) region.current?.focus({ preventScroll: true });
+  }, [visible, shell?.runId]);
 
   useEffect(() => {
     start();
@@ -80,30 +92,36 @@ function Panel({ target, mobile }: { target: ProjectShellTarget; mobile: boolean
   const directory = shell?.cwd || target.cwd;
   const hostname = currentHost?.name || hostName || location.host;
   const closeLabel = mobile ? t('Back', '返回') : t('Hide terminal', '收起终端');
+  const moveLabel = t('Drag the terminal or use arrow keys to move it', '拖动或使用方向键移动终端');
+  const resizeLabel = t('Drag the corner or use arrow keys to resize the terminal', '拖动边角或使用方向键调整终端大小');
   return (
     <section
       ref={region}
       data-terminal
       id="project-shell-panel"
+      hidden={!visible}
       tabIndex={-1}
       aria-label={t('Project terminal', '项目终端')}
-      className={cn('absolute z-30 flex min-h-0 flex-col overflow-hidden bg-background outline-none', mobile
+      style={frame ? { left: frame.x, top: frame.y, width: frame.width, height: frame.height } : undefined}
+      className={cn('absolute z-30 min-h-0 flex-col overflow-hidden bg-background outline-none', visible && 'flex', mobile
         ? 'inset-0 pb-[env(safe-area-inset-bottom)]'
-        : 'inset-x-3 bottom-3 h-[min(62%,30rem)] rounded-xl border border-border shadow-xl')}
+        : 'rounded-xl border border-border shadow-xl', !mobile && !frame && 'inset-x-3 bottom-3 h-[min(62%,30rem)]')}
     >
-      <header className={cn('flex shrink-0 items-center gap-2 border-b border-border/70 bg-background-win-alt px-2', mobile ? 'min-h-12 pt-safe' : 'h-9')}>
+      <header className={cn('flex shrink-0 items-center gap-2 border-b border-border/70 bg-background-win-alt px-2', mobile ? 'min-h-12 pt-safe' : 'h-9 touch-none cursor-grab select-none active:cursor-grabbing focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring')}
+        {...(!mobile ? { ...handlers('move'), tabIndex: 0, role: 'group', 'aria-label': moveLabel, title: moveLabel } : {})}>
         {mobile && <Button type="button" variant="ghost" size="icon-lg" onClick={close} aria-label={closeLabel}><ChevronLeft /></Button>}
-        <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />
+        {mobile ? <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden /> : <GripHorizontal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />}
         <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate" title={`${hostname} · ${directory}`}>
           <h2 className="shrink-0 text-ui-sm font-medium">{t('Project terminal', '项目终端')}</h2>
           <span className="truncate text-ui-xs text-foreground-subtle" dir="auto">{hostname} · {directory}</span>
         </div>
-        {running && <DropdownMenu>
+        {(running || !mobile) && <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Terminal actions', '终端操作')}><MoreHorizontal /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={stop} disabled={busy}><Square />{t('End terminal', '结束终端')}</DropdownMenuItem>
+            {!mobile && <DropdownMenuItem onSelect={reset}>{t('Reset panel size and position', '重置面板大小和位置')}</DropdownMenuItem>}
+            {running && <DropdownMenuItem onSelect={stop} disabled={busy}><Square />{t('End terminal', '结束终端')}</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>}
         {!mobile && <Button type="button" variant="ghost" size="icon-sm" onClick={close} aria-label={closeLabel} title={closeLabel}><ChevronDown /></Button>}
@@ -115,31 +133,44 @@ function Panel({ target, mobile }: { target: ProjectShellTarget; mobile: boolean
         {!shell && !busy && <Button type="button" variant="outline" size="sm" onClick={() => start()}>{t('Try again', '重试')}</Button>}
       </div>}
       {shell?.runId ? (
-        <ProjectShellPane key={`${shell.id}/${shell.runId}`} shellId={shell.id} runId={shell.runId} mobile={mobile} onExit={end} />
+        <ProjectShellPane key={`${shell.id}/${shell.runId}`} shellId={shell.id} runId={shell.runId} mobile={mobile} visible={visible} onExit={end} />
       ) : busy && <div className="p-3 text-ui-sm text-foreground-subtle" role="status">{t('Opening terminal…', '正在打开终端…')}</div>}
       {canRestart && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border/70 px-3 py-2 text-ui-sm text-foreground-subtle">
         {t('This shell has ended.', '本次 Shell 进程已结束。')}
         <Button type="button" variant="outline" size="sm" onClick={() => start(true)}>{t('Start a new shell', '启动新终端')}</Button>
       </div>}
+      {!mobile && <>
+        {resizeHandles.map(([handle, position]) => <div key={handle} aria-hidden className={cn('absolute z-10 touch-none', position)} {...handlers(handle)} />)}
+        <button type="button" aria-label={resizeLabel} title={resizeLabel} {...handlers('se')}
+          className="absolute bottom-0 right-0 z-10 grid size-4 touch-none cursor-nwse-resize place-items-center rounded-tl bg-background-win-alt text-foreground-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">
+          <MoveDiagonal2 className="size-3" aria-hidden />
+        </button>
+      </>}
     </section>
   );
 }
 
 /** A single terminal surface can also be mounted in a future split or window. */
-function ProjectShellPane({ shellId, runId, mobile, onExit }: {
-  shellId: string; runId: string; mobile: boolean; onExit(state: 'exited' | 'stopped'): void;
+function ProjectShellPane({ shellId, runId, mobile, visible, onExit }: {
+  shellId: string; runId: string; mobile: boolean; visible: boolean; onExit(state: 'exited' | 'stopped'): void;
 }) {
   const backend = useBackend();
   const element = useRef<HTMLDivElement>(null);
   const terminal = useRef<ReturnType<typeof createProjectShellTerminal>>(null);
+  const visibility = useRef(visible);
   const [ui, setUi] = useState(initialShellTerminalState);
   const dark = useResolvedDark();
   const palette = usePrefs(s => s.palette);
+  useLayoutEffect(() => {
+    visibility.current = visible;
+    terminal.current?.setVisible(visible);
+    if (visible) terminal.current?.focus();
+  }, [visible]);
   useEffect(() => {
     if (!element.current) return;
-    const engine = createProjectShellTerminal({ backend, shellId, runId, element: element.current, mobile, onState: setUi });
+    const engine = createProjectShellTerminal({ backend, shellId, runId, element: element.current, mobile, visible: visibility.current, onState: setUi });
     terminal.current = engine;
-    engine.focus();
+    if (visibility.current) engine.focus();
     return () => {
       terminal.current = null;
       engine.dispose();

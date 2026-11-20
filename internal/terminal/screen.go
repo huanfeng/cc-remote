@@ -66,10 +66,14 @@ func (s *screen) resize(cols, rows int) {
 
 func blankLine(cols int) []cell {
 	line := make([]cell, cols)
+	clearScreenLine(line)
+	return line
+}
+
+func clearScreenLine(line []cell) {
 	for i := range line {
 		line[i] = cell{r: ' '}
 	}
-	return line
 }
 
 func (s *screen) write(b []byte) {
@@ -202,6 +206,16 @@ func (s *screen) lineFeed() {
 
 func (s *screen) scrollUp(n int) {
 	n = min(n, s.rows)
+	if n == 1 {
+		// Streaming output scrolls line by line. Reuse the outgoing row instead
+		// of allocating a new row on every newline.
+		line := s.cells[0]
+		copy(s.cells, s.cells[1:])
+		copy(s.rowPaint, s.rowPaint[1:])
+		clearScreenLine(line)
+		s.cells[s.rows-1], s.rowPaint[s.rows-1] = line, 0
+		return
+	}
 	copy(s.cells, s.cells[n:])
 	copy(s.rowPaint, s.rowPaint[n:])
 	for y := s.rows - n; y < s.rows; y++ {

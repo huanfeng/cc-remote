@@ -156,18 +156,8 @@ func writeProjectShellEvent(ctx context.Context, ws *websocket.Conn, e terminal.
 }
 
 func writeProjectShellReplay(ctx context.Context, ws *websocket.Conn, replay terminal.ProjectShellReplay) error {
-	if replay.Reset {
-		if err := writeProjectShellFrame(ctx, ws, projectShellFrame{Type: "reset", Seq: &replay.Through}); err != nil {
-			return err
-		}
-	}
-	if err := writeProjectShellFrame(ctx, ws, projectShellFrame{Type: "size", Cols: replay.Cols, Rows: replay.Rows}); err != nil {
+	if err := writeProjectShellReplayStart(ctx, ws, replay); err != nil {
 		return err
-	}
-	if len(replay.Screen) != 0 {
-		if err := writeProjectShellEvent(ctx, ws, terminal.ProjectShellEvent{Sequence: replay.Through, Data: replay.Screen}); err != nil {
-			return err
-		}
 	}
 	for _, event := range replay.Events {
 		if err := writeProjectShellEvent(ctx, ws, event); err != nil {
@@ -175,6 +165,21 @@ func writeProjectShellReplay(ctx context.Context, ws *websocket.Conn, replay ter
 		}
 	}
 	return writeProjectShellFrame(ctx, ws, projectShellFrame{Type: "ready", Seq: &replay.Through})
+}
+
+func writeProjectShellReplayStart(ctx context.Context, ws *websocket.Conn, replay terminal.ProjectShellReplay) error {
+	if replay.Reset {
+		if err := writeProjectShellFrame(ctx, ws, projectShellFrame{Type: "reset", Seq: &replay.ScreenSequence}); err != nil {
+			return err
+		}
+	}
+	if err := writeProjectShellFrame(ctx, ws, projectShellFrame{Type: "size", Cols: replay.Cols, Rows: replay.Rows}); err != nil {
+		return err
+	}
+	if len(replay.Screen) != 0 {
+		return writeProjectShellEvent(ctx, ws, terminal.ProjectShellEvent{Sequence: replay.ScreenSequence, Data: replay.Screen})
+	}
+	return nil
 }
 
 func (s *Server) projectShellStream(w http.ResponseWriter, req *http.Request) {
@@ -211,8 +216,16 @@ func (s *Server) projectShellStream(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
 	ready := make(chan struct{})
-	go run.readSocket(ctx, ws, peer, ready, cancel)
+	var flow *projectShellFlow
+	if req.URL.Query().Get("flow") == "1" {
+		flow = &projectShellFlow{notify: make(chan struct{}, 1)}
+	}
+	go run.readSocket(ctx, ws, peer, ready, cancel, flow)
 	go pingProjectShell(ctx, ws, cancel)
+	if flow != nil {
+		run.streamWithFlow(ctx, ws, peer, ready, after, flow)
+		return
+	}
 	replay, events, unsubscribe := run.pty.Subscribe(after)
 	defer unsubscribe()
 	if err := writeProjectShellReplay(ctx, ws, replay); err != nil {
@@ -242,12 +255,22 @@ func (s *Server) projectShellStream(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (r *projectShellRun) readSocket(ctx context.Context, ws *websocket.Conn, peer chan bool, ready <-chan struct{}, cancel context.CancelFunc) {
+func (r *projectShellRun) readSocket(ctx context.Context, ws *websocket.Conn, peer chan bool, ready <-chan struct{}, cancel context.CancelFunc, flow *projectShellFlow) {
 	defer cancel()
 	for {
 		kind, data, err := ws.Read(ctx)
 		if err != nil {
 			return
+		}
+		var message projectShellFrame
+		if kind == websocket.MessageText {
+			if json.Unmarshal(data, &message) != nil {
+				continue
+			}
+			if message.Type == "ack" && flow != nil && message.Seq != nil {
+				flow.ack(*message.Seq)
+				continue
+			}
 		}
 		select {
 		case <-ready:
@@ -256,10 +279,6 @@ func (r *projectShellRun) readSocket(ctx context.Context, ws *websocket.Conn, pe
 		}
 		if kind == websocket.MessageBinary {
 			r.withControl(peer, func() { _ = r.pty.Write(data) })
-			continue
-		}
-		var message projectShellFrame
-		if json.Unmarshal(data, &message) != nil {
 			continue
 		}
 		switch message.Type {

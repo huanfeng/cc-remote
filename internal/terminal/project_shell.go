@@ -6,14 +6,15 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pty "github.com/aymanbagabas/go-pty"
 )
 
 const (
-	projectShellJournalBytes  = 2 << 20
-	projectShellJournalEvents = 4096
+	projectShellJournalBytes  = 16 << 20
+	projectShellJournalEvents = 64 << 10
 	projectShellSubscriber    = 128
 	projectShellWriteTimeout  = 2 * time.Second
 )
@@ -25,17 +26,23 @@ type ProjectShellEvent struct {
 	Sequence   uint64
 	Data       []byte
 	Cols, Rows int
+	// Size after the event, for seeking without scanning the journal.
+	cols, rows uint16
 }
 
-// ProjectShellReplay covers all events up through Through. Cols and Rows are
-// the dimensions at the start of the replay. A reset replaces missing history
-// with a snapshot at Through, with no earlier events.
+// ProjectShellReplay covers output through Through. Cols and Rows are the
+// dimensions before Events. A reset restores a snapshot at ScreenSequence,
+// immediately before the first retained event. Latest is the newest sequence
+// when this segment was captured.
 type ProjectShellReplay struct {
-	Events     []ProjectShellEvent
-	Cols, Rows int
-	Through    uint64
-	Reset      bool
-	Screen     []byte
+	Events         []ProjectShellEvent
+	Cols, Rows     int
+	Through        uint64
+	Reset          bool
+	Screen         []byte
+	ScreenSequence uint64
+	Latest         uint64
+	More           bool
 }
 
 // ProjectShell owns one process and its PTY for the lifetime of a run.
@@ -51,16 +58,19 @@ type ProjectShell struct {
 	resizeMu    sync.Mutex
 
 	mu          sync.Mutex
-	closing     bool
+	closing     atomic.Bool
 	cols, rows  int
-	baseCols    int
-	baseRows    int
 	sequence    uint64
 	bytes       int
 	journal     []ProjectShellEvent
+	journalHead int
+	journalSize int
 	subscribers map[chan ProjectShellEvent]struct{}
-	screen      *screen
-	modes       *modeTracker
+	watchers    map[chan struct{}]struct{}
+	// Interpret only the evicted prefix. Recent output is replayed verbatim, and
+	// the live PTY never has to maintain a second screen before history fills.
+	screen *screen
+	modes  *modeTracker
 }
 
 // StartProjectShell starts the platform's interactive shell in dir.
@@ -102,7 +112,7 @@ func startProjectShell(dir, exe string, args []string) (*ProjectShell, error) {
 	}
 	s := &ProjectShell{
 		pty: p, cmd: c, done: make(chan struct{}), processDone: make(chan struct{}), readDone: make(chan struct{}),
-		cols: cols, rows: rows, baseCols: cols, baseRows: rows,
+		cols: cols, rows: rows,
 		subscribers: make(map[chan ProjectShellEvent]struct{}), screen: newScreen(cols, rows), modes: newModeTracker(),
 	}
 	go s.read()
@@ -118,8 +128,6 @@ func (s *ProjectShell) read() {
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
 			s.mu.Lock()
-			s.screen.write(chunk)
-			s.modes.observe(chunk)
 			s.publishLocked(ProjectShellEvent{Data: chunk})
 			s.mu.Unlock()
 		}
@@ -152,21 +160,52 @@ func (s *ProjectShell) wait() {
 		close(ch)
 		delete(s.subscribers, ch)
 	}
+	for ch := range s.watchers {
+		close(ch)
+		delete(s.watchers, ch)
+	}
 }
 
 func (s *ProjectShell) publishLocked(event ProjectShellEvent) {
 	s.sequence++
 	event.Sequence = s.sequence
-	s.journal = append(s.journal, event)
-	s.bytes += len(event.Data)
-	for s.bytes > projectShellJournalBytes || len(s.journal) > projectShellJournalEvents {
-		old := s.journal[0]
+	event.cols, event.rows = uint16(s.cols), uint16(s.rows)
+	for s.journalSize > 0 && (s.bytes+len(event.Data) > projectShellJournalBytes || s.journalSize == projectShellJournalEvents) {
+		old := s.journal[s.journalHead]
 		s.bytes -= len(old.Data)
 		if old.Cols != 0 {
-			s.baseCols, s.baseRows = old.Cols, old.Rows
+			s.screen.resize(old.Cols, old.Rows)
+		} else {
+			modeBytes := old.Data
+			if s.screen.state == stCSI || s.screen.state == stEsc {
+				// A mode-setting CSI can straddle two PTY reads.
+				modeBytes = []byte{0x1b}
+				if s.screen.state == stCSI {
+					modeBytes = append(append(modeBytes, '['), s.screen.seq...)
+				}
+				modeBytes = append(modeBytes, old.Data...)
+			}
+			s.screen.write(old.Data)
+			s.modes.observe(modeBytes)
 		}
-		s.journal[0] = ProjectShellEvent{}
-		s.journal = s.journal[1:]
+		s.journal[s.journalHead] = ProjectShellEvent{}
+		s.journalHead = (s.journalHead + 1) % len(s.journal)
+		s.journalSize--
+	}
+	if s.journalSize == len(s.journal) {
+		grown := make([]ProjectShellEvent, max(128, 2*len(s.journal)))
+		n := copy(grown, s.journal[s.journalHead:])
+		copy(grown[n:], s.journal[:s.journalHead])
+		s.journal, s.journalHead = grown, 0
+	}
+	s.journal[(s.journalHead+s.journalSize)%len(s.journal)] = event
+	s.journalSize++
+	s.bytes += len(event.Data)
+	for ch := range s.watchers {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
 	for ch := range s.subscribers {
 		select {
@@ -179,27 +218,79 @@ func (s *ProjectShell) publishLocked(event ProjectShellEvent) {
 	}
 }
 
+// WatchOutput notifies a reader that output is available. Signals coalesce;
+// bytes stay in the shared journal until the reader requests them. A closed
+// channel means the run ended, but there can still be unread output.
+func (s *ProjectShell) WatchOutput() (<-chan struct{}, func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch := make(chan struct{}, 1)
+	if isClosed(s.done) {
+		close(ch)
+	} else {
+		if s.watchers == nil {
+			s.watchers = make(map[chan struct{}]struct{})
+		}
+		s.watchers[ch] = struct{}{}
+	}
+	return ch, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if _, watching := s.watchers[ch]; watching {
+			delete(s.watchers, ch)
+			close(ch)
+		}
+	}
+}
+
+// ReadOutput returns the next output segment. maxBytes is a soft limit on
+// event data and framing, excluding the snapshot. A positive budget still
+// permits the first event so a cursor can always advance.
+func (s *ProjectShell) ReadOutput(after uint64, maxBytes int) ProjectShellReplay {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readOutputLocked(after, maxBytes)
+}
+
+func (s *ProjectShell) readOutputLocked(after uint64, maxBytes int) ProjectShellReplay {
+	oldestCursor := s.sequence - uint64(s.journalSize)
+	replay := ProjectShellReplay{Cols: s.screen.cols, Rows: s.screen.rows, Latest: s.sequence}
+	if after < oldestCursor || after > s.sequence {
+		replay.Reset = true
+		replay.ScreenSequence = oldestCursor
+		replay.Screen = shellScreenSnapshot(s.screen, s.modes)
+		after = oldestCursor
+	}
+	replay.Through = after
+	idx := int(after - oldestCursor)
+	if idx > 0 {
+		last := s.journal[(s.journalHead+idx-1)%len(s.journal)]
+		replay.Cols, replay.Rows = int(last.cols), int(last.rows)
+	}
+	if maxBytes <= 0 && idx < s.journalSize {
+		replay.Events = make([]ProjectShellEvent, 0, s.journalSize-idx)
+	}
+	used := 0
+	for ; idx < s.journalSize; idx++ {
+		event := s.journal[(s.journalHead+idx)%len(s.journal)]
+		cost := len(event.Data) + 24
+		if maxBytes > 0 && used > 0 && used+cost > maxBytes {
+			replay.More = true
+			break
+		}
+		replay.Events = append(replay.Events, event)
+		replay.Through = event.Sequence
+		used += cost
+	}
+	return replay
+}
+
 // Subscribe atomically captures catch-up output and attaches a live subscriber.
 // A slow subscriber's channel is closed so it can reattach with a fresh cursor.
 func (s *ProjectShell) Subscribe(after uint64) (ProjectShellReplay, <-chan ProjectShellEvent, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	replay := ProjectShellReplay{Through: s.sequence, Cols: s.baseCols, Rows: s.baseRows}
-	oldestCursor := s.sequence - uint64(len(s.journal))
-	if after < oldestCursor || after > s.sequence {
-		replay.Reset = true
-		replay.Cols, replay.Rows = s.cols, s.rows
-		replay.Screen = shellScreenSnapshot(s.screen, s.modes)
-	} else {
-		index := int(after - oldestCursor)
-		for i := index - 1; i >= 0; i-- {
-			if event := s.journal[i]; event.Cols != 0 {
-				replay.Cols, replay.Rows = event.Cols, event.Rows
-				break
-			}
-		}
-		replay.Events = append([]ProjectShellEvent(nil), s.journal[index:]...)
-	}
+	replay := s.readOutputLocked(after, 0)
 	ch := make(chan ProjectShellEvent, projectShellSubscriber)
 	if isClosed(s.done) {
 		close(ch)
@@ -226,8 +317,33 @@ func shellScreenSnapshot(screen *screen, modes *modeTracker) []byte {
 			fmt.Fprintf(&frame, "\x1b[%d;1H%s", row+1, line)
 		}
 	}
-	fmt.Fprintf(&frame, "\x1b[?7h\x1b[%d;%dH", screen.y+1, screen.x+1)
+	x := screen.x
+	if screen.pendingWrap && x > 0 && screen.cells[screen.y][x].r == 0 {
+		x-- // Position at the left half when a wide character filled the row.
+	}
+	fmt.Fprintf(&frame, "\x1b[?7h\x1b[%d;%dH", screen.y+1, x+1)
+	if screen.pendingWrap {
+		// Repainting the rightmost cell restores xterm's pending auto-wrap.
+		frame.WriteRune(screen.cells[screen.y][x].r)
+	}
 	frame.Write(modes.replay())
+	// The checkpoint can bisect a Unicode character or an escape sequence.
+	// Leave xterm's parser waiting for its continuation in the first raw event.
+	switch screen.state {
+	case stGround:
+		frame.Write(screen.seq)
+	case stEsc:
+		frame.WriteByte(0x1b)
+	case stCSI:
+		frame.WriteString("\x1b[")
+		frame.Write(screen.seq)
+	case stCharset:
+		frame.WriteString("\x1b(")
+	case stString:
+		frame.WriteString("\x1b]")
+	case stStringEsc:
+		frame.WriteString("\x1b]\x1b")
+	}
 	return []byte(frame.String())
 }
 
@@ -235,9 +351,7 @@ func shellScreenSnapshot(screen *screen, modes *modeTracker) []byte {
 func (s *ProjectShell) Done() <-chan struct{} { return s.done }
 
 func (s *ProjectShell) stopping() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closing || isClosed(s.processDone)
+	return s.closing.Load() || isClosed(s.processDone)
 }
 
 // Write forwards keys without interpreting them as shell commands.
@@ -274,7 +388,7 @@ func (s *ProjectShell) Resize(cols, rows int) error {
 func (s *ProjectShell) resize(cols, rows int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing || isClosed(s.processDone) {
+	if s.stopping() {
 		return errProjectShellExited
 	}
 	if (cols == s.cols) && (rows == s.rows) {
@@ -284,7 +398,6 @@ func (s *ProjectShell) resize(cols, rows int) error {
 		return err
 	}
 	s.cols, s.rows = cols, rows
-	s.screen.resize(cols, rows)
 	s.publishLocked(ProjectShellEvent{Cols: cols, Rows: rows})
 	return nil
 }
@@ -312,11 +425,11 @@ func (s *ProjectShell) Redraw() error {
 // Callers that need to wait for cleanup can wait on Done.
 func (s *ProjectShell) Close() {
 	s.mu.Lock()
-	if s.closing || isClosed(s.processDone) {
+	if s.stopping() {
 		s.mu.Unlock()
 		return
 	}
-	s.closing = true
+	s.closing.Store(true)
 	s.mu.Unlock()
 	go func() {
 		stopProjectShellProcess(s.cmd.Process, s.processDone)

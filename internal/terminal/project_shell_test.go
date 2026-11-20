@@ -101,24 +101,112 @@ func TestProjectShellStartsAndStopsPlatformShell(t *testing.T) {
 }
 
 func TestProjectShellTruncatedReplayRestoresScreen(t *testing.T) {
-	shell := &ProjectShell{
-		done: make(chan struct{}), cols: 30, rows: 8, baseCols: 30, baseRows: 8,
-		subscribers: make(map[chan ProjectShellEvent]struct{}), screen: newScreen(30, 8), modes: newModeTracker(),
-	}
-	for i := 0; i <= projectShellJournalEvents; i++ {
+	shell := newProjectShellJournalTest()
+	shell.publishLocked(ProjectShellEvent{Data: []byte("project $ 你好\x1b[?20")})
+	shell.publishLocked(ProjectShellEvent{Data: []byte("04h")})
+	// Put half of a UTF-8 character before the retention boundary.
+	split := []byte("界")
+	shell.publishLocked(ProjectShellEvent{Data: split[:1]})
+	shell.publishLocked(ProjectShellEvent{Data: split[1:]})
+	for range projectShellJournalEvents - 1 {
 		shell.publishLocked(ProjectShellEvent{Data: []byte("\x1b[m")})
 	}
-	prompt := []byte("project $ 你好\x1b[?2004h")
-	shell.screen.write(prompt)
-	shell.modes.observe(prompt)
-	shell.publishLocked(ProjectShellEvent{Data: prompt})
 	replay, _, detach := shell.Subscribe(0)
 	defer detach()
-	if !replay.Reset || replay.Through != shell.sequence || len(replay.Events) != 0 {
+	if !replay.Reset || replay.ScreenSequence != 3 || replay.Through != shell.sequence || len(replay.Events) != projectShellJournalEvents {
 		t.Fatalf("wrong reset replay: reset=%v through=%d events=%d", replay.Reset, replay.Through, len(replay.Events))
 	}
 	if got := string(replay.Screen); !strings.Contains(got, "project $ 你好") || !strings.Contains(got, "\x1b[1;15H\x1b[?2004h") {
 		t.Fatalf("screen lost wide characters, cursor, or paste mode: %q", got)
+	}
+	if !bytes.HasSuffix(replay.Screen, split[:1]) || !bytes.Equal(replay.Events[0].Data, split[1:]) || replay.Events[0].Sequence != 4 {
+		t.Fatalf("snapshot and retained output lost a split character")
+	}
+}
+
+func TestProjectShellRetainsBurstOfSmallOutputFrames(t *testing.T) {
+	shell := newProjectShellJournalTest()
+	for range 12_000 {
+		shell.publishLocked(ProjectShellEvent{Data: []byte("log line\r\n")})
+	}
+	replay, _, detach := shell.Subscribe(0)
+	defer detach()
+	if replay.Reset || len(replay.Events) != 12_000 {
+		t.Fatalf("a small log burst should be fully retained: reset=%v events=%d", replay.Reset, len(replay.Events))
+	}
+}
+
+func TestProjectShellReadsOutputInBoundedSegments(t *testing.T) {
+	shell := newProjectShellJournalTest()
+	updates, detach := shell.WatchOutput()
+	defer detach()
+	for range 3_000 {
+		shell.publishLocked(ProjectShellEvent{Data: []byte("log\r\n")})
+	}
+	shell.cols, shell.rows = 45, 15
+	shell.publishLocked(ProjectShellEvent{Cols: 45, Rows: 15})
+	shell.publishLocked(ProjectShellEvent{Data: []byte("exit prompt")})
+	select {
+	case _, open := <-updates:
+		if !open {
+			t.Fatal("slow reader was disconnected")
+		}
+	default:
+		t.Fatal("burst produced no wake-up")
+	}
+	first := shell.ReadOutput(0, 58) // Two five-byte events and their framing.
+	if first.Reset || len(first.Events) != 2 || first.Through != 2 || first.Latest != 3002 || !first.More {
+		t.Fatalf("wrong first output segment: %+v", first)
+	}
+	last := shell.ReadOutput(3001, 100)
+	if last.Reset || len(last.Events) != 1 || last.Through != 3002 || last.More || last.Cols != 45 || last.Rows != 15 {
+		t.Fatalf("wrong last output segment: %+v", last)
+	}
+}
+
+func TestProjectShellHistoryByteBudget(t *testing.T) {
+	shell := newProjectShellJournalTest()
+	const line = "dense log output\r\n"
+	chunk := bytes.Repeat([]byte(line), (32<<10)/len(line))
+	retained := projectShellJournalBytes / len(chunk)
+	for range retained + 4 {
+		shell.publishLocked(ProjectShellEvent{Data: chunk})
+	}
+	segment := shell.ReadOutput(0, 2*(len(chunk)+24))
+	if shell.bytes > projectShellJournalBytes || !segment.Reset || segment.ScreenSequence != 4 ||
+		segment.Through != 6 || segment.Latest != uint64(retained+4) || len(segment.Events) != 2 || !segment.More {
+		t.Fatalf("wrong bounded history: bytes=%d reset=%v checkpoint=%d through=%d latest=%d events=%d more=%v",
+			shell.bytes, segment.Reset, segment.ScreenSequence, segment.Through, segment.Latest, len(segment.Events), segment.More)
+	}
+}
+
+func TestProjectShellScreenScrollReusesRows(t *testing.T) {
+	screen := newScreen(20, 3)
+	screen.write([]byte("\x1b[2moverwritten content\x1b[0m\r\n"))
+	log := []byte("long output\r\nshort\r\nlast")
+	if allocs := testing.AllocsPerRun(30, func() { screen.write(log) }); allocs != 0 {
+		t.Errorf("screen scrolling allocated %.1f times per write", allocs)
+	}
+	screen.write([]byte("\r\nfirst\r\nsecond\r\nthird"))
+	if got := strings.Join(screen.lines(), "|"); got != "first|second|third" {
+		t.Fatalf("scroll retained overwritten cells: %q", got)
+	}
+}
+
+func BenchmarkProjectShellScreenLongOutput(b *testing.B) {
+	screen := newScreen(120, 40)
+	log := bytes.Repeat([]byte("11-20 08:45:12: example continuous log output with more text here\r\n"), 500)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(log)))
+	for b.Loop() {
+		screen.write(log)
+	}
+}
+
+func newProjectShellJournalTest() *ProjectShell {
+	return &ProjectShell{
+		done: make(chan struct{}), cols: 30, rows: 8,
+		subscribers: make(map[chan ProjectShellEvent]struct{}), screen: newScreen(30, 8), modes: newModeTracker(),
 	}
 }
 

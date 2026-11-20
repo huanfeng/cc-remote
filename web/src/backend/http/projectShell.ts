@@ -21,13 +21,18 @@ function isSequence(value: unknown): value is number {
 export class HttpProjectShellStream implements ProjectShellStream {
   private readonly abort = new AbortController();
   private readonly encoder = new TextEncoder();
-  private readonly readyTimer: ReturnType<typeof setTimeout>;
+  private readyTimer?: ReturnType<typeof setTimeout>;
+  private lastActivity = Date.now();
   private readonly client: HttpClient;
   private readonly handlers: ProjectShellHandlers;
   private socket?: WebSocketLike;
   private closed = false;
   private ready = false;
   private controlling = false;
+  private flowControl = false;
+  private acknowledged = 0;
+  private pendingAck = 0;
+  private ackQueued = false;
 
   constructor(
     client: HttpClient,
@@ -38,9 +43,7 @@ export class HttpProjectShellStream implements ProjectShellStream {
   ) {
     this.client = client;
     this.handlers = handlers;
-    this.readyTimer = setTimeout(() => {
-      this.finish('failed', this.client.t('Project terminal connection timed out', '连接项目终端超时'));
-    }, OPEN_TIMEOUT);
+    this.watchReady(OPEN_TIMEOUT);
     handlers.onState('connecting');
     void this.connect(Socket, path, after);
   }
@@ -60,7 +63,7 @@ export class HttpProjectShellStream implements ProjectShellStream {
     }
     if (this.closed) return;
 
-    const query = new URLSearchParams({ ticket, after: String(after) });
+    const query = new URLSearchParams({ ticket, after: String(after), flow: '1' });
     try {
       this.socket = new Socket(socketUrl(this.client.url(`${path}/stream?${query}`)));
     } catch {
@@ -79,6 +82,7 @@ export class HttpProjectShellStream implements ProjectShellStream {
 
   private message(data: unknown) {
     if (this.closed) return;
+    if (!this.ready) this.lastActivity = Date.now();
     if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
       const view = data instanceof ArrayBuffer
         ? new DataView(data)
@@ -96,6 +100,9 @@ export class HttpProjectShellStream implements ProjectShellStream {
     if (!frame) return;
 
     switch (frame.type) {
+      case 'flow':
+        this.flowControl = true;
+        break;
       case 'size':
         if (frame.cols && frame.rows && isSequence(frame.cols) && isSequence(frame.rows)) {
           this.handlers.onSize({ cols: frame.cols, rows: frame.rows }, isSequence(frame.seq) ? frame.seq : undefined);
@@ -112,12 +119,38 @@ export class HttpProjectShellStream implements ProjectShellStream {
         this.handlers.onReady(frame.seq);
         break;
       case 'reset':
-        if (isSequence(frame.seq)) this.handlers.onReset(frame.seq);
+        if (isSequence(frame.seq)) {
+          this.acknowledged = Math.min(this.acknowledged, frame.seq - 1);
+          this.pendingAck = 0;
+          this.handlers.onReset(frame.seq);
+        }
         break;
       case 'exit':
         this.finish('exited', frame.detail);
         break;
     }
+  }
+
+  private watchReady(delay: number) {
+    this.readyTimer = setTimeout(() => {
+      const remaining = OPEN_TIMEOUT - (Date.now() - this.lastActivity);
+      if (remaining > 0) this.watchReady(remaining);
+      else this.finish('failed', this.client.t('Project terminal connection timed out', '连接项目终端超时'));
+    }, delay);
+  }
+
+  ack(seq: number) {
+    if (!this.flowControl || !isSequence(seq) || seq <= this.acknowledged) return;
+    this.pendingAck = Math.max(this.pendingAck, seq);
+    if (this.ackQueued) return;
+    this.ackQueued = true;
+    queueMicrotask(() => {
+      this.ackQueued = false;
+      if (this.pendingAck > this.acknowledged && this.socket?.readyState === OPEN) {
+        this.socket.send(JSON.stringify({ type: 'ack', seq: this.pendingAck }));
+        this.acknowledged = this.pendingAck;
+      }
+    });
   }
 
   private finish(state: 'exited' | 'failed', detail?: string, retry?: boolean) {

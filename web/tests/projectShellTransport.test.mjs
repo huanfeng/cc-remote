@@ -58,7 +58,7 @@ test('project Shell uses an authenticated run-specific ticket and applies ordere
   assert.equal(requests[0].url.pathname, '/api/project-shells/shell%2Fid/runs/run%232/ticket');
   assert.equal(requests[0].init.method, 'POST');
   assert.equal(requests[0].init.headers.Authorization, 'Bearer secret');
-  assert.equal(socket.url.href, 'wss://host.test/api/project-shells/shell%2Fid/runs/run%232/stream?ticket=once&after=17');
+  assert.equal(socket.url.href, 'wss://host.test/api/project-shells/shell%2Fid/runs/run%232/stream?ticket=once&after=17&flow=1');
 
   socket.frame({ type: 'control', held: true });
   stream.send('ignored before replay');
@@ -85,6 +85,24 @@ test('project Shell uses an authenticated run-specific ticket and applies ordere
   socket.frame({ type: 'exit', detail: 'stopped' });
   assert.deepEqual(events.at(-1), ['state', 'exited', 'stopped']);
   assert.equal(socket.readyState, 3);
+});
+
+test('project Shell acknowledges applied output during replay only when the host negotiates flow control', { timeout: 3000 }, async t => {
+  const { backend, connected } = harness();
+  t.after(() => backend.dispose());
+  const { handlers } = listener();
+  const stream = backend.openProjectShell('shell', 'run', 0, handlers);
+  const socket = await connected;
+  stream.ack?.(1);
+  assert.deepEqual(socket.sent, []);
+  socket.frame({ type: 'flow' });
+  socket.output('replay', 3);
+  assert.deepEqual(socket.sent, []);
+  stream.ack?.(3);
+  stream.ack?.(3);
+  stream.ack?.(2);
+  await Promise.resolve();
+  assert.deepEqual(socket.sent, ['{"type":"ack","seq":3}']);
 });
 
 test('project Shell metadata uses its own API and a lost run stops automatic transport retries', { timeout: 3000 }, async t => {

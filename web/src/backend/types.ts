@@ -469,6 +469,7 @@ export interface ProjectShellStart {
 
 export interface ProjectShellStream extends TerminalStream {
   send(data: string | Uint8Array): void;
+  ack?(seq: number): void;
   take(): void;
 }
 

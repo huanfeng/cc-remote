@@ -6,6 +6,7 @@ import type { Backend } from '@/backend/backend';
 import type { ProjectShellStream } from '@/backend/types';
 import { BASE_FONT_DESKTOP, BASE_FONT_PHONE, backoffDelay, MAX_ATTEMPTS, RESIZE_THROTTLE_MS, throttleLatest, usableDims } from '@/features/terminal/terminalSize';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
+import { projectShellOutput } from './projectShellOutput';
 
 export interface ShellTerminalState {
   status: 'connecting' | 'online' | 'retrying' | 'failed' | 'exited';
@@ -16,14 +17,15 @@ export interface ShellTerminalState {
 
 export const initialShellTerminalState: ShellTerminalState = { status: 'connecting', control: false, truncated: false, detail: '' };
 
-export function createProjectShellTerminal({ backend, shellId, runId, element, mobile, onState }: {
+export function createProjectShellTerminal({ backend, shellId, runId, element, mobile, visible = true, onState }: {
   backend: Backend; shellId: string; runId: string; element: HTMLDivElement; mobile: boolean;
+  visible?: boolean;
   onState(state: ShellTerminalState): void;
 }) {
   const terminal = new Terminal({
     fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
     fontSize: mobile ? BASE_FONT_PHONE : BASE_FONT_DESKTOP,
-    scrollback: 3000,
+    scrollback: mobile ? 15000 : 30000,
     allowProposedApi: true,
     theme: mergeTerminalTheme(undefined),
     disableStdin: true,
@@ -41,20 +43,17 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   let stream: ProjectShellStream | undefined;
   let connected = false;
   let controlling = false;
-  let disposed = false;
   let generation = 0;
   let cursor = 0;
   let attempts = 0;
   let retryTimer = 0;
   let sentSize = '';
   let needsRedraw = false;
-  let pending = Promise.resolve();
-
-  // Xterm's write completes asynchronously. Applying all sequenced events in order
-  // keeps a reconnect cursor consistent with both the displayed output and PTY size.
-  const enqueue = (operation: () => void | Promise<void>) => {
-    pending = pending.then(() => { if (!disposed) return operation(); });
+  const markApplied = (seq: number) => {
+    cursor = seq;
+    stream?.ack?.(cursor);
   };
+  const output = projectShellOutput((bytes, parsed) => terminal.write(bytes, parsed), markApplied);
   const update = (patch: Partial<ShellTerminalState>) => {
     state = { ...state, ...patch };
     onState(state);
@@ -65,14 +64,14 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   const binary = terminal.onBinary(value => send(Uint8Array.from(value, char => char.charCodeAt(0))));
 
   const resize = throttleLatest(RESIZE_THROTTLE_MS, ({ cols, rows }: { cols: number; rows: number }) => {
-    if (!sending()) return;
+    if (!visible || !sending()) return;
     const key = `${cols}x${rows}`;
     if (key === sentSize || (cols === terminal.cols && rows === terminal.rows)) return;
     sentSize = key;
     stream?.resize(cols, rows);
   }, { now: () => Date.now(), set: (callback, ms) => window.setTimeout(callback, ms), clear: handle => clearTimeout(handle as number) });
   const layout = () => {
-    if (!sending() || !element.clientWidth || !element.clientHeight) return;
+    if (!visible || !sending() || !element.clientWidth || !element.clientHeight) return;
     const size = fit.proposeDimensions();
     if (usableDims(size)) resize.push(size);
   };
@@ -90,10 +89,8 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
     clearTimeout(retryTimer);
   };
 
-  const applyControl = () => {
-    terminal.options.disableStdin = !sending();
-    if (connected) update({ control: controlling });
-    if (!sending()) return;
+  const refreshViewport = () => {
+    if (!visible || !sending()) return;
     layout();
     if (needsRedraw) {
       needsRedraw = false;
@@ -101,11 +98,19 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
     }
   };
 
+  const applyControl = () => {
+    terminal.options.disableStdin = !sending();
+    if (connected) update({ control: controlling });
+    refreshViewport();
+  };
+
   const connect = () => {
     disconnect();
     const current = generation;
-    enqueue(() => {
+    // Let already-delivered frames finish before asking the host where to resume.
+    output.barrier(() => {
       if (current !== generation) return;
+      let received = cursor;
       stream = backend.openProjectShell(shellId, runId, cursor, {
         onState(status, detail = '', options) {
           if (current !== generation || status === 'connecting') return;
@@ -121,7 +126,8 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
         },
         onReset(seq) {
           if (current !== generation) return;
-          enqueue(() => {
+          received = seq - 1;
+          output.barrier(() => {
             terminal.reset();
             cursor = seq - 1;
             needsRedraw = true;
@@ -129,18 +135,16 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
           });
         },
         onData(bytes, seq) {
-          if (current !== generation) return;
-          enqueue(() => {
-            if (seq <= cursor) return;
-            return new Promise<void>(resolve => terminal.write(bytes, () => { cursor = seq; resolve(); }));
-          });
+          if (current !== generation || seq <= received) return;
+          received = seq;
+          output.data(bytes, seq);
         },
         onSize({ cols, rows }, seq) {
-          if (current !== generation) return;
-          enqueue(() => {
-            if (seq !== undefined && seq <= cursor) return;
+          if (current !== generation || (seq !== undefined && seq <= received)) return;
+          if (seq !== undefined) received = seq;
+          output.barrier(() => {
             if (cols !== terminal.cols || rows !== terminal.rows) terminal.resize(cols, rows);
-            if (seq !== undefined) cursor = seq;
+            if (seq !== undefined) markApplied(seq);
           });
         },
         onControl(held) {
@@ -151,9 +155,10 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
         },
         onReady(seq) {
           if (current !== generation) return;
-          enqueue(() => {
+          received = Math.max(received, seq);
+          output.barrier(() => {
             if (current !== generation) return;
-            cursor = Math.max(cursor, seq);
+            markApplied(Math.max(cursor, seq));
             connected = true;
             attempts = 0;
             update({ status: 'online', control: controlling, detail: '' });
@@ -166,7 +171,15 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
 
   connect();
   return {
-    focus: () => terminal.focus(),
+    focus: () => { if (visible) terminal.focus(); },
+    setVisible(next: boolean) {
+      if (visible === next) return;
+      visible = next;
+      if (visible) {
+        terminal.refresh(0, terminal.rows - 1);
+        refreshViewport();
+      } else resize.cancel();
+    },
     send,
     take: () => { if (connected) stream?.take(); },
     applyTheme: () => { terminal.options.theme = mergeTerminalTheme(undefined); },
@@ -176,8 +189,8 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
       connect();
     },
     dispose() {
-      disposed = true;
       disconnect();
+      output.dispose();
       observer.disconnect();
       resize.cancel();
       data.dispose();
