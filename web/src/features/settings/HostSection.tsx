@@ -50,7 +50,13 @@ export function HostSection({ mobile }: { mobile: boolean }) {
     }
   };
 
-  const shownColor = draft?.color || identity?.defaultColor || '';
+  const defaultColor = identity?.defaultColor ?? '';
+  const autoColor = identity?.palette.find(color => color.key === defaultColor)?.hex
+    ?? (/^#[\da-f]{6}$/i.test(defaultColor) ? defaultColor : undefined)
+    ?? (!identity?.color ? identity?.shownColor : undefined)
+    ?? identity?.palette[0]?.hex
+    ?? '#293c2e';
+  const shownColor = draft?.color || autoColor;
   const versions: { name: string; value: string }[] = [
     { name: 'CC Remote', value: info?.version ? `v${info.version}` : t('Not reported', '未报告') },
     { name: 'Claude Code', value: info?.claudeAvailable === false ? t('Unavailable', '不可用') : info?.claudeVersion || t('Installed', '已安装') },
@@ -94,7 +100,7 @@ export function HostSection({ mobile }: { mobile: boolean }) {
                 className={cn('w-56 max-sm:w-full', mobile && 'h-10 text-mobile-input-safe')} />}
             />
             <Row label={t('Colour', '颜色')} stack>
-              <ColorChoices value={draft.color} palette={identity.palette} auto={identity.defaultColor} onChange={color => setDraft({ ...draft, color })} />
+              <ColorChoices value={draft.color} palette={identity.palette} auto={autoColor} onChange={color => setDraft({ ...draft, color })} />
             </Row>
             <Row label={t('Icon', '图标')} description={t('A preset, or a few characters or an emoji of your own.', '预设图标，或者几个字符、一个 emoji。')} stack>
               <IconChoices value={draft.icon} color={shownColor} onChange={icon => setDraft({ ...draft, icon })} mobile={mobile} />
@@ -123,8 +129,9 @@ function ColorChoices({ value, palette, auto, onChange }: { value: string; palet
   return (
     <div role="radiogroup" aria-label={t('Colour', '颜色')} className="flex flex-wrap items-center gap-2">
       <button type="button" role="radio" aria-checked={!chosen} title={t('Automatic', '自动')} onClick={() => onChange('')}
-        className={cn(swatch, 'h-8 w-auto rounded-full border border-border px-3 text-ui-xs text-foreground-subtle max-md:h-9', !chosen && 'ring-2 ring-foreground/60')}>
-        <span className="mr-1.5 size-3 rounded-full" style={{ background: auto }} />{t('Auto', '自动')}
+        className={cn('inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-ui-xs leading-none text-foreground-subtle ring-offset-2 ring-offset-card transition-shadow max-md:h-9', !chosen && 'ring-2 ring-foreground/60')}>
+        <span aria-hidden="true" className="size-3 shrink-0 rounded-full border border-foreground/20" style={{ backgroundColor: auto }} />
+        <span>{t('Auto', '自动')}</span>
       </button>
       {palette.map(p => {
         const on = chosen === p.hex.toLowerCase();

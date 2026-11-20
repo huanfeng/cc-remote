@@ -3,7 +3,7 @@
 // approvals unblock the turn, queued messages are delivered after it, and the
 // terminal is a small fake TUI that echoes and answers.
 import { nanoid } from 'nanoid';
-import { BackendError, type Backend, type ClaudeSettings, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
+import { BackendError, type Backend, type ClaudeSettings, type StatuslineOptions, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
   ProjectShell, ProjectShellStream,
@@ -35,7 +35,7 @@ export class MockBackend implements Backend {
   private suppliers: SupplierConfigs = { revision: 'mock', ccSwitchHidden: false, profiles: [], capabilities: { advanced: true, modelNames: true, ccSwitchImport: true } };
   private identityValue = {
     name: 'Cartech 工作站', color: '#3b82f6', icon: 'laptop', shownName: 'Cartech 工作站', shownColor: '#3b82f6',
-    defaultName: 'CARTECH-PC', defaultColor: '#3b82f6',
+    defaultName: 'CARTECH-PC', defaultColor: 'c0',
     palette: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'].map((hex, i) => ({ key: `c${i}`, hex })),
   };
 
@@ -427,18 +427,18 @@ export class MockBackend implements Backend {
   }
   private claude: ClaudeSettings = { model: 'opus', effortLevel: 'high', permissionMode: 'default', revision: 'r3', path: 'C:/Users/Cartech/.claude/settings.json' };
   async claudeSettings() { await latency(); return clone(this.claude); }
-  private statuslineValue: StatuslineSettings = { installed: false, style: '', revision: 's1' };
+  private statuslineValue: StatuslineSettings = { installed: false, style: '', revision: 's1', capabilities: { customize: true, shortLabels: true } };
   async statusline() { await latency(); return clone(this.statuslineValue); }
-  async saveStatusline(v: { style: StatuslineStyle; revision: string }) {
+  async saveStatusline(v: { style: StatuslineStyle; revision: string; options?: StatuslineOptions }) {
     await latency();
     if (v.revision !== this.statuslineValue.revision) throw new BackendError('Settings changed elsewhere', 409);
-    this.statuslineValue = { installed: true, style: v.style, revision: `${v.revision}+` };
+    this.statuslineValue = { ...this.statuslineValue, installed: true, style: v.style, options: v.options, revision: `${v.revision}+` };
     return clone(this.statuslineValue);
   }
   async removeStatusline(v: { revision: string }) {
     await latency();
     if (v.revision !== this.statuslineValue.revision) throw new BackendError('Settings changed elsewhere', 409);
-    this.statuslineValue = { installed: false, style: '', revision: `${v.revision}+` };
+    this.statuslineValue = { ...this.statuslineValue, installed: false, style: '', options: undefined, revision: `${v.revision}+` };
     return clone(this.statuslineValue);
   }
   async saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }) {
@@ -451,7 +451,8 @@ export class MockBackend implements Backend {
   async identity() { await latency(); return clone(this.identityValue); }
   async saveIdentity(v: { name: string; color: string; icon: string }) {
     await latency();
-    Object.assign(this.identityValue, v, { shownName: v.name || this.identityValue.defaultName, shownColor: v.color || this.identityValue.defaultColor });
+    const autoColor = this.identityValue.palette.find(color => color.key === this.identityValue.defaultColor)?.hex;
+    Object.assign(this.identityValue, v, { shownName: v.name || this.identityValue.defaultName, shownColor: v.color || autoColor });
     return clone(this.identityValue);
   }
   async oauthProfiles() { await latency(); return clone(this.oauth); }

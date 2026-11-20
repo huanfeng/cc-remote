@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CopyPlus, GripVertical, KeyRound, Pencil, Plus, Server, Trash2 } from 'lucide-react';
-import { Reorder, useDragControls } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
+import { CopyPlus, KeyRound, Pencil, Plus, Server, Trash2 } from 'lucide-react';
+import { Reorder } from 'motion/react';
 import { useBackend } from '@/backend/backend';
 import type { SupplierConfig, SupplierConfigs } from '@/backend/supplierConfig';
 import type { Provider, SupplierProfile } from '@/backend/types';
@@ -15,41 +15,10 @@ import { t } from '@/lib/i18n';
 import { SectionHeader, useGuard } from './parts';
 import { SupplierEditor } from './SupplierEditor';
 import { OAuthTokenEditor } from './OAuthTokenEditor';
+import { SettingsReorderRow } from './SettingsReorderRow';
 import type { SupplierDraft } from './supplierWizardState';
 
 type OAuthEntry = { id: string; name: string; notes?: string };
-
-function SupplierRow({ id, name, disabled, onMove, onDragEnd, children }: {
-  id: string;
-  name: string;
-  disabled: boolean;
-  onMove: (direction: -1 | 1) => void;
-  onDragEnd: (cancelled: boolean) => void;
-  children: ReactNode;
-}) {
-  const controls = useDragControls();
-  return <Reorder.Item
-    value={id}
-    layout="position"
-    dragListener={false}
-    dragControls={controls}
-    dragMomentum={false}
-    whileDrag={{ boxShadow: '0 4px 12px rgb(0 0 0 / 0.15)' }}
-    onDragEnd={event => onDragEnd(event.type === 'pointercancel')}
-    className="relative flex min-w-0 items-center gap-2 border-t border-border/60 bg-card px-2 py-3 first:rounded-t-xl first:border-t-0 last:rounded-b-xl sm:px-3"
-  >
-    <button type="button" disabled={disabled} aria-label={t(`Reorder ${name}`, `调整 ${name} 顺序`)}
-      title={t('Drag to reorder; use arrow keys for keyboard', '拖动排序；键盘可使用方向键')}
-      className="flex size-10 shrink-0 touch-none select-none cursor-grab items-center justify-center text-foreground-subtle active:cursor-grabbing disabled:opacity-40"
-      onPointerDown={event => { if (!disabled && event.isPrimary && event.button === 0) controls.start(event); }}
-      onKeyDown={event => {
-        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-        event.preventDefault();
-        onMove(event.key === 'ArrowUp' ? -1 : 1);
-      }}><GripVertical className="size-4" /></button>
-    {children}
-  </Reorder.Item>;
-}
 
 export function SuppliersSection({ mobile }: { mobile: boolean }) {
   const backend = useBackend();
@@ -149,14 +118,15 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
         const imported = p.id.startsWith('ccswitch:');
         const copied = collection?.profiles.some(item => item.sourceId === p.id && item.app === p.app);
         const Icon = p.kind === 'oauth' ? KeyRound : Server;
-        return <SupplierRow key={key} id={key} name={p.name} disabled={disabled || entries.length < 2}
+        return <SettingsReorderRow key={key} id={key} name={p.name} disabled={disabled || entries.length < 2}
+          className="border-t border-border/60 px-2 py-3 first:rounded-t-xl first:border-t-0 last:rounded-b-xl sm:px-3"
           onMove={direction => setOrder(moveSupplier(entries, order, key, direction))}
           onDragEnd={finishReorder}>
           <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-surface text-foreground-subtle"><Icon className="size-4" /></span>
           <div className="min-w-0 flex-1"><p className="break-words text-ui-sm font-medium">{p.name}</p><p className="break-all text-ui-xs text-foreground-subtle">{p.kind === 'oauth' ? t('OAuth · Official', 'OAuth · 官方') : imported ? 'API · CC-Switch' : local?.sourceId ? t('API · Local copy from CC-Switch', 'API · CC-Switch 本地副本') : local ? t('API · Local', 'API · 本地') : t('API · Source not provided', 'API · 来源未提供')}{local?.baseUrl ? ` · ${local.baseUrl}` : ''}</p>{(token?.notes || local?.notes) && <p className="mt-1 whitespace-pre-wrap break-words text-ui-xs text-foreground-subtle">{token?.notes || local?.notes}</p>}</div>
           {imported && collection?.capabilities?.ccSwitchImport && <Button variant="ghost" size="icon-lg" disabled={disabled || copied} aria-label={copied ? t('Already imported', '已导入') : t(`Import ${p.name}`, `导入 ${p.name}`)} title={copied ? t('Already imported', '已导入') : t('Import local copy', '导入本地副本')} onClick={() => void importOne(p.id, p.app)}><CopyPlus /></Button>}
           {(local || token) && <><Button variant="ghost" size="icon-lg" disabled={disabled} aria-label={t(`Edit ${p.name}`, `编辑 ${p.name}`)} title={t('Edit', '编辑')} onClick={() => { if (local) { setEditing(local); setWizard(true); } else if (token) setOAuthWizard({ replacing: token }); }}><Pencil /></Button><Button variant="ghost" size="icon-lg" disabled={disabled} aria-label={t(`Delete ${p.name}`, `删除 ${p.name}`)} title={t('Delete', '删除')} onClick={() => local ? setRemoving(local) : token && setRemovingOAuth(token)}><Trash2 /></Button></>}
-        </SupplierRow>;
+        </SettingsReorderRow>;
       })}
       </Reorder.Group>}
       {!entries.length && (catalog || collection || oauth) && <p className="px-4 py-6 text-ui-sm text-foreground-subtle">{t('No suppliers for this application.', '此应用暂无供应商。')}</p>}
