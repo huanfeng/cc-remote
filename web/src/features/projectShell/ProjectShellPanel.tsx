@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, ChevronDown, ChevronLeft, Columns2, Copy, GripHorizontal, MoreHorizontal, Pencil, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
+import { ArrowDownToLine, ChevronLeft, Columns2, Copy, GripHorizontal, Minus, Pencil, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import { BackendError } from '@/backend/errors';
 import type { ProjectShell } from '@/backend/types';
 import { cn } from '@/components/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuPortal, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { copyText } from '@/domain/clipboard';
@@ -16,7 +15,7 @@ import { usePrefs } from '@/lib/prefs';
 import { useResolvedDark } from '@/lib/theme';
 import { hasFeature, useApp } from '@/store/app';
 import { createProjectShellTerminal, initialShellTerminalState } from './projectShellTerminal';
-import { matchesShellPath, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
+import { findOpenProjectShell, isOpenProjectShell, matchesShellPath, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
 import { ProjectShellSearch } from './ProjectShellSearch';
 import { useProjectShellFrame } from './useProjectShellFrame';
 
@@ -31,23 +30,116 @@ const resizeHandles = [
 ] as const;
 
 type SplitDirection = 'columns' | 'rows';
-type ShellSplit = { direction: SplitDirection; first: ProjectShellTarget; secondId: string };
+type PaneGroup = { tabId: string; splitDirection?: SplitDirection };
 const shellLabel = (shell: ProjectShell) => shell.name || (shell.default ? t('Default', '默认') : shell.id.slice(0, 6));
+const shellTarget = (shell: ProjectShell): ProjectShellTarget => ({ cwd: shell.cwd, shellId: shell.id });
+const searchLabel = () => t('Search terminal output', '搜索终端输出');
 
 export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
-  const { target, activeTarget, retainedTargets, targetKey, open, close, end, shellIdFor, shells } = useProjectShellWorkspace();
+  const backend = useBackend();
+  const { target, activeTarget, retainedTargets, targetKey, open, retain, close, end, shellIdFor, shells, remember, finishRun } = useProjectShellWorkspace();
   const hostName = useApp(s => s.info?.name);
-  const [split, setSplit] = useState<ShellSplit>();
+  const tabsEnabled = useApp(s => hasFeature(s.info, 'project-shell-tabs'));
+  const groupsEnabled = useApp(s => hasFeature(s.info, 'project-shell-pane-groups'));
+  const [localGroups, setLocalGroups] = useState<Record<string, PaneGroup>>({});
+  const [searchTarget, setSearchTarget] = useState<ProjectShellTarget>();
+  const [busy, setBusy] = useState(false);
+  const mutation = useRef(false);
+  const closingShells = useRef(new Set<string>());
   const region = useRef<HTMLElement>(null);
   const { frame, handlers, reset } = useProjectShellFrame(region, !mobile && retainedTargets.length > 0);
-  const first = split && retainedTargets.includes(split.first) ? split.first : undefined;
-  const second = split && retainedTargets.find(entry => entry !== first && shellIdFor(entry) === split.secondId);
-  const direction = !mobile && first && second && (activeTarget === first || activeTarget === second) ? split?.direction : undefined;
+  const activeId = activeTarget && shellIdFor(activeTarget);
+  const activeShell = shells.find(shell => shell.id === activeId);
+  const directory = activeShell?.cwd ?? activeTarget?.cwd ?? '';
+  const groupOf = useCallback((shell: ProjectShell) => shell.tabId ?? localGroups[shell.id]?.tabId ?? shell.id, [localGroups]);
+  const activeGroup = activeShell ? groupOf(activeShell) : activeId;
+  const projectShells = shells.filter(shell => isOpenProjectShell(shell) &&
+    (shell.id === activeId || shell.projectKey === activeShell?.projectKey || matchesShellPath(shell, directory)));
+  const groups = new Map<string, ProjectShell[]>();
+  for (const shell of projectShells) {
+    const key = groupOf(shell);
+    const panes = groups.get(key);
+    if (panes) panes.push(shell);
+    else groups.set(key, [shell]);
+  }
+  const directionOf = (shell: ProjectShell) => shell.splitDirection ?? localGroups[shell.id]?.splitDirection;
+  for (const [key, panes] of groups) {
+    panes.sort((a, b) => Number(b.id === key) - Number(a.id === key) || Number(Boolean(directionOf(a))) - Number(Boolean(directionOf(b))));
+  }
+  const activePanes = activeGroup ? groups.get(activeGroup) : undefined;
+  const paired = !mobile && activePanes && activePanes.length > 1 ? activePanes : undefined;
+  const direction = paired?.map(directionOf).find(Boolean);
+  const canStop = (shell: ProjectShell) => Boolean(shell.runId) || groupsEnabled;
+  const preferredTarget = (shell?: ProjectShell) => shell && (retainedTargets.find(item => shellIdFor(item) === shell.id) ?? shellTarget(shell));
+
+  useEffect(() => {
+    if (!target || mobile) return;
+    for (const shell of shells) {
+      if (shell.id !== activeId && groupOf(shell) === activeGroup && isOpenProjectShell(shell)) retain(shellTarget(shell), false);
+    }
+  }, [activeGroup, activeId, groupOf, mobile, retain, shells, target]);
+  useEffect(() => {
+    if (searchTarget !== target) setSearchTarget(undefined);
+  }, [searchTarget, target]);
+
+  const manage = async (action: () => Promise<void>) => {
+    if (mutation.current) return;
+    mutation.current = true;
+    setBusy(true);
+    try {
+      await action();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), { variant: 'warning' });
+    } finally {
+      mutation.current = false;
+      setBusy(false);
+    }
+  };
+  const add = (splitDirection?: SplitDirection) => void manage(async () => {
+    const tabId = splitDirection && activeGroup;
+    const shell = await backend.startProjectShell({
+      cwd: directory, create: true, ...(groupsEnabled && tabId && splitDirection ? { tabId, splitDirection } : {}),
+    });
+    if (tabId && splitDirection) {
+      if (shell.tabId) {
+        for (const pane of activePanes ?? []) {
+          if (pane.splitDirection) remember({ ...pane, splitDirection: undefined }, directory);
+        }
+      } else {
+        setLocalGroups(current => ({
+          ...Object.fromEntries(Object.entries(current).map(([id, group]) => [id, group.tabId === tabId ? { tabId } : group])),
+          [shell.id]: { tabId, splitDirection },
+        }));
+      }
+    }
+    remember(shell, directory);
+    open(shellTarget(shell));
+  });
+  const stop = (items: ProjectShell[]) => void manage(async () => {
+    items = items.filter(canStop);
+    const selected = closingShells.current = new Set(items.map(shell => shell.id));
+    const remaining = (shell: ProjectShell) => !selected.has(shell.id);
+    const survivor = activePanes?.find(remaining) ?? projectShells.find(remaining);
+    const results = await Promise.allSettled(items.map(async shell => {
+      try {
+        if (shell.runId) await backend.stopProjectShell(shell.id, shell.runId);
+        else if (groupsEnabled) await backend.dismissProjectShell(shell.id);
+      } catch (error) {
+        if (!(error instanceof BackendError && (error.status === 404 || error.status === 410))) throw error;
+      }
+      if (shell.runId) finishRun(shell.id, shell.runId, 'stopped');
+      else remember({ ...shell, state: 'stopped' }, directory);
+      const entry = retainedTargets.find(item => shellIdFor(item) === shell.id);
+      if (entry) end(entry, preferredTarget(survivor));
+    }));
+    closingShells.current.clear();
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  });
 
   if (!activeTarget || retainedTargets.length === 0) return null;
   const hostname = currentHost?.name || hostName || location.host;
-  const directory = shells.find(item => item.id === shellIdFor(activeTarget))?.cwd || activeTarget.cwd;
-  const closeLabel = mobile ? t('Back', '返回') : t('Hide terminal', '收起终端');
+  const closeLabel = mobile ? t('Back', '返回') : t('Minimize terminal', '最小化终端');
   const moveLabel = t('Drag the terminal or use arrow keys to move it', '拖动或使用方向键移动终端');
   return <section ref={region} data-terminal id="project-shell-panel" hidden={!target} tabIndex={-1}
     aria-label={t('Project terminal', '项目终端')}
@@ -55,44 +147,64 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
     className={cn('absolute z-30 min-h-0 flex-col overflow-hidden bg-background outline-none', target && 'flex', mobile
       ? 'inset-0 pb-[env(safe-area-inset-bottom)]' : 'rounded-xl border border-border shadow-xl', !mobile && !frame && 'inset-x-3 bottom-3 h-[min(62%,30rem)]')}>
     <ContextMenu>
-    <ContextMenuTrigger asChild><header className={cn('flex shrink-0 items-center gap-2 border-b border-border/70 bg-background-win-alt px-2', mobile ? 'min-h-12 pt-safe' : 'h-9 touch-none cursor-grab select-none active:cursor-grabbing focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring')}
-      {...(!mobile ? { ...handlers('move'), tabIndex: 0, role: 'group', 'aria-label': moveLabel, title: moveLabel } : {})}>
-      {mobile && <Button type="button" variant="ghost" size="icon-lg" onClick={close} aria-label={closeLabel}><ChevronLeft /></Button>}
-      {mobile ? <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden /> : <GripHorizontal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />}
-      <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate" title={`${hostname} · ${directory}`}>
-        <h2 className="shrink-0 text-ui-sm font-medium">{t('Project terminal', '项目终端')}</h2>
-        <span className="truncate text-ui-xs text-foreground-subtle" dir="auto">{hostname} · {directory}</span>
-      </div>
-      {!mobile && <Button type="button" variant="ghost" size="icon-sm" onClick={reset} title={t('Reset panel size and position', '重置面板大小和位置')}
-        aria-label={t('Reset panel size and position', '重置面板大小和位置')}><RotateCcw /></Button>}
-      {!mobile && <Button type="button" variant="ghost" size="icon-sm" onClick={close} aria-label={closeLabel} title={closeLabel}><ChevronDown /></Button>}
-    </header></ContextMenuTrigger>
+      <ContextMenuTrigger asChild><header className={cn('flex shrink-0 items-center gap-2 border-b border-border/70 bg-background-win-alt px-2', mobile ? 'min-h-12 pt-safe' : 'h-9 touch-none cursor-grab select-none active:cursor-grabbing focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring')}
+        {...(!mobile ? { ...handlers('move'), tabIndex: 0, role: 'group', 'aria-label': moveLabel, title: moveLabel } : {})}>
+        {mobile && <Button type="button" variant="ghost" size="icon-lg" onClick={close} aria-label={closeLabel}><ChevronLeft /></Button>}
+        {mobile ? <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden /> : <GripHorizontal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />}
+        <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate" title={`${hostname} · ${directory}`}>
+          <h2 className="shrink-0 text-ui-sm font-medium">{t('Project terminal', '项目终端')}</h2>
+          <span className="truncate text-ui-xs text-foreground-subtle" dir="auto">{hostname} · {directory}</span>
+        </div>
+        {!mobile && <Button type="button" variant="ghost" size="icon-sm" onClick={close} aria-label={closeLabel} title={closeLabel}><Minus /></Button>}
+      </header></ContextMenuTrigger>
       <ContextMenuContent>
         {!mobile && <ContextMenuItem onSelect={reset}><RotateCcw />{t('Reset panel size and position', '重置面板大小和位置')}</ContextMenuItem>}
-        <ContextMenuItem onSelect={close}><ChevronDown />{closeLabel}</ContextMenuItem>
+        <ContextMenuItem onSelect={close}><Minus />{closeLabel}</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" disabled={busy || !projectShells.some(canStop)} onSelect={() => stop(projectShells)}>
+          <Square />{t('End all terminals', '结束所有终端')}
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
-    {target && <ProjectShellTabs key={targetKey(retainedTargets[0])} target={activeTarget} splitDirection={direction} onUnsplit={() => setSplit(undefined)}
-      onSplit={mobile ? undefined : (next, newDirection) => {
-        const other = activeTarget === second ? first : second;
-        if (direction && other && shellIdFor(other) === next.id) {
-          setSplit(current => current && { ...current, direction: newDirection });
-        } else {
-          setSplit({ direction: newDirection, first: activeTarget, secondId: next.id });
-          open({ cwd: next.cwd, shellId: next.id });
-        }
-      }} />}
+    {target && <div className="flex shrink-0 items-center gap-1 border-b border-border px-1 py-0.5">
+      <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto" role="group" aria-label={t('Project shells', '项目 Shell')}>
+        {[...groups].map(([id, panes]) => {
+          const tab = panes[0];
+          const selected = id === activeGroup;
+          const canEnd = panes.some(canStop);
+          return <ProjectShellTab key={id} {...{ tab, panes, selected, busy, canEnd, mobile }}
+            onOpen={shell => open(selected && !mobile ? target : shellTarget(shell))}
+            onRename={tabsEnabled ? name => manage(async () => remember(await backend.renameProjectShell(tab.id, name), directory)) : undefined}
+            onEnd={() => stop(panes)} />;
+        })}
+        {tabsEnabled && <ContextMenu>
+          <ContextMenuTrigger asChild><div className="min-w-0 flex-1" /></ContextMenuTrigger>
+          <ContextMenuContent><ContextMenuItem disabled={busy} onSelect={() => add()}><Plus />{t('New terminal', '新建终端')}</ContextMenuItem></ContextMenuContent>
+        </ContextMenu>}
+      </div>
+      {tabsEnabled && <Button type="button" variant="ghost" size="icon-sm" disabled={busy} title={t('New terminal', '新建终端')} aria-label={t('New terminal', '新建终端')}
+        onClick={() => add()}><Plus /></Button>}
+      {tabsEnabled && !mobile && ([['columns', Columns2, t('Split side by side', '左右分屏')], ['rows', Rows2, t('Split top and bottom', '上下分屏')]] as const)
+        .map(([axis, Icon, label]) => <Button key={axis} type="button" variant="ghost" size="icon-sm" title={label} aria-label={label}
+          disabled={busy || !activePanes?.some(shell => shell.state === 'running') || activePanes.length > 1} onClick={() => add(axis)}><Icon /></Button>)}
+      <Button type="button" variant={searchTarget === target ? 'secondary' : 'ghost'} size="icon-sm"
+        title={searchLabel()} aria-label={searchLabel()} aria-expanded={searchTarget === target} disabled={!activeShell?.runId}
+        onClick={() => setSearchTarget(searchTarget === target ? undefined : target)}><Search /></Button>
+    </div>}
     <div data-project-shell-layout={direction ?? 'single'} className={cn('grid min-h-0 flex-1', direction === 'columns' ? 'grid-cols-2 grid-rows-1' : direction === 'rows' ? 'grid-cols-1 grid-rows-2' : 'grid-cols-1 grid-rows-1')}>
       {retainedTargets.map(entry => {
         const active = entry === target;
-        const visible = Boolean(target && (active || (direction && (entry === first || entry === second))));
-        const sibling = entry === first ? second : first;
-        const metadata = shells.find(item => item.id === shellIdFor(entry));
+        const shellId = shellIdFor(entry);
+        const splitIndex = paired?.findIndex(shell => shell.id === shellId) ?? -1;
+        const visible = Boolean(target && (active || splitIndex >= 0));
+        const metadata = shells.find(item => item.id === shellId);
         return <Panel key={targetKey(entry)} target={entry} visible={visible} active={active} mobile={mobile}
-          splitPosition={direction ? (entry === first ? 1 : 2) : undefined} label={metadata && shellLabel(metadata)}
+          splitPosition={splitIndex >= 0 ? splitIndex + 1 : undefined} label={metadata && shellLabel(metadata)}
+          searching={searchTarget === entry} onSearch={value => { if (value) open(entry); setSearchTarget(value ? entry : undefined); }}
           onActivate={() => open(entry)} onEnd={() => {
-            if (entry === first || entry === second) setSplit(undefined);
-            end(entry, direction ? sibling : undefined);
+            const remaining = (shell: ProjectShell) => shell.id !== shellId && !closingShells.current.has(shell.id);
+            const survivor = (metadata && groups.get(groupOf(metadata))?.find(remaining)) ?? projectShells.find(remaining);
+            end(entry, preferredTarget(survivor));
           }} />;
       })}
     </div>
@@ -100,167 +212,109 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
   </section>;
 }
 
-function ProjectShellTabs({ target, splitDirection, onSplit, onUnsplit }: {
-  target: ProjectShellTarget;
-  splitDirection?: SplitDirection;
-  onSplit?: (shell: ProjectShell, direction: SplitDirection) => void;
-  onUnsplit(): void;
+function ProjectShellTab({ tab, panes, selected, busy, canEnd, mobile, onOpen, onRename, onEnd }: {
+  tab: ProjectShell; panes: ProjectShell[]; selected: boolean; busy: boolean; canEnd: boolean; mobile: boolean;
+  onOpen(shell: ProjectShell): void; onRename?: (name: string) => Promise<void>; onEnd(): void;
 }) {
-  const backend = useBackend();
-  const enabled = useApp(s => hasFeature(s.info, 'project-shell-tabs'));
-  const { shells, open, remember, shellIdFor, finishRun } = useProjectShellWorkspace();
-  const [busy, setBusy] = useState(false);
-  const [rename, setRename] = useState<{ id: string; name: string }>();
-  const renameInput = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState<string>();
+  const input = useRef<HTMLInputElement>(null);
   const renameFromMenu = useRef(false);
-  const abort = useRef<AbortController>(null);
-  useEffect(() => () => abort.current?.abort(), []);
-  if (!enabled) return null;
-
-  const selected = shellIdFor(target);
-  const list = shells.filter(shell => shell.id === selected || matchesShellPath(shell, target.cwd));
-  const ordered = [...list].sort((a, b) => Number(!a.default) - Number(!b.default));
-  const manage = async (action: (signal: AbortSignal) => Promise<ProjectShell>, onSuccess?: (shell: ProjectShell) => void) => {
-    const request = new AbortController();
-    abort.current = request;
-    setBusy(true);
-    try {
-      const shell = await action(request.signal);
-      if (request.signal.aborted) return;
-      remember(shell, target.cwd);
-      setRename(undefined);
-      onSuccess?.(shell);
-    } catch (error) {
-      if (!request.signal.aborted) toast(String(error instanceof Error ? error.message : error), { variant: 'warning' });
-    } finally {
-      if (!request.signal.aborted) setBusy(false);
-    }
+  const editing = useRef(false);
+  const finish = (save: boolean) => {
+    if (!editing.current) return;
+    editing.current = false;
+    setName(undefined);
+    const next = input.current?.value.trim();
+    if (save && next !== undefined && next !== (tab.name ?? '')) void onRename?.(next);
   };
-  const openShell = (shell: ProjectShell) => open({ cwd: shell.cwd, shellId: shell.id });
-  const addShell = () => void manage(signal => backend.startProjectShell({ cwd: target.cwd, create: true }, signal), openShell);
-  const renameShell = (shell: ProjectShell) => setRename({ id: shell.id, name: shell.name ?? '' });
-  const stopShell = async (shell: ProjectShell) => {
-    if (!shell.runId || busy) return;
-    setBusy(true);
-    try {
-      await backend.stopProjectShell(shell.id, shell.runId);
-      finishRun(shell.id, shell.runId, 'stopped');
-    } catch (error) {
-      if (error instanceof BackendError && error.status === 410) finishRun(shell.id, shell.runId, 'stopped');
-      else toast(error instanceof Error ? error.message : String(error), { variant: 'warning' });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return <div className="flex shrink-0 items-center gap-1 border-b border-border px-1 py-0.5">
-    {rename ? <form className="flex min-w-0 flex-1 items-center gap-1" onSubmit={event => {
-      event.preventDefault();
-      if (!busy) void manage(signal => backend.renameProjectShell(rename.id, rename.name.trim(), signal));
-    }}>
-      <Input ref={renameInput} autoFocus size="sm" disabled={busy} maxLength={80} value={rename.name} onChange={event => setRename({ ...rename, name: event.target.value })}
-        aria-label={t('Terminal name', '终端名称')} onKeyDown={event => { if (event.key === 'Escape') setRename(undefined); }} />
-      <Button type="submit" size="sm" disabled={busy}>{t('Save', '保存')}</Button>
-      <Button type="button" variant="ghost" size="sm" onClick={() => setRename(undefined)}>{t('Cancel', '取消')}</Button>
-    </form> : <>
-      <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto" role="group" aria-label={t('Project shells', '项目 Shell')}>
-        {ordered.map(shell => <ContextMenu key={shell.id}>
-          <ContextMenuTrigger asChild><Button type="button" variant={selected === shell.id ? 'secondary' : 'ghost'} size="sm"
-          className="max-w-40 shrink-0" aria-pressed={selected === shell.id} title={shellLabel(shell)} disabled={busy}
-          onClick={() => openShell(shell)}>
-          <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', shell.state === 'running' ? 'bg-emerald-500' : 'bg-foreground-subtlest')} />
-          <span className="truncate">{shellLabel(shell)}</span>
-          </Button></ContextMenuTrigger>
-          <ContextMenuContent onCloseAutoFocus={event => {
-            if (!renameFromMenu.current) return;
-            renameFromMenu.current = false;
+  const label = shellLabel(tab);
+  return <ContextMenu>
+    <ContextMenuTrigger asChild>
+      <div data-project-shell-tab={tab.id} className="shrink-0"
+        onPointerDown={event => { if (event.button === 1) event.preventDefault(); }}
+        onAuxClick={event => {
+          if (event.button === 1 && !editing.current && canEnd && !busy) {
             event.preventDefault();
-            renameInput.current?.focus();
-          }}>
-            <ContextMenuItem onSelect={() => openShell(shell)}><SquareTerminal />{t('Open terminal', '打开终端')}</ContextMenuItem>
-            <ContextMenuItem disabled={busy} onSelect={() => {
-              renameFromMenu.current = true;
-              renameShell(shell);
-            }}><Pencil />{t('Rename terminal', '重命名终端')}</ContextMenuItem>
-            {onSplit && selected && shell.id !== selected && <>
-              <ContextMenuItem disabled={busy} onSelect={() => onSplit(shell, 'columns')}><Columns2 />{t('Split side by side', '左右分屏')}</ContextMenuItem>
-              <ContextMenuItem disabled={busy} onSelect={() => onSplit(shell, 'rows')}><Rows2 />{t('Split top and bottom', '上下分屏')}</ContextMenuItem>
-            </>}
-            {shell.state === 'running' && shell.runId && <>
-              <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" disabled={busy} onSelect={() => void stopShell(shell)}><Square />{t('End terminal', '结束终端')}</ContextMenuItem>
-            </>}
-          </ContextMenuContent>
-        </ContextMenu>)}
-        <ContextMenu>
-          <ContextMenuTrigger asChild><div className="min-w-0 flex-1" /></ContextMenuTrigger>
-          <ContextMenuContent><ContextMenuItem disabled={busy} onSelect={addShell}><Plus />{t('New terminal', '新建终端')}</ContextMenuItem></ContextMenuContent>
-        </ContextMenu>
+            onEnd();
+          }
+        }}>
+        {name === undefined ? <Button type="button" variant={selected ? 'secondary' : 'ghost'} size="sm"
+          className="max-w-40" aria-pressed={selected} title={label} onClick={() => onOpen(tab)}>
+          <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', panes.some(pane => pane.state === 'running') ? 'bg-emerald-500' : 'bg-foreground-subtlest')} />
+          <span className="truncate">{label}</span>
+        </Button> : <Input ref={input} autoFocus size="sm" className="h-7 w-[clamp(5rem,15ch,10rem)] px-2" value={name}
+          maxLength={80} placeholder={label} aria-label={t('Terminal name', '终端名称')}
+          onChange={event => setName(event.target.value)} onBlur={() => finish(true)}
+          onFocus={event => event.currentTarget.select()} onKeyDown={event => {
+            if (event.nativeEvent.isComposing || (event.key !== 'Enter' && event.key !== 'Escape')) return;
+            event.preventDefault();
+            finish(event.key === 'Enter');
+          }} />}
       </div>
-      <Button type="button" variant="ghost" size="icon-sm" disabled={busy || !selected} title={t('Rename terminal', '重命名终端')} aria-label={t('Rename terminal', '重命名终端')}
-        onClick={() => { const shell = list.find(item => item.id === selected); if (shell) renameShell(shell); }}><Pencil /></Button>
-      <Button type="button" variant="ghost" size="icon-sm" disabled={busy} title={t('New terminal', '新建终端')} aria-label={t('New terminal', '新建终端')}
-        onClick={addShell}><Plus /></Button>
-      {onSplit && <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button type="button" variant={splitDirection ? 'secondary' : 'ghost'} size="icon-sm" disabled={busy || !selected}
-            aria-label={t('Split terminal', '终端分屏')} title={t('Split terminal', '终端分屏')}><Columns2 /></Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {([['columns', Columns2, t('Split side by side', '左右分屏')], ['rows', Rows2, t('Split top and bottom', '上下分屏')]] as const).map(([direction, Icon, title]) => (
-            <DropdownMenuSub key={direction}>
-              <DropdownMenuSubTrigger><Icon className="mr-2 size-4" />{title}</DropdownMenuSubTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuSubContent>
-                  <DropdownMenuItem onSelect={() => void manage(signal => backend.startProjectShell({ cwd: target.cwd, create: true }, signal), shell => onSplit(shell, direction))}>
-                    <Plus />{t('New terminal', '新建终端')}
-                  </DropdownMenuItem>
-                  {ordered.filter(shell => shell.id !== selected).map(shell => <DropdownMenuItem key={shell.id} onSelect={() => onSplit(shell, direction)}>{shellLabel(shell)}</DropdownMenuItem>)}
-                </DropdownMenuSubContent>
-              </DropdownMenuPortal>
-            </DropdownMenuSub>
-          ))}
-          {splitDirection && <DropdownMenuItem onSelect={onUnsplit}>{t('Return to one pane', '返回单终端')}</DropdownMenuItem>}
-        </DropdownMenuContent>
-      </DropdownMenu>}
-    </>}
-  </div>;
+    </ContextMenuTrigger>
+    <ContextMenuContent onCloseAutoFocus={event => {
+      if (!renameFromMenu.current) return;
+      renameFromMenu.current = false;
+      event.preventDefault();
+      input.current?.focus();
+    }}>
+      {mobile && panes.length > 1 && panes.map(pane => <ContextMenuItem key={pane.id} onSelect={() => onOpen(pane)}>
+        <SquareTerminal />{shellLabel(pane)}
+      </ContextMenuItem>)}
+      {onRename && <ContextMenuItem disabled={busy} onSelect={() => {
+        renameFromMenu.current = true;
+        editing.current = true;
+        setName(tab.name ?? '');
+      }}><Pencil />{t('Rename terminal', '重命名终端')}</ContextMenuItem>}
+      <ContextMenuItem variant="destructive" disabled={busy || !canEnd} onSelect={onEnd}><Square />{t('End terminal', '结束终端')}</ContextMenuItem>
+    </ContextMenuContent>
+  </ContextMenu>;
 }
 
-function Panel({ target, mobile, visible, active, splitPosition, label, onActivate, onEnd }: {
+function Panel({ target, mobile, visible, active, splitPosition, label, searching, onSearch, onActivate, onEnd }: {
   target: ProjectShellTarget; mobile: boolean; visible: boolean; active: boolean;
-  splitPosition?: number; label?: string; onActivate(): void; onEnd(): void;
+  splitPosition?: number; label?: string; searching: boolean; onSearch(value: boolean): void; onActivate(): void; onEnd(): void;
 }) {
   const backend = useBackend();
-  const { bind, remember, finishRun } = useProjectShellWorkspace();
+  const { bind, remember, finishRun, shellListState, shells } = useProjectShellWorkspace();
   const [shell, setShell] = useState<Pick<ProjectShell, 'id' | 'runId'>>();
   const [busy, setBusy] = useState(!target.runId);
   const [error, setError] = useState('');
   const request = useRef<AbortController>(null);
+  const locatorId = useRef(target.shellId);
+  const knownShells = useRef(shells);
+  useLayoutEffect(() => { knownShells.current = shells; }, [shells]);
+  const loading = !target.shellId && shellListState === 'loading';
   const region = useRef<HTMLElement>(null);
   const onEndRef = useRef(onEnd);
   useLayoutEffect(() => { onEndRef.current = onEnd; }, [onEnd]);
 
-  const start = useCallback((restart = true) => {
+  const start = useCallback(() => {
     request.current?.abort();
     const abort = new AbortController();
     request.current = abort;
     setBusy(true);
     setError('');
-    const locator = target.shellId ? { shellId: target.shellId } : { cwd: target.cwd };
-    void backend.startProjectShell({ ...locator, restart }, abort.signal).then(next => {
+    const shellId = locatorId.current ?? findOpenProjectShell(knownShells.current, target.cwd)?.id;
+    const locator = shellId ? { shellId } : { cwd: target.cwd, restart: true };
+    void backend.startProjectShell(locator, abort.signal).then(next => {
       if (abort.signal.aborted) return;
       remember(next, target.cwd);
       if (!next.runId || next.state !== 'running') {
         onEndRef.current();
         return;
       }
+      locatorId.current = next.id;
       setShell(next);
       bind(target, next.id, next.runId);
       if (next.recovered) {
         toast(t('Host restarted. A new shell opened in the saved directory.', '宿主已重启，已在保存的目录打开新终端。'), { variant: 'info', durationMs: 3000 });
       }
     }).catch(err => {
+      if (!abort.signal.aborted && shellId && err instanceof BackendError && (err.status === 404 || err.status === 410)) {
+        onEndRef.current();
+        return;
+      }
       if (!abort.signal.aborted) setError(err instanceof Error ? err.message : String(err));
     }).finally(() => { if (!abort.signal.aborted) setBusy(false); });
   }, [backend, bind, remember, target]);
@@ -274,9 +328,9 @@ function Panel({ target, mobile, visible, active, splitPosition, label, onActiva
       setShell({ id: target.shellId, runId: target.runId });
       return () => request.current?.abort();
     }
-    start();
+    if (!loading) start();
     return () => request.current?.abort();
-  }, [start, target]);
+  }, [loading, start, target]);
 
   const end = useCallback((state: 'exited' | 'stopped') => {
     request.current?.abort();
@@ -292,7 +346,7 @@ function Panel({ target, mobile, visible, active, splitPosition, label, onActiva
     }
     setShell(undefined);
     // Only an interrupted shell can start without an explicit restart request.
-    start(false);
+    start();
   }, [start, target, visible]);
 
   const stop = () => {
@@ -323,16 +377,16 @@ function Panel({ target, mobile, visible, active, splitPosition, label, onActiva
       </div>}
       {shell?.runId ? (
         <ProjectShellPane key={shell.runId} shellId={shell.id} runId={shell.runId} mobile={mobile} visible={visible} active={active}
-          label={splitPosition ? label ?? 'Shell' : undefined} stopping={busy} onStop={stop} onExit={end} onUnavailable={recover} />
+          searching={searching} onSearch={onSearch} stopping={busy} onStop={stop} onExit={end} onUnavailable={recover} />
       ) : busy && <div className="p-3 text-ui-sm text-foreground-subtle" role="status">{t('Opening terminal…', '正在打开终端…')}</div>}
     </section>
   );
 }
 
 /** A single terminal surface can also be mounted in a future split or window. */
-function ProjectShellPane({ shellId, runId, mobile, visible, active, label, stopping, onStop, onExit, onUnavailable }: {
+function ProjectShellPane({ shellId, runId, mobile, visible, active, searching, onSearch, stopping, onStop, onExit, onUnavailable }: {
   shellId: string; runId: string; mobile: boolean; visible: boolean; active: boolean; onExit(state: 'exited' | 'stopped'): void;
-  label?: string; stopping: boolean; onStop(): void;
+  searching: boolean; onSearch(value: boolean): void; stopping: boolean; onStop(): void;
   onUnavailable(): void;
 }) {
   const backend = useBackend();
@@ -341,7 +395,6 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, label, stop
   const visibility = useRef(visible);
   const activePane = useRef(active);
   const [ui, setUi] = useState(initialShellTerminalState);
-  const [searching, setSearching] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const searchFromMenu = useRef(false);
   const dark = useResolvedDark();
@@ -349,11 +402,10 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, label, stop
   useLayoutEffect(() => {
     visibility.current = visible;
     terminal.current?.setVisible(visible);
-    if (!visible && terminal.current) {
-      terminal.current.clearSearch();
-      setSearching(false);
-    }
   }, [visible]);
+  useEffect(() => {
+    if (!searching) terminal.current?.clearSearch();
+  }, [searching]);
   useLayoutEffect(() => {
     activePane.current = active;
     if (active && visible && !element.current?.closest('[data-shell-pane]')?.contains(document.activeElement)) terminal.current?.focus();
@@ -378,28 +430,14 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, label, stop
     : ui.status === 'retrying' ? t('Connection lost. Reconnecting…', '连接已断开，正在重连…')
       : ui.status === 'failed' ? t('Could not connect', '无法连接')
         : live && !ui.control ? t('Read-only', '只读') : '';
-  const searchLabel = t('Search terminal output', '搜索终端输出');
   const stopLabel = t('End terminal', '结束终端');
   const closeSearch = () => {
     terminal.current?.clearSearch();
-    setSearching(false);
+    onSearch(false);
     terminal.current?.focus();
   };
   return (
     <>
-      <div className="flex h-7 shrink-0 items-center justify-end gap-1 border-b border-border/70 bg-background-win-alt px-2">
-        {label && <span className="mr-auto truncate text-ui-xs">{label}</span>}
-        <Button type="button" variant={searching ? 'secondary' : 'ghost'} size="icon-sm" aria-label={searchLabel}
-          title={searchLabel} aria-expanded={searching} onClick={() => searching ? closeSearch() : setSearching(true)}><Search /></Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" aria-label={t('Terminal actions', '终端操作')}><MoreHorizontal /></Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onStop} disabled={stopping}><Square />{stopLabel}</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
       {visible && searching && <ProjectShellSearch terminal={terminal} onClose={closeSearch} />}
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -420,8 +458,8 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, label, stop
           }}><Copy />{t('Copy selection', '复制选中内容')}</ContextMenuItem>
           <ContextMenuItem onSelect={() => {
             searchFromMenu.current = true;
-            setSearching(true);
-          }}><Search />{searchLabel}</ContextMenuItem>
+            onSearch(true);
+          }}><Search />{searchLabel()}</ContextMenuItem>
           <ContextMenuItem onSelect={() => terminal.current?.scrollToBottom()}><ArrowDownToLine />{t('Jump to latest output', '回到最新输出')}</ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem variant="destructive" disabled={stopping} onSelect={onStop}><Square />{stopLabel}</ContextMenuItem>

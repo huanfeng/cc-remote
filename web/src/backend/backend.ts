@@ -126,6 +126,7 @@ export interface Backend {
   watchProjectShells(onChange: (shells: ProjectShell[]) => void, onError?: (error: unknown) => void): Unsubscribe;
   startProjectShell(body: ProjectShellStart, signal?: AbortSignal): Promise<ProjectShell>;
   renameProjectShell(shellId: string, name: string, signal?: AbortSignal): Promise<ProjectShell>;
+  dismissProjectShell(shellId: string): Promise<void>;
   stopProjectShell(shellId: string, runId: string): Promise<void>;
   openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream;
 

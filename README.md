@@ -40,6 +40,8 @@
 
 桌面布局支持拖动、调整大小和保存位置。桌面应用默认按 `Alt+F` 开合，浏览器默认用 Ctrl 加反引号，重新展开时保留清屏状态和滚动位置。需要执行单条命令时，可以用 `ccr run -- git status --short`。[项目终端使用说明](docs/usage.md#项目终端)
 
+如果 Zellij 的状态栏显示问号或方框，可以在运行浏览器或桌面应用的机器上安装 `Symbols Nerd Font Mono`，然后重新打开页面。也可以执行 `zellij options --simplified-ui true` 使用简化界面。[Zellij 字体说明](https://zellij.dev/documentation/faq)
+
 ### 3. 在 Web 和命令行切换供应商
 
 可在 CC Remote 中配置 Claude Code / Codex 的 API 供应商，也可使用宿主上的 **CC-Switch** 配置。两端共用新会话的默认供应商。

@@ -27,7 +27,7 @@ import { useNativeSessions } from './useNativeSessions';
 import { busy, idleSessions, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
 import { useCompletionRead } from '@/store/completionRead';
 import { displaySession, isCompletionPending } from '@/domain/completionRead';
-import { matchesShellPath, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { isOpenProjectShell, matchesShellPath, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 
 const PAGE = 200;
 
@@ -214,11 +214,17 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
     () => projectGroups(ordered.slice(0, limit), now, s => currentKey === `session:${s.id}`, !query),
     [ordered, limit, now, currentKey, query],
   );
-  const shellOnlyProjects = terminal.enabled ? terminal.shells.filter(shell =>
-    matches(query, shell.cwd) && !groups.some(g => matchesShellPath(shell, g.cwd))) : [];
+  const shellOnlyProjects = new Map<string, string>();
+  if (terminal.enabled) {
+    for (const shell of terminal.shells) {
+      if (isOpenProjectShell(shell) && matches(query, shell.cwd) && !groups.some(g => matchesShellPath(shell, g.cwd))) {
+        shellOnlyProjects.set(shell.projectKey, shell.cwd);
+      }
+    }
+  }
 
   if (!loaded) return <ListSkeleton />;
-  if (!ordered.length && !archived.length && !shellOnlyProjects.length) {
+  if (!ordered.length && !archived.length && !shellOnlyProjects.size) {
     return <p className="px-2 py-6 text-center text-ui-sm text-foreground-subtlest">{query ? t('No matching sessions', '没有匹配的会话') : t('No sessions yet', '还没有会话')}</p>;
   }
   const row = (s: Session, showFolder?: boolean) => (
@@ -341,12 +347,12 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
           </section>
         );
       })}
-      {shellOnlyProjects.map(shell => (
-        <button type="button" key={shell.id} title={shell.cwd}
+      {[...shellOnlyProjects].map(([projectKey, cwd]) => (
+        <button type="button" key={projectKey} title={cwd}
           className={cn('flex min-w-0 items-center gap-2 rounded-md px-2 text-left text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground', mobile ? 'h-9' : 'h-7')}
-          onClick={() => terminal.open({ cwd: shell.cwd, shellId: shell.id })}>
+          onClick={() => terminal.open({ cwd })}>
           <SquareTerminal className="size-3.5 shrink-0" />
-          <span className="truncate">{folderName(shell.cwd)}</span>
+          <span className="truncate">{folderName(cwd)}</span>
           <span className="ml-auto shrink-0 text-ui-xs text-foreground-subtlest">{t('Terminal', '终端')}</span>
         </button>
       ))}

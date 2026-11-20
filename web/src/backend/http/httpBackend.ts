@@ -553,6 +553,14 @@ export class HttpBackend implements Backend {
     return this.client.json<ProjectShell>(`${projectShellsPath}/${encodeURIComponent(shellId)}`, { method: 'PATCH', body: { name }, signal });
   }
 
+  async dismissProjectShell(shellId: string) {
+    try {
+      await this.client.json<void>(`${projectShellsPath}/${encodeURIComponent(shellId)}`, { method: 'DELETE' });
+    } finally {
+      for (const refresh of this.projectShellWatchers.values()) refresh();
+    }
+  }
+
   async stopProjectShell(shellId: string, runId: string) {
     try {
       await this.client.json<void>(projectShellRunPath(shellId, runId), { method: 'DELETE' });

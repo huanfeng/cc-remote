@@ -324,6 +324,90 @@ func TestProjectShellMultipleEntriesAndLegacyDefault(t *testing.T) {
 	}
 }
 
+func TestProjectShellKeepsOnlyOpenPanesAcrossHostRestart(t *testing.T) {
+	s, host, st := setup(t, nil)
+	defer closeShellTestHost(t, s)
+	s.cfg.DataDir = t.TempDir()
+	cwd, otherCwd := t.TempDir(), t.TempDir()
+	const path = "/api/project-shells"
+	start := func(body map[string]any) projectShellView {
+		t.Helper()
+		code, b := request(t, host, "POST", path, body, testToken)
+		var shell projectShellView
+		if code != http.StatusOK || json.Unmarshal(b, &shell) != nil || shell.State != "running" || shell.RunID == "" {
+			t.Fatalf("start shell: %d %s", code, b)
+		}
+		return shell
+	}
+	list := func() map[string]projectShellView {
+		t.Helper()
+		code, b := request(t, host, "GET", path, nil, testToken)
+		var views []projectShellView
+		if code != http.StatusOK || json.Unmarshal(b, &views) != nil {
+			t.Fatalf("list shells: %d %s", code, b)
+		}
+		byID := make(map[string]projectShellView)
+		for _, v := range views {
+			byID[v.ID] = v
+		}
+		return byID
+	}
+	expect := func(method, endpoint string, body any, want int) {
+		t.Helper()
+		if code, b := request(t, host, method, endpoint, body, testToken); code != want {
+			t.Fatalf("%s %s: got %d, want %d: %s", method, endpoint, code, want, b)
+		}
+	}
+	root := start(map[string]any{"cwd": cwd})
+	expect("POST", path, map[string]any{"cwd": cwd, "create": true, "tabId": root.ID}, http.StatusBadRequest)
+	expect("POST", path, map[string]any{"cwd": otherCwd, "create": true, "tabId": root.ID, "splitDirection": "rows"}, http.StatusNotFound)
+	expect("DELETE", path+"/"+root.ID, nil, http.StatusConflict)
+	pane := start(map[string]any{"cwd": cwd, "create": true, "tabId": root.ID, "splitDirection": "columns"})
+	if pane.TabID != root.ID || pane.SplitDirection != "columns" {
+		t.Fatalf("new pane lost its tab or direction: %+v", pane)
+	}
+	expect("POST", path, map[string]any{"cwd": cwd, "create": true, "tabId": root.ID, "splitDirection": "rows"}, http.StatusConflict)
+
+	s.projectShells.mu.Lock()
+	run := s.projectShells.entries[root.ID].run
+	s.projectShells.mu.Unlock()
+	// Simulate a PTY ending without an API stop. This avoids relying on when
+	// the platform shell finishes loading its profile and starts reading input.
+	run.pty.Close()
+	select {
+	case <-run.released:
+	case <-time.After(10 * time.Second):
+		t.Fatal("shell did not exit")
+	}
+	if views := list(); len(views) != 1 || views[pane.ID].TabID != root.ID {
+		t.Fatalf("exited pane remained visible or the surviving pane lost its tab: %+v", views)
+	}
+	freshDefault := start(map[string]any{"cwd": cwd, "restart": true})
+	if freshDefault.ID == root.ID || freshDefault.TabID != "" || freshDefault.Recovered {
+		t.Fatalf("new default joined the old tab: %+v", freshDefault)
+	}
+	secondPane := start(map[string]any{"cwd": cwd, "create": true, "tabId": root.ID, "splitDirection": "rows"})
+	if views := list(); views[pane.ID].SplitDirection != "" || views[secondPane.ID].SplitDirection != "rows" {
+		t.Fatalf("the replacement pane should define the new layout: %+v", views)
+	}
+	expect("DELETE", path+"/"+secondPane.ID+"/runs/"+secondPane.RunID, nil, http.StatusNoContent)
+	expect("POST", path, map[string]any{"shellId": secondPane.ID}, http.StatusNotFound)
+
+	closeShellTestHost(t, s)
+	restarted := New(st, s.cfg)
+	host = httptest.NewServer(restarted.Handler())
+	defer host.Close()
+	defer closeShellTestHost(t, restarted)
+	if views := list(); len(views) != 2 || views[pane.ID].State != "interrupted" || views[pane.ID].TabID != root.ID || views[freshDefault.ID].State != "interrupted" {
+		t.Fatalf("expected the open pane and the new default after restart: %+v", views)
+	}
+	expect("DELETE", path+"/"+pane.ID, nil, http.StatusNoContent)
+	expect("POST", path, map[string]any{"shellId": pane.ID}, http.StatusNotFound)
+	if views := list(); len(views) != 1 || views[freshDefault.ID].State != "interrupted" {
+		t.Fatalf("dismissing the interrupted pane affected other shells: %+v", views)
+	}
+}
+
 func closeShellTestHost(t *testing.T, s *Server) {
 	t.Helper()
 	// Windows shells hold their working directory until the host closes their PTYs.

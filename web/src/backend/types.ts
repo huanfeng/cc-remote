@@ -35,7 +35,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'message-search';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'message-search';
 
 export interface MessageSearchQuery {
   q: string;
@@ -489,6 +489,8 @@ export interface ProjectShell {
   id: string;
   name?: string;
   default?: boolean;
+  tabId?: string;
+  splitDirection?: 'columns' | 'rows';
   projectKey: string;
   cwd: string;
   aliases?: string[];
@@ -504,6 +506,8 @@ export interface ProjectShellStart {
   restart?: boolean;
   create?: boolean;
   name?: string;
+  tabId?: string;
+  splitDirection?: 'columns' | 'rows';
 }
 
 export interface ProjectShellStream extends TerminalStream {

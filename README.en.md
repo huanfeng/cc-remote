@@ -40,6 +40,8 @@ Open **Project Terminal** from the session header or the project group in the si
 
 On desktop layouts, you can move and resize the floating panel, and its position is saved. Toggle it with `Alt+F` in the desktop app or Ctrl plus backtick in the browser by default. The panel keeps its cleared screen and scroll position when reopened. Use `ccr run -- git status --short` for a one-off command. [Project terminal guide](docs/usage.md#项目终端) (Chinese).
 
+If the Zellij status bar shows question marks or boxes, install `Symbols Nerd Font Mono` on the machine running the browser or desktop app and reload the page. You can also run `zellij options --simplified-ui true` to use the simplified interface. [Zellij font guidance](https://zellij.dev/documentation/faq)
+
 ### 3. Switch providers from the web or CLI
 
 Configure API providers for Claude Code or Codex in CC Remote, or use existing **CC-Switch** profiles from the host. The web client and CLI share the default provider for new sessions.

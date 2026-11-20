@@ -18,13 +18,17 @@ export interface ShellTerminalState {
 
 export const initialShellTerminalState: ShellTerminalState = { status: 'connecting', control: false, truncated: false, detail: '' };
 
+const shellSymbolFonts = '"Symbols Nerd Font Mono", "CaskaydiaCove Nerd Font Mono", "Cascadia Mono NF", "Cascadia Code NF", "JetBrainsMono Nerd Font Mono", "MesloLGS NF"';
+
 export function createProjectShellTerminal({ backend, shellId, runId, element, mobile, visible = true, onState }: {
   backend: Backend; shellId: string; runId: string; element: HTMLDivElement; mobile: boolean;
   visible?: boolean;
   onState(state: ShellTerminalState): void;
 }) {
+  const monoFont = getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim();
+  const baseFonts = monoFont.replace(/(?:^|,\s*)monospace$/i, '');
   const terminal = new Terminal({
-    fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
+    fontFamily: [baseFonts, shellSymbolFonts, 'monospace'].filter(Boolean).join(', '),
     fontSize: mobile ? BASE_FONT_PHONE : BASE_FONT_DESKTOP,
     scrollback: mobile ? 15000 : 30000,
     allowProposedApi: true,

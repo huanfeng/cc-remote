@@ -37,6 +37,15 @@ export function matchesShellPath(shell: ProjectShell, cwd: string): boolean {
   return [shell.cwd, ...(shell.aliases ?? [])].some(path => shellPathKey(path) === key);
 }
 
+export function isOpenProjectShell(shell: ProjectShell): boolean {
+  return shell.state === 'interrupted' || (shell.state === 'running' && Boolean(shell.runId));
+}
+
+export function findOpenProjectShell(shells: ProjectShell[], cwd: string): ProjectShell | undefined {
+  const matches = shells.filter(shell => isOpenProjectShell(shell) && matchesShellPath(shell, cwd));
+  return matches.find(shell => shell.default) ?? matches.find(shell => !shell.tabId) ?? matches[0];
+}
+
 interface ProjectShellWorkspaceState {
   enabled: boolean;
   target: ProjectShellTarget | null;
@@ -45,6 +54,7 @@ interface ProjectShellWorkspaceState {
   shells: ProjectShell[];
   shellListState: 'loading' | 'ready' | 'error';
   open(target: ProjectShellTarget): void;
+  retain(target: ProjectShellTarget, activate: boolean): void;
   close(): void;
   end(target: ProjectShellTarget, preferred?: ProjectShellTarget): void;
   bind(target: ProjectShellTarget, shellId: string, runId?: string): void;
@@ -58,7 +68,7 @@ interface ProjectShellWorkspaceState {
 
 const ProjectShellWorkspaceContext = createContext<ProjectShellWorkspaceState>({
   enabled: false, target: null, activeTarget: null, retainedTargets: [], shells: [], shellListState: 'loading',
-  open() {}, close() {}, end() {}, bind() {}, shellIdFor: item => item.shellId, targetKey, toggle() {}, isOpen: () => false, remember() {}, finishRun() {},
+  open() {}, retain() {}, close() {}, end() {}, bind() {}, shellIdFor: item => item.shellId, targetKey, toggle() {}, isOpen: () => false, remember() {}, finishRun() {},
 });
 
 export const useProjectShellWorkspace = () => useContext(ProjectShellWorkspaceContext);
@@ -161,9 +171,14 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
       const tab = current.tabs[index];
       const tabs = current.tabs.filter(item => item !== tab);
       if (ended !== current.active) return { ...current, tabs };
-      const next = tabs.find(item => item.target === preferred) ?? tabs[Math.min(index, tabs.length - 1)];
+      if (preferred && preferred !== ended && preferred.shellId && preferred.shellId !== tab.shellId) {
+        const existing = tabs.find(item => item.shellId === preferred.shellId);
+        if (existing) return { ...current, tabs, active: existing.target };
+        return { ...current, tabs: [...tabs, { target: preferred, shellId: preferred.shellId, runId: preferred.runId }], active: preferred };
+      }
+      const next = tabs[Math.min(index, tabs.length - 1)];
       if (next) return { ...current, tabs, active: next.target };
-      return { tabs, active: { cwd: ended.cwd, shellId: tab.shellId }, visible: false };
+      return { tabs, active: { cwd: ended.cwd }, visible: false };
     });
   }, []);
   const ended = panel !== null && panel.tabs.length === 0;
@@ -172,26 +187,36 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
   }, [ended, restoreFocus]);
   useEffect(() => () => cancelAnimationFrame(focusRestore.current), []);
 
-  const open = useCallback((next: ProjectShellTarget) => {
+  const retain = useCallback((next: ProjectShellTarget, activate: boolean) => {
     if (!enabled || !next.cwd) return;
-    cancelAnimationFrame(focusRestore.current);
-    if (!target) focusBefore.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (mobile) useApp.getState().set({ drawerOpen: false });
+    if (activate) {
+      cancelAnimationFrame(focusRestore.current);
+      if (!target) focusBefore.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (mobile) useApp.getState().set({ drawerOpen: false });
+    }
     setPanel(current => {
       const active = current?.tabs.find(tab => tab.target === current.active);
       const sameProject = current && matchesTarget(current.active, next.cwd, active?.shellId);
+      if (!activate && (!sameProject || !active)) return current;
       const tabs = sameProject ? current.tabs : [];
-      const existing = tabs.find(tab => tab.target === next || (next.shellId && tab.shellId === next.shellId));
-      if (existing && (!next.runId || existing.runId === next.runId)) {
-        if (current?.visible && current.active === existing.target) return current;
+      if (!next.shellId && active && sameProject) return !activate || current.visible ? current : { ...current, visible: true };
+      const saved = next.shellId ? undefined : findOpenProjectShell(shells, next.cwd);
+      const item = saved ? { cwd: next.cwd, shellId: saved.id } : next;
+      const existing = tabs.find(tab => tab.target === item || (item.shellId && tab.shellId === item.shellId));
+      if (existing && (existing.target === item || !item.runId || existing.runId === item.runId)) {
+        if (!activate || (current?.visible && current.active === existing.target)) return current;
         return { tabs, active: existing.target, visible: true };
       }
-      if (!next.shellId && sameProject && active) return current.visible ? current : { ...current, visible: true };
-      const item = !next.shellId && sameProject ? current.active : next;
       const tab = { target: item, shellId: item.shellId, runId: item.runId };
-      return { tabs: existing ? tabs.map(tabItem => tabItem === existing ? tab : tabItem) : [...tabs, tab], active: item, visible: true };
+      return {
+        tabs: existing ? tabs.map(tabItem => tabItem === existing ? tab : tabItem) : [...tabs, tab],
+        active: activate || !current || current.active === existing?.target ? item : current.active,
+        visible: activate || Boolean(current?.visible),
+      };
     });
-  }, [enabled, matchesTarget, mobile, target]);
+  }, [enabled, matchesTarget, mobile, shells, target]);
+
+  const open = useCallback((next: ProjectShellTarget) => retain(next, true), [retain]);
 
   const toggle = useCallback((next: ProjectShellTarget) => {
     if (isOpen(next.cwd)) close();
@@ -241,6 +266,6 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
 
   return <ProjectShellWorkspaceContext.Provider value={{
     enabled, target, activeTarget: lastTarget, retainedTargets, shells, shellListState,
-    open, close, end, bind, shellIdFor, targetKey, toggle, isOpen, remember, finishRun,
+    open, retain, close, end, bind, shellIdFor, targetKey, toggle, isOpen, remember, finishRun,
   }}>{children}</ProjectShellWorkspaceContext.Provider>;
 }

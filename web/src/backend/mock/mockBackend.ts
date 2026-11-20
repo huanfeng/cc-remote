@@ -448,6 +448,7 @@ export class MockBackend implements Backend {
   async startProjectShell(): Promise<ProjectShell> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   async renameProjectShell(): Promise<ProjectShell> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   async stopProjectShell(): Promise<void> { throw new BackendError('演示宿主未启用项目终端。', 403); }
+  async dismissProjectShell(): Promise<void> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   openProjectShell(): ProjectShellStream { throw new BackendError('演示宿主未启用项目终端。', 403); }
 
   async models({ provider }: { provider: Provider }) { await latency(); return clone(fx.models[provider]); }

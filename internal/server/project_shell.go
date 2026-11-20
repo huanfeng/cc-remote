@@ -25,11 +25,13 @@ const (
 )
 
 type projectShellRecord struct {
-	ID         string `json:"id"`
-	ProjectKey string `json:"projectKey"`
-	Cwd        string `json:"cwd"`
-	Name       string `json:"name,omitempty"`
-	Default    *bool  `json:"default"`
+	ID             string `json:"id"`
+	ProjectKey     string `json:"projectKey"`
+	Cwd            string `json:"cwd"`
+	Name           string `json:"name,omitempty"`
+	Default        *bool  `json:"default"`
+	TabID          string `json:"tabId,omitempty"`
+	SplitDirection string `json:"splitDirection,omitempty"`
 }
 
 type projectShellView struct {
@@ -47,19 +49,36 @@ type projectShellEntry struct {
 	ended    string
 }
 
-func (e *projectShellEntry) view() projectShellView {
-	v := projectShellView{projectShellRecord: e.projectShellRecord, State: "stopped"}
+func (e *projectShellEntry) state() string {
 	if e.run != nil {
-		v.State = e.run.state()
-		if v.State == "running" {
-			v.RunID = e.run.id
-		}
-	} else if e.restored {
-		v.State = "interrupted"
-	} else if e.ended != "" {
-		v.State = e.ended
+		return e.run.state()
+	}
+	if e.restored {
+		return "interrupted"
+	}
+	if e.ended != "" {
+		return e.ended
+	}
+	return "stopped"
+}
+
+func (e *projectShellEntry) view() projectShellView {
+	v := projectShellView{projectShellRecord: e.projectShellRecord, State: e.state()}
+	if v.State == "running" {
+		v.RunID = e.run.id
 	}
 	return v
+}
+
+func isOpenProjectShell(state string) bool {
+	return state == "running" || state == "interrupted"
+}
+
+func (e *projectShellEntry) tabID() string {
+	if e.TabID != "" {
+		return e.TabID
+	}
+	return e.ID
 }
 
 type projectShellRegistry struct {
@@ -97,10 +116,12 @@ func (m *projectShellRegistry) loadLocked(dataDir string) error {
 	return nil
 }
 
-func (m *projectShellRegistry) saveLocked(dataDir string) error {
+func (m *projectShellRegistry) saveLocked(dataDir, closingID string) error {
 	records := make([]projectShellRecord, 0, len(m.entries))
 	for _, e := range m.entries {
-		records = append(records, e.projectShellRecord)
+		if e.ID != closingID && isOpenProjectShell(e.state()) {
+			records = append(records, e.projectShellRecord)
+		}
 	}
 	slices.SortFunc(records, func(a, b projectShellRecord) int { return strings.Compare(a.ID, b.ID) })
 	data, err := json.MarshalIndent(records, "", "  ")
@@ -132,7 +153,7 @@ func (m *projectShellRegistry) shutdown() func(context.Context) {
 				e.run.interrupted.Store(true)
 			}
 			e.run.pty.Close()
-			done = append(done, e.run.pty.Done())
+			done = append(done, e.run.released)
 		}
 	}
 	m.mu.Unlock()
@@ -206,8 +227,9 @@ func (s *Server) listProjectShells(w http.ResponseWriter, r *http.Request) {
 	views := make([]projectShellView, 0, len(m.entries))
 	for _, e := range m.entries {
 		// Older CLI clients use this filter to resolve attach/stop without an ID.
-		if projectKey == "" || (e.ProjectKey == projectKey && *e.Default) {
-			views = append(views, e.view())
+		view := e.view()
+		if (projectKey == "" && isOpenProjectShell(view.State)) || (projectKey != "" && e.ProjectKey == projectKey && *e.Default) {
+			views = append(views, view)
 		}
 	}
 	m.mu.Unlock()
@@ -267,11 +289,13 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Cwd     string `json:"cwd"`
-		ShellID string `json:"shellId"`
-		Restart bool   `json:"restart"`
-		Create  bool   `json:"create"`
-		Name    string `json:"name"`
+		Cwd            string `json:"cwd"`
+		ShellID        string `json:"shellId"`
+		Restart        bool   `json:"restart"`
+		Create         bool   `json:"create"`
+		Name           string `json:"name"`
+		TabID          string `json:"tabId"`
+		SplitDirection string `json:"splitDirection"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -283,6 +307,11 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Create && req.Cwd == "" {
 		fail(w, http.StatusBadRequest, l.T("Specify a project directory for the new shell", "请选择新终端的项目目录"))
+		return
+	}
+	if (req.TabID != "" || req.SplitDirection != "") &&
+		(!req.Create || req.TabID == "" || (req.SplitDirection != "columns" && req.SplitDirection != "rows")) {
+		fail(w, http.StatusBadRequest, l.T("Specify a tab and a split direction for the new shell", "请为新终端指定标签页和分屏方向"))
 		return
 	}
 	name := strings.TrimSpace(req.Name)
@@ -312,8 +341,24 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		s.projectShellStorageError(w, r, err)
 		return
 	}
+	var splitMember *projectShellEntry
+	if req.TabID != "" {
+		for _, member := range m.entries {
+			if member.ProjectKey == key && member.tabID() == req.TabID && isOpenProjectShell(member.state()) {
+				if splitMember != nil {
+					fail(w, http.StatusConflict, l.T("This tab already has two panes", "此标签页已有两个分屏"))
+					return
+				}
+				splitMember = member
+			}
+		}
+		if splitMember == nil {
+			fail(w, http.StatusNotFound, l.T("Project shell tab not found", "找不到项目终端标签页"))
+			return
+		}
+	}
 	entry := m.entries[req.ShellID]
-	if req.ShellID != "" && entry == nil {
+	if req.ShellID != "" && (entry == nil || (!*entry.Default && !isOpenProjectShell(entry.state()))) {
 		fail(w, http.StatusNotFound, l.T("Project shell not found", "找不到项目终端"))
 		return
 	}
@@ -359,27 +404,62 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, l.T("Could not start the project shell", "无法启动项目终端"))
 		return
 	}
-	if entry == nil {
+	var replacedDefault *projectShellEntry
+	if entry != nil && !isOpenProjectShell(entry.state()) {
+		// An orphaned split keeps its tab ID. Reopening the default must create a separate tab.
+		for _, member := range m.entries {
+			if member.TabID == entry.ID && isOpenProjectShell(member.state()) {
+				replacedDefault = entry
+				entry = nil
+				break
+			}
+		}
+	}
+	newEntry := entry == nil
+	if newEntry {
 		isDefault := !req.Create
 		entry = &projectShellEntry{projectShellRecord: projectShellRecord{
 			ID: rand.Text(), ProjectKey: key, Cwd: dir, Name: name, Default: &isDefault,
+			TabID: req.TabID, SplitDirection: req.SplitDirection,
 		}}
-		m.entries[entry.ID] = entry
-		if err := m.saveLocked(s.cfg.DataDir); err != nil {
-			delete(m.entries, entry.ID)
-			pty.Close()
-			s.projectShellStorageError(w, r, err)
-			return
+		if replacedDefault != nil {
+			entry.ProjectKey = replacedDefault.ProjectKey
+			delete(m.entries, replacedDefault.ID)
 		}
+		m.entries[entry.ID] = entry
 	}
-	recovered := entry.restored
+	previous := *entry
+	if !isOpenProjectShell(entry.state()) {
+		entry.Name = name
+	}
 	entry.restored = false
-	run := &projectShellRun{id: rand.Text(), pty: pty}
+	run := &projectShellRun{id: rand.Text(), pty: pty, released: make(chan struct{})}
 	entry.run = run
-	go m.releaseFinishedRun(entry, run)
+	var previousDirection string
+	if splitMember != nil {
+		// The new pane owns the direction, including when it replaces a tab's original root.
+		previousDirection = splitMember.SplitDirection
+		splitMember.SplitDirection = ""
+	}
+	if err := m.saveLocked(s.cfg.DataDir, ""); err != nil {
+		*entry = previous
+		if splitMember != nil {
+			splitMember.SplitDirection = previousDirection
+		}
+		if newEntry {
+			delete(m.entries, entry.ID)
+		}
+		if replacedDefault != nil {
+			m.entries[replacedDefault.ID] = replacedDefault
+		}
+		pty.Close()
+		s.projectShellStorageError(w, r, err)
+		return
+	}
+	go m.releaseFinishedRun(s.cfg.DataDir, entry, run)
 	view := entry.view()
 	view.Aliases = aliases
-	view.Recovered = recovered
+	view.Recovered = previous.restored
 	respond(w, http.StatusOK, view)
 }
 
@@ -426,7 +506,7 @@ func (s *Server) renameProjectShell(w http.ResponseWriter, r *http.Request) {
 	if name != entry.Name {
 		previous := entry.Name
 		entry.Name = name
-		if err := m.saveLocked(s.cfg.DataDir); err != nil {
+		if err := m.saveLocked(s.cfg.DataDir, ""); err != nil {
 			entry.Name = previous
 			s.projectShellStorageError(w, r, err)
 			return
@@ -435,14 +515,59 @@ func (s *Server) renameProjectShell(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, entry.view())
 }
 
-func (m *projectShellRegistry) releaseFinishedRun(entry *projectShellEntry, run *projectShellRun) {
+func (m *projectShellRegistry) releaseFinishedRun(dataDir string, entry *projectShellEntry, run *projectShellRun) {
 	<-run.pty.Done()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if entry.run == run {
-		entry.ended = run.state()
-		entry.run = nil
+	defer close(run.released)
+	if entry.run != run || m.entries[entry.ID] != entry {
+		return
 	}
+	entry.run = nil
+	entry.ended = run.state()
+	if entry.ended == "interrupted" {
+		entry.restored = true
+		return
+	}
+	if !*entry.Default {
+		delete(m.entries, entry.ID)
+	}
+	if entry.ended == "exited" {
+		if err := m.saveLocked(dataDir, ""); err != nil {
+			log.Printf("could not remove exited project shell from disk: %v", err)
+		}
+	}
+}
+
+func (s *Server) dismissProjectShell(w http.ResponseWriter, r *http.Request) {
+	if !s.projectShellAvailable(w, r) {
+		return
+	}
+	m := &s.projectShells
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		fail(w, http.StatusServiceUnavailable, s.lang(r).T("Host is shutting down", "主机正在关闭"))
+		return
+	}
+	if err := m.loadLocked(s.cfg.DataDir); err != nil {
+		s.projectShellStorageError(w, r, err)
+		return
+	}
+	id := r.PathValue("id")
+	if entry := m.entries[id]; entry != nil && isOpenProjectShell(entry.state()) {
+		if entry.run != nil {
+			fail(w, http.StatusConflict, s.lang(r).T("End the active terminal run first", "请先结束正在运行的终端"))
+			return
+		}
+		delete(m.entries, id)
+		if err := m.saveLocked(s.cfg.DataDir, ""); err != nil {
+			m.entries[id] = entry
+			s.projectShellStorageError(w, r, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) findProjectShellRun(w http.ResponseWriter, r *http.Request) *projectShellRun {
@@ -465,13 +590,31 @@ func (s *Server) stopProjectShell(w http.ResponseWriter, r *http.Request) {
 	if !s.projectShellAvailable(w, r) {
 		return
 	}
-	if run := s.findProjectShellRun(w, r); run != nil {
-		run.stopped.Store(true)
-		run.pty.Close()
-		select {
-		case <-run.pty.Done():
-			w.WriteHeader(http.StatusNoContent)
-		case <-r.Context().Done():
-		}
+	m := &s.projectShells
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		fail(w, http.StatusServiceUnavailable, s.lang(r).T("Host is shutting down", "主机正在关闭"))
+		return
+	}
+	entry := m.entries[r.PathValue("id")]
+	if entry == nil || entry.run == nil || entry.run.id != r.PathValue("run") || entry.run.state() != "running" {
+		m.mu.Unlock()
+		fail(w, http.StatusGone, s.lang(r).T("This terminal run has ended", "这次终端运行已结束"))
+		return
+	}
+	run := entry.run
+	if err := m.saveLocked(s.cfg.DataDir, entry.ID); err != nil {
+		m.mu.Unlock()
+		s.projectShellStorageError(w, r, err)
+		return
+	}
+	run.stopped.Store(true)
+	run.pty.Close()
+	m.mu.Unlock()
+	select {
+	case <-run.released:
+		w.WriteHeader(http.StatusNoContent)
+	case <-r.Context().Done():
 	}
 }

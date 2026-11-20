@@ -18,6 +18,7 @@ import (
 type projectShellRun struct {
 	id          string
 	pty         *terminal.ProjectShell
+	released    chan struct{}
 	stopped     atomic.Bool
 	interrupted atomic.Bool
 
