@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { ArrowUpRight, Square, SquareTerminal } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowUpRight, Square } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import { BackendError } from '@/backend/errors';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/components/ui/toast';
 import { conversationTime } from '@/domain/conversationTime';
 import { providerName, providerOf } from '@/domain/providers';
@@ -18,6 +19,7 @@ import { setTerminalView } from '@/lib/prefs';
 import { select, useApp } from '@/store/app';
 
 type Terminal = { id: string; title: string; cwd: string; detail: string; activity?: string; runId?: string };
+const terminalKey = (item: Terminal) => item.runId ? `shell:${item.id}/${item.runId}` : `session:${item.id}`;
 
 export function RunningTerminals({ open, onOpenChange, mobile }: {
   open: boolean;
@@ -30,9 +32,11 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
   const sessionsLoaded = useApp(s => s.sessionsLoaded);
   const hostName = useApp(s => s.info?.name);
   const offline = useConnection(s => !!s.offline);
-  const [target, setTarget] = useState<Terminal>();
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  const [target, setTarget] = useState<{ items: Terminal[]; bulk: boolean }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [batchError, setBatchError] = useState('');
   const now = useNow();
 
   const terminals: Terminal[] = sessions.filter(session => session.mode === 'terminal' && session.online).map(session => {
@@ -52,10 +56,29 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
   });
   for (const shell of workspace.enabled ? workspace.shells : []) {
     if (shell.state !== 'running' || !shell.runId) continue;
-    terminals.push({ id: shell.id, runId: shell.runId, title: folderName(shell.cwd), cwd: shell.cwd, detail: t('Project terminal', '项目终端') });
+    terminals.push({ id: shell.id, runId: shell.runId, title: shell.name || folderName(shell.cwd), cwd: shell.cwd, detail: t('Project terminal', '项目终端') });
   }
   const shellError = workspace.enabled && workspace.shellListState === 'error';
   const loading = !sessionsLoaded || (workspace.enabled && workspace.shellListState === 'loading');
+  const available = (item: Terminal) => !item.runId || !shellError;
+  const eligible = terminals.filter(available);
+  const selectedItems = eligible.filter(item => checked.has(terminalKey(item)));
+  const allSelected = eligible.length > 0 && selectedItems.length === eligible.length;
+
+  useEffect(() => {
+    setChecked(current => {
+      if (!current.size) return current;
+      const live = new Set(terminals.map(terminalKey));
+      const next = new Set([...current].filter(key => live.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [terminals]);
+
+  function confirm(items: Terminal[], bulk = false) {
+    setError('');
+    if (bulk) setBatchError('');
+    setTarget({ items, bulk });
+  }
 
   function reconnect(item: Terminal) {
     if (item.runId) {
@@ -69,27 +92,57 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
     });
   }
 
+  async function stopOne(item: Terminal) {
+    try {
+      if (item.runId) await backend.stopProjectShell(item.id, item.runId);
+      else await backend.exit(item.id);
+    } catch (err) {
+      if (!(err instanceof BackendError && (err.status === 404 || (item.runId && err.status === 410)))) throw err;
+    }
+    if (item.runId) workspace.finishRun(item.id, item.runId, 'stopped');
+    else {
+      const selected = useApp.getState().selection;
+      if (selected?.kind === 'session' && selected.id === item.id) setTerminalView(item.id, false);
+    }
+  }
+
   async function stop() {
     if (!target || busy || offline) return;
     setBusy(true);
     setError('');
+    const live = new Set(terminals.map(terminalKey));
+    const ended = new Set<string>();
+    const failures: { item: Terminal; message: string }[] = [];
     try {
-      if (target.runId) {
-        try {
-          await backend.stopProjectShell(target.id, target.runId);
-        } catch (err) {
-          if (!(err instanceof BackendError && err.status === 410)) throw err;
-        }
-        workspace.finishRun(target.id, target.runId, 'stopped');
-      } else {
-        await backend.exit(target.id);
-        const selected = useApp.getState().selection;
-        if (selected?.kind === 'session' && selected.id === target.id) setTerminalView(target.id, false);
+      // The host exposes one stop request per terminal. Keep fan-out bounded for large selections.
+      const batchSize = 4;
+      for (let index = 0; index < target.items.length; index += batchSize) {
+        const batch = target.items.slice(index, index + batchSize);
+        await Promise.all(batch.map(async item => {
+          try {
+            if (live.has(terminalKey(item))) {
+              if (!available(item)) throw new Error(t('Could not load project terminals. Try again after the list updates.', '无法加载项目终端，请等列表更新后重试。'));
+              await stopOne(item);
+            }
+            ended.add(terminalKey(item));
+          } catch (err) {
+            failures.push({ item, message: err instanceof Error ? err.message : String(err) });
+          }
+        }));
+      }
+      setChecked(current => new Set([...current].filter(key => !ended.has(key))));
+      if (!target.bulk && failures.length) {
+        setError(failures[0].message);
+        return;
       }
       setTarget(undefined);
-      toast(t('Terminal ended', '终端已结束'));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (failures.length) {
+        const { item, message } = failures[0];
+        setBatchError(t(`Ended ${ended.size}. Could not end ${failures.length}. ${item.title} — ${message}`,
+          `已结束 ${ended.size} 个终端，${failures.length} 个未能结束。${item.title} — ${message}`));
+      } else {
+        toast(target.bulk ? t(`Ended ${ended.size} terminals`, `已结束 ${ended.size} 个终端`) : t('Terminal ended', '终端已结束'));
+      }
     } finally {
       setBusy(false);
     }
@@ -97,7 +150,19 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
 
   return (
     <SurfaceShell open={open} mobile={mobile} onOpenChange={onOpenChange}
-      title={t('Running terminals', '运行中的终端')} description={hostName} className="sm:max-w-xl">
+      title={t('Running terminals', '运行中的终端')} description={hostName} className="sm:max-w-xl"
+      footer={terminals.length > 0 && <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1">
+        <label className="flex min-h-9 items-center gap-2 text-ui-sm">
+          <Checkbox checked={allSelected || (selectedItems.length > 0 ? 'indeterminate' : false)}
+            disabled={busy || offline || !eligible.length}
+            onCheckedChange={value => setChecked(value === true ? new Set(eligible.map(terminalKey)) : new Set())} />
+          {t('Select all', '全选')}
+        </label>
+        <span role="status" className="flex-1 text-ui-xs text-foreground-subtle">{t(`${selectedItems.length} selected`, `已选 ${selectedItems.length} 个`)}</span>
+        <Button type="button" size="sm" variant="destructive" disabled={busy || offline || !selectedItems.length}
+          onClick={() => confirm(selectedItems, true)}>{t('End selected', '批量停止')}</Button>
+        {batchError && <p role="alert" className="max-h-24 w-full overflow-y-auto break-words text-ui-sm text-destructive">{batchError}</p>}
+      </div>}>
       {offline && <p role="status" className="py-2 text-ui-sm text-destructive">{t('Host connection lost. The list may be out of date.', '与宿主的连接已断开，列表可能已过期。')}</p>}
       {shellError && !offline && <p role="status" className="py-2 text-ui-sm text-destructive">{t('Could not load project terminals. Retrying…', '无法加载项目终端，正在重试…')}</p>}
       {loading && !offline && <p role="status" className="py-3 text-ui-sm text-foreground-subtle">{t('Loading terminals…', '正在加载终端…')}</p>}
@@ -106,19 +171,28 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
       {terminals.length > 0 && (
         <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60">
           {terminals.map(item => {
-            const disabled = offline || (!!item.runId && shellError);
+            const key = terminalKey(item);
+            const disabled = busy || offline || !available(item);
             return (
-              <li key={item.runId ? `shell:${item.id}/${item.runId}` : `session:${item.id}`} className="flex items-start gap-2.5 px-3 py-2.5">
-                <SquareTerminal className="mt-0.5 size-4 shrink-0 text-foreground-subtle" aria-hidden />
-                <div className="min-w-0 flex-1">
-                  <div className="break-words text-ui-base font-medium">{item.title}</div>
-                  <div className="break-all text-ui-xs text-foreground-subtle">{item.cwd}</div>
-                  <div className="mt-1 text-ui-xs text-foreground-subtle">{item.detail}{item.activity && ` · ${item.activity}`}</div>
-                </div>
+              <li key={key} className="flex items-start gap-2.5 px-3 py-2.5">
+                <label className="flex min-w-0 flex-1 items-start gap-2.5">
+                  <Checkbox className="mt-1" checked={checked.has(key)} disabled={disabled}
+                    aria-label={t(`Select ${item.title}`, `选择 ${item.title}`)} onCheckedChange={value => setChecked(current => {
+                      const next = new Set(current);
+                      if (value === true) next.add(key);
+                      else next.delete(key);
+                      return next;
+                    })} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block break-words text-ui-base font-medium">{item.title}</span>
+                    <span className="block break-all text-ui-xs text-foreground-subtle">{item.cwd}</span>
+                    <span className="mt-1 block text-ui-xs text-foreground-subtle">{item.detail}{item.activity && ` · ${item.activity}`}</span>
+                  </span>
+                </label>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button type="button" size="icon-sm" variant="ghost" disabled={disabled} onClick={() => reconnect(item)}
                     aria-label={t('Open terminal', '接回终端')} title={t('Open terminal', '接回终端')}><ArrowUpRight /></Button>
-                  <Button type="button" size="icon-sm" variant="ghost" disabled={disabled} onClick={() => { setError(''); setTarget(item); }}
+                  <Button type="button" size="icon-sm" variant="ghost" disabled={disabled} onClick={() => confirm([item])}
                     aria-label={t('End terminal', '结束终端')} title={t('End terminal', '结束终端')} className="text-destructive"><Square /></Button>
                 </div>
               </li>
@@ -127,10 +201,11 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
         </ul>
       )}
       <ConfirmDialog open={open && !!target} onOpenChange={next => { if (!next && !busy) setTarget(undefined); }}
-        title={t('End terminal?', '结束终端？')}
-        description={t('This closes the terminal and interrupts any work still running in it.', '结束终端会中断其中仍在运行的任务。')}
-        confirmLabel={t('End terminal', '结束终端')} destructive busy={busy} onConfirm={() => void stop()}>
-        {target && <p className="break-words text-ui-sm font-medium">{target.title}</p>}
+        title={target?.bulk ? t(`End ${target.items.length} selected terminals?`, `停止选中的 ${target.items.length} 个终端？`) : t('End terminal?', '结束终端？')}
+        description={t('Any work still running in these terminals will be interrupted.', '终端中仍在运行的任务将被中断。')}
+        confirmLabel={busy ? t('Ending…', '正在停止…') : target?.bulk ? t('End selected', '批量停止') : t('End terminal', '结束终端')}
+        destructive busy={busy} confirmDisabled={offline} onConfirm={() => void stop()}>
+        {target && !target.bulk && <p className="break-words text-ui-sm font-medium">{target.items[0].title}</p>}
         {error && <p role="alert" className="break-words text-ui-sm text-destructive">{error}</p>}
       </ConfirmDialog>
     </SurfaceShell>

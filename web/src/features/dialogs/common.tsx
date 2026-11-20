@@ -44,9 +44,9 @@ export function CopyField({ value, className, multiline }: { value: string; clas
 }
 
 /** A controlled confirmation dialog. */
-export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, destructive, busy, onConfirm, children }: {
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, destructive, busy, confirmDisabled, onConfirm, children }: {
   open: boolean; onOpenChange: (open: boolean) => void; title: ReactNode; description?: ReactNode; confirmLabel: string;
-  destructive?: boolean; busy?: boolean; onConfirm: () => void; children?: ReactNode;
+  destructive?: boolean; busy?: boolean; confirmDisabled?: boolean; onConfirm: () => void; children?: ReactNode;
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -61,7 +61,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
           <AlertDialogAction
             variant={destructive ? 'destructive' : 'default'}
             className="max-md:h-10"
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             onClick={e => { e.preventDefault(); onConfirm(); }}
           >
             {confirmLabel}
