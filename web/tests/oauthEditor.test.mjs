@@ -77,7 +77,7 @@ test('OAuth editor preserves server errors and edits names without replacing cre
       assert.equal(tree.find(n => n.props?.type === 'submit')?.props.disabled, false);
       assert.equal(tree.find(n => n.type?.name === 'SurfaceShell')?.props.title, '编辑 OAuth 账号');
       await save(tree);
-      assert.deepEqual(calls, [['Renamed', '']]);
+      assert.deepEqual(calls, [['Renamed', '', undefined]]);
       assert.equal(closed, true);
     });
 
@@ -96,7 +96,17 @@ test('OAuth editor preserves server errors and edits names without replacing cre
       tree = render(props);
       input(tree, true).props.onChange({ target: { value: '  sk-ant-oat-replacement  ' } });
       await save(render(props));
-      assert.deepEqual(calls, [['Existing', 'sk-ant-oat-replacement']]);
+      assert.deepEqual(calls, [['Existing', 'sk-ant-oat-replacement', undefined]]);
+    });
+    await t.test('notes are editable and saved when supported', async () => {
+      values = [];
+      const calls = [];
+      const props = { notesSupported: true, replacing: { id: 'oauth:stable-id', name: 'Existing', notes: 'Old note' }, onClose() {}, onSave: async (...args) => { calls.push(args); } };
+      let tree = render(props);
+      assert.equal(tree.find(n => n.type === 'textarea').props.value, 'Old note');
+      tree.find(n => n.type === 'textarea').props.onChange({ target: { value: ' New note ' } });
+      await save(render(props));
+      assert.deepEqual(calls, [['Existing', '', 'New note']]);
     });
     await t.test('the account list saves edits by stable ID and omits an empty credential', async () => {
       const { OAuthSection } = await import('../src/features/settings/OAuthSection.tsx');

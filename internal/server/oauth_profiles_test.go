@@ -25,7 +25,7 @@ func TestOAuthProfileLifecycleKeepsTokenOutOfListsAndSessions(t *testing.T) {
 			t.Fatalf("%v accepted: %d", bad, code)
 		}
 	}
-	code, b := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Team", "token": "sk-ant-oat01-first"}, testToken)
+	code, b := request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "Team", "token": "sk-ant-oat01-first", "notes": "Work account"}, testToken)
 	if code != 201 || strings.Contains(string(b), "first") {
 		t.Fatalf("create %d %s", code, b)
 	}
@@ -33,6 +33,15 @@ func TestOAuthProfileLifecycleKeepsTokenOutOfListsAndSessions(t *testing.T) {
 	_ = json.Unmarshal(b, &created)
 	if !strings.HasPrefix(created.ID, "oauth:") {
 		t.Fatal("id", created.ID)
+	}
+	if code, b = request(t, ts, "GET", "/api/profiles/oauth", nil, testToken); code != 200 || !strings.Contains(string(b), "Work account") || strings.Contains(string(b), "sk-ant-oat") {
+		t.Fatalf("list notes without token: %d %s", code, b)
+	}
+	if code, _ = request(t, ts, "PATCH", "/api/profiles/oauth/"+strings.TrimPrefix(created.ID, "oauth:"), map[string]string{"notes": ""}, testToken); code != 200 {
+		t.Fatal("clear notes", code)
+	}
+	if code, b = request(t, ts, "GET", "/api/profiles/oauth", nil, testToken); code != 200 || strings.Contains(string(b), "Work account") {
+		t.Fatalf("notes cleared: %d %s", code, b)
 	}
 	if code, _ = request(t, ts, "POST", "/api/profiles/oauth", map[string]string{"name": "team", "token": "sk-ant-oat01-other"}, testToken); code != 409 {
 		t.Fatal("duplicate name accepted", code)

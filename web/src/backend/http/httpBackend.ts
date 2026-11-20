@@ -616,8 +616,8 @@ export class HttpBackend implements Backend {
   }
 
   async oauthProfiles() {
-    const r = await this.get<{ profiles?: { id: string; name: string }[] }>('/api/profiles/oauth');
-    return (r?.profiles ?? []).map(p => ({ id: p.id, name: p.name }));
+    const r = await this.get<{ profiles?: { id: string; name: string; notes?: string }[] }>('/api/profiles/oauth');
+    return (r?.profiles ?? []).map(p => ({ id: p.id, name: p.name, notes: p.notes }));
   }
   async profileUsage(provider: Provider): Promise<ProfileUsageReply | null> {
     if (provider !== 'claude') return null;
@@ -631,8 +631,8 @@ export class HttpBackend implements Backend {
   }
   // The list names entries "oauth:<id>"; the paths take the bare id.
   private oauthPath(id: string) { return `/api/profiles/oauth/${enc(id.replace(/^oauth:/, ''))}`; }
-  async addOAuthProfile(name: string, token: string) { await this.call('POST', '/api/profiles/oauth', { name, token }); }
-  async editOAuthProfile(id: string, patch: { name: string; token?: string }) { await this.call('PATCH', this.oauthPath(id), defined({ name: patch.name, token: patch.token })); }
+  async addOAuthProfile(name: string, token: string, notes?: string) { await this.call('POST', '/api/profiles/oauth', defined({ name, token, notes })); }
+  async editOAuthProfile(id: string, patch: { name: string; token?: string; notes?: string }) { await this.call('PATCH', this.oauthPath(id), defined({ name: patch.name, token: patch.token, notes: patch.notes })); }
   async removeOAuthProfile(id: string) { await this.call('DELETE', this.oauthPath(id)); }
 
   // ---------- usage and status ----------

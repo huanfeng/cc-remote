@@ -140,16 +140,16 @@ export interface Backend {
   saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }): Promise<ClaudeSettings>;
   identity(): Promise<HostIdentity>;
   saveIdentity(v: { name: string; color: string; icon: string }): Promise<HostIdentity>;
-  oauthProfiles(): Promise<{ id: string; name: string }[]>;
+  oauthProfiles(): Promise<{ id: string; name: string; notes?: string }[]>;
   probeSupplier?(v: SupplierProbe): Promise<SupplierProbeResult>;
   importCCSwitch?(id: string, app: Provider, revision: string): Promise<SupplierConfigs>;
   setCCSwitchVisibility?(hidden: boolean, revision: string): Promise<SupplierConfigs>;
   supplierConfigs?(): Promise<SupplierConfigs | null>;
   saveSupplierConfig?(id: string | undefined, v: SupplierConfigWrite): Promise<SupplierConfigs>;
   removeSupplierConfig?(id: string, revision: string): Promise<SupplierConfigs>;
-  addOAuthProfile(name: string, token: string): Promise<void>;
+  addOAuthProfile(name: string, token: string, notes?: string): Promise<void>;
   /** Edits the entry without changing its id; an omitted token keeps the stored credential. */
-  editOAuthProfile(id: string, patch: { name: string; token?: string }): Promise<void>;
+  editOAuthProfile(id: string, patch: { name: string; token?: string; notes?: string }): Promise<void>;
   removeOAuthProfile(id: string): Promise<void>;
 
   // Usage and status

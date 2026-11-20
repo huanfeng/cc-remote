@@ -171,7 +171,7 @@ func (s *Server) profilesAPI(w http.ResponseWriter, r *http.Request) {
 	for _, p := range f.Profiles {
 		items = append(items, map[string]string{"id": p.ID, "name": p.Name, "app": p.App, "kind": p.Settings.Kind})
 	}
-	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true, "defaultProfile": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "configuredDefaults": f.ConfiguredDefaults, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
+	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true, "oauthNotes": true, "defaultProfile": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "configuredDefaults": f.ConfiguredDefaults, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
 }
 
 // supplierEnvAPI returns one supplier's connection variables so the terminal

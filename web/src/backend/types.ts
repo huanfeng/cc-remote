@@ -232,7 +232,7 @@ export interface SupplierProfile {
 
 export interface ProfileCatalog {
   schemaVersion?: number;
-  capabilities?: { resumeSelection?: boolean; switchSupplier?: boolean; oauthProfiles?: boolean; defaultProfile?: boolean };
+  capabilities?: { resumeSelection?: boolean; switchSupplier?: boolean; oauthProfiles?: boolean; oauthNotes?: boolean; defaultProfile?: boolean };
   source?: string;
   found?: boolean;
   unavailable?: { id: string; name: string; app: Provider; reason: string }[];

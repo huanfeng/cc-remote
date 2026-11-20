@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import * as fx from './fixtures';
 import { dangerousPermission } from '@/domain/providers';
+import type { SupplierConfigs, SupplierConfigWrite } from '../supplierConfig';
 
 const clone = <T,>(v: T): T => structuredClone(v);
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -30,7 +31,8 @@ export class MockBackend implements Backend {
     claude: { provider: 'claude', permissionMode: 'default', model: '', effort: '', revision: 'r1' },
     codex: { provider: 'codex', permissionMode: 'workspace-write', model: '', effort: '', revision: 'r1' },
   };
-  private oauth = [{ id: 'oauth:yjw', name: 'yjw' }];
+  private oauth: { id: string; name: string; notes?: string }[] = [{ id: 'oauth:yjw', name: 'yjw', notes: '' }];
+  private suppliers: SupplierConfigs = { revision: 'mock', ccSwitchHidden: false, profiles: [], capabilities: { advanced: true, modelNames: true, ccSwitchImport: true } };
   private identityValue = {
     name: 'Cartech 工作站', color: '#3b82f6', icon: 'laptop', shownName: 'Cartech 工作站', shownColor: '#3b82f6',
     defaultName: 'CARTECH-PC', defaultColor: '#3b82f6',
@@ -394,7 +396,25 @@ export class MockBackend implements Backend {
   openProjectShell(): ProjectShellStream { throw new BackendError('演示宿主未启用项目终端。', 403); }
 
   async models({ provider }: { provider: Provider }) { await latency(); return clone(fx.models[provider]); }
-  async profiles() { await latency(); return clone(fx.profiles); }
+  async profiles() { await latency(); const catalog = clone(fx.profiles); catalog.profiles = [...catalog.profiles.filter(p => !this.suppliers.ccSwitchHidden || !p.id.startsWith('ccswitch:')), ...this.suppliers.profiles]; return catalog; }
+  async supplierConfigs() { await latency(); return clone(this.suppliers); }
+  async setCCSwitchVisibility(hidden: boolean) { await latency(); this.suppliers.ccSwitchHidden = hidden; return clone(this.suppliers); }
+  async importCCSwitch(id: string, app: Provider) {
+    await latency();
+    const source = fx.profiles.profiles.find(p => p.id === id && p.app === app);
+    if (!source) throw new BackendError('Supplier not found', 404);
+    this.suppliers.profiles.push({ id: `local:${nanoid(4)}`, sourceId: id, app, name: source.name, baseUrl: 'https://example.com', model: '', authType: 'apiKey', hasCredential: true, revision: 'mock' });
+    return clone(this.suppliers);
+  }
+  async saveSupplierConfig(id: string | undefined, value: SupplierConfigWrite) {
+    await latency();
+    const existing = this.suppliers.profiles.find(p => p.id === id);
+    const { credential, ...config } = value;
+    const entry = { ...existing, ...config, id: id ?? `local:${nanoid(4)}`, hasCredential: !!credential || !!existing?.hasCredential };
+    this.suppliers.profiles = [...this.suppliers.profiles.filter(p => p.id !== id), entry];
+    return clone(this.suppliers);
+  }
+  async removeSupplierConfig(id: string) { await latency(); this.suppliers.profiles = this.suppliers.profiles.filter(p => p.id !== id); return clone(this.suppliers); }
   async setDefaultProfile() { await latency(); }
   async preferences(provider: Provider) { await latency(); return clone(this.prefs[provider]); }
   async savePreferences(provider: Provider, p: Preferences & { confirmDangerous?: boolean }) {
@@ -446,12 +466,13 @@ export class MockBackend implements Backend {
     const summary = { available: true, identityKnown: true, windows, fetchedAt: now() };
     return { profiles: Object.fromEntries(['@native', ...this.oauth.map(entry => entry.id)].map(id => [id, clone(summary)])) };
   }
-  async addOAuthProfile(name: string) { await latency(); this.oauth.push({ id: `oauth:${nanoid(4)}`, name }); }
-  async editOAuthProfile(id: string, patch: { name: string; token?: string }) {
+  async addOAuthProfile(name: string, _token: string, notes?: string) { await latency(); this.oauth.push({ id: `oauth:${nanoid(4)}`, name, notes }); }
+  async editOAuthProfile(id: string, patch: { name: string; token?: string; notes?: string }) {
     await latency();
     const entry = this.oauth.find(o => o.id === id);
     if (!entry) throw new BackendError('token not found', 404);
     entry.name = patch.name;
+    if (patch.notes !== undefined) entry.notes = patch.notes;
   }
   async removeOAuthProfile(id: string) { await latency(); this.oauth = this.oauth.filter(o => o.id !== id); }
 

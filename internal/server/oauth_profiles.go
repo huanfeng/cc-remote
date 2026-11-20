@@ -30,6 +30,7 @@ const (
 type oauthEntry struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
+	Notes     string `json:"notes,omitempty"`
 	Token     string `json:"token"`
 	CreatedAt string `json:"createdAt"`
 }
@@ -134,6 +135,7 @@ func validOAuthToken(token string) bool {
 type oauthRequest struct {
 	Name  *string `json:"name"`
 	Token *string `json:"token"`
+	Notes *string `json:"notes"`
 }
 
 // listOAuthAPI serves GET /api/profiles/oauth: names only, independent of the
@@ -146,7 +148,7 @@ func (s *Server) listOAuthAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []map[string]string{}
 	for _, e := range entries {
-		items = append(items, map[string]string{"id": oauthIDPrefix + e.ID, "name": e.Name, "app": "claude", "kind": oauthKind})
+		items = append(items, map[string]string{"id": oauthIDPrefix + e.ID, "name": e.Name, "notes": e.Notes, "app": "claude", "kind": oauthKind})
 	}
 	respond(w, 200, map[string]any{"profiles": items})
 }
@@ -205,6 +207,13 @@ func (s *Server) oauthAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Token != nil {
 			saved.Token = strings.TrimSpace(*req.Token)
+		}
+		if req.Notes != nil {
+			saved.Notes = strings.TrimSpace(*req.Notes)
+		}
+		if len([]rune(saved.Notes)) > 2000 {
+			fail(w, 400, l.T("Notes must not exceed 2000 characters", "备注不能超过 2000 个字符"))
+			return
 		}
 		if !validOAuthName(saved.Name) {
 			fail(w, 400, l.T("Name must be 1-60 characters without control characters", "名称需为 1-60 个字符，且不含控制字符"))

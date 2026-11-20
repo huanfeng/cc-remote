@@ -7,23 +7,24 @@ import { ConfirmDialog, CopyField, ErrorText, errorMessage } from '@/features/di
 import { t } from '@/lib/i18n';
 import { useReportDirty } from './parts';
 
-export function OAuthTokenEditor({ mobile, replacing, onClose, onSave }: {
-  mobile: boolean; replacing?: { id: string; name: string }; onClose: () => void;
-  onSave: (name: string, token: string) => Promise<void>;
+export function OAuthTokenEditor({ mobile, replacing, notesSupported = false, onClose, onSave }: {
+  mobile: boolean; replacing?: { id: string; name: string; notes?: string }; notesSupported?: boolean; onClose: () => void;
+  onSave: (name: string, token: string, notes?: string) => Promise<void>;
 }) {
   const [name, setName] = useState(replacing?.name ?? '');
+  const [notes, setNotes] = useState(replacing?.notes ?? '');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [discard, setDiscard] = useState(false);
   const [error, setError] = useState('');
-  const dirty = !!token || name !== (replacing?.name ?? '');
+  const dirty = !!token || name !== (replacing?.name ?? '') || notes !== (replacing?.notes ?? '');
   useReportDirty('oauth-editor', dirty);
   const close = () => { if (!busy) { if (dirty) setDiscard(true); else onClose(); } };
   const save = async () => {
     if (busy) return;
     if (!name.trim() || !replacing && !token.trim()) { setError(t('Enter an account name and OAuth token.', '请填写账号名称和 OAuth 令牌。')); return; }
     setBusy(true); setError('');
-    try { await onSave(name.trim(), token.trim()); setToken(''); onClose(); }
+    try { await onSave(name.trim(), token.trim(), notesSupported ? notes.trim() : undefined); setToken(''); onClose(); }
     catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   };
@@ -35,6 +36,7 @@ export function OAuthTokenEditor({ mobile, replacing, onClose, onSave }: {
       <form id="oauth-token-editor" className="space-y-4 text-ui-sm" onSubmit={e => { e.preventDefault(); void save(); }}>
         <p className="text-foreground-subtle">{t('Use your official Claude account. No API address or API key is required. Existing models, plugins and hooks on the server are retained.', '使用 Claude 官方账号，无需填写 API 地址或 API Key；会话沿用服务器原有的模型、插件和 hooks 配置。')}</p>
         <label className="block space-y-2"><span>{t('Account display name', '账号显示名称')}</span><Input autoFocus size="lg" value={name} disabled={busy} maxLength={60} autoComplete="off" placeholder={t('For example: work account', '例如：工作账号')} onChange={e => setName(e.target.value)} /></label>
+        <label className="block space-y-2"><span>{t('Notes', '备注')}</span><textarea className="w-full rounded-md border border-border bg-transparent px-3 py-2" rows={3} maxLength={2000} value={notes} disabled={busy || !notesSupported} onChange={e => setNotes(e.target.value)} placeholder={notesSupported ? t('Optional', '选填') : t('Upgrade the host to use notes', '升级宿主后可使用备注')} /></label>
         <label className="block space-y-2"><span>{replacing ? t('New OAuth token (optional)', '新的 OAuth 令牌（选填）') : t('OAuth token', 'OAuth 令牌')}</span><Input type="password" size="lg" autoComplete="new-password" spellCheck={false} disabled={busy} value={token} placeholder="sk-ant-oat…" onChange={e => setToken(e.target.value)} /></label>
         <p className="text-foreground-subtle">{replacing ? t('Leave the token empty to keep the saved credential. Saved tokens are never shown or filled in.', '令牌留空则保留原有凭据。已有令牌不会显示或回填。') : t('Saved tokens are never shown or filled in. The entered token is submitted only when you save.', '已有令牌不会显示或回填。点击保存后才会提交本次填写的令牌。')}</p>
         <details className="rounded-xl border border-border/60 p-3">

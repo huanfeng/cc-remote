@@ -39,8 +39,8 @@ function SupplierContextToggle({label, value, disabled, onChange}: {label: strin
 }
 
 type Panel = 'connection' | 'models' | 'json';
-export function SupplierEditor({ mobile, editing, advanced, modelNames, probe, onClose, onSave }: {
-  mobile: boolean; editing?: SupplierConfig; advanced: boolean; modelNames?: boolean; probe?: boolean; onClose: () => void;
+export function SupplierEditor({ mobile, editing, defaultApp = 'claude', advanced, modelNames, probe, onClose, onSave }: {
+  mobile: boolean; editing?: SupplierConfig; defaultApp?: 'claude' | 'codex'; advanced: boolean; modelNames?: boolean; probe?: boolean; onClose: () => void;
   onSave: (draft: SupplierDraft) => Promise<void>;
 }) {
   const backend = useBackend();
@@ -50,14 +50,14 @@ export function SupplierEditor({ mobile, editing, advanced, modelNames, probe, o
   const [probeNotice, setProbeNotice] = useState('');
   const [probeError, setProbeError] = useState('');
   const connectionVersion = useRef(0);
-  const [draft, setDraft] = useState(() => supplierDraft(editing));
+  const [draft, setDraft] = useState(() => supplierDraft(editing ?? { app: defaultApp }));
   const [panel, setPanel] = useState<Panel>('connection');
   const [json, setJSON] = useState('');
   const [jsonDirty, setJSONDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [discard, setDiscard] = useState(false);
-  const dirty = supplierJSON(draft) !== supplierJSON(supplierDraft(editing)) || !!draft.credential || jsonDirty;
+  const dirty = supplierJSON(draft) !== supplierJSON(supplierDraft(editing ?? { app: defaultApp })) || !!draft.credential || jsonDirty;
   useReportDirty('supplier-editor', dirty);
   const update = (value: Partial<SupplierDraft>) => { setDraft(d => ({ ...d, ...value })); setError(''); if ('app' in value || 'baseUrl' in value || 'authType' in value || 'credential' in value) { connectionVersion.current++; setModels([]); setProbeNotice(''); setProbeError(''); } };
   const close = () => { if (!busy) { if (dirty) setDiscard(true); else onClose(); } };

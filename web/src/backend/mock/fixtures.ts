@@ -324,11 +324,12 @@ export const models: Record<'claude' | 'codex', ModelList> = {
 
 export const profiles: ProfileCatalog = {
   schemaVersion: 1,
-  capabilities: { resumeSelection: true, switchSupplier: true, oauthProfiles: true, defaultProfile: true },
+  capabilities: { resumeSelection: true, switchSupplier: true, oauthProfiles: true, oauthNotes: true, defaultProfile: true },
   source: 'cc-switch', found: true,
   profiles: [
     { id: 'p-official', name: 'Anthropic 官方', app: 'claude' },
     { id: 'p-relay', name: '中转 A', app: 'claude' },
+    { id: 'ccswitch:demo', name: 'CC-Switch 示例', app: 'claude' },
     { id: 'oauth:yjw', name: 'yjw（OAuth）', app: 'claude', kind: 'oauth' },
     { id: 'p-codex', name: 'OpenAI 官方', app: 'codex' },
   ],
