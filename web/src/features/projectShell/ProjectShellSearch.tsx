@@ -47,7 +47,7 @@ export function ProjectShellSearch({ terminal, onClose }: {
         event.stopPropagation();
         close();
       }}>
-      <Input ref={input} autoComplete="off" spellCheck={false} aria-label={label} placeholder={label} value={query} className="min-w-24 flex-1"
+      <Input ref={input} type="search" autoComplete="off" spellCheck={false} aria-label={label} placeholder={label} value={query} className="min-w-24 flex-1"
         onChange={event => {
           const value = event.target.value;
           setQuery(value);

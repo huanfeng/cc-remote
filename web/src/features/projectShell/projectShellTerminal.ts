@@ -174,6 +174,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   connect();
   return {
     focus: () => { if (visible) terminal.focus(); },
+    selection: () => terminal.getSelection(),
     search(query: string, direction: ShellSearchDirection) {
       const anchor = query === searchQuery ? terminal.getSelectionPosition()?.start : undefined;
       searchQuery = query;

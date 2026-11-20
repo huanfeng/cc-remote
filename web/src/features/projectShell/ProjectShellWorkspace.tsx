@@ -40,12 +40,13 @@ export function matchesShellPath(shell: ProjectShell, cwd: string): boolean {
 interface ProjectShellWorkspaceState {
   enabled: boolean;
   target: ProjectShellTarget | null;
+  activeTarget: ProjectShellTarget | null;
   retainedTargets: readonly ProjectShellTarget[];
   shells: ProjectShell[];
   shellListState: 'loading' | 'ready' | 'error';
   open(target: ProjectShellTarget): void;
   close(): void;
-  end(target: ProjectShellTarget): void;
+  end(target: ProjectShellTarget, preferred?: ProjectShellTarget): void;
   bind(target: ProjectShellTarget, shellId: string, runId?: string): void;
   shellIdFor(target: ProjectShellTarget): string | undefined;
   targetKey(target: ProjectShellTarget): string;
@@ -56,7 +57,7 @@ interface ProjectShellWorkspaceState {
 }
 
 const ProjectShellWorkspaceContext = createContext<ProjectShellWorkspaceState>({
-  enabled: false, target: null, retainedTargets: [], shells: [], shellListState: 'loading',
+  enabled: false, target: null, activeTarget: null, retainedTargets: [], shells: [], shellListState: 'loading',
   open() {}, close() {}, end() {}, bind() {}, shellIdFor: item => item.shellId, targetKey, toggle() {}, isOpen: () => false, remember() {}, finishRun() {},
 });
 
@@ -151,7 +152,7 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
     setPanel(current => current?.visible ? { ...current, visible: false } : current);
     restoreFocus();
   }, [restoreFocus]);
-  const end = useCallback((ended: ProjectShellTarget) => {
+  const end = useCallback((ended: ProjectShellTarget, preferred?: ProjectShellTarget) => {
     setPanel(current => {
       if (!current) return current;
       const index = current.tabs.findIndex(tab => tab.target === ended);
@@ -160,7 +161,7 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
       const tab = current.tabs[index];
       const tabs = current.tabs.filter(item => item !== tab);
       if (ended !== current.active) return { ...current, tabs };
-      const next = tabs[Math.min(index, tabs.length - 1)];
+      const next = tabs.find(item => item.target === preferred) ?? tabs[Math.min(index, tabs.length - 1)];
       if (next) return { ...current, tabs, active: next.target };
       return { tabs, active: { cwd: ended.cwd, shellId: tab.shellId }, visible: false };
     });
@@ -208,7 +209,7 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
       const focus = requestAnimationFrame(() => {
         const section = document.getElementById('project-shell-panel');
         if (section && !section.hidden) {
-          const textarea = [...section.querySelectorAll<HTMLElement>('textarea')].find(item => !item.closest('[hidden]'));
+          const textarea = section.querySelector<HTMLElement>('[data-shell-pane-active] textarea');
           (textarea ?? section).focus({ preventScroll: true });
         }
       });
@@ -239,7 +240,7 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
   }, [close, cwd, enabled, lastTarget, open, target]);
 
   return <ProjectShellWorkspaceContext.Provider value={{
-    enabled, target, retainedTargets, shells, shellListState,
+    enabled, target, activeTarget: lastTarget, retainedTargets, shells, shellListState,
     open, close, end, bind, shellIdFor, targetKey, toggle, isOpen, remember, finishRun,
   }}>{children}</ProjectShellWorkspaceContext.Provider>;
 }
