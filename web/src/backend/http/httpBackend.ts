@@ -549,7 +549,6 @@ export class HttpBackend implements Backend {
     }, Socket, projectShellRunPath(shellId, runId), after);
     const stream: ProjectShellStream = {
       send: data => inner.send(data),
-      ack: seq => inner.ack(seq),
       resize: (cols, rows) => inner.resize(cols, rows),
       redraw: () => inner.redraw(),
       take: () => inner.take(),
