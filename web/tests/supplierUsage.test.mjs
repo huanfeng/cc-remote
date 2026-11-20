@@ -13,20 +13,24 @@ const current = { available: true, identityKnown: true, fetchedAt: '2026-11-19T0
 test('supplier overview displays cached 5h/7d used quota, reset and collection age', () => {
   const text = supplierUsageDescription(current, now);
   assert.match(text, /Used.*5h 24%.*↺2h 0m.*7d 83%/);
-  assert.match(text, /Read 1 min ago/);
+  assert.match(text, /Fetched 1 min ago/);
   assert.doesNotMatch(text, /Cached|failed|unconfirmed/);
 });
 
 test('stale, shared and failed readings are explicit; unknown percentages never become zero', () => {
   const text = supplierUsageDescription({ ...current, stale: true, shared: true, identityKnown: false, error: 'request-failed', windows: [{ name: '5h', percent: NaN }] }, now);
   assert.match(text, /Update failed.*Cached reading.*5h —/);
-  assert.match(text, /Identity unconfirmed.*Shared quota/);
+  assert.match(text, /Shared quota/);
+  assert.doesNotMatch(text, /Identity unconfirmed/);
+  assert.match(text, /Fetched 1 min ago/, 'failure keeps the last successful reading time');
   assert.doesNotMatch(text, /0%/);
   assert.match(supplierUsageDescription({ available: false, windows: [], error: 'expired' }), /Login expired/);
   assert.match(supplierUsageDescription({ available: false, reason: 'pending', windows: [] }), /No reading yet/);
   assert.match(supplierUsageDescription({ available: false, reason: 'third-party', windows: [] }), /No subscription quota/);
   assert.match(supplierUsageDescription({ available: false, reason: 'no-login', windows: [] }), /Not signed in/);
   assert.doesNotThrow(() => supplierUsageDescription({ windows: [null] }));
+  assert.match(supplierUsageDescription({ ...current, fetchedAt: undefined }, now), /Fetch time unknown/);
+  assert.match(supplierUsageDescription({ ...current, fetchedAt: 'invalid' }, now), /Fetch time unknown/);
 });
 
 test('shared supplier options attach each OAuth reading by stable ID and preserve selection semantics', () => {

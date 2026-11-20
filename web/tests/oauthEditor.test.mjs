@@ -13,6 +13,8 @@ test('OAuth editor preserves server errors and edits names without replacing cre
   };
   const data = source => 'data:text/javascript,' + encodeURIComponent(source);
   const mocks = {
+    '@/lib/supplierOrder': 'export const useSupplierOrder=()=>({order:[]});',
+    '@/domain/supplierOrder': 'export const orderSuppliers=entries=>entries;',
     '@/components/ui/button': 'export function Button() {}',
     '@/components/ui/input': 'export function Input() {}',
     '@/components/ui/spinner': 'export function Spinner() {}',

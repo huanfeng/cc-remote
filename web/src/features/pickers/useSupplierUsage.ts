@@ -6,6 +6,13 @@ import type { ProfileUsageReply, Provider } from '@/backend/types';
 export function useSupplierUsage(provider: Provider, enabled = true) {
   const backend = useBackend();
   const [reading, setReading] = useState<{ backend: typeof backend; provider: Provider; value: ProfileUsageReply | null | undefined }>();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!enabled || provider !== 'claude') return;
+    // Advance relative timestamps without fetching or probing the provider again.
+    const timer = window.setInterval(() => tick(value => value + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [enabled, provider]);
   useEffect(() => {
     if (!enabled || provider !== 'claude' || !backend.profileUsage) return;
     let live = true;

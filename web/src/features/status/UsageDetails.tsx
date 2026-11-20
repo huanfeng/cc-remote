@@ -7,7 +7,7 @@ import type { Provider, UsageHistory, UsageReply, UsageWindow } from '@/backend/
 import { providerName } from '@/domain/providers';
 import { useNow } from '@/lib/hooks';
 import { t, locale } from '@/lib/i18n';
-import { agoText, percentText, quotaWindows, resetsIn, staleText, unavailableText, usageLevel, usageStale, validWindow, type Level } from './usageMath';
+import { fetchedText, percentText, quotaWindows, resetsIn, staleText, unavailableText, usageLevel, usageStale, validWindow, type Level } from './usageMath';
 import { HistoryChart } from './charts';
 
 /** The latest usage reading for provider (and the session's supplier), undefined until the first one. */
@@ -68,7 +68,7 @@ export function UsageDetails({ usage, provider, history, compact }: { usage?: Us
         {usage.account && <span className="truncate">{usage.account}</span>}
         {usage.profile && <span className="truncate">{usage.profile}</span>}
         <span className="ml-auto text-foreground-subtlest" title={usage.fetchedAt ? new Date(usage.fetchedAt).toLocaleString(locale) : undefined}>
-          {usage.fetchedAt ? t(`Updated ${agoText(usage.fetchedAt)}`, `更新于${agoText(usage.fetchedAt)}`) : t('Not read yet', '尚未读取')}
+          {fetchedText(usage.fetchedAt)}
         </span>
       </div>
       {note && <p className="rounded-lg bg-warning-surface px-2.5 py-1.5 text-ui-xs leading-5 text-warning-surface-foreground">{note}</p>}

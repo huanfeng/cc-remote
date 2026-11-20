@@ -144,6 +144,40 @@ func TestMonitorCodexSwitchAndFailureGaps(t *testing.T) {
 	}
 }
 
+func TestMonitorCodexDiscardsObsoleteUnidentifiedSnapshot(t *testing.T) {
+	clearProviderEnv(t)
+	s, _, st := setup(t, nil)
+	s.cfg.DataDir = t.TempDir()
+	identity := ""
+	s.codexUsageCache.fetch = func(context.Context, claude.Options) (codex.SubscriptionUsage, error) {
+		return codex.SubscriptionUsage{Identity: identity, Available: true, Usage: &codex.SubscriptionWindows{Windows: []codex.QuotaWindow{{Name: "primary", Percent: 42}}}}, nil
+	}
+	refresh := func() monitorReply {
+		s.monitor.nextRefresh = time.Time{}
+		s.codexUsageCache.retryAt = time.Time{}
+		if err := s.refreshMonitor(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		v, err := s.monitorSnapshot()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if v := refresh(); len(v.Accounts) != 1 || v.Accounts[0].IdentityKnown {
+		t.Fatalf("missing unidentified current snapshot: %+v", v)
+	}
+	identity = "verified-account/workspace"
+	v := refresh()
+	if len(v.Accounts) != 1 || !v.Accounts[0].IdentityKnown || !v.Accounts[0].Active {
+		t.Fatalf("obsolete unidentified snapshot retained: %+v", v)
+	}
+	rows, err := st.AccountUsageSamples("monitor:"+monitorID("codex", identity), time.Now().Add(-time.Hour))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("verified history lost: %v %v", rows, err)
+	}
+}
+
 func TestUsageReauthorizationFailureKeepsOriginalTimestamp(t *testing.T) {
 	s, _, _ := setup(t, nil)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(401) }))

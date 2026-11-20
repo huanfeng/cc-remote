@@ -1,3 +1,5 @@
+import { useSupplierOrder } from '@/lib/supplierOrder';
+import { orderSuppliers } from '@/domain/supplierOrder';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useBackend } from '@/backend/backend';
 import type { ProfileCatalog, Session } from '@/backend/types';
@@ -16,7 +18,9 @@ export function SupplierQuickSwitch({ session, open, onOpenChange, trigger, anch
   session: Session; open: boolean; onOpenChange(open: boolean): void; trigger?: ReactNode; anchor?: ReactNode; mobile?: boolean;
 }) {
   const backend = useBackend();
-  const [catalog, setCatalog] = useState<ProfileCatalog>();
+  const [rawCatalog, setCatalog] = useState<ProfileCatalog>();
+  const { order } = useSupplierOrder();
+  const catalog = rawCatalog && { ...rawCatalog, profiles: orderSuppliers(rawCatalog.profiles, order) };
   const [catalogError, setCatalogError] = useState('');
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);

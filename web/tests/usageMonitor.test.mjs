@@ -1,11 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { monitorAccountName, monitorAccountState, monitorRuns, windowKey, historyWindows } from '../src/features/status/monitorMath.ts';
+import { monitorAccountName, monitorAccountLabel, monitorAccountGroups, monitorAccountState, monitorRuns, windowKey, historyWindows } from '../src/features/status/monitorMath.ts';
 import { HttpBackend } from '../src/backend/http/httpBackend.ts';
 
 const window = { name: 'primary', percent: 42, windowMinutes: 300 };
 const at = minutes => new Date(Date.UTC(2026,10,12,0,minutes)).toISOString();
 const box = {width:600,height:200,padLeft:20,padRight:10,padTop:10,padBottom:20};
+
+test('historical logins stay separate from current accounts without merging identity or history', () => {
+  const previous = {id:'claude:12345678',provider:'claude',name:'Claude · 本机登录',active:false};
+  const current = {...previous,id:'claude:abcdefgh',active:true};
+  const unknown = {...previous,id:'claude:unknown0',identityKnown:false};
+  const accounts = [previous,current,unknown];
+  assert.deepEqual(monitorAccountGroups(accounts),{current:[current],archived:[previous,unknown]});
+  assert.equal(monitorAccountLabel(current,accounts),'Claude · 本机登录 · abcdefgh');
+  assert.equal(monitorAccountLabel(previous,accounts),'Claude · 本机登录 · 12345678');
+  assert.equal(monitorAccountLabel(current,[current]),'Claude · 本机登录');
+  assert.deepEqual(monitorAccountGroups([]),{current:[],archived:[]});
+});
 
 test('account names show the provider once and preserve custom names', () => {
   assert.equal(monitorAccountName({provider:'claude', name:'Claude · 本机登录'}), 'Claude · 本机登录');

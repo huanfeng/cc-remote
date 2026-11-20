@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 
 test('supplier quota reads only while visible, ignores late closed results, and never reuses another host reading', async () => {
-  let state, deps, cleanup, effect;
+  let states = [], effects = [], stateIndex = 0, effectIndex = 0;
+  globalThis.window = { setInterval: () => 1, clearInterval: () => {} };
   globalThis.__supplierUsageHooks = {
-    useState: () => [state, next => { state = next; }],
+    useState: initial => { const index = stateIndex++; if (!(index in states)) states[index] = initial; return [states[index], next => { states[index] = typeof next === 'function' ? next(states[index]) : next; }]; },
     useEffect: (callback, nextDeps) => {
-      if (!deps || nextDeps.some((value, i) => value !== deps[i])) {
-        cleanup?.(); deps = nextDeps; effect = callback;
+      const index = effectIndex++, old = effects[index];
+      if (!old || nextDeps.some((value, i) => value !== old.deps[i])) {
+        old?.cleanup?.(); effects[index] = { deps: nextDeps, callback };
       }
     },
   };
@@ -24,8 +26,9 @@ test('supplier quota reads only while visible, ignores late closed results, and 
   try {
     const { useSupplierUsage } = await import('../src/features/pickers/useSupplierUsage.ts');
     const render = (provider = 'claude', enabled = true) => {
+      stateIndex = 0; effectIndex = 0;
       const result = useSupplierUsage(provider, enabled);
-      if (effect) { const run = effect; effect = undefined; cleanup = run(); }
+      for (const effect of effects) if (effect.callback) { const run = effect.callback; effect.callback = undefined; effect.cleanup = run(); }
       return result;
     };
     render('claude', false); assert.equal(calls.length, 0);
@@ -45,6 +48,6 @@ test('supplier quota reads only while visible, ignores late closed results, and 
     globalThis.__supplierUsageBackend = {};
     assert.equal(render(), null, 'backends without the optional API keep basic supplier choices');
   } finally {
-    cleanup?.(); hook.deregister(); delete globalThis.__supplierUsageHooks; delete globalThis.__supplierUsageBackend;
+    effects.forEach(effect => effect.cleanup?.()); hook.deregister(); delete globalThis.window; delete globalThis.__supplierUsageHooks; delete globalThis.__supplierUsageBackend;
   }
 });

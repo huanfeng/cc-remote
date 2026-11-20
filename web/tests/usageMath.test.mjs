@@ -1,11 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  barLayout, compactNumber, fullest, ringLevel, countdown, durationText, historyTicks, lineRuns, meterVisible, niceMax, quotaWindows, usageLevel, validWindow,
+  barLayout, compactNumber, fullest, ringLevel, countdown, durationText, fetchedText, historyTicks, lineRuns, meterVisible, niceMax, quotaWindows, usageLevel, validWindow,
 } from '../src/features/status/usageMath.ts';
 
 const NOW = Date.parse('2026-11-07T12:00:00Z');
 const at = ms => new Date(NOW + ms).toISOString();
+
+test('fetch age stays relative and missing or invalid timestamps never appear fresh', () => {
+  assert.equal(fetchedText(at(-30_000), NOW), 'Fetched just now');
+  assert.equal(fetchedText(at(-120_000), NOW), 'Fetched 2 min ago');
+  assert.equal(fetchedText(at(-7_200_000), NOW), 'Fetched 2 h ago');
+  assert.equal(fetchedText(at(-172_800_000), NOW), 'Fetched 2 d ago');
+  assert.equal(fetchedText(undefined, NOW), 'Fetch time unknown');
+  assert.equal(fetchedText('invalid', NOW), 'Fetch time unknown');
+});
 
 test('countdown: days, hours and minutes, rounded up; empty when unknown', () => {
   assert.equal(countdown(at(3 * 86_400_000 + 4 * 3600_000), NOW), '3d 4h');

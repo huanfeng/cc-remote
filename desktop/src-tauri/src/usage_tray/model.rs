@@ -91,6 +91,28 @@ mod name_tests {
             assert_eq!(account_name(&account), expected);
         }
     }
+
+    #[test]
+    fn fetch_age_and_identity_limit_remain_clear() {
+        let mut account = Account {
+            provider: "claude".into(),
+            active: true,
+            available: true,
+            windows: vec![QuotaWindow::default()],
+            fetched_at: Some("2026-11-20T00:00:00Z".into()),
+            ..Default::default()
+        };
+        let at = timestamp_seconds("2026-11-20T00:00:00Z").unwrap();
+        assert_eq!(updated_at(&account, at + 120), "2 分钟前获取");
+        account.stale = true;
+        assert_eq!(updated_at(&account, at + 7200), "2 小时前获取");
+        account.stale = false;
+        assert_eq!(account_status(&account), "正常采集");
+        account.provider = "codex".into();
+        assert_eq!(account_status(&account), "仅显示当前额度");
+        account.fetched_at = None;
+        assert_eq!(updated_at(&account, at), "获取时间未知");
+    }
 }
 
 pub fn window_label(window: &QuotaWindow) -> String {
@@ -170,13 +192,8 @@ pub fn account_status(account: &Account) -> String {
     if account.windows.is_empty() {
         return "等待首次采样".into();
     }
-    if !account.identity_known {
-        return if account.provider == "codex" {
-            "仅显示当前额度 · 身份未确认"
-        } else {
-            "身份未确认 · 独立记录"
-        }
-        .into();
+    if !account.identity_known && account.provider == "codex" {
+        return "仅显示当前额度".into();
     }
     "正常采集".into()
 }
@@ -274,14 +291,14 @@ fn timestamp_seconds(value: &str) -> Option<i64> {
 
 fn updated_at(account: &Account, now: i64) -> String {
     let Some(at) = account.fetched_at.as_deref().and_then(timestamp_seconds) else {
-        return "尚无采样记录".into();
+        return "获取时间未知".into();
     };
     let elapsed = now.saturating_sub(at).max(0);
     match elapsed {
-        0..=59 => "刚刚更新".into(),
-        60..=3599 => format!("{} 分钟前更新", elapsed / 60),
-        3600..=86399 => format!("{} 小时前更新", elapsed / 3600),
-        _ => format!("{} 天前更新", elapsed / 86400),
+        0..=59 => "刚刚获取".into(),
+        60..=3599 => format!("{} 分钟前获取", elapsed / 60),
+        3600..=86399 => format!("{} 小时前获取", elapsed / 3600),
+        _ => format!("{} 天前获取", elapsed / 86400),
     }
 }
 pub fn updated_text(account: &Account) -> String {

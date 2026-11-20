@@ -9,6 +9,16 @@ export function monitorAccountName(account: Pick<MonitorAccount, 'provider' | 'n
   return new RegExp(`^${provider}(?:\\s*·|$)`, 'i').test(name) ? name : `${provider} · ${name}`;
 }
 
+export function monitorAccountLabel(account: MonitorAccount, accounts: MonitorAccount[]) {
+  const name = monitorAccountName(account);
+  return accounts.some(other => other.id !== account.id && monitorAccountName(other) === name)
+    ? `${name} · ${account.id.slice(-8)}` : name;
+}
+
+export function monitorAccountGroups(accounts: MonitorAccount[]) {
+  return { current: accounts.filter(a => a.active), archived: accounts.filter(a => !a.active) };
+}
+
 /** Collection and freshness are independent of quota size and confirmed identity. */
 export function monitorAccountState(account: MonitorAccount) {
   if (!account.active) return 'stopped';

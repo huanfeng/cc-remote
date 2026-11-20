@@ -48,6 +48,14 @@ export function resetsIn(iso: string | undefined, now = Date.now()): string {
 }
 
 /** "just now", "5 min ago", "3 h ago", else the local date and time. */
+export function fetchedText(iso: string | undefined, now = Date.now()): string {
+  const at = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(at)) return t('Fetch time unknown', '获取时间未知');
+  const days = Math.floor(Math.max(0, now - at) / 86_400_000);
+  const age = days >= 1 ? t(`${days} d ago`, `${days} 天前`) : agoText(iso, now);
+  return t(`Fetched ${age}`, `${age}获取`);
+}
+
 export function agoText(iso: string | undefined, now = Date.now()): string {
   const at = iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(at)) return '';

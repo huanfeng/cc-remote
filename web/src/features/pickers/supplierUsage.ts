@@ -1,6 +1,6 @@
 import type { ProfileUsageReply, ProfileUsageSummary } from '../../backend/types.ts';
 import { t } from '../../lib/i18n.ts';
-import { agoText, countdown, validWindow } from '../status/usageMath.ts';
+import { fetchedText, countdown, validWindow } from '../status/usageMath.ts';
 
 /** Missing readings remain unknown; cached failures never look like fresh quota. */
 export function supplierUsageDescription(usage: ProfileUsageSummary | undefined, now = Date.now()): string {
@@ -21,9 +21,7 @@ export function supplierUsageDescription(usage: ProfileUsageSummary | undefined,
       : usage.reason === 'api-key' || usage.reason === 'third-party' ? t('No subscription quota', '无订阅额度')
         : t('No reading yet', '尚无用量数据'));
   }
-  const age = agoText(usage.fetchedAt, now);
-  if (age) parts.push(t(`Read ${age}`, `采集于${age}`));
-  if (windows.length && usage.identityKnown === false) parts.push(t('Identity unconfirmed', '身份未确认'));
+  if (windows.length || usage.fetchedAt) parts.push(fetchedText(usage.fetchedAt, now));
   if (usage.shared) parts.push(t('Shared quota', '共用额度'));
   return parts.join(' · ');
 }

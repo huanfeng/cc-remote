@@ -12,8 +12,8 @@ import { cn } from '@/components/lib/utils';
 import { providerName } from '@/domain/providers';
 import { useNow } from '@/lib/hooks';
 import { UsageBar } from './UsageDetails';
-import { agoText, resetsIn, staleText, unavailableText, validWindow } from './usageMath';
-import { historyWindows, monitorAccountName, monitorAccountState, monitorRuns, windowKey } from './monitorMath';
+import { fetchedText, resetsIn, staleText, unavailableText, validWindow } from './usageMath';
+import { historyWindows, monitorAccountLabel, monitorAccountGroups, monitorAccountState, monitorRuns, windowKey } from './monitorMath';
 
 export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
   const backend = useBackend();
@@ -29,7 +29,8 @@ export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
   const [historyTick, setHistoryTick] = useState(0);
   const section = useRef<HTMLDivElement>(null);
   const historySection = useRef<HTMLDivElement>(null);
-  const account = monitor?.accounts.find(a => a.id === selected) ?? monitor?.accounts[0];
+  const groups = monitorAccountGroups(monitor?.accounts ?? []);
+  const account = monitor?.accounts.find(a => a.id === selected) ?? groups.current[0] ?? groups.archived[0];
 
   useEffect(() => backend.watchUsageMonitor?.(v => { setMonitor(v); setError(''); }, e => {
     if (e instanceof BackendError && e.status === 404) setUnsupported(true); else setError(errorMessage(e));
@@ -73,7 +74,7 @@ export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
       {error && <ErrorText>{error}</ErrorText>}
       {!monitor ? (!error && <Spinner className="size-4" />) : <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-ui-sm text-foreground-subtle">{t(`${monitor.accounts.length} accounts`, `${monitor.accounts.length} 个账号`)}</span>
+          <span className="text-ui-sm text-foreground-subtle">{t(`${groups.current.length} current · ${groups.archived.length} historical records`, `${groups.current.length} 个当前账号 · ${groups.archived.length} 条历史记录`)}</span>
           <label className="text-ui-xs text-foreground-subtle">{t('Sampling', '采样间隔')}{' '}
             <select className={selectClass} value={monitor.intervalMinutes} disabled={busy} onChange={e => void act(Number(e.target.value) as 10 | 30)}>
               <option value={10}>{t('10 minutes', '10 分钟')}</option><option value={30}>{t('30 minutes', '30 分钟')}</option>
@@ -82,16 +83,25 @@ export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
         </div>
         {!account ? <p className="text-ui-sm text-foreground-subtle">{t('No readings yet. Sign in on the host or add an OAuth profile in Settings, then refresh.', '尚无采样。请在宿主登录官方账号，或在设置中添加 OAuth 授权后刷新。')}</p> : <>
           <div className="grid items-start gap-2 sm:grid-cols-2" aria-label={t('All account statuses', '全部账号状态')}>
-            {monitor.accounts.map(a => <AccountCard key={a.id} account={a} selected={account.id === a.id} onHistory={() => {
+            {groups.current.map(a => <AccountCard key={a.id} name={monitorAccountLabel(a, monitor.accounts)} account={a} selected={account.id === a.id} onHistory={() => {
               setSelected(a.id);
               historySection.current?.scrollIntoView({ block: 'nearest' });
             }} />)}
           </div>
+          {!groups.current.length && <p className="text-ui-sm text-foreground-subtle">{t('No account is currently being sampled. Previous login records are retained below.', '当前没有正在采集的账号，下方保留以往登录的历史记录。')}</p>}
+          {!!groups.archived.length && <details className="rounded-xl border border-border/70 p-3">
+            <summary className="cursor-pointer text-ui-sm font-medium">{t(`Historical login records (${groups.archived.length})`, `历史登录记录（${groups.archived.length}）`)}</summary>
+            <p className="my-2 text-ui-xs text-foreground-subtle">{t('Account changes or an unconfirmed identity can leave separate records. These are not additional current logins.', '切换账号或身份未确认时可能保留独立记录，这些记录不代表当前存在多个登录。')}</p>
+            <div className="grid items-start gap-2 sm:grid-cols-2">{groups.archived.map(a => <AccountCard key={a.id} name={monitorAccountLabel(a, monitor.accounts)} account={a} selected={account.id === a.id} onHistory={() => {
+              setSelected(a.id);
+              historySection.current?.scrollIntoView({ block: 'nearest' });
+            }} />)}</div>
+          </details>}
           <div ref={historySection} className="flex scroll-mt-3 flex-col gap-3 rounded-xl border border-border/70 bg-card p-3.5">
             <div className="flex flex-wrap items-center gap-2">
               <h4 className="mr-auto text-ui-sm font-medium">{t('Quota history', '额度历史')}</h4>
               <select aria-label={t('History account', '历史账号')} className={cn(selectClass, 'min-w-0 max-w-full')} value={account.id} onChange={e => setSelected(e.target.value)}>
-                {monitor.accounts.map(a => <option key={a.id} value={a.id}>{monitorAccountName(a)}{a.active ? '' : t(' (archived)', '（已停止采集）')}</option>)}
+                {monitor.accounts.map(a => <option key={a.id} value={a.id}>{monitorAccountLabel(a, monitor.accounts)}{a.active ? '' : t(' (archived)', '（已停止采集）')}</option>)}
               </select>
               <select aria-label={t('History period', '历史范围')} className={selectClass} value={hours} onChange={e => setHours(Number(e.target.value))}>
                 <option value={24}>{t('24 hours', '24 小时')}</option><option value={168}>{t('7 days', '7 天')}</option><option value={720}>{t('30 days', '30 天')}</option>
@@ -107,9 +117,8 @@ export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
   </div>;
 }
 
-function AccountCard({ account: a, selected, onHistory }: { account: MonitorAccount; selected: boolean; onHistory(): void }) {
+function AccountCard({ account: a, name, selected, onHistory }: { account: MonitorAccount; name: string; selected: boolean; onHistory(): void }) {
   useNow(30_000);
-  const name = monitorAccountName(a);
   const state = monitorAccountState(a);
   const dim = !a.active || !a.available || !!a.stale || !!a.error;
   const note = a.error ? staleText({ available: a.available, error: a.error, profile: a.profile }, a.provider)
@@ -125,7 +134,7 @@ function AccountCard({ account: a, selected, onHistory }: { account: MonitorAcco
         <div className="mt-0.5 flex flex-wrap gap-x-2 text-ui-xs text-foreground-subtlest">
           {a.plan && <span>{a.plan}</span>}
           <span title={a.fetchedAt ? new Date(a.fetchedAt).toLocaleString(locale) : undefined}>
-            {a.fetchedAt ? t(`Updated ${agoText(a.fetchedAt)}`, `更新于${agoText(a.fetchedAt)}`) : t('Not read yet', '尚未读取')}
+            {fetchedText(a.fetchedAt)}
           </span>
         </div>
       </div>
@@ -135,9 +144,7 @@ function AccountCard({ account: a, selected, onHistory }: { account: MonitorAcco
     </div>
     <div className="flex flex-wrap items-center gap-2 text-ui-xs">
       <span className={cn('rounded-md px-1.5 py-0.5 font-medium', state === 'ready' ? 'bg-success-surface text-success-surface-foreground' : state === 'error' || state === 'stale' ? 'bg-warning-surface text-warning-surface-foreground' : 'bg-surface text-foreground-subtle')}>{labels[state]}</span>
-      {!a.identityKnown && <span className="text-foreground-subtle" title={a.provider === 'codex'
-        ? t('Only current quota is shown. Update Codex CLI to enable account history.', '仅显示当前额度；更新 Codex CLI 后可按账号记录历史。')
-        : t('Recorded separately to avoid merging different accounts.', '暂时独立记录，避免合并不同账号。')}>{a.provider === 'codex' ? t('Identity unconfirmed · current quota only', '身份未确认 · 仅当前额度') : t('Identity unconfirmed · separate history', '身份未确认 · 独立记录')}</span>}
+      {a.provider === 'codex' && !a.identityKnown && <span className="text-foreground-subtle">{t('Current quota only', '仅显示当前额度')}</span>}
       {!a.active && <span className="text-foreground-subtle">{t('History retained', '历史保留')}</span>}
     </div>
     {note && <p className={cn('break-words text-ui-xs', a.error ? 'text-warning' : 'text-foreground-subtle')}>{note}</p>}

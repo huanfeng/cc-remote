@@ -1,5 +1,7 @@
 // OAuth tokens kept on this host. A session that picks one runs with the
 // host's own Claude Code configuration and only that login token.
+import { useSupplierOrder } from '@/lib/supplierOrder';
+import { orderSuppliers } from '@/domain/supplierOrder';
 import { useEffect, useState } from 'react';
 import { KeyRound, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,8 +16,9 @@ import { OAuthTokenEditor } from './OAuthTokenEditor';
 
 type Entry = { id: string; name: string };
 
-export function OAuthSection({ mobile, embedded = false }: { mobile: boolean; embedded?: boolean }) {
+export function OAuthSection({ mobile, embedded = false, onChange }: { mobile: boolean; embedded?: boolean; onChange?: () => void }) {
   const backend = useBackend();
+  const { order } = useSupplierOrder();
   const [entries, setEntries] = useState<Entry[]>();
   const [unsupported, setUnsupported] = useState(false);
   const [wizard, setWizard] = useState<{ replacing?: Entry }>();
@@ -32,7 +35,7 @@ export function OAuthSection({ mobile, embedded = false }: { mobile: boolean; em
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true); setError('');
-    try { await action(); await load(); return true; } catch (e) { setError(errorMessage(e)); return false; } finally { setBusy(false); }
+    try { await action(); await load(); onChange?.(); return true; } catch (e) { setError(errorMessage(e)); return false; } finally { setBusy(false); }
   };
 
   return (
@@ -54,7 +57,7 @@ export function OAuthSection({ mobile, embedded = false }: { mobile: boolean; em
               <div className="flex h-16 items-center justify-center"><Spinner className="size-4 text-foreground-subtle" /></div>
             ) : entries.length === 0 ? (
               <p className="px-4 py-5 text-center text-ui-sm text-foreground-subtle">{t('No tokens yet.', '还没有令牌。')}</p>
-            ) : entries.map(entry => (
+            ) : orderSuppliers(entries.map(entry => ({ ...entry, app: 'claude' })), order).map(entry => (
               <div key={entry.id} className="border-t border-border/60 px-4 py-3 first:border-t-0">
                 <div className="flex items-center gap-3">
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface text-foreground-subtle"><KeyRound className="size-4" /></span>
@@ -78,7 +81,7 @@ export function OAuthSection({ mobile, embedded = false }: { mobile: boolean; em
       {wizard && <OAuthTokenEditor mobile={mobile} replacing={wizard.replacing} onClose={() => setWizard(undefined)} onSave={async (name, token) => {
         if (wizard.replacing) await backend.editOAuthProfile(wizard.replacing.id, { name, ...(token ? { token } : {}) });
         else await backend.addOAuthProfile(name, token);
-        void load();
+        void load(); onChange?.();
       }} />}
       <ConfirmDialog
         open={!!removing}

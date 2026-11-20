@@ -426,6 +426,13 @@ func (s *Server) refreshMonitor(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, a := range m.state.Accounts {
+		// This compatibility snapshot never has history or a verified owner.
+		// Once it is no longer current, retaining it invents an archived account
+		// (for example after upgrading a CLI that starts exposing identity).
+		if id == "codex:identity-unavailable" && !active[id] {
+			delete(m.state.Accounts, id)
+			continue
+		}
 		a.Active = active[id]
 		m.state.Accounts[id] = a
 	}

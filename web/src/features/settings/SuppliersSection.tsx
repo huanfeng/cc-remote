@@ -1,3 +1,6 @@
+import { SupplierOrderSection } from './SupplierOrderSection';
+import { useSupplierOrder } from '@/lib/supplierOrder';
+import { orderSuppliers } from '@/domain/supplierOrder';
 import { useEffect, useState } from 'react';
 import { useBackend } from '@/backend/backend';
 import type { SupplierConfig, SupplierConfigs } from '@/backend/supplierConfig';
@@ -13,6 +16,7 @@ import type { SupplierDraft } from './supplierWizardState';
 
 export function SuppliersSection({ mobile }: { mobile: boolean }) {
   const backend = useBackend();
+  const { order } = useSupplierOrder();
   const guard = useGuard();
   const { catalog, error: catalogError, reload: reloadCatalog } = useProfileCatalog();
   const [collection, setCollection] = useState<SupplierConfigs | null>();
@@ -64,13 +68,14 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
   const imports = catalog?.profiles.filter(p => p.id.startsWith('ccswitch:')) ?? [];
   return <div>
     {!mobile && <SectionHeader title={t('Suppliers', '供应商')} description={t('Connections saved on the selected server. Existing credentials are never sent back to this form.', '在当前服务器管理供应商配置。支持新增、编辑和切换，已有凭据不会回填。')} />}
+    <SupplierOrderSection catalog={catalog} />
     <GroupTitle>{t('API connections', 'API 连接')}</GroupTitle>
     {collection === null ? <p className="text-ui-sm text-foreground-subtle">{t('Upgrade this server to manage API connections. OAuth and imported suppliers remain available below.', '升级此服务器后可管理 API 连接；下方的 OAuth 和导入供应商仍可使用。')}</p>
       : collection === undefined ? !error && <Spinner className="size-4" />
       : <>
         <GroupCard>
           {collection.profiles.length === 0 && <p className="px-4 py-4 text-ui-sm text-foreground-subtle">{t('No API connections saved.', '尚未保存 API 连接。')}</p>}
-          {collection.profiles.map(p => <div key={p.id} className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3 first:border-t-0">
+          {orderSuppliers(collection.profiles, order).map(p => <div key={p.id} className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3 first:border-t-0">
             <div className="min-w-0 flex-1"><p className="break-words text-ui-sm font-medium">{p.name} <span className="font-normal text-foreground-subtle">· {p.app === 'claude' ? 'Claude Code' : 'Codex'}</span></p><p className="break-all text-ui-xs text-foreground-subtle">{p.baseUrl}{p.model ? ` · ${p.model}` : ''}</p><p className="text-ui-xs text-foreground-subtle">{p.hasCredential ? t('Credential configured', '已配置凭据') : t('No credential', '未配置凭据')}</p>{p.notes && <p className="mt-1 line-clamp-2 break-words text-ui-xs text-foreground-subtle">{p.notes}</p>}</div>
             <Button variant="outline" disabled={busy || wizard} onClick={() => { setEditing(p); setWizard(true); }}>{t('Edit', '编辑')}</Button>
             <Button variant="ghost" disabled={busy || wizard} onClick={() => setRemoving(p)}>{t('Remove', '删除')}</Button>
@@ -80,7 +85,7 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
       </>}
     {notice && <p role="status" className="mt-2 text-ui-sm text-success">{notice}</p>}
     {error && <div className="mt-2"><ErrorText>{error}</ErrorText><Button variant="ghost" disabled={busy} onClick={() => guard(() => void load())}>{t('Reload', '刷新')}</Button></div>}
-    <OAuthSection mobile={mobile} embedded />
+    <OAuthSection mobile={mobile} embedded onChange={reloadCatalog} />
     <GroupTitle>CC-Switch</GroupTitle>
     <GroupCard>
       <div className="px-4 py-3 text-ui-sm">

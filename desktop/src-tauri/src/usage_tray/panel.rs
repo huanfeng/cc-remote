@@ -18,6 +18,7 @@ pub(super) enum Action {
 pub(super) struct Model {
     pub view: View,
     pub revision: u64,
+    show_all: bool,
     feedback: Option<Feedback>,
 }
 #[derive(Clone)]
@@ -77,6 +78,7 @@ impl Model {
             .snapshot
             .accounts
             .iter()
+            .filter(|a| self.show_all || self.view.favorites.contains(&a.id))
             .map(|a| AccountRow {
                 account: a.clone(),
                 pinned: self.view.favorites.contains(&a.id),
@@ -347,7 +349,7 @@ fn account_card(row: AccountRow, model: Signal<Model>, actions: Sender<Action>) 
                         .tooltip(if row.pinned {
                             "取消收藏"
                         } else {
-                            "收藏并置顶（可多选）"
+                            "收藏（可多选）"
                         })
                         .on_click(move |_| {
                             let favorite = !model.get().view.favorites.contains(&id);
@@ -355,6 +357,7 @@ fn account_card(row: AccountRow, model: Signal<Model>, actions: Sender<Action>) 
                         }),
                 ),
         );
+    card = card.child(muted(updated_text(&a), 16).font_size(11.0));
     for pair in a.windows.chunks(2) {
         let mut row = Element::row().width_match().spacing(14);
         for window in pair {
@@ -366,7 +369,7 @@ fn account_card(row: AccountRow, model: Signal<Model>, actions: Sender<Action>) 
         || a.error.is_some()
         || !a.available
         || !a.active
-        || !a.identity_known
+        || (a.provider == "codex" && !a.identity_known)
         || row.offline
         || a.stale
     {
@@ -389,20 +392,21 @@ pub(super) fn panel(model: Signal<Model>, actions: Sender<Action>) -> WindowRequ
     let current = model.get().view;
     let desired_height = if current.loading {
         272
-    } else if current.snapshot.accounts.is_empty() {
+    } else if model.get().rows().is_empty() {
         268
     } else {
-        let content: i32 = current
-            .snapshot
-            .accounts
+        let content: i32 = model
+            .get()
+            .rows()
             .iter()
-            .map(|a| {
-                90 + a.windows.len().saturating_sub(2).div_ceil(2) as i32 * 42
+            .map(|row| {
+                let a = &row.account;
+                106 + a.windows.len().saturating_sub(2).div_ceil(2) as i32 * 42
                     + if a.error.is_some()
                         || a.stale
                         || !a.available
                         || !a.active
-                        || !a.identity_known
+                        || (a.provider == "codex" && !a.identity_known)
                         || !current.connected
                     {
                         22
@@ -465,7 +469,7 @@ fn panel_content(model: Signal<Model>, actions: Sender<Action>) -> Element {
                             send(&refresh, Action::Refresh, model);
                         }))
                     .child(Element::icon_button("×").size(26, 26).tooltip("收起 (Esc)").on_click(move |_| send(&dismiss, Action::Hide, model))))
-                .child(Element::row().height(16).spacing(6)
+                .child(Element::row().height(26).spacing(6)
                     .child(Element::label("●").font_size(9.0).width(12)
                         .fg_role_signal(model.map(|m| if m.view.connected { Role::Success } else { Role::Warning })))
                     .child(muted(model.map(|m| {
@@ -473,17 +477,20 @@ fn panel_content(model: Signal<Model>, actions: Sender<Action>) -> Element {
                         else if m.view.connected { format!("自动记录中 · {} 个账号", m.view.snapshot.accounts.iter().filter(|a| a.active).count()) }
                         else if m.view.snapshot.accounts.is_empty() { "后台离线".into() }
                         else { "后台离线 · 保留上次读数".into() }
-                    }), 16).font_size(11.0).weight(1.0)))
+                    }), 16).font_size(11.0).weight(1.0))
+                    .child(Element::button(model.map(|m| if m.show_all { "仅收藏" } else { "全部账号" }.to_string()))
+                        .small().neutral().outline_soft().on_click(move |_| model.update(|m| m.show_all = !m.show_all))))
                 .child(Element::list_signal(model.map(Model::rows), |r| r.account.id.clone(), move |r| {
                     Element::col().width_match().padding_edges(Insets::new(0, 0, 8, 4))
                         .child(account_card(r, model, rows.clone()))
-                }).weight(1.0).visible_when(move || !model.get().view.snapshot.accounts.is_empty()))
+                }).weight(1.0).visible_when(move || !model.get().rows().is_empty()))
                 .child(Element::scroll().weight(1.0).width_match()
-                    .visible_when(move || model.get().view.snapshot.accounts.is_empty())
+                    .visible_when(move || model.get().rows().is_empty())
                     .child(Element::col().width_match().padding(14).spacing(10).bg_role(Role::Surface).corner(10.0)
-                    .child(text(model.map(|m| if m.view.loading { "准备你的用量概览" } else if m.view.connected { "还没有订阅用量" } else { "连接暂时中断" }.to_string()), 17.0, 30).font_weight(600))
+                    .child(text(model.map(|m| if m.view.loading { "准备你的用量概览" } else if !m.view.snapshot.accounts.is_empty() && !m.show_all { "暂无收藏账号" } else if m.view.connected { "还没有订阅用量" } else { "连接暂时中断" }.to_string()), 17.0, 30).font_weight(600))
                     .child(muted(model.map(|m| {
                         if m.view.loading { "正在读取后台缓存，稍后会在这里显示账号。".into() }
+                        else if !m.view.snapshot.accounts.is_empty() && !m.show_all { "选择“全部账号”，然后点击星标收藏。".into() }
                         else if m.view.connected { "请先登录 Claude / Codex，或在客户端添加 OAuth 账号。后台会自动发现并记录。".into() }
                         else { format!("{}\n确认本机后台正在运行，重新连接后可继续查看。", m.view.error.as_deref().unwrap_or("无法读取后台用量")) }
                     }), 64).max_lines(3))
@@ -656,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_favorites_sort_first_and_preserve_unavailable_accounts() {
+    fn favorites_filter_accounts_and_all_mode_allows_managing_them() {
         let mut view = populated();
         view.snapshot.accounts.extend([
             Account {
@@ -669,15 +676,22 @@ mod tests {
             },
         ]);
         view.favorites = vec!["old".into(), "work".into(), "missing".into()];
-        let model = Model {
+        let mut model = Model {
             view,
             ..Default::default()
         };
         let rows = model.rows();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 2);
         assert_eq!(rows.iter().filter(|r| r.pinned).count(), 2);
         assert_eq!(rows[0].account.id, "work");
         assert_eq!(rows[1].account.id, "old");
+        model.show_all = true;
+        assert_eq!(model.rows().len(), 3);
+        model.show_all = false;
+        model.view.favorites.clear();
+        assert!(model.rows().is_empty());
+        model.show_all = true;
+        assert_eq!(model.rows().len(), 3);
     }
 
     #[test]

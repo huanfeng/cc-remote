@@ -1,4 +1,6 @@
 // Small pieces shared by the dialogs, settings and status surfaces.
+import { useSupplierOrder } from '@/lib/supplierOrder';
+import { orderSuppliers } from '@/domain/supplierOrder';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -110,6 +112,7 @@ export const errorStatus = (e: unknown) => (e as { status?: number } | null)?.st
 // ---------- Supplier profiles ----------
 
 export function useProfileCatalog() {
+  const { order } = useSupplierOrder();
   const backend = useBackend();
   const [catalog, setCatalog] = useState<ProfileCatalog>();
   const [error, setError] = useState('');
@@ -120,7 +123,7 @@ export function useProfileCatalog() {
     backend.profiles().then(c => { if (live) setCatalog(c); }, e => { if (live) setError(errorMessage(e)); });
     return () => { live = false; };
   }, [backend, version]);
-  return { catalog, error, reload: () => setVersion(v => v + 1) };
+  return { catalog: catalog && { ...catalog, profiles: orderSuppliers(catalog.profiles, order) }, error, reload: () => setVersion(v => v + 1) };
 }
 
 export { profilesFor, profileLabel, defaultSupplierLabel, supplierOptions } from '@/features/pickers/supplierSwitch';
