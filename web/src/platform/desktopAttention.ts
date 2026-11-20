@@ -16,36 +16,42 @@ export function aggregateDesktopAttention(tabs: { hostId: string; waiting: numbe
   return { waiting, done, total: waiting + done };
 }
 
-const glyphs: Record<string, string[]> = {
-  '0': ['111', '101', '101', '101', '111'], '1': ['010', '110', '010', '010', '111'],
-  '2': ['111', '001', '111', '100', '111'], '3': ['111', '001', '111', '001', '111'],
-  '4': ['101', '101', '111', '001', '001'], '5': ['111', '100', '111', '001', '111'],
-  '6': ['111', '100', '111', '101', '111'], '7': ['111', '001', '001', '001', '001'],
-  '8': ['111', '101', '111', '101', '111'], '9': ['111', '101', '111', '001', '111'],
-  '+': ['000', '010', '111', '010', '000'],
-};
+const taskbarBadgeSize = 16;
 
-/** Raw RGBA avoids icon decoding features or replacing the user's app icon. */
-export function taskbarBadgePixels(counts: AttentionCounts): Uint8Array {
-  const pixels = new Uint8Array(16 * 16 * 4);
-  const color = counts.waiting ? [217, 119, 6] : [22, 163, 74];
-  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-    if ((x - 7.5) ** 2 + (y - 7.5) ** 2 > 7.5 ** 2) continue;
-    pixels.set([...color, 255], (y * 16 + x) * 4);
-  }
+/** Windows overlays are 16 logical pixels at 96 DPI. Rasterize at the window's scale. */
+export function renderTaskbarBadge(counts: AttentionCounts, pixelRatio: number) {
+  const size = Math.max(taskbarBadgeSize, Math.round(taskbarBadgeSize * pixelRatio));
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Could not create a taskbar badge canvas');
+  const scale = size / taskbarBadgeSize;
+  context.scale(scale, scale);
+
   const label = counts.total > 99 ? '99+' : String(counts.total);
-  const scale = label.length === 1 ? 2 : 1;
-  const left = Math.floor((16 - (label.length * 4 - 1) * scale) / 2), top = Math.floor((16 - 5 * scale) / 2);
-  for (let i = 0; i < label.length; i++) for (let y = 0; y < 5; y++) for (let x = 0; x < 3; x++) {
-    if (glyphs[label[i]][y][x] !== '1') continue;
-    for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) pixels.set([255, 255, 255, 255], ((top + y * scale + dy) * 16 + left + (i * 4 + x) * scale + dx) * 4);
-  }
-  return pixels;
+  const singleDigit = label.length === 1;
+  const inset = 0.5 / scale;
+  const top = singleDigit ? inset : 1 + inset;
+  context.roundRect(inset, top, 16 - 2 * inset, 16 - 2 * top, singleDigit ? 8 : 5);
+  context.fillStyle = counts.waiting ? '#9a4705' : '#086747';
+  context.fill();
+  context.lineWidth = 1 / scale;
+  context.strokeStyle = '#ffffffe0';
+  context.stroke();
+
+  const fontSize = singleDigit ? 12 : label.length === 2 ? 10 : 8;
+  context.font = `700 ${fontSize}px "Segoe UI", Arial, sans-serif`;
+  context.textAlign = 'center';
+  const metrics = context.measureText(label);
+  const baseline = 8 + (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) / 2;
+  context.fillStyle = '#fff';
+  context.fillText(label, 8, baseline, 13);
+  return { pixels: new Uint8Array(context.getImageData(0, 0, size, size).data), size };
 }
 
 type BadgeImage = { close(): Promise<void> };
 interface NativeAttention {
-  image(pixels: Uint8Array): Promise<BadgeImage>;
+  image(counts: AttentionCounts): Promise<BadgeImage>;
   overlay(image?: BadgeImage): Promise<void>;
   badge(count?: number): Promise<void>;
 }
@@ -58,7 +64,10 @@ let nativeWrites = Promise.resolve();
 export function createDesktopAttention(platform: string, bridge?: NativeAttention) {
   const window = bridge ? undefined : getCurrentWindow();
   const native: NativeAttention = bridge ?? {
-    image: pixels => Image.new(pixels, 16, 16),
+    image: counts => {
+      const { pixels, size } = renderTaskbarBadge(counts, globalThis.devicePixelRatio || 1);
+      return Image.new(pixels, size, size);
+    },
     overlay: image => window!.setOverlayIcon(image as Image | undefined),
     badge: count => window!.setBadgeCount(count),
   };
@@ -68,7 +77,7 @@ export function createDesktopAttention(platform: string, bridge?: NativeAttentio
       const key = `${counts.waiting}:${counts.done}`;
       if (key === previous) return;
       if (platform === 'windows') {
-        const image = counts.total ? await native.image(taskbarBadgePixels(counts)) : undefined;
+        const image = counts.total ? await native.image(counts) : undefined;
         try { await native.overlay(image); } finally { await image?.close(); }
       } else await native.badge(counts.total || undefined);
       previous = key;

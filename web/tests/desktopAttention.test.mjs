@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { aggregateDesktopAttention, createDesktopAttention, taskbarBadgePixels } from '../src/platform/desktopAttention.ts';
+import { aggregateDesktopAttention, createDesktopAttention } from '../src/platform/desktopAttention.ts';
 
 test('desktop attention includes inactive hosts once and drops closed or signed-out tabs', () => {
   const a = { hostId: 'a', waiting: 2, done: 1, phase: 'ready' };
@@ -17,7 +17,7 @@ test('native overlay writes are serialized, counts clear at zero and resources c
   let release;
   const pending = new Promise(resolve => { release = resolve; });
   const controller = createDesktopAttention('windows', {
-    async image(pixels) { calls.push(['image', pixels.length]); await pending; return { close: async () => closed.push('image') }; },
+    async image(counts) { calls.push(['image', counts.total]); await pending; return { close: async () => closed.push('image') }; },
     async overlay(image) { calls.push(['overlay', !!image]); },
     async badge(count) { calls.push(['badge', count]); },
   });
@@ -34,17 +34,12 @@ test('native overlay writes are serialized, counts clear at zero and resources c
   await controller.dispose();
 });
 
-test('Dock badges use numeric API while Windows badges use transparent RGBA images', async () => {
+test('Dock badges use the numeric API and desktop capabilities allow both badge APIs', async () => {
   const calls = [];
   const controller = createDesktopAttention('mac', { image: async () => { throw Error('unexpected image'); }, overlay: async () => {}, badge: async count => { calls.push(count); } });
   await controller.update({ waiting: 0, done: 8, total: 8 });
   await controller.dispose();
   assert.deepEqual(calls, [8, undefined]);
-  const waiting = taskbarBadgePixels({ waiting: 2, done: 3, total: 5 });
-  const done = taskbarBadgePixels({ waiting: 0, done: 3, total: 3 });
-  assert.equal(waiting.length, 16 * 16 * 4);
-  assert.equal(waiting[3], 0, 'corners are transparent');
-  assert.notDeepEqual(waiting, done, 'waiting and unread completion have different colors');
   const permissions = JSON.parse(readFileSync(new URL('../../desktop/src-tauri/capabilities/default.json', import.meta.url))).permissions;
   assert.ok(permissions.includes('core:window:allow-set-overlay-icon'));
   assert.ok(permissions.includes('core:window:allow-set-badge-count'));
@@ -70,8 +65,26 @@ test('recreating a controller cannot let an old cleanup clear the new badge', as
   await current.dispose();
 });
 
-test('the actual Tauri bridge uses raw image handles and releases them after overlay IPC', async () => {
-  const saved = globalThis.window, calls = [];
+test('the Tauri bridge forwards DPI-scaled RGBA and releases the image after overlay IPC', async t => {
+  const calls = [];
+  const context = {
+    scale() {}, roundRect() {}, fill() {}, stroke() {}, fillText() {},
+    measureText: () => ({ actualBoundingBoxAscent: 7, actualBoundingBoxDescent: 0 }),
+    getImageData: (_x, _y, width, height) => ({ data: new Uint8ClampedArray(width * height * 4) }),
+  };
+  const globals = {
+    document: { createElement: () => ({ getContext: () => context }) },
+    devicePixelRatio: 1.5,
+  };
+  for (const [name, value] of Object.entries(globals)) {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+    t.after(() => {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    });
+  }
+  const saved = globalThis.window;
   globalThis.window = { __TAURI_INTERNALS__: { metadata: { currentWindow: { label: 'main' } }, invoke: async (command, args) => {
     calls.push([command, args]);
     if (command === 'plugin:image|new') return 7;
@@ -80,7 +93,9 @@ test('the actual Tauri bridge uses raw image handles and releases them after ove
     const current = createDesktopAttention('windows');
     await current.update({ waiting: 1, done: 2, total: 3 });
     assert.deepEqual(calls.map(call => call[0]), ['plugin:image|new', 'plugin:window|set_overlay_icon', 'plugin:resources|close']);
-    assert.equal(calls[0][1].width, 16);
+    assert.equal(calls[0][1].width, 24);
+    assert.equal(calls[0][1].height, 24);
+    assert.equal(calls[0][1].rgba.length, 24 * 24 * 4);
     assert.equal(calls[1][1].label, 'main');
     assert.equal(calls[1][1].value, 7);
     await current.dispose();
