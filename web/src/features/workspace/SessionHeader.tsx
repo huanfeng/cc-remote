@@ -1,7 +1,7 @@
 // Conversation header. Desktop: one 48px row, also the window drag region.
 // Phone: back/menu, title + status, and the usage orb; the rest moves into ⋯.
 import {
-  ChevronLeft, FolderOpen, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Square, SquareTerminal,
+  ChevronLeft, FolderOpen, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Search, Square, SquareTerminal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -11,8 +11,8 @@ import {
 import { cn } from '@/components/lib/utils';
 import { useBackend } from '@/backend/backend';
 import type { Session } from '@/backend/types';
-import { select, useApp } from '@/store/app';
-import { usePrefs } from '@/lib/prefs';
+import { hasFeature, select, useApp } from '@/store/app';
+import { setTerminalView, usePrefs } from '@/lib/prefs';
 import { t } from '@/lib/i18n';
 import { shortPath, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
 import { SessionStatusPopover } from '@/features/header/SessionStatusPopover';
@@ -29,6 +29,7 @@ import { projectShellShortcutLabel } from '@/features/projectShell/projectShellK
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
   const open = useApp(s => s.open);
+  const canSearch = useApp(s => hasFeature(s.info, 'message-search'));
   const setApp = useApp(s => s.set);
   const sidebarCollapsed = usePrefs(s => s.sidebarCollapsed);
   const toolsExpanded = usePrefs(s => s.toolsExpanded);
@@ -43,7 +44,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const tasks = session.activeTasks ?? 0;
   const isTerminal = session.mode === 'terminal';
 
-  const toggleView = () => setPrefs({ terminalView: rememberView(usePrefs.getState().terminalView, session.id, !terminalView) });
+  const toggleView = () => setTerminalView(session.id, !terminalView);
 
   const status = (
     <span className={cn('inline-flex h-5 shrink-0 items-center gap-1 rounded-full px-2 text-ui-xs font-medium', tonePill[tone])}>
@@ -85,6 +86,19 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
       </div>
 
       {!native && <UsageMeter session={session} mobile={mobile} />}
+
+      {canSearch && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'}
+              aria-label={t('Search this conversation', '搜索此会话')}
+              onClick={() => open({ type: 'session-search', id: session.id, native: native ? session.provider ?? 'claude' : undefined })}>
+              <Search className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('Search this conversation', '搜索此会话')}{!mobile && ' · Ctrl F'}</TooltipContent>
+        </Tooltip>
+      )}
 
       {!native && shell.enabled && !!session.cwd && (
         <Tooltip>
@@ -175,16 +189,6 @@ function ViewTab({ active, onClick, icon, label }: { active: boolean; onClick: (
       {icon}{label}
     </button>
   );
-}
-
-/** Keeps which terminal sessions show the terminal view, capped at the 100 most recent (as before). */
-function rememberView(views: Record<string, boolean>, id: string, on: boolean): Record<string, boolean> {
-  const next = { ...views };
-  delete next[id];
-  if (on) next[id] = true;
-  const keys = Object.keys(next);
-  for (const k of keys.slice(0, Math.max(0, keys.length - 100))) delete next[k];
-  return next;
 }
 
 /** Working folder: shortened in the header, with copy and native path actions. */

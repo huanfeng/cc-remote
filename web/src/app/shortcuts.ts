@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useApp } from '@/store/app';
+import { hasFeature, useApp } from '@/store/app';
 import { usePrefs } from '@/lib/prefs';
 import { dismissOverlayShortcut, overlayHistory } from '@/lib/overlayHistory';
 
@@ -13,6 +13,11 @@ export function useGlobalShortcuts() {
       const k = e.key.toLowerCase();
       const app = useApp.getState();
       if (k === 'k') { e.preventDefault(); app.open(app.surface?.type === 'palette' ? null : { type: 'palette' }); }
+      else if (k === 'f' && !e.shiftKey && app.selection && hasFeature(app.info, 'message-search') &&
+        (!app.surface || app.surface.type === 'session-search') && !(e.target instanceof Element && e.target.closest('[data-terminal]'))) {
+        e.preventDefault();
+        if (!app.surface) app.open({ type: 'session-search', id: app.selection.id, native: app.selection.kind === 'native' ? app.selection.provider : undefined });
+      }
       else if (k === 'n' && !e.shiftKey) { e.preventDefault(); app.open({ type: 'new-session' }); }
       else if (k === 'b') { e.preventDefault(); const p = usePrefs.getState(); p.set({ sidebarCollapsed: !p.sidebarCollapsed }); }
       else if (k === ',') { e.preventDefault(); app.open({ type: 'settings' }); }

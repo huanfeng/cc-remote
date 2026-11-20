@@ -21,6 +21,7 @@ export type Surface =
   | { type: 'tasks'; id: string }
   | { type: 'file'; sessionId: string; path: string; base?: string[] }
   | { type: 'palette' }
+  | { type: 'session-search'; id: string; native?: Provider }
   | { type: 'attach'; id: string }
   | null;
 

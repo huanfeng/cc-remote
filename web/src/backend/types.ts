@@ -35,7 +35,42 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'message-search';
+
+export interface MessageSearchQuery {
+  q: string;
+  sessionId?: string;
+  native?: Provider;
+  provider?: Provider;
+  cwd?: string;
+  since?: string;
+  before?: string;
+}
+
+export interface MessageSearchHit {
+  sessionId: string;
+  native?: Provider;
+  provider: Provider;
+  title: string;
+  cwd: string;
+  kind: 'user' | 'assistant';
+  createdAt: string;
+  snippet: string;
+  matchStart: number;
+  matchEnd: number;
+  locator: string;
+}
+
+export interface MessageSearchPage {
+  hits: MessageSearchHit[];
+  next?: string;
+  partial?: boolean;
+}
+
+export interface MessageSearchContext {
+  events: SessionEvent[];
+  matchSeq: number;
+}
 
 export interface HostInfo {
   version: string;

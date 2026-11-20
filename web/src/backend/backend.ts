@@ -12,6 +12,7 @@ import type {
   ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
   UsageHistory, UsageReply, UsageMonitor, MonitorHistory,
+  MessageSearchQuery, MessageSearchPage, MessageSearchHit, MessageSearchContext,
 } from './types';
 
 export type Unsubscribe = () => void;
@@ -82,6 +83,8 @@ export interface Backend {
   watchTranscript(id: string, onUpdate: (u: TranscriptUpdate) => void, opts?: { native?: Provider }): Unsubscribe;
   loadOlder(id: string, beforeSeq: number, opts?: { native?: Provider }): Promise<{ events: SessionEvent[]; hasMore: boolean }>;
   fullEvent(id: string, seq: number, opts?: { native?: Provider }): Promise<SessionEvent>;
+  searchMessages(query: MessageSearchQuery, signal?: AbortSignal): Promise<MessageSearchPage>;
+  messageContext(hit: MessageSearchHit, signal?: AbortSignal): Promise<MessageSearchContext>;
 
   // Composer
   send(id: string, body: SendRequest): Promise<{ status: 'running' | 'queued'; duplicate?: boolean }>;

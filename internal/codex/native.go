@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"container/list"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -330,15 +331,32 @@ func NativeHistory(configDir, id string) (claude.NativeSession, []claude.Event, 
 		return claude.NativeSession{}, nil, err
 	}
 	defer root.Close()
-	files, err := nativeFiles(root)
+	path, _, err := nativeHistoryPath(context.Background(), root, id)
 	if err != nil {
 		return claude.NativeSession{}, nil, err
+	}
+	s, events, err := nativeHistoryCache.read(root, path, true)
+	if err == nil {
+		if title := nativeTitles(root)[strings.ToLower(s.ID)]; title != "" {
+			s.Title = title
+		}
+	}
+	return s, events, err
+}
+
+func nativeHistoryPath(ctx context.Context, root *os.Root, id string) (string, claude.NativeSession, error) {
+	files, err := nativeFiles(root)
+	if err != nil {
+		return "", claude.NativeSession{}, err
 	}
 	// Normal rollout filenames contain the UUID. Try those first so opening a
 	// session does not parse metadata for unrelated files on a cold cache. Keep
 	// the metadata fallback for older or renamed transcripts.
 	for _, matchingName := range []bool{true, false} {
 		for _, path := range files {
+			if err := ctx.Err(); err != nil {
+				return "", claude.NativeSession{}, err
+			}
 			if strings.Contains(strings.ToLower(filepath.Base(path)), strings.ToLower(id)) != matchingName {
 				continue
 			}
@@ -347,16 +365,10 @@ func NativeHistory(configDir, id string) (claude.NativeSession, []claude.Event, 
 			if err != nil || !strings.EqualFold(s.ID, id) {
 				continue
 			}
-			s, events, err := nativeHistoryCache.read(root, path, true)
-			if err == nil {
-				if title := nativeTitles(root)[strings.ToLower(s.ID)]; title != "" {
-					s.Title = title
-				}
-			}
-			return s, events, err
+			return path, s, nil
 		}
 	}
-	return claude.NativeSession{}, nil, os.ErrNotExist
+	return "", claude.NativeSession{}, os.ErrNotExist
 }
 
 type rolloutRecord struct {
@@ -492,27 +504,9 @@ func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s 
 			noteActivity(r.Timestamp)
 			continue
 		case "message":
-			if p.Role != "user" && p.Role != "assistant" {
-				continue
-			}
-			var blocks []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			if json.Unmarshal(p.Content, &blocks) != nil {
-				continue
-			}
-			var texts []string
-			for _, b := range blocks {
-				if b.Type == "input_text" || b.Type == "output_text" {
-					texts = append(texts, b.Text)
-				}
-			}
-			ev = claude.Event{Kind: p.Role, Text: strings.Join(texts, "\n")}
-			if strings.TrimSpace(ev.Text) == "" {
-				continue
-			}
-			if p.Role == "user" && !meaningfulNativeText(ev.Text) {
+			var ok bool
+			ev, ok = r.message()
+			if !ok {
 				continue
 			}
 			if p.Role == "user" && !customTitle && !userTitle {
@@ -567,6 +561,31 @@ func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s 
 		}
 	}
 	return s, events, scanner.Err()
+}
+
+func (r rolloutRecord) message() (claude.Event, bool) {
+	p := r.Payload
+	if p.Role != "user" && p.Role != "assistant" {
+		return claude.Event{}, false
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(p.Content, &blocks) != nil {
+		return claude.Event{}, false
+	}
+	var texts []string
+	for _, b := range blocks {
+		if b.Type == "input_text" || b.Type == "output_text" {
+			texts = append(texts, b.Text)
+		}
+	}
+	text := strings.Join(texts, "\n")
+	if strings.TrimSpace(text) == "" || (p.Role == "user" && !meaningfulNativeText(text)) {
+		return claude.Event{}, false
+	}
+	return claude.Event{Kind: p.Role, Text: text}, true
 }
 
 func nativeTimestamp(value string) string {

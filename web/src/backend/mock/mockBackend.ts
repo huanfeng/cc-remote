@@ -8,6 +8,7 @@ import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
   ProjectShell, ProjectShellStream,
   Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
+  MessageSearchQuery, MessageSearchHit,
 } from '../types';
 import * as fx from './fixtures';
 import { dangerousPermission } from '@/domain/providers';
@@ -17,6 +18,14 @@ const clone = <T,>(v: T): T => structuredClone(v);
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 const latency = () => wait(120 + Math.random() * 180);
 const now = () => new Date().toISOString();
+const earlierMessages: SessionEvent[] = [
+  { seq: 1, kind: 'user', text: '（更早的消息）先确认一下 ConPTY 在 Windows 10 上的可用性。', createdAt: fx.ago(30 * 60) },
+  { seq: 2, kind: 'assistant', text: 'ConPTY 需要 Windows 10 1809 及以上，cc-remote 启动时会检测版本。', createdAt: fx.ago(30 * 60 - 1) },
+];
+const nativeMessages: SessionEvent[] = [
+  { seq: 1, kind: 'user', text: '（终端历史）这是一段只读记录。', createdAt: fx.ago(300) },
+  { seq: 2, kind: 'assistant', text: '原生历史会话只能查看；可以**以终端会话继续**，或**导入为托管会话**。', createdAt: fx.ago(299) },
+];
 
 type Watcher = (u: TranscriptUpdate) => void;
 
@@ -180,13 +189,9 @@ export class MockBackend implements Backend {
 
   watchTranscript(id: string, onUpdate: Watcher, opts?: { native?: Provider }): Unsubscribe {
     if (opts?.native) {
-      const events: SessionEvent[] = [
-        { seq: 1, kind: 'user', text: '（终端历史）这是一段只读记录。', createdAt: fx.ago(300) },
-        { seq: 2, kind: 'assistant', text: '原生历史会话只能查看；可以**以终端会话继续**，或**导入为托管会话**。', createdAt: fx.ago(299) },
-      ];
       const native = [...fx.nativeClaude, ...fx.nativeCodex].find(n => n.id === id);
       const session: Session = { id, title: native?.title ?? id, cwd: native?.cwd ?? '', provider: opts.native, updatedAt: native?.updatedAt ?? now() };
-      setTimeout(() => onUpdate({ session, events, hasMore: false, requests: [] }), 150);
+      setTimeout(() => onUpdate({ session, events: clone(nativeMessages), hasMore: false, requests: [] }), 150);
       return () => {};
     }
     let set = this.watchers.get(id);
@@ -201,14 +206,63 @@ export class MockBackend implements Backend {
     return () => { set!.delete(onUpdate); };
   }
 
-  async loadOlder(_id: string, beforeSeq: number) {
+  async loadOlder(id: string, beforeSeq: number) {
     await wait(500);
-    const base = new Date(Date.now() - 60 * 60_000 * 30).getTime();
-    const events: SessionEvent[] = [
-      { seq: beforeSeq - 2, kind: 'user', text: '（更早的消息）先确认一下 ConPTY 在 Windows 10 上的可用性。', createdAt: new Date(base).toISOString() },
-      { seq: beforeSeq - 1, kind: 'assistant', text: 'ConPTY 需要 Windows 10 1809 及以上，cc-remote 启动时会检测版本。', createdAt: new Date(base + 9000).toISOString() },
-    ].filter(e => e.seq > 0);
+    const events = id === 's5' ? earlierMessages.filter(event => event.seq < beforeSeq) : [];
     return { events, hasMore: false };
+  }
+
+  private searchableMessages(id: string, native?: Provider) {
+    if (native) return nativeMessages;
+    return [...(id === 's5' ? earlierMessages : []), ...(this.events[id] ?? [])]
+      .filter(event => (event.kind === 'user' || event.kind === 'assistant') && event.text);
+  }
+
+  async searchMessages(query: MessageSearchQuery, signal?: AbortSignal) {
+    await latency();
+    signal?.throwIfAborted();
+    const hits: MessageSearchHit[] = [];
+    const phrase = query.q.trim();
+    if (!phrase) return { hits };
+    const pattern = new RegExp(phrase.replace(/[$.*+?^{}()|[\]\\]/g, '\\$&'), 'iu');
+    const sources = [
+      ...this.sessions.map(session => ({ ...session, provider: session.provider ?? 'claude' as const, native: undefined })),
+      ...fx.nativeClaude.map(session => ({ ...session, provider: 'claude' as const, native: 'claude' as const })),
+      ...fx.nativeCodex.map(session => ({ ...session, provider: 'codex' as const, native: 'codex' as const })),
+    ];
+    for (const source of sources) {
+      if (query.sessionId && (source.id !== query.sessionId || source.native !== query.native)) continue;
+      if (query.provider && source.provider !== query.provider || query.cwd && source.cwd !== query.cwd) continue;
+      for (const event of this.searchableMessages(source.id, source.native)) {
+        if (event.kind !== 'user' && event.kind !== 'assistant') continue;
+        if (query.since && Date.parse(event.createdAt) < Date.parse(query.since)) continue;
+        const text = event.text ?? '';
+        const match = pattern.exec(text);
+        if (!match) continue;
+        const left = Math.max(0, match.index - 70);
+        const right = Math.min(text.length, match.index + match[0].length + 100);
+        const matchStart = match.index - left + Number(left > 0);
+        hits.push({
+          sessionId: source.id, title: source.title, cwd: source.cwd, native: source.native, provider: source.provider,
+          kind: event.kind, createdAt: event.createdAt, locator: String(event.seq),
+          snippet: (left > 0 ? '…' : '') + text.slice(left, right) + (right < text.length ? '…' : ''),
+          matchStart, matchEnd: matchStart + match[0].length,
+        });
+      }
+    }
+    hits.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const start = Number(query.before) || 0;
+    const end = start + 30;
+    return { hits: hits.slice(start, end), next: end < hits.length ? String(end) : undefined };
+  }
+
+  async messageContext(hit: MessageSearchHit, signal?: AbortSignal) {
+    await latency();
+    signal?.throwIfAborted();
+    const messages = this.searchableMessages(hit.sessionId, hit.native);
+    const position = messages.findIndex(event => String(event.seq) === hit.locator);
+    if (position < 0) throw new BackendError('Message not found', 404);
+    return { events: clone(messages.slice(Math.max(0, position - 10), position + 11)), matchSeq: messages[position].seq };
   }
 
   async fullEvent(id: string, seq: number) {

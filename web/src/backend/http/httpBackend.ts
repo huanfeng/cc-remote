@@ -16,6 +16,7 @@ import type {
   ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
   UsageReply, UsageMonitor, MonitorHistory,
+  MessageSearchQuery, MessageSearchPage, MessageSearchHit, MessageSearchContext,
 } from '../types.ts';
 import { HttpClient, defined, providerQuery, withQuery, type Lang } from './client.ts';
 import { poll, type Poller } from './poll.ts';
@@ -124,6 +125,18 @@ export class HttpBackend implements Backend {
   }
   private call<T>(method: string, path: string, body?: unknown) { return this.client.json<T>(path, { method, body }); }
   private session(id: string) { return `/api/sessions/${enc(id)}`; }
+
+  searchMessages(query: MessageSearchQuery, signal?: AbortSignal) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value) params.set(key, value);
+    return this.client.json<MessageSearchPage>(withQuery('/api/search/messages', params.toString()), { signal });
+  }
+
+  messageContext({ sessionId, native, locator }: MessageSearchHit, signal?: AbortSignal) {
+    const params = new URLSearchParams({ sessionId, locator });
+    if (native) params.set('native', native);
+    return this.client.json<MessageSearchContext>(withQuery('/api/search/context', params.toString()), { signal });
+  }
   private t(en: string, zh: string) { return this.client.t(en, zh); }
 
   /** The host's features: from the last info(), fetched once if none was read yet. */

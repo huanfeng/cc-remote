@@ -172,6 +172,10 @@ func inspectFile(file nativeFile) (NativeSession, bool) {
 		return NativeSession{}, false
 	}
 	defer f.Close()
+	return inspectNativeFile(f, file), true
+}
+
+func inspectNativeFile(f *os.File, file nativeFile) NativeSession {
 	session := NativeSession{ID: strings.TrimSuffix(filepath.Base(file.path), ".jsonl"), Title: "Claude session", UpdatedAt: file.mod.UTC().Format(time.RFC3339Nano)}
 	data, _ := io.ReadAll(io.LimitReader(f, 256*1024))
 	inspectMetadata(data, &session)
@@ -185,7 +189,7 @@ func inspectFile(file nativeFile) (NativeSession, bool) {
 	finishConversationTime(&session, file.mod)
 	// Listing does not need pending background launches.
 	session.launches = nil
-	return session, true
+	return session
 }
 
 func inspectMetadata(data []byte, s *NativeSession) {

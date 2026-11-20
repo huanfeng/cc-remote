@@ -213,6 +213,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}", s.get)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.events)
 	mux.HandleFunc("GET /api/sessions/{id}/events/{seq}", s.eventAt)
+	mux.HandleFunc("GET /api/search/messages", s.searchMessages)
+	mux.HandleFunc("GET /api/search/context", s.searchContext)
 	mux.HandleFunc("GET /api/sessions/{id}/tasks", s.tasks)
 	mux.HandleFunc("POST /api/terminals/{id}/hook", s.terminalHook)
 	mux.HandleFunc("POST /api/terminals/{id}/status", s.terminalStatus)
