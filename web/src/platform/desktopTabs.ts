@@ -6,6 +6,9 @@ import { isUsageHistory } from '@/domain/usageHistoryRoute';
 import { useApp } from '@/store/app';
 import { dismissOverlayShortcut, overlayHistory } from '@/lib/overlayHistory';
 import { useConnection, type Phase } from '@/features/auth/connection';
+import { attentionCounts } from '@/domain/attention';
+import { useCompletionRead } from '@/store/completionRead';
+import { hostKey } from '@/lib/hosts';
 
 export const DESKTOP_OPEN_HOST = 'desktop-open-host';
 export const DESKTOP_TAB_STATE = 'desktop-tab-state';
@@ -16,7 +19,7 @@ export type DesktopHostRequest = { hostId: string; hash: string; reload: boolean
 export type DesktopOpenHost = DesktopHostRequest;
 export type DesktopTabState = {
   label: string; hash: string; title: string; canBack: boolean; canForward: boolean;
-  phase: Phase; error: string; waiting: number;
+  phase: Phase; error: string; waiting: number; done?: number;
 };
 export type DesktopTabCommand = { action: 'state' | 'back' | 'forward' | 'reload' | 'navigate' | 'settings'; hash?: string };
 export type DesktopShortcut = { action: 'next' | 'previous' | 'close' | 'new' | 'new-window' | 'reopen' };
@@ -44,10 +47,13 @@ export function installDesktopTabNavigation() {
     journal.record(location.hash);
     try { sessionStorage.setItem(storageKey, JSON.stringify(journal)); } catch { /* unavailable */ }
     const connection = useConnection.getState();
+    const app = useApp.getState();
+    const records = useCompletionRead.getState().records;
+    const attention = app.sessionsLoaded && connection.phase !== 'signed-out' ? attentionCounts(app.sessions, session => records[hostKey(session.id)]) : { waiting: 0, done: 0, total: 0 };
     void emitTo(shell(), DESKTOP_TAB_STATE, {
       label, hash: location.hash, title: document.title, canBack: journal.canBack || overlayHistory().hasOpen, canForward: journal.canForward,
       phase: connection.phase, error: connection.error || connection.offline,
-      waiting: useApp.getState().sessions.filter(session => session.status === 'waiting').length,
+      waiting: attention.waiting, done: attention.done,
     } satisfies DesktopTabState).catch(console.error);
   };
   const navigate = (hash: string) => {
@@ -106,11 +112,13 @@ export function installDesktopTabNavigation() {
   const stopApp = useApp.subscribe(report);
   const stopConnection = useConnection.subscribe(report);
   const stopOverlays = overlayHistory().subscribe(report);
+  const stopCompletion = useCompletionRead.subscribe(report);
   let stopCommands: (() => void) | undefined;
   void listen<DesktopTabCommand>(DESKTOP_TAB_COMMAND, event => command(event.payload), { target: { kind: 'Webview', label } })
     .then(stop => { if (disposed) stop(); else { stopCommands = stop; report(); } }).catch(console.error);
   return () => {
     stopOverlays();
+    stopCompletion();
     disposed = true; observer.disconnect(); stopApp(); stopConnection(); stopCommands?.();
     window.removeEventListener('hashchange', report); window.removeEventListener('keydown', onKey, true);
   };

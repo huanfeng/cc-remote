@@ -1,17 +1,21 @@
-// System notifications and the "(n)" title badge, computed from the session
-// list the app already watches. The first list after load is quiet (see
-// sessionChanges); the session the user is looking at never notifies.
+// Popup notifications and persistent attention indicators use the session list
+// already watched by the app. Popups are optional; title/favicon attention is
+// always shown for pending decisions and unread completions.
 import { useEffect, useRef } from 'react';
 import { parseHash, select, selectionHash, useApp } from '@/store/app';
 import { usePrefs } from '@/lib/prefs';
 import { notifySupported, sessionChanges, showNotification } from '@/domain/notify';
-import { setTitleBadge } from '@/lib/identity';
+import { setTitleAttention } from '@/lib/identity';
+import { useCompletionRead } from '@/store/completionRead';
+import { hostKey } from '@/lib/hosts';
+import { attentionCounts } from '@/domain/attention';
 
 type Seen = Parameters<typeof sessionChanges>[0];
 
 export function useNotifications() {
   const sessions = useApp(s => s.sessions);
   const loaded = useApp(s => s.sessionsLoaded);
+  const records = useCompletionRead(s => s.records);
   const seen = useRef<Seen>(new Map());
 
   useEffect(() => {
@@ -44,10 +48,9 @@ export function useNotifications() {
     return () => sw.removeEventListener('message', onMessage);
   }, []);
 
-  // "(n) Title" while n sessions wait for an answer.
-  const waiting = sessions.filter(s => s.status === 'waiting').length;
-  useEffect(() => { setTitleBadge(waiting); }, [waiting]);
-  useEffect(() => () => setTitleBadge(0), []);
+  const attention = loaded ? attentionCounts(sessions, s => records[hostKey(s.id)]) : { waiting: 0, done: 0, total: 0 };
+  useEffect(() => { setTitleAttention(attention); }, [attention.waiting, attention.done]);
+  useEffect(() => () => setTitleAttention({ waiting: 0, done: 0, total: 0 }), []);
 }
 
 /** Mount once (Surfaces does) to keep notifications and the title badge running. */

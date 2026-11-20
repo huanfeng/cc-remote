@@ -37,6 +37,8 @@
 
 ## Information architecture
 
+- Attention indicators count pending decisions and unread completed turns using the same read watermark as Done. Archived sessions and active background work are excluded; imported historical completions establish a quiet baseline. Viewing results clears unread attention immediately, while pending decisions remain until handled. Browser title and favicon identify attention independently of popup-notification preferences. Desktop tabs show per-server counts and the shell aggregates open servers for its native taskbar/Dock badge, without double-counting a host.
+
 - OAuth supplier options show cached 5-hour and weekly usage, reset/sample times and stale/error/identity notices. Reuse the CLI's cached summary endpoint once per open selector/form; missing support on older hosts preserves ordinary supplier selection and never invents zero usage.
 - Expired terminal login is an explicit failure with the original /login guidance, including when already idle. Resume-cost confirmations become a ResumeConversation request in the web, offering only the live terminal's actual choices. Validate the current menu before sending arrows/Enter and pause queued prompts until it closes.
 - Terminal selection copies after the selection gesture completes. Right-click with a selection retains and copies it before Claude's mouse handling can clear it; ordinary no-selection terminal input is unchanged. Clipboard failures keep the selection and display retry guidance.

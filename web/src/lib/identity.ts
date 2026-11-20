@@ -5,7 +5,9 @@
 // connected, /api/info (and the settings) keep them current.
 import { useSyncExternalStore } from 'react';
 import { currentHost, updateCurrentHost } from './hosts';
-import { iconURL } from './hostIcon';
+import { iconSvg } from './hostIcon';
+import { attentionIcon, attentionTitle, type AttentionCounts } from '@/domain/attention';
+import { lang } from './i18n';
 
 export type Identity = { name: string; color: string; icon: string };
 
@@ -21,12 +23,18 @@ const own: Identity = {
 const shown = (id: Identity): Identity => ({ name: currentHost?.alias || id.name, color: currentHost?.tint || id.color, icon: currentHost?.emblem || id.icon });
 
 let current = shown(own);
-let badge = 0;
+let attention: AttentionCounts = { waiting: 0, done: 0, total: 0 };
 const listeners = new Set<() => void>();
 
 function showTitle() {
   if (!root) return;
-  document.title = (badge ? `(${badge}) ` : '') + (current.name === BRAND ? BRAND : `${current.name} · ${BRAND}`);
+  document.title = attentionTitle(current.name === BRAND ? BRAND : `${current.name} · ${BRAND}`, attention, lang);
+}
+
+function showIcon() {
+  if (!root) return;
+  const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (icon) icon.href = `data:image/svg+xml,${encodeURIComponent(attentionIcon(iconSvg(current.color, current.icon), attention))}`;
 }
 
 /** Shows the host's identity (its own; this page's alias, tint and emblem win) in the
@@ -43,16 +51,16 @@ export function applyIdentity(hostId: Identity) {
   showTitle();
   root.style.setProperty('--host-color', next.color);
   // Drawn here (a standalone page's CSP loads no image from a host), as the host draws it.
-  const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-  if (icon) icon.href = iconURL(next.color, next.icon);
+  showIcon();
   if (changed) listeners.forEach(f => f());
 }
 
-/** Puts the number of sessions waiting for an answer in front of the tab title. */
-export function setTitleBadge(count: number) {
-  if (count === badge) return;
-  badge = count;
+/** Unread results and pending decisions are independent of popup-notification preferences. */
+export function setTitleAttention(counts: AttentionCounts) {
+  if (counts.waiting === attention.waiting && counts.done === attention.done) return;
+  attention = counts;
   showTitle();
+  showIcon();
 }
 
 const subscribe = (f: () => void) => { listeners.add(f); return () => { listeners.delete(f); }; };

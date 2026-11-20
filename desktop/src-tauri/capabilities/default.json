@@ -9,6 +9,8 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-set-title",
+    "core:window:allow-set-overlay-icon",
+    "core:window:allow-set-badge-count",
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
     "core:webview:allow-create-webview-window",

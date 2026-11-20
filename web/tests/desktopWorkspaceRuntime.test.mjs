@@ -68,10 +68,11 @@ test('native tabs survive overlapping opens, wait for listeners, preserve focus 
     await workspace.sendDesktopTabCommand({action:'settings'});
     assert.equal(events.filter(e=>e.payload?.action==='settings').length,0,'commands wait for the child JS listener');
     const activations=calls.filter(([name])=>name==='desktop_tab_activate').length;
-    handlers.get('desktop-tab-state')({payload:{...b,title:'B · CC Remote',phase:'ready',error:'',waiting:2}});
+    handlers.get('desktop-tab-state')({payload:{...b,title:'B · CC Remote',phase:'ready',error:'',waiting:2,done:3}});
     await settle();
     assert.equal(events.filter(e=>e.payload?.action==='settings').length,1);
     assert.equal(calls.filter(([name])=>name==='desktop_tab_activate').length,activations,'poll metadata never steals input focus');
+    assert.equal(workspace.useDesktopWorkspace.getState().tabs.find(tab=>tab.label===b.label).done,3,'inactive host completion metadata is retained');
 
     h.update.setState({aboutOpen:true});await settle();
     assert.equal(calls.filter(([name])=>name==='desktop_tab_activate').at(-1)[1].label,null);

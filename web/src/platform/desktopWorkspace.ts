@@ -13,7 +13,7 @@ const windowLabel = DESKTOP ? getCurrentWindow().label : 'main';
 const KEY = 'cc-desktop-tabs:v1';
 let sequence = 0;
 const makeTab = (hostId: string, hash = ''): WorkspaceTab => ({
-  label: `tab-${windowLabel}-${Date.now().toString(36)}-${++sequence}`, hostId, hash, title: '', canBack: false, canForward: false, waiting: 0,
+  label: `tab-${windowLabel}-${Date.now().toString(36)}-${++sequence}`, hostId, hash, title: '', canBack: false, canForward: false, waiting: 0, done: 0,
 });
 function initial(): Workspace {
   if (!DESKTOP || DESKTOP_TAB) return emptyWorkspace();
@@ -161,9 +161,9 @@ export function subscribeDesktopWorkspace() {
     const current = useDesktopWorkspace.getState();
     if (!current.tabs.some(x => x.label === state.label)) return;
     // Child metadata cannot change the tab's server association.
-    const { label, hash, title, canBack, canForward, waiting, phase, error } = state;
+    const { label, hash, title, canBack, canForward, waiting, done, phase, error } = state;
     ready.add(label);
-    change({ tabs: current.tabs.map(x => x.label === label ? { ...x, hash, title, canBack, canForward, waiting, phase, error } : x) }, false);
+    change({ tabs: current.tabs.map(x => x.label === label ? { ...x, hash, title, canBack, canForward, waiting, done: done ?? 0, phase, error } : x) }, false);
     const pending = commands.get(label);
     commands.delete(label);
     if (pending) void pending.reduce((previous, command) => previous.then(() => emitTo({ kind: 'Webview', label }, DESKTOP_TAB_COMMAND, command)), Promise.resolve());

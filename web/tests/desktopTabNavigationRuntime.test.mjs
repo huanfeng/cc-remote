@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 
 test('tab route traversal keeps forward history despite synchronous store subscribers', async () => {
-  const events=[],listeners=new Map(),appListeners=new Set(),storage=new Map();
-  let command, appState={sessions:[]};
+  const events=[],listeners=new Map(),appListeners=new Set(),completionListeners=new Set(),connectionListeners=new Set(),storage=new Map();
+  let command, appState={sessions:[],sessionsLoaded:true}, records={}, phase='ready';
   const url=new URL('http://tauri.localhost/index.html?desktop-tab=tab-main-a&host=a#/s/a');
   const h={
     emit:async(target,event,payload)=>events.push({target,event,payload}),
     listen:async(_,callback)=>{command=callback;return()=>{command=undefined;};},
     app:{getState:()=>({...appState,open:surface=>{appState={...appState,surface};for(const callback of appListeners)callback();}}),subscribe:callback=>{appListeners.add(callback);return()=>appListeners.delete(callback);}},
-    connection:{getState:()=>({phase:'ready',error:'',offline:''}),subscribe:()=>()=>{}},
+    connection:{getState:()=>({phase,error:'',offline:''}),subscribe:callback=>{connectionListeners.add(callback);return()=>connectionListeners.delete(callback);}},
+    completion:{getState:()=>({records}),subscribe:callback=>{completionListeners.add(callback);return()=>completionListeners.delete(callback);}},
   };
   globalThis.__desktopNavigationTest=h;
   globalThis.location={get hash(){return url.hash;},set hash(value){url.hash=value;},get pathname(){return url.pathname;},get search(){return url.search;},replace:value=>{url.href=new URL(value,url).href;},reload(){}};
@@ -27,6 +28,8 @@ test('tab route traversal keeps forward history despite synchronous store subscr
     './desktop':data('export const DESKTOP=true,DESKTOP_TAB="tab-main-a";'),
     '@/store/app':data(prelude+'export const useApp=h.app;'),
     '@/features/auth/connection':data(prelude+'export const useConnection=h.connection;'),
+    '@/store/completionRead':data(prelude+'export const useCompletionRead=h.completion;'),
+    '@/lib/hosts':data('export const hostKey=id=>"a:"+id;'),
   };
   const hook=registerHooks({resolve(specifier,context,next){
     if(mocks[specifier])return{url:mocks[specifier],shortCircuit:true};
@@ -38,6 +41,20 @@ test('tab route traversal keeps forward history despite synchronous store subscr
   try {
     const {installDesktopTabNavigation}=await import('../src/platform/desktopTabs.ts');
     stop=installDesktopTabNavigation();await new Promise(resolve=>setImmediate(resolve));
+    appState={sessionsLoaded:true,sessions:[{id:'waiting',status:'waiting'},{id:'archived',status:'waiting',archived:true},{id:'done',status:'completed',completedAt:'2026-11-20T00:00:00Z'}]};
+    records={'a:done':{completedAt:'2026-11-20T00:00:00Z',viewedAt:''}};
+    for(const callback of appListeners)callback();
+    assert.equal(events.at(-1).payload.waiting,1);
+    assert.equal(events.at(-1).payload.done,1);
+    phase='signed-out';
+    for(const callback of connectionListeners)callback();
+    assert.equal(events.at(-1).payload.waiting,0,'sign-out clears raw per-tab badges even while old sessions remain');
+    assert.equal(events.at(-1).payload.done,0);
+    phase='ready';
+    for(const callback of connectionListeners)callback();
+    records={'a:done':{completedAt:'2026-11-20T00:00:00Z',viewedAt:'2026-11-20T00:00:00Z'}};
+    for(const callback of completionListeners)callback();
+    assert.equal(events.at(-1).payload.done,0,'viewing completion reports clear without waiting for another server poll');
     const {overlayHistory}=await import('../src/lib/overlayHistory.ts');
     let remove,closed=0;
     remove=overlayHistory().add(()=>{closed++;remove();});

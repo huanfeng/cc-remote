@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { dismissOverlayShortcut, overlayHistory } from '@/lib/overlayHistory';
 import { ArrowLeft, ArrowRight, Info, List, MoreHorizontal, Plus, RotateCw, Settings, Undo2, X } from 'lucide-react';
 import { useHosts } from '@/lib/hosts';
-import { t } from '@/lib/i18n';
+import { t, lang } from '@/lib/i18n';
 import { cn } from '@/components/lib/utils';
 import { StandaloneHome } from '@/features/standalone/StandaloneHome';
 import { DesktopAboutDialog } from '@/features/settings/DesktopUpdate';
@@ -11,6 +11,8 @@ import { openDesktopAbout, subscribeDesktopUpdate, useDesktopUpdate } from '@/pl
 import { activateDesktopTab, closeDesktopTab, desktopShortcut, newDesktopWindow, reconcileDesktopTabs, reorderDesktopTab, reopenDesktopTab, sendDesktopTabCommand, showDesktopHosts, showDesktopMenu, subscribeDesktopWorkspace, useDesktopWorkspace } from '@/platform/desktopWorkspace';
 import { WindowControls } from './WindowControls';
 import { installDesktopTitlebar } from '@/platform/desktopTitlebar';
+import { attentionTitle, stripAttentionTitle } from '@/domain/attention';
+import { aggregateDesktopAttention, createDesktopAttention } from '@/platform/desktopAttention';
 
 const iconButton = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-30';
 
@@ -28,14 +30,26 @@ export function DesktopWorkspace() {
   const list = useRef<HTMLDivElement>(null);
   const titlebar = useRef<HTMLElement>(null);
   const visible = !panel && !aboutOpen && !error;
+  const attention = aggregateDesktopAttention(tabs);
+  const nativeAttention = useRef<ReturnType<typeof createDesktopAttention>>(null);
+  useEffect(() => {
+    const badge = createDesktopAttention(window.__CC_DESKTOP__?.platform ?? 'windows');
+    nativeAttention.current = badge;
+    return () => { nativeAttention.current = null; void badge.dispose(); };
+  }, []);
+  useEffect(() => { void nativeAttention.current?.update(attention); }, [attention.waiting, attention.done]);
   useEffect(() => subscribeDesktopWorkspace(), []);
   useEffect(() => subscribeDesktopUpdate(), []);
   useEffect(() => {
     if (titlebar.current && window.__CC_DESKTOP__) return installDesktopTitlebar(titlebar.current, window.__CC_DESKTOP__.platform);
   }, []);
   useEffect(() => {
-    document.title = selected?.title || `${hosts.find(x => x.id === selected?.hostId)?.name || ''}${selected ? ' · ' : ''}CC Remote`;
-  }, [selected?.title, selected?.hostId, hosts]);
+    // The native window represents every server tab. Keep the selected host's
+    // alias while replacing its local counts with the window-wide summary.
+    const name = hosts.find(x => x.id === selected?.hostId)?.name;
+    const title = selected?.title ? stripAttentionTitle(selected.title) : name ? `${name} · CC Remote` : 'CC Remote';
+    document.title = attentionTitle(title, attention, lang);
+  }, [selected?.hostId, selected?.title, hosts, attention.waiting, attention.done]);
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [active, visible]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -95,7 +109,7 @@ export function DesktopWorkspace() {
             onAuxClick={event => { if (event.button === 1) { event.preventDefault(); closeDesktopTab(tab.label); } }}
             className={cn('group flex h-8 w-44 min-w-24 max-w-48 shrink-0 items-center rounded-md border', current ? 'border-border/80 bg-card shadow-xs' : 'border-transparent hover:bg-surface-hover')}>
             <button id={`tab-${tab.label}`} type="button" role="tab" aria-selected={current} tabIndex={active === tab.label ? 0 : -1}
-              title={[nameOf(tab.hostId), tab.error || (tab.phase === 'ready' ? t('Connected', '已连接') : tab.phase === 'connecting' ? t('Connecting…', '连接中…') : t('Disconnected', '未连接')), tab.waiting ? t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`) : ''].filter(Boolean).join(' · ')}
+              title={[nameOf(tab.hostId), tab.error || (tab.phase === 'ready' ? t('Connected', '已连接') : tab.phase === 'connecting' ? t('Connecting…', '连接中…') : t('Disconnected', '未连接')), tab.waiting ? t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`) : '', tab.done ? t(`${tab.done} unread completions`, `${tab.done} 项完成待查看`) : ''].filter(Boolean).join(' · ')}
               className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left text-ui-xs" onClick={() => activateDesktopTab(tab.label)}
               onKeyDown={event => {
                 const index = tabs.indexOf(tab);
@@ -105,6 +119,7 @@ export function DesktopWorkspace() {
               <span className={cn('size-1.5 shrink-0 rounded-full', tab.phase === 'connecting' || !tab.phase ? 'animate-pulse bg-warning' : tab.error || tab.phase !== 'ready' ? 'bg-foreground-subtlest' : '')} style={tab.phase === 'ready' && !tab.error ? { backgroundColor: host?.color || 'var(--color-success)' } : undefined} />
               <span className="min-w-0 flex-1 truncate">{nameOf(tab.hostId)}</span>
               {tab.waiting > 0 && <span className="rounded bg-warning/15 px-1 text-[10px] text-warning">{tab.waiting}</span>}
+              {(tab.done ?? 0) > 0 && <span className="rounded bg-success/15 px-1 text-[10px] text-success">{tab.done}</span>}
             </button>
             <button type="button" aria-label={t(`Close ${nameOf(tab.hostId)}`, `关闭 ${nameOf(tab.hostId)}`)} title={t('Close tab · Ctrl+W', '关闭标签页 · Ctrl+W')}
               className="mx-1 flex size-5 shrink-0 items-center justify-center rounded text-foreground-subtlest hover:bg-surface-hover hover:text-foreground" onClick={() => closeDesktopTab(tab.label)}><X className="size-3" /></button>
@@ -129,7 +144,7 @@ export function DesktopWorkspace() {
             <MenuAction icon={<Info className="size-4" />} onClick={openDesktopAbout}>{t('About & updates', '关于与更新')}</MenuAction>
           </div>
           <div className="space-y-1"><h2 className="mb-2 text-ui-xs text-foreground-subtle">{t('Open tabs · Ctrl Tab to switch', '已打开的标签页 · Ctrl Tab 切换')}</h2>
-            {tabs.map(tab => <button key={tab.label} onClick={() => activateDesktopTab(tab.label)} className="flex w-full items-center gap-3 rounded-lg border border-border/50 px-3 py-2 text-left hover:bg-surface-hover"><span className="min-w-0 flex-1 truncate text-ui-sm">{nameOf(tab.hostId)}</span>{tab.waiting > 0 && <span className="text-ui-xs text-warning">{t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`)}</span>}{tab.label === active && <span className="text-ui-xs text-foreground-subtlest">{t('Current', '当前')}</span>}</button>)}
+            {tabs.map(tab => <button key={tab.label} onClick={() => activateDesktopTab(tab.label)} className="flex w-full items-center gap-3 rounded-lg border border-border/50 px-3 py-2 text-left hover:bg-surface-hover"><span className="min-w-0 flex-1 truncate text-ui-sm">{nameOf(tab.hostId)}</span>{tab.waiting > 0 && <span className="text-ui-xs text-warning">{t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`)}</span>}{(tab.done ?? 0) > 0 && <span className="text-ui-xs text-success">{t(`${tab.done} unread completions`, `${tab.done} 项完成待查看`)}</span>}{tab.label === active && <span className="text-ui-xs text-foreground-subtlest">{t('Current', '当前')}</span>}</button>)}
           </div>
           <p className="text-ui-xs leading-5 text-foreground-subtlest">{t('Closing a tab leaves its host sessions running. Drag tabs to reorder; middle-click to close. The window close button keeps the main app in the system tray.', '关闭标签页后，宿主上的会话继续运行。拖动标签页可调整顺序，中键点击可关闭。主窗口关闭后保留在系统托盘。')}</p>
         </div> : panel === 'hosts' || !selected ? <StandaloneHome choose /> : <div className="flex h-full items-center justify-center text-ui-sm text-foreground-subtlest">{t('Opening host…', '正在打开宿主…')}</div>}
