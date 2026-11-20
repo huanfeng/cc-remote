@@ -2,9 +2,9 @@
 
 <h1 align="center">CC Remote</h1>
 
-<p align="center"><strong>Manage Claude Code sessions across multiple servers from one web page.</strong></p>
+<p align="center"><strong>Manage Claude Code, Codex and project terminals across servers from one web client.</strong></p>
 
-<p align="center">Work remotely, switch providers while keeping your conversation, and manage official OAuth tokens and subscription usage.</p>
+<p align="center">Run host commands from your browser, switch providers from the web or CLI, and use official Claude subscription accounts through OAuth.</p>
 
 <p align="center">
   <a href="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml"><img src="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -34,17 +34,24 @@ Each server runs its own CC Remote backend and session processes. Closing the we
 
 See the [connection guide](docs/getting-started.en.md#connect-a-phone-or-another-computer) and [standalone web client and HTTPS setup](docs/standalone.md) (Chinese).
 
-### 2. Switch providers while keeping your session
+### 2. Share a project shell between the browser and CLI
 
-Read **CC-Switch** profiles directly from the server. Choose a provider when creating a session, or change the provider for an existing Claude Code session. CC Remote keeps the session ID and conversation history, stops the old process, and automatically resumes with the new provider when you send the next message.
+Open **Project Terminal** from the session header or the project group in the sidebar to run commands on the host. Sessions in the same project on that host share a default shell. Run `ccr shell` to attach to the same process from the CLI. The shell keeps running when you hide the panel or disconnect, so you can reconnect later.
 
-Each session can use its own provider, and you can set a default for new sessions. Switching during an active task asks you to confirm the interruption. The previous request is not automatically sent again.
+On desktop layouts, you can move and resize the floating panel, and its position is saved. Toggle it with `Alt+F` in the desktop app or Ctrl plus backtick in the browser by default. The panel keeps its cleared screen and scroll position when reopened. Use `ccr run -- git status --short` for a one-off command. [Project terminal guide](docs/usage.md#项目终端) (Chinese).
+
+### 3. Switch providers from the web or CLI
+
+Configure API providers for Claude Code or Codex in CC Remote, or use existing **CC-Switch** profiles from the host. The web client and CLI share the default provider for new sessions.
+
+- **Web and desktop**. Pick a provider when creating a session, or switch it from an existing session's header. Switching preserves the conversation history and asks for confirmation before interrupting an active task.
+- **CLI**. Choose a provider when starting Claude Code with `ccr --new` or resuming with `ccr -r <session-id>`. Use `--profile <provider-id>` to select one in a script.
 
 See [provider selection and switching](docs/supplier-profiles.md) (Chinese).
 
-### 3. Manage official Claude Code OAuth tokens and usage
+### 4. Use official Claude accounts with OAuth
 
-Add, rename, replace or remove **OAuth tokens** for multiple official accounts, then choose an account for each session through the provider selector. Generate tokens with `claude setup-token` and store them on the corresponding server. Sessions retain the server's native model, plugin, hook, MCP and permission settings.
+Generate a token with `claude setup-token` and add one or more subscription accounts under **Settings → Suppliers → Official Claude OAuth**. Choose a saved account in the web provider picker or in `ccr`, or pass `--profile oauth:<ID>`. The host stores the token, and sessions retain the host's native model, plugin, hook, MCP and permission settings.
 
 Compare accounts' **5-hour and weekly subscription quotas, reset times and usage history**. The backend collects readings even when the web page or desktop client is closed. The Windows tray also provides a quick view of account quotas.
 
@@ -130,7 +137,7 @@ Once it works locally, [connect your phone or another computer](docs/getting-sta
 | Start managed sessions in the web / desktop client | Yes | Yes |
 | Streaming replies, tool activity, approvals and questions | Yes | Yes |
 | Import local history and continue it | Yes | Yes |
-| `ccr` terminal/web handoff and web terminal view | Yes | Not yet |
+| Native AI session handoff between terminal and web | Yes | Not yet |
 | Official subscription readings | Supported official logins / OAuth accounts | Local official login |
 
 The backend supports **Windows, Linux and macOS**. Native client downloads and the graphical hover tray currently target **Windows x64**. Quotas depend on what the provider reports; API-key and third-party profiles may have no subscription readings. See [Codex](docs/codex.md), [subscription monitoring](docs/subscription-monitor.md) and [known limitations](docs/architecture.md#已知限制) (Chinese).
@@ -144,6 +151,9 @@ ccr                    # pick a session in this project, or create one
 ccr ls                 # browse and attach to recent terminal sessions
 ccr --resume <id>      # resume a Claude Code session
 ccr -c                 # continue this directory's latest Claude Code session
+ccr shell              # open or attach to this project's shell
+ccr shell ls           # list project shells on the host
+ccr run -- git status --short # run a one-off command on the host
 ccr status             # inspect the host service
 ccr logs -f            # follow host logs
 ccr update             # update the CLI and backend only

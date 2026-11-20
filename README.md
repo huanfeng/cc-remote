@@ -2,9 +2,9 @@
 
 <h1 align="center">CC Remote</h1>
 
-<p align="center"><strong>在一个 Web 页面中，管理多台服务器上的 Claude Code 会话。</strong></p>
+<p align="center"><strong>在一个网页中管理多台服务器上的 Claude Code、Codex 会话和项目终端。</strong></p>
 
-<p align="center">远程处理会话，保留历史切换供应商，集中管理官方 OAuth Token 与订阅用量。</p>
+<p align="center">在浏览器执行宿主命令，在 Web 和命令行切换供应商，使用 Claude 官方 OAuth 订阅账号。</p>
 
 <p align="center">
   <a href="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml"><img src="https://github.com/huanfeng/cc-remote/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -34,17 +34,24 @@
 
 连接方式见[首次使用指南](docs/getting-started.md#用手机或另一台电脑连接)，多服务器与 HTTPS 配置见[独立网页前端](docs/standalone.md)。
 
-### 2. 保留会话，切换供应商
+### 2. 在浏览器和命令行共用项目 Shell
 
-直接读取服务器上的 **CC-Switch** 配置，在新建会话时选择供应商，也可以为已有 Claude Code 会话更换供应商。切换时保留原会话 ID 和历史，停止旧进程；继续发送消息时自动按新供应商配置恢复会话，无需重新创建对话。
+从会话标题栏或侧栏项目组打开「项目终端」，直接在宿主上运行命令。同一宿主和项目的会话共用一个默认 Shell，也可以用 `ccr shell` 接入同一个进程。收起面板或断线时 Shell 继续运行，重新打开可接回。
 
-每个会话可以使用自己的供应商，也可以设置新会话的默认供应商。正在执行任务时，切换前会要求确认中断；切换后不会自动重发上一条请求。
+桌面布局支持拖动、调整大小和保存位置。桌面应用默认按 `Alt+F` 开合，浏览器默认用 Ctrl 加反引号，重新展开时保留清屏状态和滚动位置。需要执行单条命令时，可以用 `ccr run -- git status --short`。[项目终端使用说明](docs/usage.md#项目终端)
+
+### 3. 在 Web 和命令行切换供应商
+
+可在 CC Remote 中配置 Claude Code / Codex 的 API 供应商，也可使用宿主上的 **CC-Switch** 配置。两端共用新会话的默认供应商。
+
+- **Web / 桌面客户端**：新建会话时选择供应商，也可从已有会话的标题栏切换。切换会恢复原会话及其历史，忙碌时会先确认是否中断。
+- **命令行**：用 `ccr --new` 创建 Claude Code 会话，或用 `ccr -r <会话ID>` 恢复会话时选择供应商。脚本可用 `--profile <供应商ID>` 直接指定。
 
 配置与使用方式见[供应商选择与切换](docs/supplier-profiles.md)。
 
-### 3. 管理 Claude Code 官方 OAuth Token 与用量
+### 4. 使用 Claude 官方 OAuth 模式
 
-集中添加、重命名、更换或删除多个官方账号的 **OAuth Token**，并像选择供应商一样为会话选择账号。Token 可通过 `claude setup-token` 获取，保存在对应服务器上；会话继续使用服务器原有的模型、插件、Hooks、MCP 和权限配置。
+用 `claude setup-token` 获取令牌，在「设置 → 供应商 → Claude 官方 OAuth」中添加一个或多个订阅账号。Web 的供应商选择器和 `ccr` 都能选择已保存的账号，也可用 `--profile oauth:<ID>` 直接指定。令牌保存在对应宿主，会话沿用宿主的模型、插件、Hooks、MCP 和权限设置。
 
 查看各账号的 **5 小时 / 每周订阅额度、重置时间与用量历史**，了解哪些账号还有可用额度。后台定期采集，关闭网页或客户端后仍会继续；Windows 托盘也能直接查看账号额度。
 
@@ -130,7 +137,7 @@ ccr
 | 网页 / 桌面客户端新建托管会话 | 支持 | 支持 |
 | 流式回复、工具过程、审批与提问 | 支持 | 支持 |
 | 读取本机历史并导入继续 | 支持 | 支持 |
-| `ccr` 终端与网页接力、网页终端视图 | 支持 | 暂不支持 |
+| AI 会话的原生终端与网页接力 | 支持 | 暂不支持 |
 | 官方订阅额度 | 支持的官方登录 / OAuth 账号 | 本机官方登录账号 |
 
 后台支持 **Windows、Linux、macOS**；原生客户端发布包和图形化悬停托盘目前提供 **Windows x64**。订阅额度由提供方实际返回，API Key / 第三方配置不保证有订阅读数。更多边界见 [Codex](docs/codex.md)、[订阅监控](docs/subscription-monitor.md)和[已知限制](docs/architecture.md#已知限制)。
@@ -144,6 +151,9 @@ ccr                    # 选择当前项目会话，没有则新建
 ccr ls                 # 浏览并接入最近的终端会话
 ccr --resume <会话ID>  # 恢复 Claude Code 会话
 ccr -c                 # 继续当前目录最近的 Claude Code 会话
+ccr shell              # 打开或接入当前项目的 Shell
+ccr shell ls           # 列出宿主上的项目 Shell
+ccr run -- git status --short # 在宿主执行单条命令
 ccr status             # 查看后台状态
 ccr logs -f            # 查看后台日志
 ccr update             # 仅更新命令行与后台
