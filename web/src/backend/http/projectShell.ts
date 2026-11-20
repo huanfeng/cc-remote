@@ -57,7 +57,7 @@ export class HttpProjectShellStream implements ProjectShellStream {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       const status = error instanceof BackendError ? error.status : 0;
-      if ([404, 409, 410].includes(status)) this.finish('exited', detail);
+      if ([404, 409, 410].includes(status)) this.finish('unavailable', detail);
       else this.finish('failed', detail, ![400, 401, 403, 405, 422].includes(status));
       return;
     }
@@ -75,7 +75,7 @@ export class HttpProjectShellStream implements ProjectShellStream {
     socket.onmessage = event => this.message(event.data);
     socket.onerror = () => { /* The browser follows this with a close event. */ };
     socket.onclose = event => {
-      if (event.code === EXITED) this.finish('exited', event.reason);
+      if (event.code === EXITED) this.endRun(event.reason);
       else this.finish('failed', event.reason || this.client.t('Project terminal connection lost', '项目终端连接已断开'));
     };
   }
@@ -126,7 +126,7 @@ export class HttpProjectShellStream implements ProjectShellStream {
         }
         break;
       case 'exit':
-        this.finish('exited', frame.detail);
+        this.endRun(frame.detail);
         break;
     }
   }
@@ -153,7 +153,11 @@ export class HttpProjectShellStream implements ProjectShellStream {
     });
   }
 
-  private finish(state: 'exited' | 'failed', detail?: string, retry?: boolean) {
+  private endRun(detail?: string) {
+    this.finish(detail === 'interrupted' ? 'failed' : 'exited', detail === 'interrupted' ? undefined : detail);
+  }
+
+  private finish(state: 'exited' | 'unavailable' | 'failed', detail?: string, retry?: boolean) {
     if (this.closed) return;
     this.close();
     this.handlers.onState(state, detail, retry === undefined ? undefined : { retry });

@@ -7,9 +7,10 @@ import type { ProjectShellStream } from '@/backend/types';
 import { BASE_FONT_DESKTOP, BASE_FONT_PHONE, backoffDelay, MAX_ATTEMPTS, RESIZE_THROTTLE_MS, throttleLatest, usableDims } from '@/features/terminal/terminalSize';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
 import { projectShellOutput } from './projectShellOutput';
+import { findProjectShellMatch, type ShellSearchDirection } from './findProjectShellMatch';
 
 export interface ShellTerminalState {
-  status: 'connecting' | 'online' | 'retrying' | 'failed' | 'exited';
+  status: 'connecting' | 'online' | 'retrying' | 'failed' | 'exited' | 'unavailable';
   control: boolean;
   truncated: boolean;
   detail: string;
@@ -49,6 +50,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   let retryTimer = 0;
   let sentSize = '';
   let needsRedraw = false;
+  let searchQuery = '';
   const markApplied = (seq: number) => {
     cursor = seq;
     stream?.ack?.(cursor);
@@ -115,7 +117,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
         onState(status, detail = '', options) {
           if (current !== generation || status === 'connecting') return;
           disconnect();
-          if (status === 'exited') {
+          if (status === 'exited' || status === 'unavailable') {
             update({ status, detail, control: false });
           } else if (options?.retry !== false && attempts < MAX_ATTEMPTS) {
             retryTimer = window.setTimeout(connect, backoffDelay(attempts++));
@@ -172,6 +174,30 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   connect();
   return {
     focus: () => { if (visible) terminal.focus(); },
+    search(query: string, direction: ShellSearchDirection) {
+      const anchor = query === searchQuery ? terminal.getSelectionPosition()?.start : undefined;
+      searchQuery = query;
+      const buffer = terminal.buffer.active;
+      const match = findProjectShellMatch(buffer, terminal.cols, query, direction, anchor);
+      if (!match) {
+        terminal.clearSelection();
+        return false;
+      }
+      terminal.select(match.x, match.y, match.length);
+      if (match.y < buffer.viewportY || match.y >= buffer.viewportY + terminal.rows) {
+        terminal.scrollToLine(Math.max(0, match.y - Math.floor(terminal.rows / 2)));
+      }
+      return true;
+    },
+    clearSearch() {
+      if (searchQuery) terminal.clearSelection();
+      searchQuery = '';
+    },
+    pauseFollowing() {
+      const buffer = terminal.buffer.active;
+      if (buffer.viewportY === buffer.baseY && buffer.baseY > 0) terminal.scrollLines(-1);
+    },
+    scrollToBottom() { terminal.scrollToBottom(); },
     setVisible(next: boolean) {
       if (visible === next) return;
       visible = next;

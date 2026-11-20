@@ -65,7 +65,7 @@ export class HttpBackend implements Backend {
   /** Watched transcripts, for a poll right after an action on their session. */
   private transcriptPollers = new Map<string, Set<Poller>>();
   private usagePollers = new Set<Poller>();
-  private projectShellWatchers = new Set<Unsubscribe>();
+  private projectShellWatchers = new Map<Unsubscribe, () => void>();
   private streams = new Set<TerminalStream>();
   private assets = new Map<string, Promise<string>>();
   /** Pending requests filtered from the host's reply, keyed by that reply (identity survives a 304). */
@@ -87,7 +87,7 @@ export class HttpBackend implements Backend {
     this.transcriptPollers.clear();
     for (const p of this.usagePollers) p.stop();
     this.usagePollers.clear();
-    for (const stop of this.projectShellWatchers) stop();
+    for (const stop of this.projectShellWatchers.keys()) stop();
     for (const s of this.streams) s.close();
     this.streams.clear();
     for (const a of this.assets.values()) void a.then(revoke, () => {});
@@ -522,7 +522,7 @@ export class HttpBackend implements Backend {
     return this.client.json<ProjectShell[]>(projectShellsPath, { signal });
   }
 
-  watchProjectShells(onChange: (shells: ProjectShell[]) => void): Unsubscribe {
+  watchProjectShells(onChange: (shells: ProjectShell[]) => void, onError?: (error: unknown) => void): Unsubscribe {
     if (this.disposed) return () => {};
     const abort = new AbortController();
     let previous: ProjectShell[] | undefined;
@@ -532,13 +532,16 @@ export class HttpBackend implements Backend {
         previous = shells;
         onChange(shells);
       }
-    }, this.intervals.projectShells, { pauseHidden: true });
+    }, this.intervals.projectShells, { pauseHidden: true, onError: error => {
+      previous = undefined;
+      onError?.(error);
+    } });
     const stop = () => {
       abort.abort();
       watcher.stop();
       this.projectShellWatchers.delete(stop);
     };
-    this.projectShellWatchers.add(stop);
+    this.projectShellWatchers.set(stop, watcher.now);
     return stop;
   }
 
@@ -546,8 +549,16 @@ export class HttpBackend implements Backend {
     return this.client.json<ProjectShell>(projectShellsPath, { method: 'POST', body, signal });
   }
 
-  stopProjectShell(shellId: string, runId: string) {
-    return this.client.json<void>(projectShellRunPath(shellId, runId), { method: 'DELETE' });
+  renameProjectShell(shellId: string, name: string, signal?: AbortSignal) {
+    return this.client.json<ProjectShell>(`${projectShellsPath}/${encodeURIComponent(shellId)}`, { method: 'PATCH', body: { name }, signal });
+  }
+
+  async stopProjectShell(shellId: string, runId: string) {
+    try {
+      await this.client.json<void>(projectShellRunPath(shellId, runId), { method: 'DELETE' });
+    } finally {
+      for (const refresh of this.projectShellWatchers.values()) refresh();
+    }
   }
 
   openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream {

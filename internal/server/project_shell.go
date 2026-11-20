@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"cc-remote/internal/terminal"
 )
@@ -26,6 +28,8 @@ type projectShellRecord struct {
 	ID         string `json:"id"`
 	ProjectKey string `json:"projectKey"`
 	Cwd        string `json:"cwd"`
+	Name       string `json:"name,omitempty"`
+	Default    *bool  `json:"default"`
 }
 
 type projectShellView struct {
@@ -83,6 +87,11 @@ func (m *projectShellRegistry) loadLocked(dataDir string) error {
 		return err
 	}
 	for _, rec := range records {
+		// Records written before multiple shells were introduced belong to the default shell.
+		if rec.Default == nil {
+			isDefault := true
+			rec.Default = &isDefault
+		}
 		m.entries[rec.ID] = &projectShellEntry{projectShellRecord: rec, restored: true}
 	}
 	return nil
@@ -119,6 +128,9 @@ func (m *projectShellRegistry) shutdown() func(context.Context) {
 	var done []<-chan struct{}
 	for _, e := range m.entries {
 		if e.run != nil {
+			if e.run.state() == "running" {
+				e.run.interrupted.Store(true)
+			}
 			e.run.pty.Close()
 			done = append(done, e.run.pty.Done())
 		}
@@ -193,7 +205,8 @@ func (s *Server) listProjectShells(w http.ResponseWriter, r *http.Request) {
 	err := m.loadLocked(s.cfg.DataDir)
 	views := make([]projectShellView, 0, len(m.entries))
 	for _, e := range m.entries {
-		if projectKey == "" || e.ProjectKey == projectKey {
+		// Older CLI clients use this filter to resolve attach/stop without an ID.
+		if projectKey == "" || (e.ProjectKey == projectKey && *e.Default) {
 			views = append(views, e.view())
 		}
 	}
@@ -211,7 +224,21 @@ func (s *Server) listProjectShells(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	slices.SortFunc(views, func(a, b projectShellView) int { return strings.Compare(a.Cwd, b.Cwd) })
+	slices.SortFunc(views, func(a, b projectShellView) int {
+		if order := strings.Compare(a.Cwd, b.Cwd); order != 0 {
+			return order
+		}
+		if *a.Default != *b.Default {
+			if *a.Default {
+				return -1
+			}
+			return 1
+		}
+		if order := strings.Compare(a.Name, b.Name); order != 0 {
+			return order
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 	respond(w, http.StatusOK, views)
 }
 
@@ -243,6 +270,8 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		Cwd     string `json:"cwd"`
 		ShellID string `json:"shellId"`
 		Restart bool   `json:"restart"`
+		Create  bool   `json:"create"`
+		Name    string `json:"name"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -250,6 +279,15 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 	l := s.lang(r)
 	if (req.Cwd == "") == (req.ShellID == "") {
 		fail(w, http.StatusBadRequest, l.T("Specify a project directory or shell ID", "请选择项目目录或终端 ID"))
+		return
+	}
+	if req.Create && req.Cwd == "" {
+		fail(w, http.StatusBadRequest, l.T("Specify a project directory for the new shell", "请选择新终端的项目目录"))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if !validProjectShellName(name) {
+		fail(w, http.StatusBadRequest, l.T("Shell names must be at most 80 characters without control characters", "终端名称不得超过 80 个字符或包含控制字符"))
 		return
 	}
 	var dir, key string
@@ -279,9 +317,9 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, l.T("Project shell not found", "找不到项目终端"))
 		return
 	}
-	if req.Cwd != "" {
+	if req.Cwd != "" && !req.Create {
 		for _, e := range m.entries {
-			if e.ProjectKey == key {
+			if e.ProjectKey == key && *e.Default {
 				entry = e
 				break
 			}
@@ -322,7 +360,10 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if entry == nil {
-		entry = &projectShellEntry{projectShellRecord: projectShellRecord{ID: rand.Text(), ProjectKey: key, Cwd: dir}}
+		isDefault := !req.Create
+		entry = &projectShellEntry{projectShellRecord: projectShellRecord{
+			ID: rand.Text(), ProjectKey: key, Cwd: dir, Name: name, Default: &isDefault,
+		}}
 		m.entries[entry.ID] = entry
 		if err := m.saveLocked(s.cfg.DataDir); err != nil {
 			delete(m.entries, entry.ID)
@@ -340,6 +381,58 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 	view.Aliases = aliases
 	view.Recovered = recovered
 	respond(w, http.StatusOK, view)
+}
+
+func validProjectShellName(name string) bool {
+	return utf8.RuneCountInString(name) <= 80 && strings.IndexFunc(name, unicode.IsControl) < 0
+}
+
+func (s *Server) renameProjectShell(w http.ResponseWriter, r *http.Request) {
+	if !s.projectShellAvailable(w, r) {
+		return
+	}
+	var req struct {
+		Name *string `json:"name"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	l := s.lang(r)
+	if req.Name == nil {
+		fail(w, http.StatusBadRequest, l.T("Specify a shell name", "请指定终端名称"))
+		return
+	}
+	name := strings.TrimSpace(*req.Name)
+	if !validProjectShellName(name) {
+		fail(w, http.StatusBadRequest, l.T("Shell names must be at most 80 characters without control characters", "终端名称不得超过 80 个字符或包含控制字符"))
+		return
+	}
+	m := &s.projectShells
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closing {
+		fail(w, http.StatusServiceUnavailable, l.T("Host is shutting down", "主机正在关闭"))
+		return
+	}
+	if err := m.loadLocked(s.cfg.DataDir); err != nil {
+		s.projectShellStorageError(w, r, err)
+		return
+	}
+	entry := m.entries[r.PathValue("id")]
+	if entry == nil {
+		fail(w, http.StatusNotFound, l.T("Project shell not found", "找不到项目终端"))
+		return
+	}
+	if name != entry.Name {
+		previous := entry.Name
+		entry.Name = name
+		if err := m.saveLocked(s.cfg.DataDir); err != nil {
+			entry.Name = previous
+			s.projectShellStorageError(w, r, err)
+			return
+		}
+	}
+	respond(w, http.StatusOK, entry.view())
 }
 
 func (m *projectShellRegistry) releaseFinishedRun(entry *projectShellEntry, run *projectShellRun) {

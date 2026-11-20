@@ -16,6 +16,7 @@ export type Surface =
   | { type: 'new-session'; resume?: { id: string; provider: Provider; cwd: string }; cwd?: string; provider?: Provider }
   | { type: 'settings'; section?: SettingsSection }
   | { type: 'status' }
+  | { type: 'running-terminals' }
   | { type: 'session-details'; id: string }
   | { type: 'delete-session'; id: string }
   | { type: 'tasks'; id: string }

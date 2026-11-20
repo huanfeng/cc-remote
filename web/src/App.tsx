@@ -22,6 +22,7 @@ import { toast } from '@/components/ui/toast';
 import { DesktopShell } from '@/app/DesktopShell';
 import { MobileShell } from '@/app/MobileShell';
 import { Surfaces } from '@/features/dialogs/Surfaces';
+import { ProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 import { useGlobalShortcuts } from '@/app/shortcuts';
 import { useDrafts } from '@/features/composer/drafts';
 import { useRequestDrafts } from '@/features/requests/drafts';
@@ -175,7 +176,6 @@ function Connected({ backend }: { backend: Backend }) {
           )}
           <div className="min-h-0 flex-1"><Shell /></div>
         </div>
-        <Surfaces />
       </TooltipPrimitive.Provider>
     </BackendContext.Provider>
   );
@@ -184,7 +184,12 @@ function Connected({ backend }: { backend: Backend }) {
 function Shell() {
   const mobile = useIsMobile();
   useGlobalShortcuts();
-  return mobile ? <MobileShell /> : <DesktopShell />;
+  return (
+    <ProjectShellWorkspace mobile={mobile}>
+      {mobile ? <MobileShell /> : <DesktopShell />}
+      <Surfaces />
+    </ProjectShellWorkspace>
+  );
 }
 
 /**

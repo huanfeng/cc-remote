@@ -8,7 +8,23 @@ import { DESKTOP } from '@/platform/desktop';
 import { hasFeature, selectionKey, useApp, useSelectedSession } from '@/store/app';
 import { matchesProjectShellShortcut } from './projectShellKeys';
 
-export interface ProjectShellTarget { cwd: string; shellId?: string }
+export interface ProjectShellTarget { cwd: string; shellId?: string; runId?: string }
+
+interface RetainedTab {
+  target: ProjectShellTarget;
+  shellId?: string;
+  runId?: string;
+}
+
+interface PanelState {
+  tabs: RetainedTab[];
+  active: ProjectShellTarget;
+  visible: boolean;
+}
+
+function targetKey(target: ProjectShellTarget) {
+  return JSON.stringify([target.shellId, target.runId, shellPathKey(target.cwd)]);
+}
 
 // Path spelling is only a lookup hint. The host owns project identity and returns aliases.
 export function shellPathKey(cwd: string) {
@@ -24,17 +40,24 @@ export function matchesShellPath(shell: ProjectShell, cwd: string): boolean {
 interface ProjectShellWorkspaceState {
   enabled: boolean;
   target: ProjectShellTarget | null;
-  retainedTarget: ProjectShellTarget | null;
+  retainedTargets: readonly ProjectShellTarget[];
   shells: ProjectShell[];
+  shellListState: 'loading' | 'ready' | 'error';
   open(target: ProjectShellTarget): void;
   close(): void;
+  end(target: ProjectShellTarget): void;
+  bind(target: ProjectShellTarget, shellId: string, runId?: string): void;
+  shellIdFor(target: ProjectShellTarget): string | undefined;
+  targetKey(target: ProjectShellTarget): string;
   toggle(target: ProjectShellTarget): void;
   isOpen(cwd: string): boolean;
   remember(shell: ProjectShell, alias?: string): void;
+  finishRun(shellId: string, runId: string, state: 'exited' | 'stopped'): void;
 }
 
 const ProjectShellWorkspaceContext = createContext<ProjectShellWorkspaceState>({
-  enabled: false, target: null, retainedTarget: null, shells: [], open() {}, close() {}, toggle() {}, isOpen: () => false, remember() {},
+  enabled: false, target: null, retainedTargets: [], shells: [], shellListState: 'loading',
+  open() {}, close() {}, end() {}, bind() {}, shellIdFor: item => item.shellId, targetKey, toggle() {}, isOpen: () => false, remember() {}, finishRun() {},
 });
 
 export const useProjectShellWorkspace = () => useContext(ProjectShellWorkspaceContext);
@@ -54,9 +77,11 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
 }) {
   const backend = useBackend();
   const [shells, setShells] = useState<ProjectShell[]>([]);
-  const [panel, setPanel] = useState<{ target: ProjectShellTarget; visible: boolean } | null>(null);
-  const retainedTarget = panel?.target ?? null;
-  const target = panel?.visible ? panel.target : null;
+  const [shellListState, setShellListState] = useState<ProjectShellWorkspaceState['shellListState']>('loading');
+  const [panel, setPanel] = useState<PanelState | null>(null);
+  const lastTarget = panel?.active ?? null;
+  const retainedTargets = panel?.tabs.map(tab => tab.target) ?? [];
+  const target = panel?.visible ? panel.active : null;
   const focusBefore = useRef<HTMLElement | null>(null);
   const focusRestore = useRef<number>(0);
   const previousSelection = useRef(selectionId);
@@ -64,35 +89,56 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
 
   useEffect(() => {
     if (!enabled) return;
-    return backend.watchProjectShells(next => setShells(current => {
-      const records = new Map(current.map(shell => [shell.id, shell]));
-      for (const shell of next) {
-        const cached = records.get(shell.id);
-        const aliases = [...new Set([...(shell.aliases ?? []), ...(cached?.aliases ?? [])])];
-        records.set(shell.id, { ...shell, aliases });
-      }
-      return [...records.values()];
-    }));
+    return backend.watchProjectShells(next => {
+      setShellListState('ready');
+      setShells(current => {
+        const records = new Map(current.map(shell => [shell.id, shell]));
+        return next.map(shell => {
+          const cached = records.get(shell.id);
+          const aliases = [...new Set([...(shell.aliases ?? []), ...(cached?.aliases ?? [])])];
+          return { ...shell, aliases };
+        });
+      });
+    }, () => setShellListState('error'));
   }, [backend, enabled]);
 
   const remember = useCallback((shell: ProjectShell, alias?: string) => {
     setShells(current => {
       const before = current.find(item => item.id === shell.id);
       const aliases = [...new Set([...(before?.aliases ?? []), ...(shell.aliases ?? []), ...(alias ? [alias] : [])])];
-      return [...current.filter(item => item.id !== shell.id), { ...shell, aliases }];
+      const updated = { ...shell, aliases };
+      return before ? current.map(item => item === before ? updated : item) : [...current, updated];
     });
   }, []);
 
-  const matchesTarget = useCallback((candidate: ProjectShellTarget, path: string) => {
+  const finishRun = useCallback((shellId: string, runId: string, state: 'exited' | 'stopped') => {
+    setShells(current => current.map(shell =>
+      shell.id === shellId && shell.runId === runId ? { ...shell, runId: undefined, state } : shell));
+  }, []);
+
+  const bind = useCallback((candidate: ProjectShellTarget, shellId: string, runId?: string) => {
+    setPanel(current => {
+      const tab = current?.tabs.find(item => item.target === candidate);
+      if (!current || !tab || (tab.shellId === shellId && tab.runId === runId)) return current;
+      const duplicate = current.tabs.find(item => item !== tab && item.shellId === shellId);
+      const tabs = current.tabs.filter(item => item !== duplicate).map(item => item === tab ? { ...item, shellId, runId } : item);
+      return { ...current, tabs, active: duplicate?.target === current.active ? candidate : current.active };
+    });
+  }, []);
+
+  const shellIdFor = useCallback((candidate: ProjectShellTarget) => (
+    panel?.tabs.find(tab => tab.target === candidate)?.shellId ?? candidate.shellId
+  ), [panel?.tabs]);
+
+  const matchesTarget = useCallback((candidate: ProjectShellTarget, path: string, shellId = candidate.shellId) => {
     if (shellPathKey(path) === shellPathKey(candidate.cwd)) return true;
-    const shell = shells.find(item => item.id === candidate.shellId || matchesShellPath(item, candidate.cwd));
+    const shell = shells.find(item => item.id === shellId) ?? shells.find(item => matchesShellPath(item, candidate.cwd));
     return !!shell && matchesShellPath(shell, path);
   }, [shells]);
 
-  const isOpen = useCallback((path: string) => !!target && matchesTarget(target, path), [matchesTarget, target]);
+  const isOpen = useCallback((path: string) => !!target && matchesTarget(target, path, shellIdFor(target)), [matchesTarget, shellIdFor, target]);
 
-  const close = useCallback(() => {
-    setPanel(current => current?.visible ? { ...current, visible: false } : current);
+  const restoreFocus = useCallback(() => {
     const before = focusBefore.current;
     focusBefore.current = null;
     cancelAnimationFrame(focusRestore.current);
@@ -101,18 +147,50 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
       else (document.querySelector<HTMLElement>('[data-session-composer]') ?? document.querySelector<HTMLElement>('[data-project-shell-trigger]'))?.focus();
     });
   }, []);
+  const close = useCallback(() => {
+    setPanel(current => current?.visible ? { ...current, visible: false } : current);
+    restoreFocus();
+  }, [restoreFocus]);
+  const end = useCallback((ended: ProjectShellTarget) => {
+    setPanel(current => {
+      if (!current) return current;
+      const index = current.tabs.findIndex(tab => tab.target === ended);
+      if (index === -1) return current;
+
+      const tab = current.tabs[index];
+      const tabs = current.tabs.filter(item => item !== tab);
+      if (ended !== current.active) return { ...current, tabs };
+      const next = tabs[Math.min(index, tabs.length - 1)];
+      if (next) return { ...current, tabs, active: next.target };
+      return { tabs, active: { cwd: ended.cwd, shellId: tab.shellId }, visible: false };
+    });
+  }, []);
+  const ended = panel !== null && panel.tabs.length === 0;
+  useLayoutEffect(() => {
+    if (ended && focusBefore.current) restoreFocus();
+  }, [ended, restoreFocus]);
   useEffect(() => () => cancelAnimationFrame(focusRestore.current), []);
 
   const open = useCallback((next: ProjectShellTarget) => {
-    if (!enabled || !next.cwd || isOpen(next.cwd)) return;
+    if (!enabled || !next.cwd) return;
     cancelAnimationFrame(focusRestore.current);
     if (!target) focusBefore.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (mobile) useApp.getState().set({ drawerOpen: false });
-    setPanel(current => ({
-      target: current && ((next.shellId && current.target.shellId === next.shellId) || matchesTarget(current.target, next.cwd)) ? current.target : next,
-      visible: true,
-    }));
-  }, [enabled, isOpen, matchesTarget, mobile, target]);
+    setPanel(current => {
+      const active = current?.tabs.find(tab => tab.target === current.active);
+      const sameProject = current && matchesTarget(current.active, next.cwd, active?.shellId);
+      const tabs = sameProject ? current.tabs : [];
+      const existing = tabs.find(tab => tab.target === next || (next.shellId && tab.shellId === next.shellId));
+      if (existing && (!next.runId || existing.runId === next.runId)) {
+        if (current?.visible && current.active === existing.target) return current;
+        return { tabs, active: existing.target, visible: true };
+      }
+      if (!next.shellId && sameProject && active) return current.visible ? current : { ...current, visible: true };
+      const item = !next.shellId && sameProject ? current.active : next;
+      const tab = { target: item, shellId: item.shellId, runId: item.runId };
+      return { tabs: existing ? tabs.map(tabItem => tabItem === existing ? tab : tabItem) : [...tabs, tab], active: item, visible: true };
+    });
+  }, [enabled, matchesTarget, mobile, target]);
 
   const toggle = useCallback((next: ProjectShellTarget) => {
     if (isOpen(next.cwd)) close();
@@ -122,39 +200,46 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
   useLayoutEffect(() => {
     const selectionChanged = previousSelection.current !== selectionId;
     previousSelection.current = selectionId;
-    if (retainedTarget && (!enabled || (selectionChanged && (!cwd || !matchesTarget(retainedTarget, cwd))))) {
+    if (lastTarget && (!enabled || (selectionChanged && (!cwd || !matchesTarget(lastTarget, cwd, shellIdFor(lastTarget)))))) {
       cancelAnimationFrame(focusRestore.current);
       setPanel(null);
       focusBefore.current = null;
     } else if (selectionChanged && target) {
       const focus = requestAnimationFrame(() => {
         const section = document.getElementById('project-shell-panel');
-        if (section && !section.hidden) (section.querySelector<HTMLElement>('textarea') ?? section).focus({ preventScroll: true });
+        if (section && !section.hidden) {
+          const textarea = [...section.querySelectorAll<HTMLElement>('textarea')].find(item => !item.closest('[hidden]'));
+          (textarea ?? section).focus({ preventScroll: true });
+        }
       });
       return () => cancelAnimationFrame(focus);
     }
-  }, [cwd, enabled, matchesTarget, retainedTarget, selectionId, target]);
+  }, [cwd, enabled, lastTarget, matchesTarget, selectionId, shellIdFor, target]);
 
+  const visible = target !== null;
   useLayoutEffect(() => {
-    if (mobile && target && !drawerOpen) return overlayHistory().add(close);
-  }, [close, drawerOpen, mobile, target]);
+    if (mobile && visible && !drawerOpen) return overlayHistory().add(close);
+  }, [close, drawerOpen, mobile, visible]);
 
   useEffect(() => {
     if (!enabled) return;
     const onKey = (event: KeyboardEvent) => {
       const app = useApp.getState();
       if (app.surface || app.drawerOpen || document.querySelector('[aria-modal="true"][data-state="open"]')) return;
-      if (!matchesProjectShellShortcut(event, usePrefs.getState().projectShellShortcut, DESKTOP) || (!cwd && !retainedTarget)) return;
+      if (!matchesProjectShellShortcut(event, usePrefs.getState().projectShellShortcut, DESKTOP) || (!cwd && !lastTarget)) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat) return;
       if (target) close();
-      else if (retainedTarget) open(retainedTarget);
+      else if (lastTarget) open(lastTarget);
       else if (cwd) open({ cwd });
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [close, cwd, enabled, open, retainedTarget, target]);
+  }, [close, cwd, enabled, lastTarget, open, target]);
 
-  return <ProjectShellWorkspaceContext.Provider value={{ enabled, target, retainedTarget, shells, open, close, toggle, isOpen, remember }}>{children}</ProjectShellWorkspaceContext.Provider>;
+  return <ProjectShellWorkspaceContext.Provider value={{
+    enabled, target, retainedTargets, shells, shellListState,
+    open, close, end, bind, shellIdFor, targetKey, toggle, isOpen, remember, finishRun,
+  }}>{children}</ProjectShellWorkspaceContext.Provider>;
 }

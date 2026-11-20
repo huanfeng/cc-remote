@@ -123,8 +123,9 @@ export interface Backend {
   // Terminal
   openTerminal(id: string, handlers: TerminalHandlers): TerminalStream;
   projectShells(signal?: AbortSignal): Promise<ProjectShell[]>;
-  watchProjectShells(onChange: (shells: ProjectShell[]) => void): Unsubscribe;
+  watchProjectShells(onChange: (shells: ProjectShell[]) => void, onError?: (error: unknown) => void): Unsubscribe;
   startProjectShell(body: ProjectShellStart, signal?: AbortSignal): Promise<ProjectShell>;
+  renameProjectShell(shellId: string, name: string, signal?: AbortSignal): Promise<ProjectShell>;
   stopProjectShell(shellId: string, runId: string): Promise<void>;
   openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream;
 

@@ -12,14 +12,10 @@ import { useApp } from '@/store/app';
 import { t } from '@/lib/i18n';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { SessionWorkspace } from '@/features/workspace/SessionWorkspace';
-import { ProjectShellWorkspace, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 import { ProjectShellPanel } from '@/features/projectShell/ProjectShellPanel';
 
 export function MobileShell() {
-  return <ProjectShellWorkspace mobile><MobileWorkspace /></ProjectShellWorkspace>;
-}
-
-function MobileWorkspace() {
   const selection = useApp(s => s.selection);
   const drawerOpen = useApp(s => s.drawerOpen);
   const set = useApp(s => s.set);

@@ -67,6 +67,7 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
       <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2">
         <NavButton mobile={mobile} icon={<Plus className="size-4" />} label={t('New session', '新建会话')} shortcut="Ctrl N" onClick={() => open({ type: 'new-session' })} />
         <NavButton mobile={mobile} icon={<Search className="size-4" />} label={t('Search', '搜索')} shortcut="Ctrl K" onClick={() => open({ type: 'palette' })} />
+        <NavButton mobile={mobile} icon={<SquareTerminal className="size-4" />} label={t('Running terminals', '运行中的终端')} onClick={() => open({ type: 'running-terminals' })} />
       </div>
 
       <div role="tablist" className="mx-2 flex shrink-0 items-center gap-1 border-t border-border/60 pt-2">

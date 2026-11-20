@@ -35,7 +35,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'message-search';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'message-search';
 
 export interface MessageSearchQuery {
   q: string;
@@ -487,6 +487,8 @@ export interface TerminalHandlers {
 
 export interface ProjectShell {
   id: string;
+  name?: string;
+  default?: boolean;
   projectKey: string;
   cwd: string;
   aliases?: string[];
@@ -500,6 +502,8 @@ export interface ProjectShellStart {
   cwd?: string;
   shellId?: string;
   restart?: boolean;
+  create?: boolean;
+  name?: string;
 }
 
 export interface ProjectShellStream extends TerminalStream {
@@ -517,5 +521,5 @@ export interface ProjectShellHandlers {
   /** All output and size events up to this point have been delivered. */
   onReady(seq: number): void;
   onReset(seq: number): void;
-  onState(state: 'connecting' | 'exited' | 'failed', detail?: string, opts?: { retry?: boolean }): void;
+  onState(state: 'connecting' | 'exited' | 'unavailable' | 'failed', detail?: string, opts?: { retry?: boolean }): void;
 }

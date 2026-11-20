@@ -16,9 +16,10 @@ import (
 )
 
 type projectShellRun struct {
-	id      string
-	pty     *terminal.ProjectShell
-	stopped atomic.Bool
+	id          string
+	pty         *terminal.ProjectShell
+	stopped     atomic.Bool
+	interrupted atomic.Bool
 
 	mu    sync.Mutex // serializes ownership changes with PTY input and resize
 	peers map[chan bool]bool
@@ -39,6 +40,9 @@ func (r *projectShellRun) state() string {
 		return "stopped"
 	}
 	if r.finished() {
+		if r.interrupted.Load() {
+			return "interrupted"
+		}
 		return "exited"
 	}
 	return "running"

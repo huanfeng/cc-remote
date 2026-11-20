@@ -105,7 +105,7 @@ test('project Shell acknowledges applied output during replay only when the host
   assert.deepEqual(socket.sent, ['{"type":"ack","seq":3}']);
 });
 
-test('project Shell metadata uses its own API and a lost run stops automatic transport retries', { timeout: 3000 }, async t => {
+test('project Shell metadata uses its own API and an unavailable run can be resolved by the workspace', { timeout: 3000 }, async t => {
   const { backend, requests } = harness(Response.json({ error: 'Run has ended' }, { status: 410 }));
   t.after(() => backend.dispose());
   assert.deepEqual(await backend.projectShells(), []);
@@ -122,7 +122,18 @@ test('project Shell metadata uses its own API and a lost run stops automatic tra
     ...handlers,
     onState: (state, detail) => { if (state !== 'connecting') resolve({ state, detail }); },
   });
-  assert.deepEqual(await exited, { state: 'exited', detail: 'Run has ended' });
+  assert.deepEqual(await exited, { state: 'unavailable', detail: 'Run has ended' });
+});
+
+test('a host shutdown leaves the project Shell eligible for reconnection', { timeout: 3000 }, async t => {
+  const { backend, connected } = harness();
+  t.after(() => backend.dispose());
+  const { events, handlers } = listener();
+  backend.openProjectShell('shell', 'run', 0, handlers);
+  const socket = await connected;
+  socket.frame({ type: 'exit', detail: 'interrupted' });
+  assert.deepEqual(events, [['state', 'connecting'], ['state', 'failed']]);
+  assert.equal(socket.readyState, 3);
 });
 
 test('the project Shell watcher delivers shells created by another client', { timeout: 3000 }, async t => {

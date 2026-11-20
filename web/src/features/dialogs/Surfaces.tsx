@@ -13,6 +13,7 @@ import { NewSessionDialog } from './NewSessionDialog';
 import { DeleteSessionSurface } from './DeleteSessionDialog';
 import { AttachDialog } from './AttachDialog';
 import { FileSurface } from './FileSurface';
+import { RunningTerminals } from '@/features/terminal/RunningTerminals';
 import { useNotifications } from './notifications';
 
 const EXIT_MS = 220;
@@ -54,6 +55,7 @@ export function Surfaces() {
     case 'new-session': return <NewSessionDialog key={key} {...common} resume={current.resume} initialCwd={current.cwd} initialProvider={current.provider} />;
     case 'settings': return <SettingsPage key={key} {...common} section={current.section} />;
     case 'status': return <StatusPanel key={key} {...common} />;
+    case 'running-terminals': return <RunningTerminals key={key} {...common} />;
     case 'delete-session': return <DeleteSessionSurface key={key} open={open} onOpenChange={onOpenChange} id={current.id} />;
     case 'session-details': return <SessionDetails key={key} {...common} id={current.id} />;
     case 'tasks': return <TaskPanel key={key} {...common} id={current.id} />;
