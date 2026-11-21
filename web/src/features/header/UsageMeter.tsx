@@ -1,5 +1,5 @@
 // Subscription usage in the conversation header. Desktop: a compact two-row
-// meter (5h / 7d with thin bars); hovering shows every limit with its reset,
+// meter with usage bars and segmented 5h / 7d reset tracks; hovering shows every limit with its reset,
 // clicking opens the host status. Phones: a small ring (top arc 5h, bottom
 // arc 7d) that opens a bottom sheet. Hidden without a subscription; a stale
 // reading is dimmed.
@@ -14,7 +14,7 @@ import { useApp } from '@/store/app';
 import { t } from '@/lib/i18n';
 import { useNow } from '@/lib/hooks';
 import { providerName, providerOf } from '@/domain/providers';
-import { fullest, meterVisible, percentText, quotaWindows, resetsIn, ringLevel, usageStale, validWindow, type QuotaWindow } from '@/features/status/usageMath';
+import { fullest, meterVisible, percentText, quotaResetSegments, quotaWindows, resetsIn, ringLevel, usageStale, validWindow, type QuotaWindow } from '@/features/status/usageMath';
 import { UsageBar, UsageDetails, useUsage } from '@/features/status/UsageDetails';
 import { TOUCH } from '@/features/dialogs/SurfaceShell';
 
@@ -33,16 +33,25 @@ export function UsageMeter({ session, mobile }: { session: Session; mobile: bool
 
   if (mobile) return <MeterOrb windows={windows} stale={stale} title={title} summary={summary} details={details} openStatus={openStatus} />;
 
+  const now = Date.now();
+  const rows = windows.map(w => ({
+    ...w,
+    segments: quotaResetSegments(w.label, w.window?.resetsAt, now),
+    resetText: resetsIn(w.window?.resetsAt, now),
+  }));
+  const split = rows.some(w => w.segments.length > 0);
+  const desktopSummary = rows.map(w => [`${w.label} ${percentText(w.window)}`, w.resetText].filter(Boolean).join(', ')).join(' · ');
+
   return (
     <HoverCard openDelay={250} closeDelay={120}>
       <HoverCardTrigger asChild>
         <button
           type="button"
           onClick={openStatus}
-          aria-label={`${title}: ${summary}`}
+          aria-label={`${title}: ${desktopSummary}`}
           className={cn('flex cursor-pointer h-8 shrink-0 flex-col justify-center gap-[3px] rounded-lg px-2 hover:bg-surface-hover', stale && 'opacity-55')}
         >
-          {windows.map(w => <MeterRow key={w.key} w={w} />)}
+          {rows.map(w => <MeterRow key={w.key} w={w} split={split} />)}
         </button>
       </HoverCardTrigger>
       <HoverCardContent align="end" sideOffset={6} className="w-80 p-3.5">
@@ -56,11 +65,22 @@ export function UsageMeter({ session, mobile }: { session: Session; mobile: bool
   );
 }
 
-function MeterRow({ w }: { w: QuotaWindow }) {
+function MeterRow({ w, split }: { w: QuotaWindow & { segments: number[]; resetText: string }; split: boolean }) {
   return (
-    <span className="flex items-center gap-1.5 leading-none" title={resetsIn(w.window?.resetsAt) || undefined}>
+    <span className="flex items-center gap-1.5 leading-none" title={w.resetText || undefined}>
       <span className="w-4 text-left text-ui-xs text-foreground-subtlest">{w.label}</span>
-      <UsageBar window={w.window} className="h-1 w-12" />
+      <span aria-hidden="true" className={split ? 'grid w-28 grid-cols-[minmax(0,1fr)_39%] items-center gap-1' : 'w-12'}>
+        <UsageBar window={w.window?.percent === 0 ? undefined : w.window} className="h-1" />
+        {w.segments.length > 0 && (
+          <span className="flex h-1 gap-0.5">
+            {w.segments.map((fill, index) => (
+              <span key={index} className="flex-1 overflow-hidden rounded-[1px] bg-surface-hover">
+                <span className="ml-auto block h-full bg-foreground-subtle" style={{ width: `${fill}%` }} />
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
       <span className="w-7 text-right text-ui-xs tabular-nums text-foreground-subtle">{percentText(w.window)}</span>
     </span>
   );

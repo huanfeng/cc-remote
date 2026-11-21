@@ -275,7 +275,9 @@ export function SuggestionBar({ text, busy, onSend, onEdit, mobile }: { text: st
         {text}
       </button>
       <Button variant="ghost" size={mobile ? 'lg' : 'sm'} className={cn(mobile && 'h-9')} disabled={busy} onClick={onSend}>{t('Send', '发送')}</Button>
-      <Button variant="ghost" size={mobile ? 'lg' : 'sm'} className={cn(mobile && 'h-9')} onClick={onEdit}>{t('Edit', '编辑')}</Button>
+      <Button variant="ghost" size={mobile ? 'lg' : 'sm'} className={cn(mobile && 'h-9')} onClick={onEdit}>
+        {t('Edit', '编辑')}{!mobile && <kbd className="text-foreground-subtlest" aria-hidden="true">→</kbd>}
+      </Button>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SendIds, admitFiles, canSteer, commandName, filterCommands, isSendKey, modelArgument, needsSteerConfirmation,
+  SendIds, admitFiles, canSteer, commandName, filterCommands, historyDirection, isSendKey, modelArgument, needsSteerConfirmation,
   pruneDrafts, quickSwitchCommand, sendContent, slashQuery, DRAFT_TTL_MS, MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES,
 } from '../src/features/composer/composerLogic.ts';
 import { groupModels, modelEfforts, permissionOptions, shortModel } from '../src/features/pickers/options.ts';
@@ -96,6 +96,16 @@ test('drafts expire after 7 days and empty drafts are dropped', () => {
     empty: { text: '', attachments: [], at: now },
   }, now);
   assert.deepEqual(Object.keys(kept).sort(), ['files', 'fresh']);
+});
+
+test('history arrows preserve selections and movement within a multi-line draft', () => {
+  assert.equal(historyDirection('ArrowUp', 0, 0, 0, true), -1);
+  assert.equal(historyDirection('ArrowUp', 5, 5, 5, true), -1);
+  assert.equal(historyDirection('ArrowUp', 5, 5, 5, false), 0);
+  assert.equal(historyDirection('ArrowUp', 0, 0, 5, false), -1);
+  assert.equal(historyDirection('ArrowUp', 0, 2, 5, true), 0);
+  assert.equal(historyDirection('ArrowDown', 2, 2, 5, false), 0);
+  assert.equal(historyDirection('ArrowDown', 5, 5, 5, false), 1);
 });
 
 test('models group by source and filter by query', () => {

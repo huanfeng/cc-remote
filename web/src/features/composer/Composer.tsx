@@ -3,7 +3,7 @@
 // session; slash commands, @mentions, the pending queue, Codex steer and the
 // suggestion bar sit around the card. Request bodies follow the host's
 // features (sendId, defer, mentions, queueControls, codexSteer).
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowUp, AtSign, CornerDownRight, Hand, Maximize2, Plus, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -20,10 +20,11 @@ import { t } from '@/lib/i18n';
 import { providerName, providerOf } from '@/domain/providers';
 import { contextReading } from '@/domain/contextReading';
 import { mentionAt } from '@/domain/mentions';
+import { isHiddenUser } from '@/features/conversation/fold';
 import { PermissionPicker } from '@/features/pickers/Pickers';
 import { QuickSwitch, patchOverride, useModelSwitchConfirm, type QuickKind } from '@/features/pickers/QuickSwitch';
 import {
-  MAX_ATTACHMENTS, admitFiles, canSteer, commandName, filterCommands, isCommand, isSendKey, modelArgument,
+  MAX_ATTACHMENTS, admitFiles, canSteer, commandName, filterCommands, historyDirection, isCommand, isSendKey, modelArgument,
   needsSteerConfirmation, quickSwitchCommand, sendContent, slashQuery,
 } from './composerLogic';
 import { sendIds } from './sendIds';
@@ -38,6 +39,12 @@ export interface ComposerProps {
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+interface HistoryRecall {
+  entries: string[];
+  index: number;
+  text: string;
+}
+
 export function Composer({ session, transcript, mobile }: ComposerProps) {
   const backend = useBackend();
   const info = useApp(s => s.info);
@@ -47,7 +54,10 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   const provider = providerOf(session);
   const draft = useDraft(id);
   const { setText, setAttachments, clear } = useDrafts.getState();
-  const text = draft.text;
+  // Recalling a message must never overwrite the persisted draft.
+  const [recall, setRecall] = useState<HistoryRecall>();
+  const text = recall?.text ?? draft.text;
+  const uneditedRecall = !!recall && recall.text === recall.entries[recall.index];
   const attachments = draft.attachments;
 
   const box = useRef<HTMLTextAreaElement>(null);
@@ -77,7 +87,10 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   const empty = !trimmed && !attachments.length;
   const showStop = running && empty && !uploading.length;
 
-  const setDraftText = useCallback((v: string) => setText(id, v), [id, setText]);
+  const setDraftText = (value: string) => {
+    if (recall) setRecall({ ...recall, text: value });
+    else setText(id, value);
+  };
 
   // ---------- slash commands ----------
   const [commands, setCommands] = useState<SlashCommand[]>([]);
@@ -89,7 +102,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   const slash = slashQuery(text);
   const [slashClosedFor, setSlashClosedFor] = useState<string | null>(null);
   const slashItems = useMemo(() => (slash === undefined ? [] : filterCommands(commands, slash)), [commands, slash]);
-  const slashOpen = slash !== undefined && slashItems.length > 0 && slashClosedFor !== text;
+  const slashOpen = !uneditedRecall && slash !== undefined && slashItems.length > 0 && slashClosedFor !== text;
   const [slashActive, setSlashActive] = useState(0);
   useEffect(() => { setSlashActive(0); }, [slash]);
 
@@ -118,7 +131,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
     return () => { live = false; clearTimeout(timer); };
   }, [backend, id, mentionQuery]);
   useEffect(() => { if (!mention) setMentionClosedAt(-1); }, [mention?.start]); // eslint-disable-line react-hooks/exhaustive-deps
-  const mentionOpen = !!mention && mention.start !== mentionClosedAt && paths.q === mentionQuery && paths.paths.length > 0 && !slashOpen;
+  const mentionOpen = !uneditedRecall && !!mention && mention.start !== mentionClosedAt && paths.q === mentionQuery && paths.paths.length > 0 && !slashOpen;
 
   const pickMention = (path: string) => {
     if (!mention) return;
@@ -200,6 +213,15 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   const deferBody = queueControls ? { defer: true } : {};
   const sendIdBody = (key: string, content: string) => (hasFeature(info, 'sendId') ? { sendId: sendIds.idFor(key, content) } : {});
 
+  const finishSend = (body: string, attachmentIds: string[]) => {
+    if (!recall) {
+      clear(id, { text: body, attachmentIds });
+      return;
+    }
+    if (attachmentIds.length) setAttachments(id, list => list.filter(a => !attachmentIds.includes(a.id)));
+    setRecall(current => current === recall ? undefined : current);
+  };
+
   async function steer() {
     if (busy) return;
     const body = text.trim();
@@ -220,14 +242,14 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
             : t('Delivery could not be confirmed yet; check again shortly.', '暂时无法确认是否送达，请稍后再检查。'));
         } else {
           sendIds.clear(steerKey);
-          clear(id, { text: body, attachmentIds: [] });
+          finishSend(body, []);
           toast(t('The instruction was added to the current task.', '指令已追加到当前任务。'), { position: 'bottom-center', variant: 'success' });
         }
         return;
       }
       await backend.steer(id, body, sendId);
       sendIds.clear(steerKey);
-      clear(id, { text: body, attachmentIds: [] });
+      finishSend(body, []);
     } catch (e) {
       // A rejected steer was not taken; anything else may have been: keep the ID to check.
       if ((e as { delivery?: string }).delivery === 'rejected') sendIds.clear(steerKey);
@@ -242,7 +264,12 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
     const body = text.trim();
     if ((!body && !attachments.length) || busy || uploading.length) return;
     const kind = quickSwitchCommand(body);
-    if (kind) { setDraftText(''); setQuick(kind); return; }
+    if (kind) {
+      if (recall) setRecall(undefined);
+      else setDraftText('');
+      setQuick(kind);
+      return;
+    }
     setBusy(true); setError('');
     try {
       if (isCommand(body)) {
@@ -252,14 +279,14 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
         const result = await backend.runCommand(id, body);
         if (result.sendMessage) await backend.send(id, { text: body, ...sendIdBody(id, body) });
         sendIds.clear(id);
-        clear(id, { text: body, attachmentIds: [] });
+        finishSend(body, []);
         if (result.openSettings) openSurface({ type: 'settings' });
         if (result.message) toast(result.message, { position: 'bottom-center' });
       } else {
         const attachmentIds = attachments.map(a => a.id);
         await backend.send(id, { text: body, attachmentIds, ...deferBody, ...sendIdBody(id, sendContent(body, attachmentIds)) });
         sendIds.clear(id);
-        clear(id, { text: body, attachmentIds });
+        finishSend(body, attachmentIds);
       }
     } catch (e) {
       setError(errorText(e));
@@ -281,6 +308,55 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   const stop = () => { void backend.stop(id).catch(e => setError(errorText(e))); };
 
   // ---------- keys ----------
+  const suggestion = session.live?.suggestion;
+  const showSuggestion = !!suggestion && !running && session.status !== 'waiting' && !recall && !text && !attachments.length;
+
+  const acceptSuggestion = () => {
+    if (!suggestion) return;
+    setDraftText(suggestion);
+    focusAt(suggestion.length);
+  };
+
+  const restoreDraft = () => {
+    setRecall(undefined);
+    focusAt(draft.text.length);
+  };
+
+  const onRecallKey = (e: KeyboardEvent<HTMLTextAreaElement>, composingNow: boolean) => {
+    if (e.defaultPrevented || composingNow || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key === 'Escape' && recall && !expanded) {
+      e.preventDefault();
+      restoreDraft();
+      return;
+    }
+    if (busy || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    // An edited recall stays in the box until sent or explicitly dismissed.
+    if (recall && !uneditedRecall) return;
+    const el = e.currentTarget;
+    let singleLine = false;
+    if (e.key === 'ArrowUp' && !expanded && !text.includes('\n')) {
+      const style = getComputedStyle(el);
+      const lineBox = parseFloat(style.lineHeight) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      singleLine = el.scrollHeight <= Math.max(lineBox, parseFloat(style.minHeight)) + 1;
+    }
+    const step = historyDirection(e.key, el.selectionStart, el.selectionEnd, text.length, singleLine);
+    if (!step || (!recall && step > 0)) return;
+    const entries = recall?.entries ?? transcript.events.flatMap(event =>
+      event.kind === 'user' && !event.truncated && event.text?.trim() && !isHiddenUser(event.text) ? [event.text] : [],
+    );
+    if (!entries.length) return;
+    const index = (recall?.index ?? entries.length) + step;
+    e.preventDefault();
+    if (index < 0) return;
+    const next = entries[index];
+    setRecall(next === undefined ? undefined : { entries, index, text: next });
+    const at = (next ?? draft.text).length;
+    setCaret(at);
+    requestAnimationFrame(() => {
+      if (document.activeElement === el) el.setSelectionRange(at, at);
+    });
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const composingNow = e.nativeEvent.isComposing || composing.current || e.keyCode === 229;
     const menu = slashOpen
@@ -289,7 +365,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
         ? { n: paths.paths.length, active: mentionActive, set: setMentionActive, pick: (i: number) => pickMention(paths.paths[i]), close: () => setMentionClosedAt(mention!.start) }
         : undefined;
     if (menu && !composingNow) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault();
         menu.set((menu.active + (e.key === 'ArrowDown' ? 1 : -1) + menu.n) % menu.n);
         return;
@@ -303,6 +379,13 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
       }
       if (e.key === 'Escape') { e.preventDefault(); menu.close(); return; }
     }
+    if (e.key === 'ArrowRight' && !composingNow && !busy && showSuggestion && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      acceptSuggestion();
+      return;
+    }
+    onRecallKey(e, composingNow);
+    if (e.defaultPrevented) return;
     if (e.key === 'Enter' && e.altKey && !composingNow) {
       // Alt+Enter is a newline everywhere; browsers do not all insert one by themselves.
       e.preventDefault();
@@ -341,8 +424,6 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
 
   const reading = contextReading(provider, session.live, transcript.events);
   const queued = (session.queued ?? []).filter(m => !m.sending);
-  const suggestion = session.live?.suggestion;
-  const showSuggestion = !!suggestion && !running && session.status !== 'waiting' && !text && !attachments.length;
 
   const queueOps = {
     onSendNow: (m: PendingMessage) => backend.sendQueuedNow(id, m.id!),
@@ -507,7 +588,13 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
 
   return (
     <div className={cn('mx-auto w-full max-w-3xl shrink-0', mobile ? 'px-0 pb-safe' : 'px-4 pb-4')}>
-      {showSuggestion && <SuggestionBar text={suggestion!} busy={busy} mobile={mobile} onSend={() => void sendSuggestion(suggestion!)} onEdit={() => { setDraftText(suggestion!); focusAt(suggestion!.length); }} />}
+      {showSuggestion && <SuggestionBar text={suggestion!} busy={busy} mobile={mobile} onSend={() => void sendSuggestion(suggestion!)} onEdit={acceptSuggestion} />}
+      {recall && (
+        <div className="mb-2 flex items-center justify-between gap-2 px-1 text-ui-sm text-foreground-subtle">
+          <span>{t('Message history', '发送历史')}</span>
+          <Button variant="ghost" size="sm" onClick={restoreDraft}>{t('Back to draft', '返回草稿')}</Button>
+        </div>
+      )}
       <PendingQueue items={queued} controls={queueControls} mobile={mobile} {...queueOps} />
       <QuickSwitch
         session={session} kind={quick ?? 'model'} open={!!quick} mobile={mobile} side="top"
@@ -534,6 +621,8 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
             onCompositionStart={() => { composing.current = true; }}
             onCompositionEnd={() => { composing.current = false; }}
             onKeyDown={e => {
+              onRecallKey(e, e.nativeEvent.isComposing || composing.current || e.keyCode === 229);
+              if (e.defaultPrevented) return;
               if (isSendKey({ ...e, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode }, sendKey, composing.current)) {
                 e.preventDefault(); setExpanded(false); void submit();
               }

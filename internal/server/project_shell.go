@@ -429,7 +429,8 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, l.T("This host has reached its project shell limit", "此主机的项目终端数量已达上限"))
 		return
 	}
-	pty, err := terminal.StartProjectShell(dir)
+	runID := rand.Text()
+	pty, err := terminal.StartProjectShell(dir, runID)
 	if err != nil {
 		log.Printf("start project shell: %v", err)
 		fail(w, http.StatusInternalServerError, l.T("Could not start the project shell", "无法启动项目终端"))
@@ -465,7 +466,7 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		entry.Ordinal = m.nextProjectShellOrdinal(entry.ProjectKey)
 	}
 	entry.restored = false
-	run := &projectShellRun{id: rand.Text(), pty: pty, released: make(chan struct{})}
+	run := &projectShellRun{id: runID, pty: pty, released: make(chan struct{})}
 	entry.run = run
 	var panePaths map[string]string
 	var rollbackLayout func()

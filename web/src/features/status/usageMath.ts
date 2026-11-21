@@ -47,6 +47,17 @@ export function resetsIn(iso: string | undefined, now = Date.now()): string {
   return left ? t(`resets in ${left}`, `${left}后重置`) : '';
 }
 
+/** Per-cell fill percentages, with the remaining hours or days anchored at the right. */
+export function quotaResetSegments(label: string, iso: string | undefined, now = Date.now()): number[] {
+  if (label !== '5h' && label !== '7d') return [];
+  const resetAt = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(resetAt)) return [];
+  const count = label === '5h' ? 5 : 7;
+  const segmentMs = label === '5h' ? 3_600_000 : 86_400_000;
+  const remaining = (resetAt - now) / segmentMs;
+  return Array.from({ length: count }, (_, i) => 100 * Math.min(1, Math.max(0, remaining - (count - 1 - i))));
+}
+
 /** "just now", "5 min ago", "3 h ago", else the local date and time. */
 export function fetchedText(iso: string | undefined, now = Date.now()): string {
   const at = iso ? Date.parse(iso) : NaN;

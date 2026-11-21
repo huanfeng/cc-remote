@@ -25,6 +25,7 @@ import { hostKey } from '@/lib/hosts';
 import { DESKTOP } from '@/platform/desktop';
 import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 import { projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
+import { projectShellCounts } from '@/features/projectShell/projectShellStatus';
 
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
@@ -36,6 +37,10 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const sendKey = usePrefs(s => s.sendKey);
   const shellShortcut = usePrefs(s => s.projectShellShortcut);
   const shell = useProjectShellWorkspace();
+  const shellCounts = projectShellCounts(shell.shells, session.cwd ?? '');
+  const shellLabel = shellCounts.total
+    ? t(`Project terminals (${shellCounts.total}, ${shellCounts.running} running)`, `项目终端（${shellCounts.total} 个，${shellCounts.running} 个运行中）`)
+    : t('Project terminal', '项目终端');
   const setPrefs = usePrefs(s => s.set);
   const records = useCompletionRead(s => s.records);
   const display = native ? session : displaySession(session, records[hostKey(session.id)]);
@@ -104,13 +109,17 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
       {!native && shell.enabled && !!session.cwd && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} data-project-shell-trigger
-              aria-label={t('Project terminal', '项目终端')} aria-expanded={shell.isOpen(session.cwd)}
+            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} data-project-shell-trigger className="relative"
+              aria-label={shellLabel} aria-expanded={shell.isOpen(session.cwd)}
               onClick={() => shell.toggle({ cwd: session.cwd })}>
               <SquareTerminal className="size-4" />
+              {shellCounts.total > 0 && <span aria-hidden className={cn(
+                'pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-ui-2xs font-semibold tabular-nums ring-1 ring-background',
+                shellCounts.running ? 'bg-success-surface text-success-surface-foreground' : 'bg-surface text-foreground-subtle',
+              )}>{shellCounts.total > 99 ? '99+' : shellCounts.total}</span>}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{[t('Project terminal', '项目终端'), projectShellShortcutLabel(shellShortcut, DESKTOP)].filter(Boolean).join(' · ')}</TooltipContent>
+          <TooltipContent>{[shellLabel, projectShellShortcutLabel(shellShortcut, DESKTOP)].filter(Boolean).join(' · ')}</TooltipContent>
         </Tooltip>
       )}
 

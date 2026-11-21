@@ -11,6 +11,7 @@ import { t } from '@/lib/i18n';
 import { Markdown } from '@/features/markdown/Markdown';
 import { RequestShell, type RequestTone } from './RequestShell';
 import { useRequest } from './drafts';
+import { useRequestSubmit } from './useRequestSubmit';
 import type { Interaction } from './QuestionCard';
 import { findPlan, type PlanSource } from '@/domain/planSource';
 import { ConversationContext } from '@/features/conversation/context';
@@ -56,6 +57,9 @@ export const PlanCard = memo(function PlanCard({ call, request, session, interac
   const mode = draft.mode ?? modes[0].value;
   const long = plan.split('\n').length > PLAN_LINES;
   const state = settled && interactive ? { label: t('Submitted', '已提交'), tone: 'done' as const } : planState(call, interaction, interactive || session.mode !== 'terminal');
+  const feedback = draft.feedback?.trim();
+  const keepPlanning = () => void answer({ decision: 'deny', message: feedback || undefined });
+  const { keyShortcut, handlers } = useRequestSubmit(interactive && !busy && feedback ? keepPlanning : undefined);
   return (
     <RequestShell
       icon={<ListChecksIcon />}
@@ -70,7 +74,7 @@ export const PlanCard = memo(function PlanCard({ call, request, session, interac
               {t('Answer in terminal', '在终端回答')}
             </Button>
           )}
-          <Button variant="outline" size="lg" disabled={busy} onClick={() => void answer({ decision: 'deny', message: draft.feedback?.trim() || undefined })}>
+          <Button variant="outline" size="lg" disabled={busy} aria-keyshortcuts={keyShortcut} onClick={keepPlanning}>
             {t('Keep planning', '继续规划')}
           </Button>
           <Button size="lg" disabled={busy} onClick={() => void answer(shared ? { decision: 'allow', mode } : { decision: 'allow' })}>{settled ? t('Submitted', '已提交') : t('Approve plan', '批准计划')}</Button>
@@ -128,6 +132,7 @@ export const PlanCard = memo(function PlanCard({ call, request, session, interac
             value={draft.feedback ?? ''}
             disabled={busy}
             onChange={e => { const feedback = e.target.value; update(d => ({ ...d, feedback })); }}
+            {...handlers}
           />
         </div>
       )}

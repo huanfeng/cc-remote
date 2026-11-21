@@ -11,6 +11,7 @@ import { cn } from '@/components/lib/utils';
 import { t } from '@/lib/i18n';
 import { RequestShell, type RequestTone } from './RequestShell';
 import { useRequest } from './drafts';
+import { useRequestSubmit } from './useRequestSubmit';
 
 export type Interaction = { outcome: string; decision?: string; mode?: string; answers?: Record<string, string> };
 
@@ -61,17 +62,19 @@ function Mark({ selected, multi }: { selected: boolean; multi: boolean }) {
   );
 }
 
-function QuestionBlock({ view, index, interactive, picks, custom, mobile, busy, onToggle, onCustom }: {
+function QuestionBlock({ view, index, interactive, picks, custom, mobile, busy, onToggle, onCustom, submitHandlers }: {
   view: QuestionView; index: number; interactive: boolean; picks: string[]; custom: string; mobile: boolean; busy: boolean;
   onToggle(label: string): void; onCustom(text: string): void;
+  submitHandlers: ReturnType<typeof useRequestSubmit>['handlers'];
 }) {
   const [focus, setFocus] = useState<string>();
   const hasPreview = view.options.some(option => option.preview);
-  const isSelected = (label: string) => interactive ? picks.includes(label) && !custom.trim() : view.options.find(o => o.label === label)?.selected ?? false;
+  const hasCustom = !!custom.trim();
+  const isSelected = (label: string) => interactive ? picks.includes(label) && !hasCustom : view.options.find(o => o.label === label)?.selected ?? false;
   const shownLabel = focus ?? (interactive ? picks.at(-1) : view.options.find(o => o.selected)?.label) ?? view.options.find(o => o.preview)?.label;
   const shown = view.options.find(option => option.label === shownLabel);
   const list = (
-    <div role={view.multiSelect ? 'group' : 'radiogroup'} aria-label={view.question} className="flex min-w-0 flex-col gap-1">
+    <div role={view.multiSelect ? 'group' : 'radiogroup'} aria-label={view.question} className="flex min-w-0 flex-col gap-1" onKeyDown={submitHandlers.onKeyDown}>
       {view.options.map(option => {
         const selected = isSelected(option.label);
         return (
@@ -80,7 +83,7 @@ function QuestionBlock({ view, index, interactive, picks, custom, mobile, busy, 
             type="button"
             role={view.multiSelect ? 'checkbox' : 'radio'}
             aria-checked={selected}
-            disabled={!interactive || busy}
+            disabled={!interactive || busy || hasCustom}
             onClick={() => onToggle(option.label)}
             onMouseEnter={() => option.preview && setFocus(option.label)}
             onFocus={() => option.preview && setFocus(option.label)}
@@ -88,7 +91,7 @@ function QuestionBlock({ view, index, interactive, picks, custom, mobile, busy, 
               'flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
               mobile && 'min-h-11',
               selected ? 'border-border-hover bg-selected' : 'border-transparent',
-              interactive ? 'hover:bg-surface-hover disabled:opacity-60' : 'cursor-default',
+              interactive ? 'enabled:hover:bg-surface-hover disabled:opacity-60' : 'cursor-default',
               !interactive && !selected && 'opacity-60',
             )}
           >
@@ -133,6 +136,7 @@ function QuestionBlock({ view, index, interactive, picks, custom, mobile, busy, 
           value={custom}
           disabled={busy}
           onChange={e => onCustom(e.target.value)}
+          {...submitHandlers}
         />
       )}
       {!interactive && view.custom && (
@@ -161,6 +165,10 @@ export const QuestionCard = memo(function QuestionCard({ call, request, session,
   });
   const state = settled && interactive ? { label: t('Submitted', '已提交'), tone: 'done' as const } : questionState(call, interaction, interactive || session.mode !== 'terminal');
   const ready = views.length > 0 && views.every(view => value(view.question));
+  const submit = interactive && ready && !busy
+    ? () => void answer({ decision: 'allow', answers: Object.fromEntries(views.map(v => [v.question, value(v.question)])) })
+    : undefined;
+  const { keyShortcut, handlers } = useRequestSubmit(submit);
   return (
     <RequestShell
       icon={<MessageCircleQuestionIcon />}
@@ -181,8 +189,7 @@ export const QuestionCard = memo(function QuestionCard({ call, request, session,
             onClick={() => void answer({ decision: 'deny', message: clarifyMessage(views.map(v => v.question), value) })}>
             {t('Chat about this', '聊聊这个')}
           </Button>
-          <Button size="lg" disabled={busy || !ready}
-            onClick={() => void answer({ decision: 'allow', answers: Object.fromEntries(views.map(v => [v.question, value(v.question)])) })}>
+          <Button size="lg" disabled={!submit} aria-keyshortcuts={keyShortcut} onClick={submit}>
             {settled ? t('Submitted', '已提交') : t('Submit', '提交')}
           </Button>
         </>
@@ -203,6 +210,7 @@ export const QuestionCard = memo(function QuestionCard({ call, request, session,
           busy={busy}
           onToggle={label => toggle(view, label)}
           onCustom={text => update(d => ({ ...d, custom: { ...d.custom, [view.question]: text } }))}
+          submitHandlers={handlers}
         />
       ))}
     </RequestShell>

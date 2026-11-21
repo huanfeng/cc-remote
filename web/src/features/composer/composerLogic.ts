@@ -100,6 +100,16 @@ export function isSendKey(
   return sendKey === 'enter' ? !mod : mod;
 }
 
+/** Only take arrow keys the textarea cannot use to move within the draft. */
+export function historyDirection(
+  key: string, start: number, end: number, length: number, singleLine: boolean,
+): -1 | 0 | 1 {
+  if (start !== end) return 0;
+  if (key === 'ArrowUp' && (start === 0 || (singleLine && end === length))) return -1;
+  if (key === 'ArrowDown' && end === length) return 1;
+  return 0;
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`;

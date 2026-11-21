@@ -14,6 +14,7 @@ import { SimpleSelect } from '@/features/dialogs/common';
 import { GroupTitle, SectionHeader } from './parts';
 import { DESKTOP } from '@/platform/desktop';
 import { projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
+import { appPalettes, appPaletteLabels, appThemes, appThemeLabels, terminalPaletteLabels } from './appearanceOptions';
 
 export function BrowserSection({ mobile }: { mobile: boolean }) {
   const set = usePrefs(s => s.set);
@@ -23,13 +24,6 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
   const sendKey = usePrefs(s => s.sendKey);
   const shellShortcut = usePrefs(s => s.projectShellShortcut);
   const [language] = useState(langOverride());
-  const terminalPaletteLabels = {
-    dark: t('Dark · default', '深色 · 默认'),
-    light: t('Light', '浅色'),
-    ocean: t('Ocean', '深海蓝'),
-    warm: t('Warm', '暖棕'),
-    app: t('Follow app theme', '跟随应用主题'),
-  };
   return (
     <div>
       {!mobile && <SectionHeader title={t('Appearance & interaction', '外观与交互')} description={t('Preferences are stored locally.', '偏好设置保存在本地。')} />}
@@ -38,7 +32,7 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
       <GroupCard>
         <Row label={t('Theme', '主题')} stack>
           <div role="radiogroup" aria-label={t('Theme', '主题')} className="grid grid-cols-3 gap-2 sm:max-w-md">
-            {(['system', 'light', 'dark'] as ThemePref[]).map(v => (
+            {appThemes.map(v => (
               <ThemeCard key={v} value={v} active={theme === v} onClick={() => set({ theme: v })} />
             ))}
           </div>
@@ -46,7 +40,7 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
         <Row
           label={t('Colour palette', '配色')}
           control={<SimpleSelect value={palette} onChange={v => set({ palette: v === 'default' ? 'default' : 'graphite' })} ariaLabel={t('Colour palette', '配色')}
-            options={[{ value: 'graphite', label: t('Graphite', '石墨') }, { value: 'default', label: t('Classic', '经典') }]} />}
+            options={appPalettes.map(value => ({ value, label: appPaletteLabels[value] }))} />}
         />
         <Row
           label={t('Terminal colours', '终端配色')}
@@ -162,7 +156,7 @@ function Notifications() {
  */
 function ThemeCard({ value, active, onClick }: { value: ThemePref; active: boolean; onClick: () => void }) {
   const systemDark = useSystemDark();
-  const label = value === 'system' ? t('System', '跟随系统') : value === 'light' ? t('Light', '浅色') : t('Dark', '深色');
+  const label = appThemeLabels[value];
   return (
     <button type="button" role="radio" aria-checked={active} onClick={onClick} className="group flex flex-col gap-1.5 text-left">
       <span className={cn('relative block aspect-[16/10] overflow-hidden rounded-lg border transition-shadow', active ? 'border-transparent ring-2 ring-foreground/70' : 'border-border group-hover:border-border-hover')}>

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowRightLeft, ChevronLeft, Columns2, Copy, GripHorizontal, Minus, Pencil, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { ArrowDownToLine, ArrowRightLeft, ChevronLeft, Columns2, Copy, GripHorizontal, Minus, Pencil, Pin, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import { BackendError } from '@/backend/errors';
 import type { ProjectShell } from '@/backend/types';
@@ -13,10 +13,12 @@ import { currentHost } from '@/lib/hosts';
 import { t } from '@/lib/i18n';
 import { hasFeature, useApp } from '@/store/app';
 import { createProjectShellTerminal, initialShellTerminalState } from './projectShellTerminal';
-import { findOpenProjectShell, isOpenProjectShell, matchesShellPath, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
+import { findOpenProjectShell, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
 import { ProjectShellSearch } from './ProjectShellSearch';
+import { defaultProjectShellBindings, projectShellActionForKey, projectShellBindingLabel, type ProjectShellBindings } from './projectShellKeys';
 import { projectShellLabel } from './projectShellLabel';
 import { projectShellLayout, type PaneRect, type SplitDirection } from './projectShellLayout';
+import { isOpenProjectShell, isRunningProjectShell, matchesShellPath } from './projectShellStatus';
 import { useProjectShellFrame } from './useProjectShellFrame';
 
 const resizeHandles = [
@@ -32,9 +34,9 @@ const resizeHandles = [
 const shellTarget = (shell: ProjectShell): ProjectShellTarget => ({ cwd: shell.cwd, shellId: shell.id });
 const searchLabel = () => t('Search terminal output', '搜索终端输出');
 
-export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
+export function ProjectShellPanel({ mobile = false, bindings = defaultProjectShellBindings }: { mobile?: boolean; bindings?: ProjectShellBindings }) {
   const backend = useBackend();
-  const { target, activeTarget, retainedTargets, targetKey, open, retain, close, end, shellIdFor, shells, remember, finishRun } = useProjectShellWorkspace();
+  const { target, activeTarget, retainedTargets, targetKey, open, retain, close, pinned, togglePinned, end, shellIdFor, shells, remember, finishRun } = useProjectShellWorkspace();
   const hostName = useApp(s => s.info?.name);
   const tabsEnabled = useApp(s => hasFeature(s.info, 'project-shell-tabs'));
   const groupsEnabled = useApp(s => hasFeature(s.info, 'project-shell-pane-groups'));
@@ -119,8 +121,23 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
       }
     }
     rememberLayout(shell);
-    open(shellTarget(shell));
+    const next = shellTarget(shell);
+    if (region.current && !region.current.hidden) open(next);
+    else retain(next, false);
   });
+  const canAdd = tabsEnabled && !!directory && !busy;
+  const canSplit = canAdd && !mobile && !!activeShell && isRunningProjectShell(activeShell) && (layoutEnabled || activePanes.length <= 1);
+  const onShortcut = (event: KeyboardEvent<HTMLElement>) => {
+    const element = event.target;
+    if (!target || !(element instanceof HTMLElement) || !event.currentTarget.contains(element) ||
+      element.closest('input, [contenteditable], [role="menu"]') ||
+      (element instanceof HTMLTextAreaElement && !element.classList.contains('xterm-helper-textarea'))) return;
+    const action = projectShellActionForKey(event.nativeEvent, bindings);
+    if (!action || (action === 'newTab' ? !canAdd : !canSplit)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) add(action === 'newTab' ? undefined : action === 'splitColumns' ? 'columns' : 'rows');
+  };
   const reorient = (direction: SplitDirection) => {
     if (!activeGroup || !activeId) return;
     if (layoutEnabled) void manage(async () => rememberLayout(await backend.reorientProjectShell(activeId, direction)));
@@ -157,8 +174,13 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
   const hostname = currentHost?.name || hostName || location.host;
   const closeLabel = mobile ? t('Back', '返回') : t('Minimize terminal', '最小化终端');
   const moveLabel = t('Drag the terminal or use arrow keys to move it', '拖动或使用方向键移动终端');
+  const pinLabel = t('Pin terminal panel', '固定终端面板');
+  const pinHint = pinned ? t('Unpin terminal panel', '取消固定终端面板') : pinLabel;
+  const newLabel = t('New terminal', '新建终端');
+  const shortcutTitle = (label: string, binding: ProjectShellBindings[keyof ProjectShellBindings]) =>
+    [label, projectShellBindingLabel(binding)].filter(Boolean).join(' · ');
   return <section ref={region} data-terminal id="project-shell-panel" hidden={!target} tabIndex={-1}
-    aria-label={t('Project terminal', '项目终端')}
+    aria-label={t('Project terminal', '项目终端')} onKeyDownCapture={onShortcut}
     style={frame ? { left: frame.x, top: frame.y, width: frame.width, height: frame.height } : undefined}
     className={cn('absolute z-30 min-h-0 flex-col overflow-hidden bg-background outline-none', target && 'flex', mobile
       ? 'inset-0 pb-[env(safe-area-inset-bottom)]' : 'rounded-xl border border-border shadow-xl', !mobile && !frame && 'inset-x-3 bottom-3 h-[min(62%,30rem)]')}>
@@ -167,6 +189,8 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
         {...(!mobile ? { ...handlers('move'), tabIndex: 0, role: 'group', 'aria-label': moveLabel, title: moveLabel } : {})}>
         {mobile && <Button type="button" variant="ghost" size="icon-lg" onClick={close} aria-label={closeLabel}><ChevronLeft /></Button>}
         {mobile ? <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden /> : <GripHorizontal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />}
+        {!mobile && <Button type="button" variant={pinned ? 'secondary' : 'ghost'} size="icon-sm"
+          aria-label={pinLabel} aria-pressed={pinned} title={pinHint} onClick={togglePinned}><Pin /></Button>}
         <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate" title={`${hostname} · ${directory}`}>
           <h2 className="shrink-0 text-ui-sm font-medium">{t('Project terminal', '项目终端')}</h2>
           <span className="truncate text-ui-xs text-foreground-subtle" dir="auto">{hostname} · {directory}</span>
@@ -197,14 +221,18 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
         })}
         {tabsEnabled && <ContextMenu>
           <ContextMenuTrigger asChild><div className="min-w-0 flex-1" /></ContextMenuTrigger>
-          <ContextMenuContent><ContextMenuItem disabled={busy} onSelect={() => add()}><Plus />{t('New terminal', '新建终端')}</ContextMenuItem></ContextMenuContent>
+          <ContextMenuContent><ContextMenuItem disabled={!canAdd} onSelect={() => add()}><Plus />{newLabel}</ContextMenuItem></ContextMenuContent>
         </ContextMenu>}
       </div>
-      {tabsEnabled && <Button type="button" variant="ghost" size="icon-sm" disabled={busy} title={t('New terminal', '新建终端')} aria-label={t('New terminal', '新建终端')}
+      {tabsEnabled && <Button type="button" variant="ghost" size="icon-sm" disabled={!canAdd} title={shortcutTitle(newLabel, bindings.newTab)} aria-label={newLabel}
+        aria-keyshortcuts={projectShellBindingLabel(bindings.newTab, true)}
         onClick={() => add()}><Plus /></Button>}
-      {tabsEnabled && !mobile && ([['columns', Columns2, t('Split side by side', '左右分屏')], ['rows', Rows2, t('Split top and bottom', '上下分屏')]] as const)
-        .map(([axis, Icon, label]) => <Button key={axis} type="button" variant="ghost" size="icon-sm" title={label} aria-label={label}
-          disabled={busy || activeShell?.state !== 'running' || (!layoutEnabled && activePanes.length > 1)} onClick={() => add(axis)}><Icon /></Button>)}
+      {tabsEnabled && !mobile && ([
+        ['columns', Columns2, t('Split side by side', '左右分屏'), bindings.splitColumns],
+        ['rows', Rows2, t('Split top and bottom', '上下分屏'), bindings.splitRows],
+      ] as const).map(([axis, Icon, label, binding]) => <Button key={axis} type="button" variant="ghost" size="icon-sm"
+        title={shortcutTitle(label, binding)} aria-label={label} aria-keyshortcuts={projectShellBindingLabel(binding, true)}
+        disabled={!canSplit} onClick={() => add(axis)}><Icon /></Button>)}
       {activePanes.length > 1 && <Button type="button" variant="ghost" size="icon-sm" disabled={busy}
         aria-label={t('Focus next pane', '切换到下一个窗格')} title={t('Focus next pane', '切换到下一个窗格')} onClick={focusNext}><ArrowRightLeft /></Button>}
       <Button type="button" variant={searchTarget === target ? 'secondary' : 'ghost'} size="icon-sm"

@@ -19,6 +19,7 @@ test('resume card preserves the cost warning, submits a selected action and disa
     '@/lib/i18n': translate,
     './RequestShell': data('export function RequestShell() {}'),
     './drafts': data('export const useRequest=()=>globalThis.__resumeRequest();'),
+    './useRequestSubmit': data('export const useRequestSubmit=()=>({keyShortcut:"Enter",handlers:{}});'),
   };
   const hook = registerHooks({
     resolve(specifier, context, next) {

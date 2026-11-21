@@ -8,6 +8,7 @@ import { cn } from '@/components/lib/utils';
 import { t } from '@/lib/i18n';
 import { RequestShell } from './RequestShell';
 import { useRequest } from './drafts';
+import { useRequestSubmit } from './useRequestSubmit';
 import type { Interaction } from './QuestionCard';
 
 export const UsageLimitCard = memo(function UsageLimitCard({ call, request, session, interaction, mobile }: {
@@ -19,14 +20,16 @@ export const UsageLimitCard = memo(function UsageLimitCard({ call, request, sess
   const selected = interactive ? draft.picks?.option?.[0] ?? '' : view.selected;
   const ready = view.options.some(option => option.id === selected);
   const answered = settled || !!view.selected || call.status === 'ok';
+  const submit = interactive && ready && !busy ? () => void answer({ decision: 'allow', answers: { option: selected } }) : undefined;
+  const { keyShortcut, handlers } = useRequestSubmit(submit);
   return <RequestShell icon={<ClockIcon />} eyebrow={view.title}
     state={view.expired ? t('Expired', '已过期') : view.outcome === 'terminal' ? t('Answered in terminal', '终端已处理') : answered ? t('Submitted', '已提交') : interactive ? t('Choose an action', '请选择处理方式') : t('No answer recorded', '未记录回答')}
     tone={view.expired ? 'declined' : answered ? 'done' : interactive ? 'pending' : 'neutral'} error={error}
-    actions={interactive ? <Button size="lg" disabled={busy || !ready} onClick={() => void answer({ decision: 'allow', answers: { option: selected } })}>
+    actions={interactive ? <Button size="lg" disabled={!submit} aria-keyshortcuts={keyShortcut} onClick={submit}>
       {settled ? t('Submitted', '已提交') : t('Submit', '提交')}
     </Button> : undefined}>
     {view.reset && <p className="mb-3 text-ui-sm text-foreground-subtle">{t('Resets: ', '重置时间：')}{view.reset}</p>}
-    <div role="radiogroup" aria-label={view.title} className="flex flex-col gap-1">
+    <div role="radiogroup" aria-label={view.title} className="flex flex-col gap-1" onKeyDown={handlers.onKeyDown}>
       {view.options.map(option => <button key={option.id} type="button" role="radio" aria-checked={selected === option.id}
         disabled={!interactive || busy} onClick={() => update(d => ({ ...d, picks: { ...d.picks, option: [option.id] } }))}
         className={cn('flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left text-ui-base', mobile && 'min-h-11', selected === option.id ? 'border-border-hover bg-selected' : 'border-transparent', interactive ? 'hover:bg-surface-hover disabled:opacity-60' : 'cursor-default')}>

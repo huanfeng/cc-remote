@@ -10,11 +10,13 @@ import { Sidebar } from '@/features/sidebar/Sidebar';
 import { SessionWorkspace } from '@/features/workspace/SessionWorkspace';
 import { EmptyState } from '@/features/workspace/EmptyState';
 import { ProjectShellPanel } from '@/features/projectShell/ProjectShellPanel';
+import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 
 export function DesktopShell() {
   const collapsed = usePrefs(s => s.sidebarCollapsed);
   const width = usePrefs(s => s.sidebarWidth);
   const selection = useApp(s => s.selection);
+  const { hideForConversation } = useProjectShellWorkspace();
   return (
     <div className="flex h-full min-h-0 bg-background-win-alt">
       <aside
@@ -28,7 +30,12 @@ export function DesktopShell() {
         </div>
         {!collapsed && <Resizer />}
       </aside>
-      <main className={cn('relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background', 'my-1.5 mr-1.5 rounded-xl border border-border/60 shadow-xs', collapsed && 'ml-1.5')}>
+      <main className={cn('relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background', 'my-1.5 mr-1.5 rounded-xl border border-border/60 shadow-xs', collapsed && 'ml-1.5')}
+        onClickCapture={event => {
+          const target = event.target;
+          if (selection && target instanceof Element && event.currentTarget.contains(target) &&
+            !target.closest('#project-shell-panel, [data-project-shell-trigger]')) hideForConversation();
+        }}>
         {selection ? <SessionWorkspace mobile={false} /> : <EmptyState />}
         <ProjectShellPanel />
       </main>

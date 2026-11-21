@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"cc-remote/internal/hostauth"
+	"cc-remote/internal/i18n"
 
 	pty "github.com/aymanbagabas/go-pty"
 	"github.com/coder/websocket"
@@ -64,6 +65,7 @@ func TestProjectShellItemsPrioritizeCurrentProject(t *testing.T) {
 func TestProjectShellCLIStop(t *testing.T) {
 	const token = "project-shell-cli-test-auth"
 	t.Setenv("CC_REMOTE_TOKEN", token)
+	t.Setenv(projectShellRunEnv, "RUN")
 	cwd := t.TempDir()
 	deleted := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +97,26 @@ func TestProjectShellCLIStop(t *testing.T) {
 	case <-deleted:
 	default:
 		t.Fatal("stop never attempted to end the run")
+	}
+}
+
+func TestProjectShellCLISkipsNestedOpen(t *testing.T) {
+	t.Setenv(projectShellRunEnv, "RUN")
+	err := ProjectShellCLI(nil, t.TempDir(), func(string, string) error {
+		t.Fatal("bare nested open tried to start a host")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "ccr shell attach <ID>") {
+		t.Fatalf("bare nested open returned %v", err)
+	}
+}
+
+func TestProjectShellCLIRejectsSelfAttachBeforeDial(t *testing.T) {
+	t.Setenv(projectShellRunEnv, "RUN")
+	var api *client
+	err := api.attachProjectShell(cliProjectShell{ID: "SHELL", RunID: "RUN"})
+	if want := i18n.T("cannot attach a project terminal to itself", "无法从项目终端接入自身"); err == nil || err.Error() != want {
+		t.Fatalf("self-attach returned %v, want %q", err, want)
 	}
 }
 

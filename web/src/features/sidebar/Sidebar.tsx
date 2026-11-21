@@ -2,7 +2,7 @@
 // component is the home page (and the drawer over a conversation).
 import { useMemo, useRef, useState } from 'react';
 import {
-  Activity, Archive, ArchiveRestore, ChevronDown, History, MoreHorizontal, PanelLeftClose, Plus, Search, Settings, SquareTerminal, Trash2, X,
+  Activity, Archive, ArchiveRestore, ChevronDown, History, MoreHorizontal, Palette, PanelLeftClose, Plus, Search, Settings, SquareTerminal, Trash2, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -27,7 +27,9 @@ import { useNativeSessions } from './useNativeSessions';
 import { busy, idleSessions, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
 import { useCompletionRead } from '@/store/completionRead';
 import { displaySession, isCompletionPending } from '@/domain/completionRead';
-import { isOpenProjectShell, matchesShellPath, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { isOpenProjectShell, matchesShellPath } from '@/features/projectShell/projectShellStatus';
+import { AppearanceMenu } from '@/features/settings/AppearanceMenu';
 
 const PAGE = 200;
 
@@ -102,7 +104,8 @@ export function Sidebar({ variant = 'desktop', onClose }: { variant?: 'desktop' 
 
       <div className="flex shrink-0 items-center gap-0.5 border-t border-border/60 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
         <FooterButton mobile={mobile} icon={<Settings className="size-4" />} label={t('Settings', '设置')} onClick={() => open({ type: 'settings' })} />
-        <FooterButton mobile={mobile} icon={<Activity className="size-4" />} label={t('Host status', '宿主状态')} onClick={() => open({ type: 'status' })} />
+        <FooterButton mobile={mobile} icon={<Activity className="size-4" />} label={t('Status', '状态')} onClick={() => open({ type: 'status' })} />
+        <AppearanceMenu mobile={mobile} trigger={<FooterButton mobile={mobile} icon={<Palette className="size-4" />} label={t('Theme', '主题')} />} />
       </div>
     </div>
   );
@@ -162,9 +165,12 @@ function TabButton({ active, children, onClick, mobile }: { active: boolean; chi
   );
 }
 
-function FooterButton({ icon, label, onClick, mobile }: { icon: React.ReactNode; label: string; onClick: () => void; mobile?: boolean }) {
+function FooterButton({ icon, label, mobile, className, ...props }: React.ComponentProps<'button'> & { icon: React.ReactNode; label: string; mobile?: boolean }) {
   return (
-    <button type="button" onClick={onClick} className={cn('flex flex-1 items-center justify-center gap-2 rounded-lg px-2 text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground', mobile ? 'h-10' : 'h-8')}>
+    <button type="button" {...props} className={cn(
+      'flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-1 text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-expanded:bg-surface-hover aria-expanded:text-foreground [&_svg]:shrink-0',
+      mobile ? 'h-10' : 'h-8', className,
+    )}>
       {icon}
       <span className="truncate">{label}</span>
     </button>

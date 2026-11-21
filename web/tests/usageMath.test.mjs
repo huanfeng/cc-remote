@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  barLayout, compactNumber, fullest, ringLevel, countdown, durationText, fetchedText, historyTicks, lineRuns, meterVisible, niceMax, quotaWindows, usageLevel, validWindow,
+  barLayout, compactNumber, fullest, ringLevel, countdown, durationText, fetchedText, historyTicks, lineRuns, meterVisible, niceMax, quotaResetSegments, quotaWindows, usageLevel, validWindow,
 } from '../src/features/status/usageMath.ts';
 
 const NOW = Date.parse('2026-11-07T12:00:00Z');
@@ -23,6 +23,20 @@ test('countdown: days, hours and minutes, rounded up; empty when unknown', () =>
   assert.equal(countdown(at(-60_000), NOW), '0m');
   assert.equal(countdown(undefined, NOW), '');
   assert.equal(countdown('not a date', NOW), '');
+});
+
+test('quota reset cells fill by hour or day from the right, including partial cells', () => {
+  const hour = 3_600_000;
+  assert.deepEqual(quotaResetSegments('5h', at(2.5 * hour), NOW), [0, 0, 50, 100, 100]);
+  assert.deepEqual(quotaResetSegments('5h', at(hour / 4), NOW), [0, 0, 0, 0, 25]);
+  assert.deepEqual(quotaResetSegments('7d', at(4.5 * 24 * hour), NOW), [0, 0, 50, 100, 100, 100, 100]);
+  assert.deepEqual(quotaResetSegments('7d', at(12 * hour), NOW), [0, 0, 0, 0, 0, 0, 50]);
+  assert.deepEqual(quotaResetSegments('5h', at(8 * hour), NOW), [100, 100, 100, 100, 100]);
+  assert.deepEqual(quotaResetSegments('5h', at(0), NOW), [0, 0, 0, 0, 0]);
+  assert.deepEqual(quotaResetSegments('5h', at(-hour), NOW), [0, 0, 0, 0, 0]);
+  assert.deepEqual(quotaResetSegments('5h', undefined, NOW), []);
+  assert.deepEqual(quotaResetSegments('7d', 'invalid', NOW), []);
+  assert.deepEqual(quotaResetSegments('2d', at(hour), NOW), []);
 });
 
 test('usage level: severity wins, else 75/90 thresholds', () => {

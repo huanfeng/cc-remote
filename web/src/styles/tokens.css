@@ -22,8 +22,8 @@
   --color-background-win-alt: var(--color-neutral-200);
   --color-brand: var(--color-sky-400);
   --color-resize-handle: var(--color-sky-500);
-  --color-icon-blue: var(--color-terminal-bright-blue);
-  --color-icon-purple: var(--color-terminal-bright-magenta);
+  --color-icon-blue: var(--color-sky-500);
+  --color-icon-purple: var(--color-fuchsia-500);
   --color-accent: var(--color-sky-50);
   --color-find-highlight: #fde68a;
   --color-find-highlight-active: #facc15;
@@ -68,8 +68,6 @@
   --color-terminal-bright-red: var(--color-red-500);
   --color-terminal-bright-green: var(--color-green-500);
   --color-terminal-bright-yellow: var(--color-yellow-500);
-  --color-terminal-bright-blue: var(--color-sky-500);
-  --color-terminal-bright-magenta: var(--color-fuchsia-500);
   --color-terminal-bright-cyan: var(--color-cyan-500);
   --color-terminal-bright-white: var(--color-neutral-950);
   --color-usage-chart-1: var(--color-sky-600);
@@ -181,6 +179,8 @@
   --color-background-win-alt: var(--color-neutral-800);
   --color-brand: var(--color-sky-500);
   --color-resize-handle: var(--color-sky-400);
+  --color-icon-blue: var(--color-sky-600);
+  --color-icon-purple: var(--color-fuchsia-600);
   --color-accent: color-mix(in oklab, var(--color-sky-950) 50%, transparent);
   --color-find-highlight: #713f12;
   --color-find-highlight-active: #a16207;
@@ -224,8 +224,6 @@
   --color-terminal-bright-red: var(--color-red-600);
   --color-terminal-bright-green: var(--color-green-600);
   --color-terminal-bright-yellow: var(--color-yellow-600);
-  --color-terminal-bright-blue: var(--color-sky-600);
-  --color-terminal-bright-magenta: var(--color-fuchsia-600);
   --color-terminal-bright-cyan: var(--color-cyan-600);
   --color-terminal-bright-white: var(--color-neutral-50);
   --color-usage-chart-1: var(--color-sky-500);
@@ -338,6 +336,8 @@
   --color-background-win-alt: #fafbfd;
   --color-background-alt: color-mix(in oklab, var(--color-background) 70%, transparent);
   --color-brand: #000000;
+  --color-icon-blue: #0066dd;
+  --color-icon-purple: #9e77ed;
   --color-accent: #ebf4ff;
   --color-find-highlight: #fff4eb;
   --color-find-highlight-active: #ffb26b;
@@ -381,8 +381,6 @@
   --color-terminal-bright-red: #e03131;
   --color-terminal-bright-green: #1e8a3e;
   --color-terminal-bright-yellow: #e07b00;
-  --color-terminal-bright-blue: #0066dd;
-  --color-terminal-bright-magenta: #9e77ed;
   --color-terminal-bright-cyan: #0aa7a7;
   --color-terminal-bright-white: #0d0d0d;
   --color-usage-chart-1: #0b7fff;
@@ -493,6 +491,8 @@
   --color-background-win-alt: #2b2b2b;
   --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
   --color-brand: #ffffff;
+  --color-icon-blue: #80beff;
+  --color-icon-purple: #a888f2;
   --color-accent: #001d3d;
   --color-find-highlight: #542500;
   --color-find-highlight-active: #ff8a30;
@@ -536,8 +536,6 @@
   --color-terminal-bright-red: #ff9999;
   --color-terminal-bright-green: #87d9a4;
   --color-terminal-bright-yellow: #ffb26b;
-  --color-terminal-bright-blue: #80beff;
-  --color-terminal-bright-magenta: #a888f2;
   --color-terminal-bright-cyan: #8ee5e5;
   --color-terminal-bright-white: #f8f8f8;
   --color-usage-chart-1: #4099ff;
@@ -639,6 +637,12 @@
   --color-plugin-node: rgba(224, 174, 112, 0.16);
   --color-plugin-node-hover: rgba(224, 174, 112, 0.22);
   --color-plugin-node-foreground: #efc58f;
+}
+
+/* The Follow app theme preset shares these ANSI colours with the app. */
+:root {
+  --color-terminal-bright-blue: var(--color-icon-blue);
+  --color-terminal-bright-magenta: var(--color-icon-purple);
 }
 
 /* Terminal presets are independent of the surrounding application palette. */

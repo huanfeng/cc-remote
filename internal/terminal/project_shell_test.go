@@ -12,20 +12,21 @@ import (
 func TestProjectShellReconnectsToOriginalPTY(t *testing.T) {
 	t.Setenv("CC_PROJECT_SHELL_TEST_MARKER", "PROJECT-OK")
 	t.Setenv("CC_REMOTE_TOKEN", "token-that-must-not-be-in-child-env")
+	t.Setenv(projectShellRunEnv, "parent-run")
 	dir := t.TempDir()
 	name, args := "/bin/sh", []string{"-i"}
-	command := "printf 'OUTPUT-%s\\n' \"$CC_PROJECT_SHELL_TEST_MARKER\"; pwd; printf 'CLEARED-%s%s\\n' \"$CC_REMOTE_TOKEN\" yes\r"
+	command := "printf 'OUTPUT-%s\\n' \"$CC_PROJECT_SHELL_TEST_MARKER\"; pwd; printf 'RUN-%s\\n' \"$CC_REMOTE_PROJECT_SHELL_RUN_ID\"; printf 'CLEARED-%s%s\\n' \"$CC_REMOTE_TOKEN\" yes\r"
 	cleared := "CLEARED-yes"
 	if runtime.GOOS == "windows" {
 		name, args = "cmd.exe", []string{"/D", "/Q"}
-		command = "echo OUTPUT-%CC_PROJECT_SHELL_TEST_MARKER% & cd & if not defined CC_REMOTE_TOKEN echo CLEARED-%CC_PROJECT_SHELL_TEST_MARKER%\r"
+		command = "echo OUTPUT-%CC_PROJECT_SHELL_TEST_MARKER% & cd & echo RUN-%CC_REMOTE_PROJECT_SHELL_RUN_ID% & if not defined CC_REMOTE_TOKEN echo CLEARED-%CC_PROJECT_SHELL_TEST_MARKER%\r"
 		cleared = "CLEARED-PROJECT-OK"
 	}
 	path, err := exec.LookPath(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	shell, err := startProjectShell(dir, path, args)
+	shell, err := startProjectShell(dir, path, args, "child")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestProjectShellReconnectsToOriginalPTY(t *testing.T) {
 			t.Fatalf("timed out waiting for command output: %q", output.String())
 		}
 	}
-	if got := output.String(); !strings.Contains(got, "OUTPUT-PROJECT-OK") || !strings.Contains(got, dir) || strings.Contains(got, "token-that-must-not-be-in-child-env") {
+	if got := output.String(); !strings.Contains(got, "OUTPUT-PROJECT-OK") || !strings.Contains(got, dir) || !strings.Contains(got, "RUN-child") || strings.Contains(got, "token-that-must-not-be-in-child-env") {
 		t.Fatalf("wrong shell output for cwd %s: %q", dir, got)
 	}
 	if err := shell.Write([]byte("exit\r")); err != nil {
@@ -88,7 +89,7 @@ func TestProjectShellReconnectsToOriginalPTY(t *testing.T) {
 }
 
 func TestProjectShellStartsAndStopsPlatformShell(t *testing.T) {
-	shell, err := StartProjectShell(t.TempDir())
+	shell, err := StartProjectShell(t.TempDir(), "test-run")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,9 +27,10 @@ import (
 )
 
 const (
-	projectShellAPI                             = "/api/project-shells"
-	projectShellRunEnv                          = "CC_REMOTE_PROJECT_SHELL_RUN_ID"
-	projectShellExitStatus websocket.StatusCode = 4001
+	projectShellAPI                              = "/api/project-shells"
+	projectShellDefaultHost                      = "http://127.0.0.1:8787"
+	projectShellRunEnv                           = "CC_REMOTE_PROJECT_SHELL_RUN_ID"
+	projectShellExitStatus  websocket.StatusCode = 4001
 )
 
 type cliProjectShell struct {
@@ -55,7 +56,7 @@ type projectShellCLIOptions struct {
 func parseProjectShellCLI(args []string, defaultDataDir string) (projectShellCLIOptions, error) {
 	o := projectShellCLIOptions{command: "open"}
 	fs := flag.NewFlagSet("shell", flag.ContinueOnError)
-	fs.StringVar(&o.host, "host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
+	fs.StringVar(&o.host, "host", projectShellDefaultHost, i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
 	fs.StringVar(&o.dataDir, "data-dir", defaultDataDir, i18n.T("cc-remote data directory (access token)", "cc-remote 数据目录（访问令牌所在）"))
 	fs.StringVar(&o.cwd, "cwd", "", i18n.T("directory on the host (default: current directory)", "宿主上的目录（默认当前目录）"))
 	fs.Usage = func() {
@@ -130,6 +131,9 @@ func ProjectShellCLI(args []string, defaultDataDir string, ensureHost ...func(da
 	}
 	if err != nil {
 		return err
+	}
+	if o.command == "open" && o.cwd == "" && o.host == projectShellDefaultHost && os.Getenv(projectShellRunEnv) != "" {
+		return errors.New(i18n.T("already in a project terminal; use ccr shell attach <ID> to connect to another terminal", "当前已在项目终端中；使用 ccr shell attach <ID> 接入其他终端"))
 	}
 	if (o.command == "open" || o.command == "attach") && (!term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd()))) {
 		return errors.New(i18n.T("opening a project shell requires an interactive terminal", "打开项目终端需要交互式终端"))
@@ -397,6 +401,11 @@ func shellCLIReadInput(ctx context.Context, stdin io.Reader, input chan<- shellC
 }
 
 func (c *client) attachProjectShell(shell cliProjectShell) error {
+	// Replaying this PTY into itself would feed every output byte back into
+	// its journal, including the CLI's terminal clear and reset sequences.
+	if runID := os.Getenv(projectShellRunEnv); runID != "" && runID == shell.RunID {
+		return errors.New(i18n.T("cannot attach a project terminal to itself", "无法从项目终端接入自身"))
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	dialCtx, endDial := context.WithTimeout(ctx, 15*time.Second)

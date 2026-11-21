@@ -7,6 +7,7 @@ import { usePrefs } from '@/lib/prefs';
 import { DESKTOP } from '@/platform/desktop';
 import { hasFeature, selectionKey, useApp, useSelectedSession } from '@/store/app';
 import { matchesProjectShellShortcut } from './projectShellKeys';
+import { isOpenProjectShell, matchesShellPath, shellPathKey } from './projectShellStatus';
 
 export interface ProjectShellTarget { cwd: string; shellId?: string; runId?: string }
 
@@ -26,21 +27,6 @@ function targetKey(target: ProjectShellTarget) {
   return JSON.stringify([target.shellId, target.runId, shellPathKey(target.cwd)]);
 }
 
-// Path spelling is only a lookup hint. The host owns project identity and returns aliases.
-export function shellPathKey(cwd: string) {
-  if (/^(?:[a-z]:[\\/]|\\\\)/i.test(cwd)) return cwd.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-  return cwd.replace(/\/+$/, '') || '/';
-}
-
-export function matchesShellPath(shell: ProjectShell, cwd: string): boolean {
-  const key = shellPathKey(cwd);
-  return [shell.cwd, ...(shell.aliases ?? [])].some(path => shellPathKey(path) === key);
-}
-
-export function isOpenProjectShell(shell: ProjectShell): boolean {
-  return shell.state === 'interrupted' || (shell.state === 'running' && Boolean(shell.runId));
-}
-
 export function findOpenProjectShell(shells: ProjectShell[], cwd: string): ProjectShell | undefined {
   const matches = shells.filter(shell => isOpenProjectShell(shell) && matchesShellPath(shell, cwd));
   return matches.find(shell => shell.default) ?? matches.find(shell => !shell.tabId) ?? matches[0];
@@ -48,6 +34,7 @@ export function findOpenProjectShell(shells: ProjectShell[], cwd: string): Proje
 
 interface ProjectShellWorkspaceState {
   enabled: boolean;
+  pinned: boolean;
   target: ProjectShellTarget | null;
   activeTarget: ProjectShellTarget | null;
   retainedTargets: readonly ProjectShellTarget[];
@@ -56,6 +43,8 @@ interface ProjectShellWorkspaceState {
   open(target: ProjectShellTarget): void;
   retain(target: ProjectShellTarget, activate: boolean): void;
   close(): void;
+  hideForConversation(): void;
+  togglePinned(): void;
   end(target: ProjectShellTarget, preferred?: ProjectShellTarget): void;
   bind(target: ProjectShellTarget, shellId: string, runId?: string): void;
   shellIdFor(target: ProjectShellTarget): string | undefined;
@@ -67,8 +56,8 @@ interface ProjectShellWorkspaceState {
 }
 
 const ProjectShellWorkspaceContext = createContext<ProjectShellWorkspaceState>({
-  enabled: false, target: null, activeTarget: null, retainedTargets: [], shells: [], shellListState: 'loading',
-  open() {}, retain() {}, close() {}, end() {}, bind() {}, shellIdFor: item => item.shellId, targetKey, toggle() {}, isOpen: () => false, remember() {}, finishRun() {},
+  enabled: false, pinned: false, target: null, activeTarget: null, retainedTargets: [], shells: [], shellListState: 'loading',
+  open() {}, retain() {}, close() {}, hideForConversation() {}, togglePinned() {}, end() {}, bind() {}, shellIdFor: item => item.shellId, targetKey, toggle() {}, isOpen: () => false, remember() {}, finishRun() {},
 });
 
 export const useProjectShellWorkspace = () => useContext(ProjectShellWorkspaceContext);
@@ -90,6 +79,8 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
   const [shells, setShells] = useState<ProjectShell[]>([]);
   const [shellListState, setShellListState] = useState<ProjectShellWorkspaceState['shellListState']>('loading');
   const [panel, setPanel] = useState<PanelState | null>(null);
+  const [pinned, setPinned] = useState(false);
+  const togglePinned = () => setPinned(value => !value);
   const lastTarget = panel?.active ?? null;
   const retainedTargets = panel?.tabs.map(tab => tab.target) ?? [];
   const target = panel?.visible ? panel.active : null;
@@ -158,10 +149,19 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
       else (document.querySelector<HTMLElement>('[data-session-composer]') ?? document.querySelector<HTMLElement>('[data-project-shell-trigger]'))?.focus();
     });
   }, []);
-  const close = useCallback(() => {
+  const hide = useCallback(() => {
     setPanel(current => current?.visible ? { ...current, visible: false } : current);
+  }, []);
+  const close = useCallback(() => {
+    hide();
     restoreFocus();
-  }, [restoreFocus]);
+  }, [hide, restoreFocus]);
+  const hideForConversation = useCallback(() => {
+    if (mobile || pinned || !target) return;
+    cancelAnimationFrame(focusRestore.current);
+    focusBefore.current = null;
+    hide();
+  }, [hide, mobile, pinned, target]);
   const end = useCallback((ended: ProjectShellTarget, preferred?: ProjectShellTarget) => {
     setPanel(current => {
       if (!current) return current;
@@ -230,7 +230,7 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
       cancelAnimationFrame(focusRestore.current);
       setPanel(null);
       focusBefore.current = null;
-    } else if (selectionChanged && target) {
+    } else if (selectionChanged && mobile && target) {
       const focus = requestAnimationFrame(() => {
         const section = document.getElementById('project-shell-panel');
         if (section && !section.hidden) {
@@ -239,8 +239,10 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
         }
       });
       return () => cancelAnimationFrame(focus);
+    } else if (selectionChanged) {
+      hideForConversation();
     }
-  }, [cwd, enabled, lastTarget, matchesTarget, selectionId, shellIdFor, target]);
+  }, [cwd, enabled, hideForConversation, lastTarget, matchesTarget, mobile, selectionId, shellIdFor, target]);
 
   const visible = target !== null;
   useLayoutEffect(() => {
@@ -265,7 +267,7 @@ function ProjectShellWorkspaceStateProvider({ enabled, selectionId, cwd, mobile,
   }, [close, cwd, enabled, lastTarget, open, target]);
 
   return <ProjectShellWorkspaceContext.Provider value={{
-    enabled, target, activeTarget: lastTarget, retainedTargets, shells, shellListState,
-    open, retain, close, end, bind, shellIdFor, targetKey, toggle, isOpen, remember, finishRun,
+    enabled, pinned, target, activeTarget: lastTarget, retainedTargets, shells, shellListState,
+    open, retain, close, hideForConversation, togglePinned, end, bind, shellIdFor, targetKey, toggle, isOpen, remember, finishRun,
   }}>{children}</ProjectShellWorkspaceContext.Provider>;
 }

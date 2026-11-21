@@ -74,15 +74,15 @@ type ProjectShell struct {
 }
 
 // StartProjectShell starts the platform's interactive shell in dir.
-func StartProjectShell(dir string) (*ProjectShell, error) {
+func StartProjectShell(dir, runID string) (*ProjectShell, error) {
 	exe, args, err := projectShellCommand()
 	if err != nil {
 		return nil, err
 	}
-	return startProjectShell(dir, exe, args)
+	return startProjectShell(dir, exe, args, runID)
 }
 
-func startProjectShell(dir, exe string, args []string) (*ProjectShell, error) {
+func startProjectShell(dir, exe string, args []string, runID string) (*ProjectShell, error) {
 	p, err := pty.New()
 	if err != nil {
 		return nil, err
@@ -96,11 +96,11 @@ func startProjectShell(dir, exe string, args []string) (*ProjectShell, error) {
 	c.Dir = dir
 	for _, entry := range CleanEnv(os.Environ()) {
 		name, _, _ := strings.Cut(entry, "=")
-		if !strings.EqualFold(name, "TERM") {
+		if !strings.EqualFold(name, "TERM") && !strings.EqualFold(name, projectShellRunEnv) {
 			c.Env = append(c.Env, entry)
 		}
 	}
-	c.Env = append(c.Env, "TERM=xterm-256color")
+	c.Env = append(c.Env, "TERM=xterm-256color", projectShellRunEnv+"="+runID)
 	if err := c.Start(); err != nil {
 		_ = p.Close()
 		return nil, err
