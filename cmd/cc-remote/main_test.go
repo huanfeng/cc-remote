@@ -20,6 +20,9 @@ func TestCLIRoute(t *testing.T) {
 		args    []string
 	}{
 		{nil, "open", nil},
+		{[]string{"--new"}, "open", []string{"--new"}},
+		{[]string{"--resume", "native-id"}, "open", []string{"--resume", "native-id"}},
+		{[]string{"--data-dir", "config", "--resume=native-id"}, "open", []string{"--data-dir", "config", "--resume=native-id"}},
 		{[]string{"ls"}, "ls", nil},
 		{[]string{"list"}, "ls", nil},
 		{[]string{"ccr", "ls"}, "unknown", []string{"ccr", "ls"}},

@@ -47,6 +47,8 @@ func routeCLI(args []string) cliRoute {
 		case "version", "--version":
 			command = "version"
 			args = args[1:]
+		case "--new", "--resume":
+			// Keep the shortcut and its value for the Agent option parser.
 		case "list", "ls":
 			command = "ls"
 			args = args[1:]
@@ -54,6 +56,9 @@ func routeCLI(args []string) cliRoute {
 			command = args[0]
 			args = args[1:]
 		default:
+			if strings.HasPrefix(args[0], "--resume=") {
+				break
+			}
 			name, _, _ := strings.Cut(strings.TrimLeft(args[0], "-"), "=")
 			if strings.HasPrefix(args[0], "-") && legacyHostFlag(name) {
 				command = "serve"

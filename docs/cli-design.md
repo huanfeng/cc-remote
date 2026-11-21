@@ -3,6 +3,8 @@
 | 命令 | 行为 |
 | --- | --- |
 | `ccr` | 选择当前项目的终端，有需要时选择 Agent 新建 |
+| `ccr --new` | 直接选择 Claude Code 或 Codex，启动新的终端 |
+| `ccr --resume <原生ID>` | 从宿主原生历史自动识别 Agent，在原项目恢复对话 |
 | `ccr ls` / `ccr list` | 跨项目选择近期活动的终端 |
 | `ccr claude` / `ccr codex` | 接入当前项目所选 Agent 的终端，没有则新建 |
 | `ccr claude --new` / `ccr codex --new` | 新建独立终端 |
@@ -14,7 +16,7 @@
 | `ccr shell ls` / `ccr shell stop [ID]` | 列出或停止项目 Shell |
 | `ccr run -- 命令 [参数]` | 在宿主运行一次命令 |
 
-连接参数 `--host` 和 `--data-dir` 放在命令前。`--cwd`、`--new`、`--title`、`--prompt` 与支持的 `--supplier` 由 CCR 解析。`--` 后按原参数边界交给 Agent，宿主终端只接受该 Agent 支持的交互启动选项。Claude 和 Codex 的原生历史 ID 用在各自的 `resume` 命令，CCR 登记的 ID 用在 `session attach`。Shell 有自己的 ID，与 Agent 终端共享宿主接入方式。
+连接参数 `--host` 和 `--data-dir` 放在命令前。`--cwd`、`--new`、`--title`、`--prompt` 与支持的 `--supplier` 由 CCR 解析。`--` 后按原参数边界交给 Agent，宿主终端只接受该 Agent 支持的交互启动选项。`ccr --resume` 使用完整的原生历史 ID；如果两个 Agent 都匹配同一个 ID，请显式指定 `ccr claude resume` 或 `ccr codex resume`。CCR 登记的 ID 用在 `session attach`。Shell 有自己的 ID，与 Agent 终端共享宿主接入方式。
 
 Windows 和 Unix 的 `ccr` 启动器将参数直接转发给 `cc-remote`。服务安装和升级会重生成默认启动器。独立二进制的旧版原地更新保留安装目录中的脚本，可用新版 `cc-remote alias install` 重生成。
 

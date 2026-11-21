@@ -120,6 +120,116 @@ func TestAttachRequiresLiveTerminalAndUniqueID(t *testing.T) {
 	}
 }
 
+func TestAgentShortcutValidation(t *testing.T) {
+	for _, args := range [][]string{
+		{"--resume"},
+		{"--resume="},
+		{"--resume", "--new"},
+		{"--resume", "native-id", "--new"},
+		{"--new", "unexpected"},
+	} {
+		err := AgentCLI(args, "", false, t.TempDir(), func(string, string) error {
+			t.Fatal("invalid syntax reached the host")
+			return nil
+		})
+		if err == nil || strings.Contains(err.Error(), "interactive terminal") {
+			t.Errorf("%q: expected an argument error, got %v", args, err)
+		}
+	}
+}
+
+func TestNewAgentShortcutAlwaysOpensProviderPicker(t *testing.T) {
+	defer func(old *bufio.Reader) { stdin = old }(stdin)
+	cwd := t.TempDir()
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" ||
+			json.NewDecoder(r.Body).Decode(&body) != nil || body["provider"] != "codex" || body["cwd"] != cwd {
+			t.Errorf("unexpected request: %s %s %+v", r.Method, r.URL.Path, body)
+		}
+		json.NewEncoder(w).Encode(remoteSession{ID: "new-codex", Online: true})
+	}))
+	defer host.Close()
+	c := &client{host: host.URL}
+	stdin = bufio.NewReader(strings.NewReader("q\n"))
+	if _, err := c.openAgent("", agentOptions{fresh: true, cwd: cwd}, false); err != errPickerCancelled {
+		t.Fatalf("cancel new: %v", err)
+	}
+	stdin = bufio.NewReader(strings.NewReader("2\n"))
+	if x, err := c.openAgent("", agentOptions{fresh: true, cwd: cwd}, false); err != nil || x.ID != "new-codex" {
+		t.Fatalf("open new from picker: %+v %v", x, err)
+	}
+}
+
+func TestResumeNativeIDAutomatically(t *testing.T) {
+	const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	for _, tc := range []struct {
+		name, provider, want, errText string
+		claude, codex                 int
+		live                          bool
+	}{
+		{name: "Claude", provider: "claude", claude: 200, codex: 404, want: "resumed"},
+		{name: "Codex", provider: "codex", claude: 404, codex: 200, want: "resumed"},
+		{name: "running Claude before history exists", live: true, codex: 404, want: "live-claude"},
+		{name: "both histories", claude: 200, codex: 200, errText: "ccr codex resume"},
+		{name: "running Claude and Codex history", live: true, codex: 200, errText: "ccr claude resume"},
+		{name: "missing", claude: 404, codex: 404, errText: "ccr session attach"},
+		{name: "lookup failure", claude: 200, codex: 503, errText: "503"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/sessions":
+					var list []remoteSession
+					if tc.live {
+						list = append(list, remoteSession{ID: "live-claude", Provider: "claude", Mode: "terminal", NativeID: id, Online: true})
+					}
+					json.NewEncoder(w).Encode(list)
+				case r.Method == http.MethodGet && r.URL.Path == "/api/native/sessions/"+id:
+					status := tc.claude
+					switch r.URL.Query().Get("provider") {
+					case "codex":
+						status = tc.codex
+					case "claude":
+					default:
+						t.Errorf("missing provider in %s", r.URL)
+					}
+					if status != 200 {
+						if status == 0 {
+							t.Errorf("queried Claude history for a known live terminal")
+							status = 404
+						}
+						w.WriteHeader(status)
+						return
+					}
+					json.NewEncoder(w).Encode(map[string]remoteSession{"session": {ID: id, Cwd: cwd}})
+				case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+					var body map[string]any
+					if tc.provider == "" || json.NewDecoder(r.Body).Decode(&body) != nil ||
+						body["provider"] != tc.provider || body["resume"] != id || body["cwd"] != cwd {
+						t.Errorf("unexpected resume request: %+v", body)
+					}
+					json.NewEncoder(w).Encode(remoteSession{ID: "resumed", Online: true})
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+					w.WriteHeader(500)
+				}
+			}))
+			defer host.Close()
+			c := &client{host: host.URL}
+			x, err := c.openAgent("", agentOptions{resume: true, nativeID: id, cwd: t.TempDir()}, false)
+			if tc.errText != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.errText) {
+					t.Fatalf("expected error with %q, got %+v %v", tc.errText, x, err)
+				}
+			} else if err != nil || x.ID != tc.want {
+				t.Fatalf("want %s, got %+v %v", tc.want, x, err)
+			}
+		})
+	}
+}
+
 func TestCodexTerminalOptionsAndExplicitResume(t *testing.T) {
 	cwd := t.TempDir()
 	requests := 0

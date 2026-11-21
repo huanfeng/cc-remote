@@ -62,6 +62,8 @@
 ```sh
 ccr
 ccr ls                                            # 跨项目浏览最近的终端会话
+ccr --new                                         # 选择 Claude Code 或 Codex 并新建终端
+ccr --resume <原生ID>                               # 根据原生会话 ID 自动识别 Agent 并恢复
 ccr claude --new --model sonnet --prompt "修复登录页" -- --add-dir ../lib
 ccr codex                                         # 打开或新建宿主上的 Codex 终端
 ccr claude resume <原生ID>
@@ -104,7 +106,7 @@ ccr local --supplier work -- --help               # 在当前终端运行 Claude
    ccr session attach <CCR会话ID>
    ```
 
-   Claude Code 退出时显示的 `claude --resume <原生ID>`，可改写成 `ccr claude resume <原生ID>`。宿主会在原目录恢复历史，网页「终端历史」里的会话也可以「以终端会话继续」。
+   用 `ccr --resume <原生ID>` 可恢复 Claude Code 或 Codex 的历史对话，宿主会自动识别 Agent 并使用原目录。也可以显式指定 Agent，例如 `ccr claude resume <原生ID>`。网页「终端历史」里的会话也可以「以终端会话继续」。
 
    按 `Ctrl+]` 断开，Claude Code 继续运行。多个前端可以同时接入。终端尺寸以本地终端为准：多个 `ccr` 同时接入时，以最近调整过窗口或打过字的那个为准，网页不会改动它。Windows 的 ConPTY 只发送变化的字符，终端偶尔会留下没刷新的字符：每轮回复结束时会自动整屏重画，也可以按 `Ctrl+L`。
 6. 网页标题栏显示 Claude Code 状态栏数据：模型、推理强度、上下文用量（圆环，60% 起变黄、80% 起变红）、时长和费用；Claude 工作时显示和终端相同的状态行（如 `Composing… (8m 33s · ↓ 26.2k tokens)`）。终端里的状态栏仍是你自己配置的那个。

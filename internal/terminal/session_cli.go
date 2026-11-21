@@ -61,12 +61,24 @@ func AgentCLI(args []string, agent string, recent bool, defaultDataDir string, e
 	fs := flag.NewFlagSet("ccr "+agent, flag.ContinueOnError)
 	host, dir := connectionFlags(fs, defaultDataDir)
 	var o agentOptions
+	if !recent {
+		fs.BoolVar(&o.fresh, "new", false, i18n.T("start a new terminal session", "新建终端会话"))
+	}
+	if agent == "" && !recent {
+		fs.Func("resume", i18n.T("resume a native conversation by ID", "按原生 ID 恢复对话"), func(id string) error {
+			id = strings.ToLower(strings.TrimSpace(id))
+			if id == "" || strings.HasPrefix(id, "-") {
+				return errors.New(i18n.T("--resume requires a native session ID", "--resume 需要原生会话 ID"))
+			}
+			o.resume, o.nativeID = true, id
+			return nil
+		})
+	}
 	if agent != "" {
 		fs.StringVar(&o.cwd, "cwd", "", i18n.T("project directory on the host", "宿主上的项目目录"))
 		fs.StringVar(&o.title, "title", "", i18n.T("session title", "会话标题"))
 		fs.StringVar(&o.prompt, "prompt", "", i18n.T("first message", "首条消息"))
 		fs.StringVar(&o.model, "model", "", i18n.T("model", "模型"))
-		fs.BoolVar(&o.fresh, "new", false, i18n.T("start a new terminal session", "新建终端会话"))
 		fs.BoolVar(&o.last, "last", false, i18n.T("resume the latest history in this project", "恢复当前项目最近的历史对话"))
 		if agent == "claude" {
 			fs.StringVar(&o.supplier, "supplier", "", i18n.T("supplier ID", "供应商 ID"))
@@ -75,10 +87,13 @@ func AgentCLI(args []string, agent string, recent bool, defaultDataDir string, e
 		}
 	}
 	fs.Usage = func() {
-		if agent == "" {
-			fmt.Fprintln(fs.Output(), i18n.T("Usage: ccr [ls]", "用法：ccr [ls]"))
-		} else {
+		switch {
+		case agent != "":
 			fmt.Fprintf(fs.Output(), i18n.T("Usage: ccr %[1]s [--new] [options] [-- native flags]\n       ccr %[1]s resume [native ID | --last] [options] [-- native flags]\n", "用法：ccr %[1]s [--new] [选项] [-- 原生选项]\n      ccr %[1]s resume [原生 ID | --last] [选项] [-- 原生选项]\n"), agent)
+		case recent:
+			fmt.Fprintln(fs.Output(), i18n.T("Usage: ccr ls", "用法：ccr ls"))
+		default:
+			fmt.Fprintln(fs.Output(), i18n.T("Usage: ccr [--new | --resume <native ID>]", "用法：ccr [--new | --resume <原生 ID>]"))
 		}
 		fs.PrintDefaults()
 	}
@@ -143,6 +158,14 @@ func requireAgentTerminal() error {
 
 func (c *client) openAgent(agent string, o agentOptions, recent bool) (remoteSession, error) {
 	if o.resume {
+		if agent == "" {
+			target, err := c.detectResumeTarget(o.nativeID)
+			if err != nil || target.Online {
+				return target, err
+			}
+			o.cwd = target.Cwd
+			return c.startAgent(target.Provider, o, o.nativeID)
+		}
 		return c.resumeAgent(agent, o)
 	}
 	create := func() (remoteSession, error) {
@@ -231,28 +254,82 @@ func (c *client) resumeAgent(agent string, o agentOptions) (remoteSession, error
 
 func (c *client) resumeAgentID(agent string, o agentOptions, id string) (remoteSession, error) {
 	if agent == "claude" {
-		all, err := c.sessions()
-		if err != nil {
-			return remoteSession{}, err
-		}
-		for _, x := range all {
-			if x.Mode == "terminal" && x.Online && x.agent() == agent && strings.EqualFold(x.NativeID, id) {
-				return x, nil
-			}
+		running, err := c.liveClaudeTerminal(id)
+		if err != nil || running.ID != "" {
+			return running, err
 		}
 		// Trust confirmation must name the directory saved by Claude, which
 		// can differ from the current project when an explicit ID was given.
 		if o.nativeID != "" {
-			var history struct {
-				Session remoteSession `json:"session"`
-			}
-			if err := c.do(http.MethodGet, "/api/native/sessions/"+url.PathEscape(strings.ToLower(id))+"?tail=1", nil, &history); err != nil {
+			history, err := c.nativeSession(agent, id)
+			if err != nil {
 				return remoteSession{}, err
 			}
-			o.cwd = history.Session.Cwd
+			o.cwd = history.Cwd
 		}
 	}
 	return c.startAgent(agent, o, id)
+}
+
+func (c *client) liveClaudeTerminal(id string) (remoteSession, error) {
+	all, err := c.sessions()
+	if err != nil {
+		return remoteSession{}, err
+	}
+	for _, x := range all {
+		if x.Mode == "terminal" && x.Online && x.agent() == "claude" && strings.EqualFold(x.NativeID, id) {
+			return x, nil
+		}
+	}
+	return remoteSession{}, nil
+}
+
+func (c *client) nativeSession(agent, id string) (remoteSession, error) {
+	var history struct {
+		Session remoteSession `json:"session"`
+	}
+	path := "/api/native/sessions/" + url.PathEscape(strings.ToLower(id)) + "?provider=" + agent + "&tail=1&compact=1"
+	if err := c.do(http.MethodGet, path, nil, &history); err != nil {
+		return remoteSession{}, err
+	}
+	if !strings.EqualFold(history.Session.ID, id) {
+		return remoteSession{}, i18n.Errorf("the host returned the wrong %s history ID", "宿主返回了错误的 %s 历史 ID", agent)
+	}
+	return remoteSession{ID: history.Session.ID, Cwd: history.Session.Cwd, Provider: agent}, nil
+}
+
+func (c *client) detectResumeTarget(id string) (remoteSession, error) {
+	// A running Claude terminal can already have a native ID before Claude
+	// writes a transcript. Codex's live thread identity can change in the TUI.
+	match, err := c.liveClaudeTerminal(id)
+	if err != nil {
+		return remoteSession{}, err
+	}
+	for _, agent := range []string{"claude", "codex"} {
+		if agent == "claude" && match.ID != "" {
+			continue
+		}
+		history, err := c.nativeSession(agent, id)
+		var refused hostError
+		if errors.As(err, &refused) && refused.status == http.StatusNotFound {
+			continue
+		}
+		if err != nil {
+			return remoteSession{}, err
+		}
+		if match.ID != "" {
+			return remoteSession{}, i18n.Errorf(
+				"native ID %q matches both Claude and Codex; use ccr claude resume <ID> or ccr codex resume <ID>",
+				"原生 ID %q 同时匹配 Claude 和 Codex，请用 ccr claude resume <ID> 或 ccr codex resume <ID>", id)
+		}
+		match = history
+	}
+	if match.ID == "" {
+		return remoteSession{}, i18n.Errorf(
+			"no Claude or Codex history found for native ID %q; for a CC Remote session ID use ccr session attach <ID>",
+			"找不到原生 ID %q 对应的 Claude 或 Codex 历史。若使用的是 CCR 会话 ID，请运行 ccr session attach <ID>", id)
+	}
+	return match, nil
 }
 
 func (c *client) startAgent(agent string, o agentOptions, nativeID string) (remoteSession, error) {
