@@ -11,8 +11,8 @@ import { t, locale } from '@/lib/i18n';
 import { cn } from '@/components/lib/utils';
 import { providerName } from '@/domain/providers';
 import { useNow } from '@/lib/hooks';
-import { UsageBar } from './UsageDetails';
-import { fetchedText, resetsIn, staleText, unavailableText, validWindow } from './usageMath';
+import { QuotaBar, UsageBar } from './UsageDetails';
+import { fetchedText, quotaResetSegments, resetsIn, staleText, unavailableText, validWindow } from './usageMath';
 import { historyWindows, monitorAccountLabel, monitorAccountGroups, monitorAccountState, monitorRuns, windowKey } from './monitorMath';
 
 export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
@@ -119,6 +119,7 @@ export function UsageMonitor({ fallback }: { fallback: ReactNode }) {
 
 function AccountCard({ account: a, name, selected, onHistory }: { account: MonitorAccount; name: string; selected: boolean; onHistory(): void }) {
   useNow(30_000);
+  const now = Date.now();
   const state = monitorAccountState(a);
   const dim = !a.active || !a.available || !!a.stale || !!a.error;
   const note = a.error ? staleText({ available: a.available, error: a.error, profile: a.profile }, a.provider)
@@ -148,14 +149,20 @@ function AccountCard({ account: a, name, selected, onHistory }: { account: Monit
       {!a.active && <span className="text-foreground-subtle">{t('History retained', '历史保留')}</span>}
     </div>
     {note && <p className={cn('break-words text-ui-xs', a.error ? 'text-warning' : 'text-foreground-subtle')}>{note}</p>}
-    {a.windows.length ? <div className="grid grid-cols-2 gap-2.5">{a.windows.map(w => <div key={windowKey(w)} className="flex min-w-0 flex-col gap-1">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-1 text-ui-sm">
-        <span className="break-words text-foreground-subtle">{w.name}</span>
-        <span className="font-medium tabular-nums">{validWindow(w) ? t(`${w.percent.toFixed(1)}% used`, `已用 ${w.percent.toFixed(1)}%`) : '—'}</span>
-      </div>
-      <UsageBar window={w} dim={dim} />
-      <span className="text-ui-xs text-foreground-subtlest" title={w.resetsAt ? new Date(w.resetsAt).toLocaleString(locale) : undefined}>{resetsIn(w.resetsAt) || t('Reset time unknown', '重置时间未知')}</span>
-    </div>)}</div> : <p className="text-ui-sm text-foreground-subtle">{t('No quota reported', '尚无额度数据')}</p>}
+    {a.windows.length ? <div className="grid grid-cols-2 gap-2.5">{a.windows.map(w => {
+      const segments = quotaResetSegments(w.windowMinutes ?? w.name, w.resetsAt, now);
+      const resetText = resetsIn(w.resetsAt, now);
+      return <div key={windowKey(w)} className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-1 text-ui-sm">
+          <span className="break-words text-foreground-subtle">{w.name}</span>
+          <span className="font-medium tabular-nums">{validWindow(w) ? t(`${w.percent.toFixed(1)}% used`, `已用 ${w.percent.toFixed(1)}%`) : '—'}</span>
+        </div>
+        {segments.length > 0
+          ? <QuotaBar window={w} segments={segments} dim={dim} className="h-1.5" />
+          : <UsageBar window={w} dim={dim} />}
+        <span className="text-ui-xs text-foreground-subtlest" title={resetText && w.resetsAt ? new Date(w.resetsAt).toLocaleString(locale) : undefined}>{resetText || t('Reset time unknown', '重置时间未知')}</span>
+      </div>;
+    })}</div> : <p className="text-ui-sm text-foreground-subtle">{t('No quota reported', '尚无额度数据')}</p>}
   </article>;
 }
 

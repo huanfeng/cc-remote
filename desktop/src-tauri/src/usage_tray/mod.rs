@@ -7,6 +7,7 @@ mod panel;
 mod placement;
 
 use model::Snapshot;
+use placement::PanelSize;
 use serde::Serialize;
 use std::{path::PathBuf, sync::Mutex, time::Duration};
 use tauri::{
@@ -33,15 +34,42 @@ pub struct View {
 pub struct UsageTray {
     view: Mutex<View>,
     refresh: mpsc::Sender<()>,
-    preferences: PathBuf,
+    preferences: Mutex<TrayPreferences>,
     hover: hover::Handle,
     windows: std::sync::mpsc::Sender<WindowAction>,
+    about_item: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+const TRAY_ID: &str = "cc-remote";
+const ABOUT_TEXT: &str = "关于与更新";
+
+struct TrayPreferences {
+    path: PathBuf,
+    panel_size: Option<PanelSize>,
+}
+
+impl TrayPreferences {
+    fn save(&self, favorites: &[String], panel_size: Option<PanelSize>) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let pending = self.path.with_extension("json.tmp");
+        std::fs::write(
+            &pending,
+            serde_json::json!({
+                "favoriteAccounts": favorites,
+                "panelSize": panel_size,
+            })
+            .to_string(),
+        )?;
+        std::fs::rename(pending, &self.path)
+    }
 }
 
 enum WindowAction {
     ShowMain,
     History(Option<String>),
-    About { check_updates: bool },
+    About,
 }
 
 fn window_action(app: &tauri::AppHandle, action: WindowAction) {
@@ -71,7 +99,7 @@ fn publish(app: &tauri::AppHandle) {
     let view = state.view.lock().unwrap().clone();
     state.hover.update(&view);
     #[cfg(not(windows))]
-    if let Some(tray) = app.tray_by_id("cc-remote") {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let count = view.favorites.len();
         let _ = tray.set_tooltip(Some(format!(
             "CC Remote · {count} 个收藏账号 · 点击打开客户端"
@@ -143,22 +171,57 @@ fn open_history_now(app: &tauri::AppHandle, account: Option<String>) -> Result<(
     Ok(())
 }
 
-fn open_about(app: &tauri::AppHandle, check_updates: bool) {
+fn open_about(app: &tauri::AppHandle) {
     app.state::<UsageTray>().hover.suppress(true);
-    window_action(app, WindowAction::About { check_updates });
+    window_action(app, WindowAction::About);
 }
 
-fn open_about_now(app: &tauri::AppHandle, check_updates: bool) -> Result<(), String> {
+fn open_about_now(app: &tauri::AppHandle) -> Result<(), String> {
     app.state::<crate::about::Requests>().request();
     show_main_now(app)?;
     let _ = app.emit_to("main", "desktop-about-requested", ());
-    if check_updates {
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            crate::update::desktop_update_check(app).await;
-        });
-    }
     Ok(())
+}
+
+pub fn update_indicator(app: &tauri::AppHandle, version: Option<&str>) {
+    let Some(state) = app.try_state::<UsageTray>() else {
+        return;
+    };
+    let label = match version {
+        Some(version) => format!("{ABOUT_TEXT} · v{version} 可用"),
+        None => ABOUT_TEXT.into(),
+    };
+    let _ = state.about_item.set_text(label);
+    if let (Some(tray), Some(icon)) = (app.tray_by_id(TRAY_ID), app.default_window_icon()) {
+        let icon = if version.is_some() {
+            icon_with_update_dot(icon)
+        } else {
+            icon.clone()
+        };
+        let _ = tray.set_icon(Some(icon));
+    }
+}
+
+fn icon_with_update_dot(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
+    let (width, height) = (icon.width(), icon.height());
+    let mut rgba = icon.rgba().to_vec();
+    let radius = width.min(height) as f32 * 0.20;
+    let center_x = width as f32 - radius;
+    for y in 0..height {
+        for x in 0..width {
+            let distance = (x as f32 + 0.5 - center_x).hypot(y as f32 + 0.5 - radius);
+            let color = if distance < radius * 0.70 {
+                [43, 179, 111, 255]
+            } else if distance < radius {
+                [22, 49, 36, 255]
+            } else {
+                continue;
+            };
+            let i = ((y * width + x) * 4) as usize;
+            rgba[i..i + 4].copy_from_slice(&color);
+        }
+    }
+    tauri::image::Image::new_owned(rgba, width, height)
 }
 
 pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -169,8 +232,10 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let saved = read_preferences(&preferences)
         .or_else(|| previous.and_then(|p| read_preferences(&p)))
         .unwrap_or_default();
+    let panel_size = serde_json::from_value(saved["panelSize"].clone()).ok();
     let (tx, rx) = mpsc::channel(1);
     let (windows, window_requests) = std::sync::mpsc::channel();
+    let about_item = tauri::menu::MenuItem::with_id(app, "about", ABOUT_TEXT, true, None::<&str>)?;
     app.manage(UsageTray {
         view: Mutex::new(View {
             favorites: favorites(&saved),
@@ -178,19 +243,23 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         }),
         refresh: tx,
-        preferences,
-        hover: hover::Handle::start(app.handle().clone()),
+        preferences: Mutex::new(TrayPreferences {
+            path: preferences,
+            panel_size,
+        }),
+        hover: hover::Handle::start(app.handle().clone(), panel_size),
         windows,
+        about_item: about_item.clone(),
     });
     let menu = tauri::menu::Menu::with_items(
         app,
         &[
             &tauri::menu::MenuItem::with_id(app, "open", "打开 CC Remote", true, None::<&str>)?,
+            &tauri::menu::PredefinedMenuItem::separator(app)?,
             &tauri::menu::MenuItem::with_id(app, "refresh", "刷新用量", true, None::<&str>)?,
             &tauri::menu::MenuItem::with_id(app, "history", "全部用量历史", true, None::<&str>)?,
-            &tauri::menu::MenuItem::with_id(app, "update", "检查桌面端更新", true, None::<&str>)?,
-            &tauri::menu::MenuItem::with_id(app, "about", "关于与更新", true, None::<&str>)?,
             &tauri::menu::PredefinedMenuItem::separator(app)?,
+            &about_item,
             &tauri::menu::MenuItem::with_id(
                 app,
                 "quit",
@@ -200,7 +269,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             )?,
         ],
     )?;
-    let mut tray = TrayIconBuilder::with_id("cc-remote")
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -209,8 +278,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let _ = request_refresh(app);
             }
             "history" => open_history(app, None),
-            "update" => open_about(app, true),
-            "about" => open_about(app, false),
+            "about" => open_about(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -263,7 +331,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let result = match action {
                     WindowAction::ShowMain => show_main_now(&handle),
                     WindowAction::History(account) => open_history_now(&handle, account),
-                    WindowAction::About { check_updates } => open_about_now(&handle, check_updates),
+                    WindowAction::About => open_about_now(&handle),
                 };
                 if let Err(error) = result {
                     handle.state::<UsageTray>().hover.suppress(false);
@@ -399,20 +467,24 @@ fn set_favorite(app: tauri::AppHandle, id: String, favorite: bool) -> Result<Vie
         if favorite {
             favorites.push(id);
         }
-        let parent = state.preferences.parent().ok_or("无法确定收藏目录")?;
-        std::fs::create_dir_all(parent).map_err(|_| "无法创建收藏目录")?;
-        let pending = state.preferences.with_extension("json.tmp");
-        std::fs::write(
-            &pending,
-            serde_json::json!({ "favoriteAccounts": favorites }).to_string(),
-        )
-        .and_then(|_| std::fs::rename(pending, &state.preferences))
-        .map_err(|_| "无法保存收藏")?;
+        let preferences = state.preferences.lock().unwrap();
+        preferences
+            .save(&favorites, preferences.panel_size)
+            .map_err(|_| "无法保存收藏")?;
         view.favorites = favorites;
     }
     publish(&app);
     let view = state.view.lock().unwrap().clone();
     Ok(view)
+}
+
+#[cfg(windows)]
+fn save_panel_size(app: &tauri::AppHandle, size: PanelSize) -> std::io::Result<()> {
+    let state = app.state::<UsageTray>();
+    let view = state.view.lock().unwrap();
+    let mut preferences = state.preferences.lock().unwrap();
+    preferences.panel_size = Some(size);
+    preferences.save(&view.favorites, Some(size))
 }
 
 pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -427,6 +499,42 @@ pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_size_and_favorites_survive_updates_to_the_same_preferences_file() {
+        let path = std::env::temp_dir().join(format!(
+            "cc-desktop-tray-preferences-{}.json",
+            std::process::id()
+        ));
+        let preferences = TrayPreferences {
+            path: path.clone(),
+            panel_size: None,
+        };
+        preferences.save(&["old".into()], None).unwrap();
+        let size = PanelSize {
+            width: 510,
+            height: 320,
+        };
+        preferences.save(&["new".into()], Some(size)).unwrap();
+        let saved = read_preferences(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(favorites(&saved), ["new"]);
+        assert_eq!(
+            serde_json::from_value::<PanelSize>(saved["panelSize"].clone()).unwrap(),
+            size
+        );
+    }
+
+    #[test]
+    fn update_dot_preserves_the_icon_outside_the_corner() {
+        let original = tauri::image::Image::new_owned(vec![0; 32 * 32 * 4], 32, 32);
+        let icon = icon_with_update_dot(&original);
+        assert_eq!((icon.width(), icon.height()), (32, 32));
+        assert_eq!(&icon.rgba()[..4], &[0, 0, 0, 0]);
+        let center = (6 * 32 + 25) * 4;
+        assert_eq!(&icon.rgba()[center..center + 4], &[43, 179, 111, 255]);
+    }
+
     #[test]
     fn cache_reads_never_refresh_and_each_request_rereads_the_token() {
         use std::io::{Read, Write};

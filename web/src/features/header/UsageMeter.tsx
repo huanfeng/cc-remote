@@ -15,7 +15,7 @@ import { t } from '@/lib/i18n';
 import { useNow } from '@/lib/hooks';
 import { providerName, providerOf } from '@/domain/providers';
 import { fullest, meterVisible, percentText, quotaResetSegments, quotaWindows, resetsIn, ringLevel, usageStale, validWindow, type QuotaWindow } from '@/features/status/usageMath';
-import { UsageBar, UsageDetails, useUsage } from '@/features/status/UsageDetails';
+import { QuotaBar, UsageDetails, useUsage } from '@/features/status/UsageDetails';
 import { TOUCH } from '@/features/dialogs/SurfaceShell';
 
 export function UsageMeter({ session, mobile }: { session: Session; mobile: boolean }) {
@@ -69,18 +69,7 @@ function MeterRow({ w, split }: { w: QuotaWindow & { segments: number[]; resetTe
   return (
     <span className="flex items-center gap-1.5 leading-none" title={w.resetText || undefined}>
       <span className="w-4 text-left text-ui-xs text-foreground-subtlest">{w.label}</span>
-      <span aria-hidden="true" className={split ? 'grid w-28 grid-cols-[minmax(0,1fr)_39%] items-center gap-1' : 'w-12'}>
-        <UsageBar window={w.window?.percent === 0 ? undefined : w.window} className="h-1" />
-        {w.segments.length > 0 && (
-          <span className="flex h-1 gap-0.5">
-            {w.segments.map((fill, index) => (
-              <span key={index} className="flex-1 overflow-hidden rounded-[1px] bg-surface-hover">
-                <span className="ml-auto block h-full bg-foreground-subtle" style={{ width: `${fill}%` }} />
-              </span>
-            ))}
-          </span>
-        )}
-      </span>
+      <QuotaBar window={w.window} segments={split ? w.segments : undefined} className={split ? 'w-28' : 'w-12'} />
       <span className="w-7 text-right text-ui-xs tabular-nums text-foreground-subtle">{percentText(w.window)}</span>
     </span>
   );

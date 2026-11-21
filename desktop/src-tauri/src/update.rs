@@ -24,6 +24,62 @@ struct Inner {
     notified: Option<String>,
 }
 
+impl Inner {
+    fn new(current_version: String) -> Self {
+        Self {
+            view: View {
+                revision: 0,
+                current_version,
+                phase: "idle",
+                version: None,
+                notes: None,
+                downloaded: 0,
+                total: None,
+                error: None,
+            },
+            pending: None,
+            notified: None,
+        }
+    }
+
+    fn finish_check(
+        &mut self,
+        result: Result<Option<Update>, String>,
+        automatic: bool,
+        previous: View,
+    ) -> Option<String> {
+        match result {
+            Ok(Some(update)) => {
+                self.view.phase = "available";
+                self.view.version = Some(update.version.clone());
+                self.view.notes = update.body.clone();
+                let should_notify = automatic && self.notified.as_ref() != Some(&update.version);
+                self.pending = Some(update);
+                if should_notify {
+                    self.notified = self.view.version.clone();
+                    return self.notified.clone();
+                }
+            }
+            Ok(None) => {
+                self.pending = None;
+                self.view.phase = "updated";
+                self.view.version = None;
+                self.view.notes = None;
+            }
+            Err(_) if automatic => {
+                // Keep a known update visible through a background network failure.
+                self.view.phase = previous.phase;
+                self.view.error = previous.error;
+            }
+            Err(error) => {
+                self.view.phase = "error";
+                self.view.error = Some(error);
+            }
+        }
+        None
+    }
+}
+
 pub struct DesktopUpdate {
     inner: Mutex<Inner>,
     operation: tokio::sync::Mutex<()>,
@@ -32,11 +88,20 @@ pub struct DesktopUpdate {
 fn change(app: &tauri::AppHandle, edit: impl FnOnce(&mut Inner)) -> View {
     let state = app.state::<DesktopUpdate>();
     let mut inner = state.inner.lock().unwrap();
+    let previous_version = inner.view.version.clone();
     edit(&mut inner);
     inner.view.revision += 1;
     let view = inner.view.clone();
     // Emit under the same lock so windows see transitions in order.
     let _ = app.emit("desktop-update", &view);
+    drop(inner);
+    if previous_version != view.version {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let current = desktop_update_status(handle.clone());
+            crate::usage_tray::update_indicator(&handle, current.version.as_deref());
+        });
+    }
     view
 }
 
@@ -60,17 +125,20 @@ fn configured(app: &tauri::AppHandle) -> bool {
         .is_some_and(|v| !v.trim().is_empty())
 }
 
-async fn check(app: &tauri::AppHandle, notify: bool) -> View {
+async fn check(app: &tauri::AppHandle, automatic: bool) -> View {
     let state = app.state::<DesktopUpdate>();
-    let Ok(_guard) = state.operation.try_lock() else {
-        return desktop_update_status(app.clone());
+    let _guard = if automatic {
+        state.operation.lock().await
+    } else {
+        let Ok(guard) = state.operation.try_lock() else {
+            return desktop_update_status(app.clone());
+        };
+        guard
     };
+    let previous = desktop_update_status(app.clone());
     change(app, |inner| {
-        inner.pending = None;
         inner.view.phase = "checking";
         inner.view.error = None;
-        inner.view.version = None;
-        inner.view.notes = None;
         inner.view.downloaded = 0;
         inner.view.total = None;
     });
@@ -92,22 +160,8 @@ async fn check(app: &tauri::AppHandle, notify: bool) -> View {
         updater.check().await.map_err(|e| e.to_string())
     }.await;
     let mut notification = None;
-    let view = change(app, |inner| match result {
-        Ok(Some(update)) => {
-            inner.view.phase = "available";
-            inner.view.version = Some(update.version.clone());
-            inner.view.notes = update.body.clone();
-            if notify && inner.notified.as_ref() != Some(&update.version) {
-                notification = Some(update.version.clone());
-                inner.notified = Some(update.version.clone());
-            }
-            inner.pending = Some(update);
-        }
-        Ok(None) => inner.view.phase = "updated",
-        Err(error) => {
-            inner.view.phase = "error";
-            inner.view.error = Some(error);
-        }
+    let view = change(app, |inner| {
+        notification = inner.finish_check(result, automatic, previous);
     });
     if let Some(version) = notification {
         let _ = app
@@ -180,20 +234,7 @@ pub async fn desktop_update_install(app: tauri::AppHandle) -> Result<(), String>
 
 pub fn setup(app: &tauri::AppHandle) {
     app.manage(DesktopUpdate {
-        inner: Mutex::new(Inner {
-            view: View {
-                revision: 0,
-                current_version: app.package_info().version.to_string(),
-                phase: "idle",
-                version: None,
-                notes: None,
-                downloaded: 0,
-                total: None,
-                error: None,
-            },
-            pending: None,
-            notified: None,
-        }),
+        inner: Mutex::new(Inner::new(app.package_info().version.to_string())),
         operation: tokio::sync::Mutex::new(()),
     });
     if !configured(app) || !cfg!(all(windows, target_arch = "x86_64")) {
@@ -201,6 +242,7 @@ pub fn setup(app: &tauri::AppHandle) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Also runs in --tray mode, before any WebView is created.
         tokio::time::sleep(Duration::from_secs(15)).await;
         loop {
             check(&app, true).await;
@@ -213,8 +255,7 @@ pub fn setup(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn signed_updates_reject_tampered_bytes_and_mislabelled_versions() {
+    fn signed_fixture() -> tauri_plugin_updater::Updater {
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().plugins.0.insert(
             "updater".into(),
@@ -228,20 +269,25 @@ mod tests {
             .plugin(tauri_plugin_updater::Builder::new().build())
             .build(context)
             .unwrap();
-        let updater = app
-            .updater_builder()
+        app.updater_builder()
             .target("windows-x86_64")
             .build()
-            .unwrap();
-        let manifest = |version: &str| {
-            serde_json::json!({
-                "version": version,
-                "platforms": { "windows-x86_64": {
-                    "url": "https://example.com/installer.exe",
-                    "signature": include_str!("../tests/fixtures/update.txt.sig").trim(),
-                }},
-            })
-        };
+            .unwrap()
+    }
+
+    fn manifest(version: &str) -> serde_json::Value {
+        serde_json::json!({
+            "version": version,
+            "platforms": { "windows-x86_64": {
+                "url": "https://example.com/installer.exe",
+                "signature": include_str!("../tests/fixtures/update.txt.sig").trim(),
+            }},
+        })
+    }
+
+    #[test]
+    fn signed_updates_reject_tampered_bytes_and_mislabelled_versions() {
+        let updater = signed_fixture();
         let update = updater.restore_update(manifest("99.0.0")).unwrap().unwrap();
         let bytes = include_bytes!("../tests/fixtures/update.txt");
         update
@@ -257,5 +303,34 @@ mod tests {
             updater.restore_update(manifest("0.0.0")).unwrap().is_none(),
             "older versions are not offered"
         );
+    }
+
+    #[test]
+    fn automatic_checks_notify_once_and_keep_a_known_update_when_offline() {
+        let updater = signed_fixture();
+        let update = updater.restore_update(manifest("99.0.0")).unwrap().unwrap();
+        let mut inner = Inner::new("1.0.0".into());
+        assert!(inner
+            .finish_check(Ok(Some(update.clone())), false, inner.view.clone())
+            .is_none());
+        assert_eq!(
+            inner
+                .finish_check(Ok(Some(update.clone())), true, inner.view.clone())
+                .as_deref(),
+            Some("99.0.0"),
+        );
+        assert!(inner
+            .finish_check(Ok(Some(update)), true, inner.view.clone())
+            .is_none());
+        assert!(inner
+            .finish_check(Err("offline".into()), true, inner.view.clone())
+            .is_none());
+        assert_eq!(inner.view.phase, "available");
+        assert_eq!(inner.view.version.as_deref(), Some("99.0.0"));
+        assert!(inner.pending.is_some());
+        assert!(inner.view.error.is_none());
+        inner.finish_check(Ok(None), true, inner.view.clone());
+        assert!(inner.view.version.is_none());
+        assert!(inner.pending.is_none());
     }
 }

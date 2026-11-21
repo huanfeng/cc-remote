@@ -1,4 +1,25 @@
-//! Native popup placement. Positions are physical pixels; returned height is dp.
+//! Native popup placement. Positions are physical pixels; sizes are logical dp.
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub(super) struct PanelSize {
+    pub width: i32,
+    pub height: i32,
+}
+
+#[cfg(any(windows, test))]
+impl PanelSize {
+    pub const MIN: Self = Self {
+        width: 360,
+        height: 168,
+    };
+
+    pub fn expanded_to_minimum(self) -> Self {
+        Self {
+            width: self.width.max(Self::MIN.width),
+            height: self.height.max(Self::MIN.height),
+        }
+    }
+}
 
 #[cfg(any(windows, test))]
 #[derive(Clone, Copy, Default)]
@@ -20,16 +41,13 @@ struct Rect {
 
 /// Place a frameless popup next to the taskbar on the cursor's display.
 ///
-/// `width` and `desired_height` are logical dp. The returned x/y are native
-/// screen coordinates, for the desktop popup.
-pub fn popup_bounds(width: i32, desired_height: i32) -> (i32, i32, i32) {
-    #[cfg(windows)]
+#[cfg(windows)]
+pub(super) fn popup_bounds(size: PanelSize) -> (i32, i32, PanelSize) {
+    let size = size.expanded_to_minimum();
     if let Some((monitor, work, cursor, dpi)) = native::display_at_cursor() {
-        return place(width, desired_height, monitor, work, cursor, dpi);
+        return place(size, monitor, work, cursor, dpi);
     }
-    // Platforms without a native monitor query still get an accessible origin.
-    let _ = width;
-    (10, 10, desired_height.max(1))
+    (10, 10, size)
 }
 
 #[cfg(any(windows, test))]
@@ -39,22 +57,25 @@ fn physical(dp: i32, dpi: u32) -> i32 {
 
 #[cfg(any(windows, test))]
 fn place(
-    width: i32,
-    desired_height: i32,
+    size: PanelSize,
     monitor: Rect,
     work: Rect,
     cursor: Point,
     dpi: u32,
-) -> (i32, i32, i32) {
+) -> (i32, i32, PanelSize) {
     let dpi = if dpi == 0 { 96 } else { dpi };
     let margin = physical(10, dpi);
-    let available_height = (work.bottom - work.top - margin * 2).max(1);
     // Floor the inverse conversion so even a rounded-up physical size fits.
-    let height = desired_height
-        .max(1)
-        .min((i64::from(available_height) * 96 / i64::from(dpi)).max(1) as i32);
-    let w = physical(width, dpi);
-    let h = physical(height, dpi);
+    let fit = |dp: i32, available: i32| {
+        dp.min((i64::from((available - margin * 2).max(1)) * 96 / i64::from(dpi)).max(1) as i32)
+    };
+    let size = size.expanded_to_minimum();
+    let size = PanelSize {
+        width: fit(size.width, work.right - work.left),
+        height: fit(size.height, work.bottom - work.top),
+    };
+    let w = physical(size.width, dpi);
+    let h = physical(size.height, dpi);
     let min_x = work.left + margin;
     let max_x = (work.right - margin - w).max(min_x);
     let min_y = work.top + margin;
@@ -74,9 +95,9 @@ fn place(
     } else if work.right < monitor.right || (right && !top && !bottom) {
         (max_x, cursor.y - h + margin)
     } else {
-        (max_x, max_y)
+        (max_x.min(cursor.x - margin), max_y)
     };
-    (x.clamp(min_x, max_x), y.clamp(min_y, max_y), height)
+    (x.clamp(min_x, max_x), y.clamp(min_y, max_y), size)
 }
 
 #[cfg(windows)]
@@ -144,16 +165,26 @@ mod tests {
         }
     }
 
+    fn size(width: i32, height: i32) -> PanelSize {
+        PanelSize { width, height }
+    }
+
     #[test]
     fn bottom_taskbar_stays_inside_work_area_at_each_scale() {
         for dpi in [96, 120, 144, 192] {
             let monitor = rect(1920, 0, 4480, 1440);
             let work = rect(1920, 0, 4480, 1380);
-            let (x, y, height) = place(420, 640, monitor, work, Point { x: 4430, y: 1410 }, dpi);
+            let (x, y, fitted) = place(
+                size(420, 640),
+                monitor,
+                work,
+                Point { x: 4430, y: 1410 },
+                dpi,
+            );
             let margin = physical(10, dpi);
-            assert_eq!(height, 640);
+            assert_eq!(fitted, size(420, 640));
             assert_eq!(x, work.right - margin - physical(420, dpi));
-            assert_eq!(y, work.bottom - margin - physical(height, dpi));
+            assert_eq!(y, work.bottom - margin - physical(fitted.height, dpi));
             assert!(x >= work.left + margin);
         }
     }
@@ -162,18 +193,23 @@ mod tests {
     fn negative_coordinate_monitor_and_left_taskbar() {
         let monitor = rect(-1920, -200, 0, 880);
         let work = rect(-1860, -200, 0, 880);
-        let (x, y, h) = place(420, 600, monitor, work, Point { x: -1890, y: 790 }, 144);
+        let (x, y, fitted) = place(
+            size(420, 600),
+            monitor,
+            work,
+            Point { x: -1890, y: 790 },
+            144,
+        );
         assert_eq!(x, -1845);
         assert_eq!(y, -95);
-        assert_eq!(h, 600);
+        assert_eq!(fitted, size(420, 600));
     }
 
     #[test]
     fn top_and_right_taskbars_open_on_the_inside() {
         let monitor = rect(0, 0, 1920, 1080);
         let (x, y, _) = place(
-            420,
-            600,
+            size(420, 600),
             monitor,
             rect(0, 40, 1920, 1080),
             Point { x: 1800, y: 20 },
@@ -181,8 +217,7 @@ mod tests {
         );
         assert_eq!((x, y), (1288, 53));
         let (x, y, _) = place(
-            420,
-            600,
+            size(420, 600),
             monitor,
             rect(0, 0, 1880, 1080),
             Point { x: 1900, y: 1000 },
@@ -192,16 +227,24 @@ mod tests {
     }
 
     #[test]
-    fn short_screen_reduces_logical_height_without_overflow() {
+    fn smaller_screen_clamps_saved_width_and_height() {
         let monitor = rect(0, 0, 1280, 720);
         let work = rect(0, 0, 1280, 680);
         for dpi in [96, 120, 144, 192] {
-            let (x, y, height) = place(420, 800, monitor, work, Point { x: 1240, y: 700 }, dpi);
+            let (x, y, fitted) = place(
+                size(1600, 800),
+                monitor,
+                work,
+                Point { x: 1240, y: 700 },
+                dpi,
+            );
             let margin = physical(10, dpi);
-            assert!(height < 800);
+            assert!(fitted.width < 1600);
+            assert!(fitted.height < 800);
             assert!(x >= work.left + margin);
+            assert!(x + physical(fitted.width, dpi) <= work.right - margin);
             assert!(y >= work.top + margin);
-            assert!(y + physical(height, dpi) <= work.bottom - margin);
+            assert!(y + physical(fitted.height, dpi) <= work.bottom - margin);
         }
     }
 
@@ -209,8 +252,21 @@ mod tests {
     fn auto_hidden_top_taskbar_and_zero_dpi_fallback() {
         let monitor = rect(0, 0, 1920, 1080);
         assert_eq!(
-            place(420, 600, monitor, monitor, Point { x: 900, y: 1 }, 0),
-            (490, 10, 600)
+            place(size(420, 600), monitor, monitor, Point { x: 900, y: 1 }, 0),
+            (490, 10, size(420, 600))
         );
+    }
+
+    #[test]
+    fn bottom_popup_stays_above_an_icon_farther_from_the_right_edge() {
+        let monitor = rect(0, 0, 1920, 1080);
+        let (x, _, fitted) = place(
+            size(360, 260),
+            monitor,
+            rect(0, 0, 1920, 1040),
+            Point { x: 1420, y: 1060 },
+            96,
+        );
+        assert!((x..x + fitted.width).contains(&1420));
     }
 }

@@ -7,7 +7,7 @@ import type { Provider, UsageHistory, UsageReply, UsageWindow } from '@/backend/
 import { providerName } from '@/domain/providers';
 import { useNow } from '@/lib/hooks';
 import { t, locale } from '@/lib/i18n';
-import { fetchedText, percentText, quotaWindows, resetsIn, staleText, unavailableText, usageLevel, usageStale, validWindow, type Level } from './usageMath';
+import { fetchedText, percentText, quotaResetSegments, quotaWindows, resetsIn, staleText, unavailableText, usageLevel, usageStale, validWindow, type Level } from './usageMath';
 import { HistoryChart } from './charts';
 
 /** The latest usage reading for provider (and the session's supplier), undefined until the first one. */
@@ -39,26 +39,54 @@ export function UsageBar({ window: w, className, dim }: { window?: UsageWindow; 
   );
 }
 
-function WindowRow({ label, window: w, dim }: { label: string; window?: UsageWindow; dim?: boolean }) {
+/** Usage and reset share one row. An empty segments array reserves space for alignment. */
+export function QuotaBar({ window: w, segments, className, dim }: {
+  window?: UsageWindow; segments?: number[]; className?: string; dim?: boolean;
+}) {
+  return (
+    <span aria-hidden="true" className={cn('h-1', segments ? 'grid grid-cols-[minmax(0,1fr)_39%] gap-1' : 'block', className)}>
+      <UsageBar window={w?.percent === 0 ? undefined : w} dim={dim} className="h-full" />
+      {!!segments?.length && (
+        <span className="flex h-full gap-0.5">
+          {segments.map((fill, index) => (
+            <span key={index} className="flex-1 overflow-hidden rounded-[1px] bg-surface-hover">
+              <span className={cn('ml-auto block h-full bg-foreground-subtle', dim && 'opacity-50')} style={{ width: `${fill}%` }} />
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function WindowRow({ label, window: w, resetLabel, dim, now }: {
+  label: string; window?: UsageWindow; resetLabel: string; dim: boolean; now: number;
+}) {
   const reset = w?.resetsAt && Number.isFinite(Date.parse(w.resetsAt)) ? new Date(w.resetsAt).toLocaleString(locale) : undefined;
+  const segments = quotaResetSegments(resetLabel, w?.resetsAt, now);
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
       <span className="truncate text-ui-sm text-foreground">{label}</span>
       <span className={cn('text-ui-sm font-medium tabular-nums', dim ? 'text-foreground-subtle' : 'text-foreground')}>{percentText(w)}</span>
-      <UsageBar window={w} dim={dim} className="col-span-2" />
-      <span className="col-span-2 text-ui-xs text-foreground-subtlest" title={reset}>{resetsIn(w?.resetsAt) || t('Reset time unknown', '重置时间未知')}</span>
+      {segments.length > 0
+        ? <QuotaBar window={w} segments={segments} dim={dim} className="col-span-2 h-1.5" />
+        : <UsageBar window={w} dim={dim} className="col-span-2" />}
+      <span className="col-span-2 text-ui-xs text-foreground-subtlest" title={reset}>{resetsIn(w?.resetsAt, now) || t('Reset time unknown', '重置时间未知')}</span>
     </div>
   );
 }
 
 /** Every limit with its reset, per-model weekly limits, plan and account, and the update time. */
-export function UsageDetails({ usage, provider, history, compact }: { usage?: UsageReply; provider: Provider; history?: boolean; compact?: boolean }) {
+export function UsageDetails({ usage, provider, history, compact }: {
+  usage?: UsageReply; provider: Provider; history?: boolean; compact?: boolean;
+}) {
   useNow(30_000);
   if (!usage) return <p className="py-2 text-ui-sm text-foreground-subtle">{t('Loading usage…', '正在读取用量…')}</p>;
   if (!usage.available && !usage.error) {
     return <p className="py-1 text-ui-sm leading-5 text-foreground-subtle">{unavailableText(usage, providerName(provider))}</p>;
   }
   const dim = usageStale(usage);
+  const now = Date.now();
   const windows = quotaWindows(usage, provider);
   const note = staleText(usage, provider);
   return (
@@ -76,8 +104,12 @@ export function UsageDetails({ usage, provider, history, compact }: { usage?: Us
         <p className="text-ui-sm text-foreground-subtle">{t('No limits reported.', '未报告额度。')}</p>
       ) : (
         <div className={cn('grid gap-3', !compact && 'sm:grid-cols-2')}>
-          {windows.map(w => <WindowRow key={w.key} label={w.title} window={w.window} dim={dim} />)}
-          {usage.usage?.models?.map(m => <WindowRow key={`m:${m.name}`} label={t(`Weekly · ${m.name}`, `每周 · ${m.name}`)} window={m} dim={dim} />)}
+          {windows.map(w => (
+            <WindowRow key={w.key} label={w.title} window={w.window} resetLabel={w.label} dim={dim} now={now} />
+          ))}
+          {usage.usage?.models?.map(m => (
+            <WindowRow key={`m:${m.name}`} label={t(`Weekly · ${m.name}`, `每周 · ${m.name}`)} window={m} resetLabel="7d" dim={dim} now={now} />
+          ))}
         </div>
       )}
       {history && provider === 'claude' && <UsageHistoryChart />}

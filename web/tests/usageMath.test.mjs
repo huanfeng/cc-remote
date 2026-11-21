@@ -37,6 +37,9 @@ test('quota reset cells fill by hour or day from the right, including partial ce
   assert.deepEqual(quotaResetSegments('5h', undefined, NOW), []);
   assert.deepEqual(quotaResetSegments('7d', 'invalid', NOW), []);
   assert.deepEqual(quotaResetSegments('2d', at(hour), NOW), []);
+  assert.deepEqual(quotaResetSegments(300, at(2.5 * hour), NOW), [0, 0, 50, 100, 100]);
+  assert.deepEqual(quotaResetSegments(10080, at(12 * hour), NOW), [0, 0, 0, 0, 0, 0, 50]);
+  assert.deepEqual(quotaResetSegments(1440, at(hour), NOW), []);
 });
 
 test('usage level: severity wins, else 75/90 thresholds', () => {

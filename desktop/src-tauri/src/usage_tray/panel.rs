@@ -1,4 +1,4 @@
-use super::{model::*, View};
+use super::{model::*, placement::PanelSize, View};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use windui::core::{EventCtx, Widget};
@@ -12,6 +12,7 @@ pub(super) enum Action {
     History(Option<String>),
     Hide,
     ShowMain,
+    PanelResized(PanelSize),
 }
 
 #[derive(Clone, Default)]
@@ -232,23 +233,57 @@ fn quota_role(percent: Option<f64>) -> Role {
     }
 }
 
-/// Static, theme-aware usage bars. The adjacent text carries value and meaning.
-struct QuotaBar(Option<f64>, bool);
+/// The left side shows usage; the right side counts down to the reset.
+struct QuotaBar {
+    percent: Option<f64>,
+    stale: bool,
+    segments: Vec<f32>,
+}
 
 impl Widget for QuotaBar {
     fn paint(&self, bounds: Rect, _: Rect, _: bool, _: bool, canvas: &mut dyn Canvas, _: &Style) {
         let theme = windui::theme::current();
         let (x, y, w) = (bounds.x as f32, bounds.y as f32, bounds.w as f32);
-        canvas.fill_round_rect(x, y, w, 6.0, 3.0, &Paint::fill(theme.palette.surface_alt));
-        if let Some(percent) = self.0 {
-            let color = if self.1 {
+        let (usage_width, reset_width) = if self.segments.is_empty() {
+            (w, 0.0)
+        } else {
+            (w * 0.61 - 4.0, w * 0.39)
+        };
+        if usage_width <= 0.0 {
+            return;
+        }
+        let track = Paint::fill(theme.palette.surface_alt);
+        canvas.fill_round_rect(x, y, usage_width, 6.0, 3.0, &track);
+        if let Some(percent) = self.percent {
+            let color = if self.stale {
                 theme.palette.text_subtle
             } else {
-                quota_role(self.0).resolve(&theme)
+                quota_role(self.percent).resolve(&theme)
             };
-            let width = w * (percent as f32 / 100.0);
+            let width = usage_width * (percent as f32 / 100.0);
             if width > 0.0 {
                 canvas.fill_round_rect(x, y, width, 6.0, 3.0, &Paint::fill(color));
+            }
+        }
+        if reset_width == 0.0 {
+            return;
+        }
+        let count = self.segments.len() as f32;
+        let cell = (reset_width - (count - 1.0) * 2.0) / count;
+        if cell <= 0.0 {
+            return;
+        }
+        let fill = Paint::fill(if self.stale {
+            theme.palette.text_subtle
+        } else {
+            theme.palette.text_muted
+        });
+        for (index, fraction) in self.segments.iter().enumerate() {
+            let left = x + w - reset_width + index as f32 * (cell + 2.0);
+            canvas.fill_round_rect(left, y, cell, 6.0, 1.0, &track);
+            let visible = cell * fraction;
+            if visible > 0.0 {
+                canvas.fill_round_rect(left + cell - visible, y, visible, 6.0, 1.0, &fill);
             }
         }
     }
@@ -256,6 +291,7 @@ impl Widget for QuotaBar {
 
 fn quota(window: &QuotaWindow, stale: bool) -> Element {
     let percent = quota_percent(window);
+    let now = now_seconds();
     Element::col()
         .width_match()
         .spacing(2)
@@ -278,13 +314,12 @@ fn quota(window: &QuotaWindow, stale: bool) -> Element {
                         }),
                 ),
         )
-        .child(
-            Element::col()
-                .height(6)
-                .width_match()
-                .widget(QuotaBar(percent, stale)),
-        )
-        .child(muted(reset_text(window), 15).font_size(10.0))
+        .child(Element::col().height(6).width_match().widget(QuotaBar {
+            percent,
+            stale,
+            segments: reset_segments(window, now).collect(),
+        }))
+        .child(muted(reset_text(window, now), 15).font_size(10.0))
 }
 
 fn account_card(row: AccountRow, model: Signal<Model>, actions: Sender<Action>) -> Element {
@@ -386,7 +421,11 @@ fn account_card(row: AccountRow, model: Signal<Model>, actions: Sender<Action>) 
     card
 }
 
-pub(super) fn panel(model: Signal<Model>, actions: Sender<Action>) -> WindowRequest {
+pub(super) fn panel(
+    model: Signal<Model>,
+    actions: Sender<Action>,
+    size: Option<PanelSize>,
+) -> WindowRequest {
     // Reserve the normal viewport during startup; shrink known single/empty
     // states when reopened, without resizing a window under the user's pointer.
     let current = model.get().view;
@@ -417,14 +456,21 @@ pub(super) fn panel(model: Signal<Model>, actions: Sender<Action>) -> WindowRequ
             .sum();
         (74 + content).clamp(168, 480)
     };
-    let (x, y, height) = super::placement::popup_bounds(440, desired_height);
+    let (x, y, size) = super::placement::popup_bounds(size.unwrap_or(PanelSize {
+        width: 440,
+        height: desired_height,
+    }));
     let dismiss = actions.clone();
-    Window::new("CC Remote Desktop · 订阅用量", 440, height)
+    Window::new("CC Remote Desktop · 订阅用量", size.width, size.height)
         .single("desktop-usage-native")
         .frameless(true)
         .skip_taskbar(true)
         .activate_on_show(false)
-        .resizable(false)
+        .resizable(true)
+        .min_size(
+            size.width.min(PanelSize::MIN.width),
+            size.height.min(PanelSize::MIN.height),
+        )
         .position(x, y)
         .icon({
             let image = windui::render::image::Image::from_png_bytes(include_bytes!(
@@ -730,17 +776,20 @@ mod tests {
                 QuotaWindow {
                     name: "5h".into(),
                     percent: 38.0,
+                    resets_at: Some("2099-01-01T06:00:00Z".into()),
                     ..Default::default()
                 },
                 QuotaWindow {
                     name: "7d".into(),
                     percent: 82.0,
+                    resets_at: Some("2099-01-07T01:00:00Z".into()),
                     ..Default::default()
                 },
                 QuotaWindow {
                     name: "Fable".into(),
                     percent: 12.0,
-                    ..Default::default()
+                    window_minutes: Some(10_080),
+                    resets_at: Some("2099-01-07T01:00:00Z".into()),
                 },
             ];
             view.snapshot.accounts.push(Account {
@@ -797,12 +846,23 @@ mod tests {
     #[ignore = "opens and closes a native tool window; run alone on an interactive desktop"]
     fn native_hover_runtime() {
         use std::ffi::c_void;
+        #[derive(Default)]
+        #[repr(C)]
+        struct WindowRect {
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+        }
         #[link(name = "user32")]
         extern "system" {
             fn GetForegroundWindow() -> *mut c_void;
             fn FindWindowW(class: *const u16, title: *const u16) -> *mut c_void;
             fn GetWindowLongPtrW(hwnd: *mut c_void, index: i32) -> isize;
             fn IsWindowVisible(hwnd: *mut c_void) -> i32;
+            fn GetWindowRect(hwnd: *mut c_void, rect: *mut WindowRect) -> i32;
+            fn SendMessageW(hwnd: *mut c_void, message: u32, wparam: usize, lparam: isize)
+                -> isize;
         }
         enum Control {
             Open,
@@ -814,11 +874,15 @@ mod tests {
             ..Default::default()
         });
         let (actions, _rx) = std::sync::mpsc::channel();
+        let size = PanelSize {
+            width: 520,
+            height: 320,
+        };
         let mut app = App::resident("Native hover runtime test");
         let quit = app.tray_handle();
         let control = app.channel(move |ctx, command| match command {
             Control::Open => {
-                let mut request = panel(model, actions.clone());
+                let mut request = panel(model, actions.clone(), Some(size));
                 // Neither app nor window timers may mask channel-effect draining.
                 request.intervals.clear();
                 ctx.open_window(request);
@@ -865,6 +929,20 @@ mod tests {
                     let style = unsafe { GetWindowLongPtrW(hwnd, -20) };
                     if style & 0x80 == 0 || style & 0x40000 != 0 {
                         return Err("panel is not a taskbar-free tool window");
+                    }
+                    let mut bounds = WindowRect::default();
+                    if unsafe { GetWindowRect(hwnd, &mut bounds) } == 0 {
+                        return Err("could not read panel bounds");
+                    }
+                    let hit = |x: i32, y: i32| {
+                        let position = (x as u16 as usize) | ((y as u16 as usize) << 16);
+                        unsafe { SendMessageW(hwnd, 0x0084, 0, position as isize) }
+                    };
+                    if hit(bounds.left + 1, (bounds.top + bounds.bottom) / 2) != 10
+                        || hit((bounds.left + bounds.right) / 2, bounds.bottom - 2) != 15
+                        || hit(bounds.right - 2, bounds.bottom - 2) != 17
+                    {
+                        return Err("panel edges and corner do not support native resize");
                     }
                     let foreground = unsafe { GetForegroundWindow() } as usize;
                     if foreground != baseline {

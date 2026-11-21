@@ -198,7 +198,7 @@ pub fn account_status(account: &Account) -> String {
     "正常采集".into()
 }
 
-fn now_seconds() -> i64 {
+pub(super) fn now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs().min(i64::MAX as u64) as i64)
@@ -305,7 +305,7 @@ pub fn updated_text(account: &Account) -> String {
     updated_at(account, now_seconds())
 }
 
-fn resets_at(window: &QuotaWindow, now: i64) -> String {
+pub(super) fn reset_text(window: &QuotaWindow, now: i64) -> String {
     let Some(at) = window.resets_at.as_deref().and_then(timestamp_seconds) else {
         return "重置时间未知".into();
     };
@@ -332,6 +332,45 @@ fn resets_at(window: &QuotaWindow, now: i64) -> String {
         format!("{days} 天 {} 小时后重置", hours % 24)
     }
 }
-pub fn reset_text(window: &QuotaWindow) -> String {
-    resets_at(window, now_seconds())
+#[cfg(any(windows, test))]
+pub fn reset_segments(window: &QuotaWindow, now: i64) -> impl ExactSizeIterator<Item = f32> {
+    let (count, unit) = match window.window_minutes.filter(|minutes| *minutes > 0) {
+        Some(300) => (5, 3_600),
+        Some(10_080) => (7, 86_400),
+        None if window.name == "5h" => (5, 3_600),
+        None if window.name == "7d" => (7, 86_400),
+        _ => (0, 1),
+    };
+    let at = window.resets_at.as_deref().and_then(timestamp_seconds);
+    let remaining = at.map_or(0.0, |at| at.saturating_sub(now) as f64 / unit as f64);
+    let count = if at.is_some() { count } else { 0 };
+    (0..count).map(move |i| (remaining - f64::from(count - 1 - i)).clamp(0.0, 1.0) as f32)
+}
+
+#[cfg(test)]
+#[test]
+fn reset_cells_fill_from_the_right_and_require_a_known_timestamp() {
+    let at = timestamp_seconds("2026-11-21T12:00:00+08:00").unwrap();
+    let mut window = QuotaWindow {
+        name: "5h".into(),
+        resets_at: Some("2026-11-21T12:00:00+08:00".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        reset_segments(&window, at - 9_000).collect::<Vec<_>>(),
+        [0.0, 0.0, 0.5, 1.0, 1.0]
+    );
+    window.name = "Opus".into();
+    window.window_minutes = Some(10_080);
+    assert_eq!(
+        reset_segments(&window, at - 129_600).collect::<Vec<_>>(),
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0]
+    );
+    assert!(reset_segments(&window, at).all(|fill| fill == 0.0));
+    assert!(reset_segments(&window, at - 691_200).all(|fill| fill == 1.0));
+    window.window_minutes = Some(1_440);
+    assert_eq!(reset_segments(&window, at).len(), 0);
+    window.window_minutes = Some(300);
+    window.resets_at = Some("invalid".into());
+    assert_eq!(reset_segments(&window, at).len(), 0);
 }

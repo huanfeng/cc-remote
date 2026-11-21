@@ -1,24 +1,24 @@
 //! Tauri owns the icon; windui owns its independent native UI thread.
-use super::View;
+use super::{placement::PanelSize, View};
 
 pub struct Handle {
     #[cfg(windows)]
     tx: std::sync::mpsc::Sender<Event>,
 }
 impl Handle {
-    pub fn start(app: tauri::AppHandle) -> Self {
+    pub fn start(app: tauri::AppHandle, size: Option<PanelSize>) -> Self {
         #[cfg(windows)]
         {
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::Builder::new()
                 .name("usage-hover".into())
-                .spawn(move || native::run(app, rx))
+                .spawn(move || native::run(app, rx, size))
                 .expect("usage hover coordinator");
             Self { tx }
         }
         #[cfg(not(windows))]
         {
-            let _ = app;
+            let _ = (app, size);
             Self {}
         }
     }
@@ -131,7 +131,7 @@ mod native {
     const KEY: &str = "desktop-usage-native";
     enum Message {
         Update(Box<View>),
-        Open,
+        Open(Option<PanelSize>),
         Close,
         Quit,
     }
@@ -145,6 +145,8 @@ mod native {
     extern "system" {
         fn GetCursorPos(point: *mut Point) -> i32;
         fn GetWindowRect(hwnd: *mut c_void, rect: *mut Rect) -> i32;
+        fn GetClientRect(hwnd: *mut c_void, rect: *mut Rect) -> i32;
+        fn GetDpiForWindow(hwnd: *mut c_void) -> u32;
         fn FindWindowW(class: *const u16, title: *const u16) -> *mut c_void;
         fn GetWindowThreadProcessId(hwnd: *mut c_void, pid: *mut u32) -> u32;
         fn IsWindowVisible(hwnd: *mut c_void) -> i32;
@@ -179,12 +181,35 @@ mod native {
             }
         }
     }
-    pub(super) fn run(app: tauri::AppHandle, rx: mpsc::Receiver<Event>) {
+    fn logical_size(hwnd: *mut c_void) -> Option<PanelSize> {
+        let mut client = Rect::default();
+        unsafe {
+            let dpi = GetDpiForWindow(hwnd);
+            if dpi == 0 || GetClientRect(hwnd, &mut client) == 0 {
+                return None;
+            }
+            let dp = |physical: i32| {
+                let dpi = i64::from(dpi);
+                ((i64::from(physical) * 96 + dpi / 2) / dpi) as i32
+            };
+            Some(PanelSize {
+                width: dp(client.right),
+                height: dp(client.bottom),
+            })
+        }
+    }
+
+    pub(super) fn run(
+        app: tauri::AppHandle,
+        rx: mpsc::Receiver<Event>,
+        mut size: Option<PanelSize>,
+    ) {
         unsafe {
             SetThreadDpiAwarenessContext(-4isize as *mut c_void);
         }
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let (actions, action_rx) = mpsc::channel();
+        let resize_actions = actions.clone();
         let action_app = app.clone();
         std::thread::Builder::new()
             .name("usage-actions".into())
@@ -212,6 +237,11 @@ mod native {
                             action_app.state::<UsageTray>().hover.suppress(true);
                             super::super::show_main(&action_app);
                         }
+                        panel::Action::PanelResized(size) => {
+                            if let Err(error) = super::super::save_panel_size(&action_app, size) {
+                                eprintln!("CC Remote could not save the usage panel size: {error}");
+                            }
+                        }
                     }
                 }
             })
@@ -229,7 +259,9 @@ mod native {
                     Message::Update(view) => {
                         model.update(|m| m.apply(*view, windui::event::window_open(KEY)))
                     }
-                    Message::Open => ctx.open_window(panel::panel(model, actions.clone())),
+                    Message::Open(size) => {
+                        ctx.open_window(panel::panel(model, actions.clone(), size))
+                    }
                     Message::Close => {
                         model.update(|m| m.clear_feedback());
                         ctx.close_window(KEY);
@@ -248,6 +280,7 @@ mod native {
         let mut icon = Rect::default();
         let mut active = false;
         let mut shown = false;
+        let mut measured_size = None;
         let mut topmost = false;
         let mut last_open = 0;
         let start = Instant::now();
@@ -287,23 +320,40 @@ mod native {
             let mut cursor = Point::default();
             let mut bounds = Rect::default();
             let popup = window();
-            let (on_icon, on_panel, escape) = unsafe {
+            let (on_icon, on_panel, escape, mouse_down) = unsafe {
                 let valid = GetCursorPos(&mut cursor) != 0;
                 let in_panel = popup.is_some_and(|hwnd| {
                     GetWindowRect(hwnd, &mut bounds) != 0 && contains(bounds, &cursor)
                 });
-                // Keep native title dragging alive until the mouse button is released.
+                let mouse_down = GetAsyncKeyState(1) < 0;
+                // Keep the panel open throughout native moving and resizing.
                 (
                     valid && contains(icon, &cursor),
-                    valid && (in_panel || (shown && GetAsyncKeyState(1) < 0)),
+                    valid && (in_panel || (shown && mouse_down)),
                     shown && GetAsyncKeyState(0x1b) < 0,
+                    mouse_down,
                 )
             };
+            if shown && (!mouse_down || measured_size.is_none()) {
+                if let Some(current) = popup.and_then(logical_size) {
+                    if measured_size
+                        .replace(current)
+                        .is_some_and(|previous| previous != current)
+                    {
+                        size = Some(current);
+                        let _ = resize_actions.send(panel::Action::PanelResized(current));
+                    }
+                }
+            }
             let now = start.elapsed().as_millis() as u64;
             let want = dwell.update(now, on_icon, on_panel, escape);
             if want != shown {
                 if tx
-                    .send(if want { Message::Open } else { Message::Close })
+                    .send(if want {
+                        Message::Open(size)
+                    } else {
+                        Message::Close
+                    })
                     .is_err()
                 {
                     break;
@@ -311,6 +361,7 @@ mod native {
                 shown = want;
                 if want {
                     last_open = now;
+                    measured_size = None;
                 }
                 topmost = false;
             }
@@ -318,7 +369,7 @@ mod native {
             // later enter were drained together, retry after destruction rather
             // than retaining a logical open state with no actual window.
             if shown && popup.is_none() && on_icon && now.saturating_sub(last_open) >= 600 {
-                if tx.send(Message::Open).is_err() {
+                if tx.send(Message::Open(size)).is_err() {
                     break;
                 }
                 last_open = now;

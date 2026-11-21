@@ -48,12 +48,13 @@ export function resetsIn(iso: string | undefined, now = Date.now()): string {
 }
 
 /** Per-cell fill percentages, with the remaining hours or days anchored at the right. */
-export function quotaResetSegments(label: string, iso: string | undefined, now = Date.now()): number[] {
-  if (label !== '5h' && label !== '7d') return [];
+export function quotaResetSegments(window: string | number, iso: string | undefined, now = Date.now()): number[] {
+  const hourly = window === '5h' || window === 300;
+  if (!hourly && window !== '7d' && window !== 10080) return [];
   const resetAt = iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(resetAt)) return [];
-  const count = label === '5h' ? 5 : 7;
-  const segmentMs = label === '5h' ? 3_600_000 : 86_400_000;
+  const count = hourly ? 5 : 7;
+  const segmentMs = hourly ? 3_600_000 : 86_400_000;
   const remaining = (resetAt - now) / segmentMs;
   return Array.from({ length: count }, (_, i) => 100 * Math.min(1, Math.max(0, remaining - (count - 1 - i))));
 }
