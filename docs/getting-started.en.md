@@ -103,7 +103,7 @@ Run `ccr` in a project to select a terminal session or create one. Press **Ctrl+
 cd your-project
 ccr
 ccr ls                # browse recent terminal sessions
-ccr --resume <id>     # resume a Claude Code session
+ccr claude resume <id>     # resume a Claude Code session
 ```
 
 `ccr` and `cc-remote` are interchangeable. **Terminal handoff is for Claude Code**. For Codex, create a managed session in the web / desktop client, or import a session from **Terminal history**. Before importing native history, stop the original session in its terminal to avoid running the same session twice.

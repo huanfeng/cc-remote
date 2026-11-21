@@ -22,7 +22,7 @@ export const languages = {
     featureIntro: '一个自托管后台，连接本机 CLI、项目文件和你的常用设备。模型请求仍发往你配置的提供方。',
     featureItems: [
       ['浏览器里的项目 Shell', '通过 xterm.js 在宿主上运行命令。浮动面板可拖动和缩放，断线后可重新接入。Web 和 <code>ccr shell</code> 共用项目中的同一个 Shell。'],
-      ['Web 和命令行都能切换供应商', '在网页新建会话或从标题栏切换供应商，保留会话历史。用 <code>ccr --new</code> 或 <code>ccr -r</code> 也能为 Claude Code 会话选择供应商。支持自定义 API 和 CC-Switch 配置。'],
+      ['Web 和命令行都能切换供应商', '在网页新建会话或从标题栏切换供应商，保留会话历史。用 <code>ccr claude --new</code> 或 <code>ccr claude resume</code> 也能为 Claude Code 会话选择供应商。支持自定义 API 和 CC-Switch 配置。'],
       ['Claude 官方 OAuth 模式', '添加通过 <code>claude setup-token</code> 获取的令牌，在 Web 或命令行选择官方订阅账号。会话沿用宿主的 Claude Code 配置，并可查看各账号的 5 小时和每周额度。'],
       ['终端与网页接力', '用 ccr 打开 Claude Code 原生终端，断开后从网页继续，再回到终端。保留同一个会话和上下文。'],
       ['Claude Code 与 Codex', '在网页或客户端新建托管会话，查看工具过程、审批和提问。Codex 目前支持托管及历史导入，终端接力用于 Claude Code。'],
@@ -73,7 +73,7 @@ export const languages = {
     featureIntro: 'One self-hosted backend connects your local CLIs, project files and devices. Model requests still go to your configured provider.',
     featureItems: [
       ['A project shell in your browser', 'Run commands on the host in an xterm.js terminal. Move or resize the floating panel and reconnect after a disconnect. The web client and <code>ccr shell</code> attach to the same project shell.'],
-      ['Switch providers from the web or CLI', 'Pick a provider when creating a web session, or switch from its header and keep the history. Choose a Claude Code provider in the terminal with <code>ccr --new</code> or <code>ccr -r</code>. Use custom API or CC-Switch profiles.'],
+      ['Switch providers from the web or CLI', 'Pick a provider when creating a web session, or switch from its header and keep the history. Choose a Claude Code provider in the terminal with <code>ccr claude --new</code> or <code>ccr claude resume</code>. Use custom API or CC-Switch profiles.'],
       ['Official Claude OAuth', 'Add tokens generated with <code>claude setup-token</code> and choose a subscription account from the web or CLI. Keep the host’s Claude Code settings and view each account’s 5-hour and weekly quotas.'],
       ['Terminal meets browser', 'Start native Claude Code with ccr, detach and continue in the web UI. Return to the terminal with the same session and context.'],
       ['Claude Code and Codex', 'Start managed sessions in the web or desktop client, with tool activity, approvals and questions. Codex supports managed sessions and history import; terminal handoff is for Claude Code.'],

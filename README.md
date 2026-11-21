@@ -47,7 +47,7 @@
 可在 CC Remote 中配置 Claude Code / Codex 的 API 供应商，也可使用宿主上的 **CC-Switch** 配置。两端共用新会话的默认供应商。
 
 - **Web / 桌面客户端**：新建会话时选择供应商，也可从已有会话的标题栏切换。切换会恢复原会话及其历史，忙碌时会先确认是否中断。
-- **命令行**：用 `ccr --new` 创建 Claude Code 会话，或用 `ccr -r <会话ID>` 恢复会话时选择供应商。脚本可用 `--profile <供应商ID>` 直接指定。
+- **命令行**：用 `ccr claude --new` 创建 Claude Code 会话，或用 `ccr claude resume <会话ID>` 恢复会话时选择供应商。脚本可用 `--supplier <供应商ID>` 直接指定。
 
 配置与使用方式见[供应商选择与切换](docs/supplier-profiles.md)。
 
@@ -150,10 +150,13 @@ ccr
 
 ```sh
 ccr                    # 选择当前项目会话，没有则新建
+ccr claude             # 打开宿主 Claude 终端
+ccr codex              # 打开宿主 Codex 终端
 ccr ls                 # 浏览并接入最近的终端会话
-ccr --resume <会话ID>  # 恢复 Claude Code 会话
-ccr -c                 # 继续当前目录最近的 Claude Code 会话
+ccr claude resume <会话ID>  # 恢复 Claude Code 会话
+ccr claude resume --last                 # 继续当前目录最近的 Claude Code 会话
 ccr shell              # 打开或接入当前项目的 Shell
+ccr shell attach       # 选择并接入正在运行的项目 Shell
 ccr shell ls           # 列出宿主上的项目 Shell
 ccr run -- git status --short # 在宿主执行单条命令
 ccr status             # 查看后台状态

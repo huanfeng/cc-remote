@@ -4,44 +4,46 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"golang.org/x/term"
 	"net/http"
 	"os"
 	"os/exec"
 
 	"cc-remote/internal/claude"
 	"cc-remote/internal/i18n"
+
+	"golang.org/x/term"
 )
 
 // RunClaudeDirect launches the native Claude Code CLI right here in this
 // terminal, applying a CC-Switch supplier through environment variables. The
 // host is contacted only to read the supplier catalog: no session is created,
 // nothing is recorded, and Ctrl+C belongs to Claude Code alone.
-func RunClaudeDirect(args []string, profile, defaultDataDir string, ensureHost func(dataDir, host string) error) error {
-	fs := flag.NewFlagSet("ccr claude", flag.ExitOnError)
+func RunClaudeDirect(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error) error {
+	fs := flag.NewFlagSet("ccr local", flag.ContinueOnError)
 	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("host to read the supplier catalog from", "读取供应商目录的宿主"))
 	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("SQLite and access-token directory (or CC_REMOTE_DATA_DIR)", "SQLite 数据库和访问令牌所在目录（或 CC_REMOTE_DATA_DIR）"))
-	profileFlag := fs.String("profile", profile, i18n.T("supplier configuration to apply (empty: pick interactively, Enter = default)", "要应用的供应商配置（留空：交互选择，回车 = 默认）"))
+	profileFlag := fs.String("supplier", "", i18n.T("supplier configuration to apply (empty: pick interactively, Enter = default)", "要应用的供应商配置（留空：交互选择，回车 = 默认）"))
 	claudeBin := fs.String("claude", "claude", i18n.T("Claude Code executable to launch", "要启动的 Claude Code 可执行文件"))
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr claude [--profile ID] [--claude BIN] [-- claude arguments]
+		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr local [claude] [--supplier ID] [--claude BIN] [-- Claude arguments]
 
-Run the native Claude Code CLI in this terminal. Unlike ccr, the host does not
-hold the process: this is plain Claude Code, with a CC-Switch supplier applied
-through environment variables so normal "cc" workflows can pick suppliers too.
-`, `用法：ccr claude [--profile ID] [--claude BIN] [-- claude 参数]
+Run Claude Code in the current terminal with the selected CC-Switch supplier.
+`, `用法：ccr local [claude] [--supplier ID] [--claude BIN] [-- Claude 参数]
 
-在当前终端直接运行原生 Claude Code CLI。与 ccr 不同，宿主不持有进程：这就是
-普通的 Claude Code，仅通过环境变量应用一个 CC-Switch 供应商配置，让普通的
-"cc" 工作流也能选择供应商。
+在当前终端运行 Claude Code，并应用所选的 CC-Switch 供应商。
 `))
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	words, native, err := parseCLIFlags(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
+	}
+	if len(words) > 1 || len(words) == 1 && words[0] != "claude" {
+		fs.Usage()
+		return errors.New(i18n.T("invalid local command arguments", "本地命令参数无效"))
 	}
 	if err := checkHost(*host); err != nil {
 		return err
@@ -66,7 +68,7 @@ through environment variables so normal "cc" workflows can pick suppliers too.
 	}
 	// Claude Code resolves git and shell integrations through a real console:
 	// stdin, stdout and stderr pass through untouched.
-	cmd := exec.Command(*claudeBin, fs.Args()...)
+	cmd := exec.Command(*claudeBin, native...)
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -138,10 +140,6 @@ func (c *client) supplierEnvironment(explicit string, interactive bool) ([]strin
 		Env  map[string]string `json:"env"`
 	}
 	if err := c.do("GET", "/api/profiles/"+chosen+"/env", nil, &reply); err != nil {
-		var refused hostError
-		if errors.As(err, &refused) && refused.status == http.StatusNotFound && !interactive {
-			return os.Environ(), "", nil
-		}
 		return nil, "", err
 	}
 	if len(reply.Env) == 0 {

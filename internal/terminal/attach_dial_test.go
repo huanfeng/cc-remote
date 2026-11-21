@@ -13,7 +13,7 @@ import (
 func TestDialStreamErrors(t *testing.T) {
 	status := http.StatusInternalServerError
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/terminals/abc/stream" || r.Header.Get("Authorization") != "Bearer tok" {
+		if r.URL.Path != "/api/terminals/abc/stream" || r.URL.Query().Get("attach") != "1" || r.Header.Get("Authorization") != "Bearer tok" {
 			t.Errorf("request %s %q", r.URL.Path, r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")

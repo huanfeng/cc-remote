@@ -8,7 +8,7 @@ import { CopyField } from './common';
 
 export function AttachDialog({ open, onOpenChange, mobile, id }: { open: boolean; onOpenChange: (o: boolean) => void; mobile: boolean; id: string }) {
   const info = useApp(s => s.info);
-  const command = `${info?.attachCommand || 'ccr attach'} ${id.slice(0, 8)}`;
+  const command = `${info?.attachCommand || 'ccr session attach'} ${id}`;
   return (
     <SurfaceShell
       open={open}

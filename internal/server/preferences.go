@@ -123,6 +123,10 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
+	if x.Provider == "codex" && x.Mode == "terminal" && (req.Model != nil || req.Effort != nil || req.PermissionMode != nil) {
+		fail(w, 409, s.lang(r).T("Use native options to configure a Codex terminal", "请通过 Codex 原生参数配置终端"))
+		return
+	}
 	if err = req.apply(s.lang(r), &x); err != nil {
 		fail(w, 400, i18n.Text(s.lang(r), err))
 		return

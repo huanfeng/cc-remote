@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,7 @@ import (
 
 const (
 	projectShellAPI                             = "/api/project-shells"
+	projectShellRunEnv                          = "CC_REMOTE_PROJECT_SHELL_RUN_ID"
 	projectShellExitStatus websocket.StatusCode = 4001
 )
 
@@ -58,20 +60,23 @@ func parseProjectShellCLI(args []string, defaultDataDir string) (projectShellCLI
 	fs.StringVar(&o.cwd, "cwd", "", i18n.T("directory on the host (default: current directory)", "宿主上的目录（默认当前目录）"))
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), i18n.T(`Usage: ccr shell [--cwd DIRECTORY]
-       ccr shell list
+       ccr shell list | ls
        ccr shell attach [ID]
+       ccr shell attach --cwd DIRECTORY
        ccr shell stop [ID]
 
-Open or attach to the project's default shell. Ctrl+] detaches and leaves
-it running. Type exit in the shell, or use ccr shell stop, to end it.
-Omit ID to select the shell in the current directory.`, `用法：ccr shell [--cwd 目录]
-      ccr shell list
+Open or attach to the project's default shell. Use attach alone to choose
+from running shells, or pass an ID or unique prefix to attach directly.
+Use attach --cwd to connect to a project's running default shell.
+Ctrl+] detaches. Type exit in the shell, or use ccr shell stop, to end it.`, `用法：ccr shell [--cwd 目录]
+      ccr shell list | ls
       ccr shell attach [ID]
+      ccr shell attach --cwd 目录
       ccr shell stop [ID]
 
-打开或接入项目的默认 Shell。Ctrl+] 断开，Shell 在宿主上继续运行。
-在 Shell 中输入 exit，或运行 ccr shell stop，可结束进程。
-省略 ID 时选择当前目录的 Shell。`))
+打开或接入项目的默认 Shell。单独使用 attach 可选择运行中的 Shell，
+也可用 ID 或唯一前缀直接接入。使用 attach --cwd 接入指定项目的默认 Shell。
+Ctrl+] 断开。在 Shell 中输入 exit，或运行 ccr shell stop，可结束进程。`))
 		fs.PrintDefaults()
 	}
 	var flags, words []string
@@ -141,6 +146,17 @@ func ProjectShellCLI(args []string, defaultDataDir string, ensureHost ...func(da
 	if err != nil {
 		return err
 	}
+	if o.command == "attach" && o.query == "" && o.cwd == "" {
+		cwd, _ := os.Getwd() // optional, used to prioritize shells from this project
+		shell, err := api.chooseProjectShell(cwd)
+		if errors.Is(err, errPickerCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return api.attachProjectShell(shell)
+	}
 	if o.command != "list" && o.query == "" {
 		if o.cwd == "" {
 			o.cwd, err = os.Getwd()
@@ -176,7 +192,7 @@ func ProjectShellCLI(args []string, defaultDataDir string, ensureHost ...func(da
 			// Hosts that predate cwd filtering can return an unfiltered list.
 			// Restrict the selection before sending input or ending a process.
 			shells = slices.DeleteFunc(shells, func(s cliProjectShell) bool {
-				return !shellPathSame(s.Cwd, o.cwd) && !slices.ContainsFunc(s.Aliases, func(alias string) bool { return shellPathSame(alias, o.cwd) })
+				return !s.matchesCwd(o.cwd)
 			})
 		}
 		shell, err = pickProjectShell(shells, o.query)
@@ -184,7 +200,7 @@ func ProjectShellCLI(args []string, defaultDataDir string, ensureHost ...func(da
 			return err
 		}
 	}
-	if shell.State != "running" || shell.RunID == "" {
+	if !shell.running() {
 		return errors.New(i18n.T("this project shell is not running; use ccr shell --cwd to start it", "此项目终端未运行，请用 ccr shell --cwd 启动"))
 	}
 	if o.command == "stop" {
@@ -205,17 +221,83 @@ func printProjectShells(out io.Writer, shells []cliProjectShell) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, i18n.T("ID\tSTATE\tDIRECTORY\tNAME", "ID\t状态\t目录\t名称"))
 	for _, s := range shells {
-		name := s.Name
-		if name == "" {
-			if s.Ordinal > 0 {
-				name = i18n.F("Terminal %d", "终端 %d", s.Ordinal)
-			} else if s.Default {
-				name = i18n.T("Default", "默认")
-			}
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.ID, s.State, s.Cwd, name)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", printable(s.ID), printable(s.State), printable(s.Cwd), printable(s.displayName()))
 	}
 	return w.Flush()
+}
+
+func (s cliProjectShell) displayName() string {
+	switch {
+	case s.Name != "":
+		return s.Name
+	case s.Ordinal > 0:
+		return i18n.F("Terminal %d", "终端 %d", s.Ordinal)
+	case s.Default:
+		return i18n.T("Default", "默认")
+	default:
+		return s.ID
+	}
+}
+
+func (s cliProjectShell) matchesCwd(cwd string) bool {
+	return cwd != "" && (shellPathSame(s.Cwd, cwd) || slices.ContainsFunc(s.Aliases, func(alias string) bool {
+		return shellPathSame(alias, cwd)
+	}))
+}
+
+func (s cliProjectShell) running() bool {
+	return s.State == "running" && s.RunID != ""
+}
+
+func projectShellItems(shells []cliProjectShell, cwd, currentRun string) []pickerItem {
+	ordered := slices.Clone(shells)
+	priority := func(s cliProjectShell) int {
+		if s.matchesCwd(cwd) {
+			return 0
+		}
+		return 1
+	}
+	slices.SortStableFunc(ordered, func(a, b cliProjectShell) int {
+		return cmp.Compare(priority(a), priority(b))
+	})
+	var items []pickerItem
+	for _, s := range ordered {
+		if !s.running() || s.RunID == currentRun {
+			continue
+		}
+		name := s.displayName()
+		items = append(items, pickerItem{
+			id:     s.ID,
+			lines:  [2]string{fmt.Sprintf("%d  %s", len(items)+1, name), s.Cwd + " · " + s.ID},
+			search: name + " " + s.Cwd + " " + s.ID,
+		})
+	}
+	return items
+}
+
+func (c *client) chooseProjectShell(cwd string) (cliProjectShell, error) {
+	currentRun := os.Getenv(projectShellRunEnv)
+	var shells []cliProjectShell
+	refresh := func() ([]pickerItem, error) {
+		var latest []cliProjectShell
+		if err := c.do(http.MethodGet, projectShellAPI, nil, &latest); err != nil {
+			return nil, err
+		}
+		shells = latest
+		return projectShellItems(shells, cwd, currentRun), nil
+	}
+	items, err := refresh()
+	if err != nil {
+		return cliProjectShell{}, err
+	}
+	if len(items) == 0 {
+		return cliProjectShell{}, errors.New(i18n.T("no running project shells to attach to; use ccr shell to open one", "没有可接入的运行中终端，请用 ccr shell 打开一个"))
+	}
+	id, err := pickItems(items, items[0].id, refresh, nil)
+	if err != nil {
+		return cliProjectShell{}, err
+	}
+	return pickProjectShell(shells, id)
 }
 
 func windowsShellPath(p string) bool {
@@ -286,8 +368,6 @@ type projectShellCLIFrame struct {
 	Held bool   `json:"held,omitempty"`
 }
 
-const shellCLIResetModes = resetModes + "\x1b[?1049l"
-
 type shellCLIInput struct {
 	data   []byte
 	detach bool
@@ -336,7 +416,7 @@ func (c *client) attachProjectShell(shell cliProjectShell) error {
 	}
 	detached := false
 	defer func() {
-		fmt.Fprint(os.Stdout, shellCLIResetModes)
+		fmt.Fprint(os.Stdout, resetModes)
 		_ = term.Restore(in, old)
 		if detached {
 			fmt.Fprint(os.Stdout, i18n.F("\r\nDetached. Reattach with ccr shell attach %s.\r\n", "\r\n已断开。使用 ccr shell attach %s 重新接入。\r\n", shell.ID))
@@ -413,7 +493,7 @@ func (c *client) attachProjectShell(shell cliProjectShell) error {
 			case "exit":
 				return nil
 			case "reset":
-				if _, err := io.WriteString(os.Stdout, shellCLIResetModes+"\x1b[2J\x1b[H"); err != nil {
+				if _, err := io.WriteString(os.Stdout, resetModes+"\x1b[2J\x1b[H"); err != nil {
 					return err
 				}
 				redraw = true

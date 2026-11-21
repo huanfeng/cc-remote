@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"cc-remote/internal/channel"
-	"cc-remote/internal/claude"
 	"cc-remote/internal/config"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/listen"
@@ -23,7 +22,7 @@ type cliRoute struct {
 }
 
 // routeCLI does not inspect the executable name. Only leading context options
-// are consumed before selecting a command; Claude arguments are never scanned.
+// are consumed before selecting a command; native arguments are never scanned.
 func routeCLI(args []string) cliRoute {
 	var context []string
 	for len(args) > 0 {
@@ -37,18 +36,9 @@ func routeCLI(args []string) cliRoute {
 			args = args[n:]
 			continue
 		}
-		if args[0] == "ccr" {
-			args = args[1:]
-			continue
-		} // old installed launcher
 		break
 	}
-	command := "session"
-	// Retain the old `cc-remote [context] -- claude [options]` spelling
-	// as a managed terminal launch, identically under either executable name.
-	if len(args) > 1 && args[0] == "--" && args[1] == "claude" {
-		args = append([]string{"--"}, args[2:]...)
-	}
+	command := "open"
 	if len(args) > 0 {
 		switch args[0] {
 		case "help", "--help", "-h", "-help":
@@ -57,18 +47,23 @@ func routeCLI(args []string) cliRoute {
 		case "version", "--version":
 			command = "version"
 			args = args[1:]
-		case "session", "shell", "run", "serve", "service", "status", "start", "stop", "restart", "logs", "config", "alias", "update", "attach", "a", "claude", "oauth", "profile", "hook", "permission-mcp", "channel", "channel-session-hook", "channel-ask-hook", "terminal-hook", "terminal-status":
+		case "list", "ls":
+			command = "ls"
+			args = args[1:]
+		case "session", "shell", "run", "serve", "service", "status", "start", "stop", "restart", "logs", "config", "alias", "update", "claude", "codex", "local", "oauth", "profile", "hook", "permission-mcp", "channel", "channel-session-hook", "channel-ask-hook", "terminal-hook", "terminal-status":
 			command = args[0]
 			args = args[1:]
 		default:
 			name, _, _ := strings.Cut(strings.TrimLeft(args[0], "-"), "=")
 			if strings.HasPrefix(args[0], "-") && legacyHostFlag(name) {
 				command = "serve"
+			} else {
+				return cliRoute{"unknown", args}
 			}
 		}
 	}
 	// --host is connection context, not a remote service-management option.
-	if command != "session" && command != "shell" && command != "run" && command != "claude" && command != "oauth" && command != "profile" && command != "attach" && command != "a" {
+	if !usesConnection(command) {
 		var local []string
 		for i := 0; i < len(context); i++ {
 			name, _, inline := strings.Cut(strings.TrimLeft(context[i], "-"), "=")
@@ -95,6 +90,14 @@ func routeCLI(args []string) cliRoute {
 	return cliRoute{command, append(context, args...)}
 }
 
+func usesConnection(command string) bool {
+	switch command {
+	case "open", "ls", "session", "claude", "codex", "local", "shell", "run", "profile", "oauth":
+		return true
+	}
+	return false
+}
+
 func hasSubcommand(command string) bool {
 	return command == "service" || command == "oauth" || command == "profile"
 }
@@ -117,10 +120,6 @@ func legacyHostFlag(name string) bool {
 
 // connectionDefaults makes direct invocation and installed launchers agree,
 // including installations with a custom directory or loopback port.
-func connectionDefaults(args []string) []string {
-	return connectionDefaultsFor("session", args)
-}
-
 func connectionDefaultsFor(command string, args []string) []string {
 	dir := os.Getenv("CC_REMOTE_DATA_DIR")
 	flags := args
@@ -148,22 +147,16 @@ func connectionDefaultsFor(command string, args []string) []string {
 	return append(defaults, args...)
 }
 
-// Follow each target parser's option/value boundaries. In particular a Claude
-// option can take the literal "--data-dir" as its value; it is not our context.
+// Follow each target parser's option/value boundaries. Native flags and values
+// after -- belong entirely to the command running in the terminal.
 func connectionDataDir(command string, args []string, dir string) string {
-	afterDash := false
 	for i := 0; i < len(args); {
 		a := args[i]
 		if a == "--" {
-			if command != "session" {
-				break
-			}
-			afterDash = true
-			i++
-			continue
+			break
 		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
-			if command == "claude" || command == "attach" || command == "a" || command == "run" {
+			if command == "run" {
 				break
 			}
 			i++
@@ -174,17 +167,17 @@ func connectionDataDir(command string, args []string, dir string) string {
 		own := name == "host" || name == "data-dir"
 		switch command {
 		case "session":
-			own = (strings.HasPrefix(a, "--") || !afterDash) && (own || name == "title" || name == "model" || name == "effort" || name == "permission-mode" || name == "profile")
-		case "claude":
-			own = own || name == "profile" || name == "claude"
+			own = own || name == "agent"
+		case "claude", "codex":
+			own = own || name == "cwd" || name == "title" || name == "prompt" || name == "model" || name == "supplier" || name == "effort" || name == "permission-mode"
+		case "local":
+			own = own || name == "supplier" || name == "claude"
 		case "shell", "run":
 			own = own || name == "cwd"
 		case "oauth":
 			own = own || name == "token"
 		case "profile":
 			own = own || name == "app"
-		case "attach", "a":
-			own = own || name == "title"
 		}
 		if own {
 			if !inline && i+1 < len(args) {
@@ -198,11 +191,7 @@ func connectionDataDir(command string, args []string, dir string) string {
 			i++
 			continue
 		}
-		if command == "session" {
-			i += len(claude.ParseArgs(args[i:])[0].Words())
-		} else {
-			i++
-		}
+		i++
 	}
 	return dir
 }
@@ -222,6 +211,8 @@ func runCLI(args []string) error {
 	}
 	route := routeCLI(args)
 	switch route.command {
+	case "unknown":
+		return i18n.Errorf("unknown command %q; see ccr --help", "未知命令 %q，请查看 ccr --help", route.args[0])
 	case "help":
 		fmt.Fprint(os.Stdout, i18n.T(usageEN, usageZH))
 		return nil
@@ -241,19 +232,23 @@ func runCLI(args []string) error {
 	}
 	args = connectionDefaultsFor(route.command, route.args)
 	switch route.command {
-	case "attach", "a":
-		return terminal.Attach(args, config.DefaultDataDir())
+	case "session":
+		return terminal.SessionCLI(args, config.DefaultDataDir())
 	case "shell":
 		return terminal.ProjectShellCLI(args, config.DefaultDataDir(), channel.EnsureHost)
 	case "run":
 		return terminal.ProjectCommandCLI(args, config.DefaultDataDir(), channel.EnsureHost)
-	case "claude":
-		return terminal.RunClaudeDirect(args, "", config.DefaultDataDir(), channel.EnsureHost)
+	case "local":
+		return terminal.RunClaudeDirect(args, config.DefaultDataDir(), channel.EnsureHost)
+	case "claude", "codex":
+		return terminal.AgentCLI(args, route.command, false, config.DefaultDataDir(), channel.EnsureHost)
+	case "open", "ls":
+		return terminal.AgentCLI(args, "", route.command == "ls", config.DefaultDataDir(), channel.EnsureHost)
 	case "oauth":
 		return terminal.RunOAuth(args, config.DefaultDataDir(), channel.EnsureHost)
 	case "profile":
 		return terminal.RunProfile(args, config.DefaultDataDir(), channel.EnsureHost)
 	default:
-		return runCCR(args)
+		return i18n.Errorf("unknown command %q", "未知命令 %q", route.command)
 	}
 }

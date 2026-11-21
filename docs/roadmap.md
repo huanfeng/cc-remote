@@ -35,6 +35,6 @@
 
 ## 阶段 4：与终端交接
 
-- 已由终端会话取代（见 [design/terminal-sessions.md](design/terminal-sessions.md)）：宿主持有交互式 Claude Code，网页和 `cc-remote attach` 同时接入，切换不中断任务。
-- 终端会话阶段 1–2 已完成：伪终端运行器、hook 驱动的状态、网页消息与提问、`cc-remote attach`。
+- 已由终端会话取代（见 [design/terminal-sessions.md](design/terminal-sessions.md)）：宿主持有交互式 Claude Code，网页和 `ccr session attach` 同时接入，切换不中断任务。
+- 终端会话阶段 1–2 已完成：伪终端运行器、hook 驱动的状态、网页消息与提问、`ccr session attach`。
 - 后续：网页内终端（xterm）、工具审批经 hook 送到网页、宿主升级前提示忙碌会话。共享会话已下线：代码移除，旧会话迁移为终端会话。

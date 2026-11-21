@@ -48,7 +48,7 @@ export const hostInfo: HostInfo = {
   codexAvailable: true,
   codexVersion: '0.92.0',
   providers: ['claude', 'codex'],
-  attachCommand: 'ccr attach',
+  attachCommand: 'ccr session attach',
   language: 'zh',
   name: 'Cartech 工作站',
   color: '#3b82f6',

@@ -28,9 +28,9 @@ cc-remote service config --env "CC_REMOTE_CC_SWITCH_DB=D:\Config\cc-switch.db"
 
 - Web 新建会话：选择 Claude Code 或 Codex，再选择对应供应商。默认采用 CC-Switch 当前供应商；也可明确选择“宿主原生配置”。
 - Web 原生历史：选择会话，点击以终端继续或导入托管会话，在确认窗口选择供应商。默认沿用原配置；已导入的会话保持原供应商快照。
-- `ccr --new`：交互终端会列出 Claude 供应商；`ccr -r` / `ccr -c` 在恢复时同样可以选择，回车沿用原配置。
-- `ccr --new --profile <供应商ID>` 或 `ccr -r <会话ID> --profile <供应商ID>`：指定供应商。支持数据库原 ID 或列表中的 `ccswitch:` ID。
-- `--profile @native`：明确使用宿主原生配置。非交互恢复且没有指定 `--profile` 时保持原会话配置。
+- `ccr claude --new`：交互终端会列出 Claude 供应商；`ccr claude resume` / `ccr claude resume --last` 在恢复时同样可以选择，回车沿用原配置。
+- `ccr claude --new --supplier <供应商ID>` 或 `ccr claude resume <会话ID> --supplier <供应商ID>`：指定供应商。支持数据库原 ID 或列表中的 `ccswitch:` ID。
+- `--supplier @native`：明确使用宿主原生配置。非交互恢复且没有指定 `--supplier` 时保持原会话配置。
 - 已运行会话：设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。
 - 会话标题下方持续显示所选供应商，新建后尚未发送消息也会显示；名称来自会话保存的配置快照，刷新后保留。
 
@@ -56,7 +56,7 @@ ccr profile rm "Work API"
 
 ## 默认供应商
 
-新建会话时没指定供应商，用的就是「默认供应商」，网页的新建会话和 `ccr` 完全一致。优先级：明确指定（网页下拉、`--profile`）> 你设置的默认 > CC-Switch 当前选中的供应商 > 宿主原生配置。
+新建会话时没指定供应商，用的就是「默认供应商」，网页的新建会话和 `ccr` 完全一致。优先级：明确指定（网页下拉、`--supplier`）> 你设置的默认 > CC-Switch 当前选中的供应商 > 宿主原生配置。
 
 - 设置：网页「设置 → 会话默认 → 新会话供应商」，或命令行：
 
@@ -80,7 +80,7 @@ CC-Switch 的供应商是「整体替换」：端点、密钥、模型变量都�
 - 生成令牌：在能登录的机器上运行 `claude setup-token`，得到 `sk-ant-oat…`。
 - 添加：网页「设置 → 供应商配置 → Claude 官方 OAuth」。令牌只保存在宿主数据目录的 `oauth-profiles.json`（权限 0600），添加后不会再显示，也不出现在任何列表接口里；请保护该目录。保存失败会显示具体原因，例如令牌包含空格或格式不正确。
 - 编辑：可修改名称，或填写新令牌；令牌留空会保留原令牌，条目 ID 保持不变。默认配置和已有会话保存的名称不会自动改写，需要时请手动重新选择保存。
-- 选择：与 CC-Switch 供应商出现在同一个选择器里，名称后带「· OAuth」；`ccr` 的供应商列表同样带标记，`--profile oauth:<ID>` 可直接指定。
+- 选择：与 CC-Switch 供应商出现在同一个选择器里，名称后带「· OAuth」；`ccr` 的供应商列表同样带标记，`--supplier oauth:<ID>` 可直接指定。
 - 冲突处理：启动时清空 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL`（它们优先于 OAuth 令牌，或会把令牌发到别的端点），其余 `ANTHROPIC_*`（包括模型变量）保持原生设置。
 - 会话只记引用（`oauth:<ID>`），**每次启动现取令牌**：更换令牌后，使用它的会话下次启动即生效；条目被删除后，这些会话启动时会提示重新选择供应商。
 - 命令行：`cc-remote oauth ls | add 名称 | token 名称 | rename 名称 新名称 | rm 名称`（名称也可写 `ls` 显示的 id）。`add` 和 `token` 的令牌从环境变量 `CC_REMOTE_OAUTH_TOKEN`、标准输入或隐藏输入读取，也可用 `--token`（会留在 shell 历史里，不推荐）。命令经由运行中的宿主完成，宿主没运行时会先启动。

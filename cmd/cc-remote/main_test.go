@@ -19,30 +19,26 @@ func TestCLIRoute(t *testing.T) {
 		command string
 		args    []string
 	}{
-		{nil, "session", nil},
-		{[]string{"--resume", "status"}, "session", []string{"--resume", "status"}},
-		{[]string{"--model", "sonnet", "status"}, "session", []string{"--model", "sonnet", "status"}},
-		{[]string{"--", "status"}, "session", []string{"--", "status"}},
-		{[]string{"--data-dir", "d", "--", "claude", "--resume", "abc"}, "session", []string{"--data-dir", "d", "--", "--resume", "abc"}},
-		{[]string{"session", "status"}, "session", []string{"status"}},
+		{nil, "open", nil},
+		{[]string{"ls"}, "ls", nil},
+		{[]string{"list"}, "ls", nil},
+		{[]string{"ccr", "ls"}, "unknown", []string{"ccr", "ls"}},
+		{[]string{"attach", "abc"}, "unknown", []string{"attach", "abc"}},
+		{[]string{"--", "claude"}, "unknown", []string{"--", "claude"}},
+		{[]string{"session", "attach", "abc"}, "session", []string{"attach", "abc"}},
 		{[]string{"status", "--json"}, "status", []string{"--json"}},
-		{[]string{"claude", "--", "--resume", "abc"}, "claude", []string{"--", "--resume", "abc"}},
-		{[]string{"ccr", "--host", "http://localhost:8999", "--data-dir", "status", "status", "--json"}, "status", []string{"--data-dir", "status", "--json"}},
-		{[]string{"--data-dir", "config", "--resume", "foo"}, "session", []string{"--data-dir", "config", "--resume", "foo"}},
+		{[]string{"claude", "--new"}, "claude", []string{"--new"}},
+		{[]string{"--data-dir", "config", "codex", "resume", "foo"}, "codex", []string{"--data-dir", "config", "resume", "foo"}},
 		{[]string{"--listen", "127.0.0.1:8999"}, "serve", []string{"--listen", "127.0.0.1:8999"}},
-		{[]string{"--data-dir", "d", "--listen", "127.0.0.1:8999"}, "serve", []string{"--data-dir", "d", "--listen", "127.0.0.1:8999"}},
 		{[]string{"--help"}, "help", nil},
 		{[]string{"service", "typo"}, "service", []string{"typo"}},
-		{[]string{"ccr", "--host", "http://localhost:8999", "--data-dir", "old", "service", "status", "--data-dir", "new"}, "service", []string{"status", "--data-dir", "old", "--data-dir", "new"}},
-		{[]string{"ccr", "--host", "http://localhost:8999", "--data-dir", "old", "service"}, "service", nil},
+		{[]string{"--host", "http://localhost:8999", "--data-dir", "old", "service", "status", "--data-dir", "new"}, "service", []string{"status", "--data-dir", "old", "--data-dir", "new"}},
 		{[]string{"--data-dir", "d", "oauth", "ls"}, "oauth", []string{"ls", "--data-dir", "d"}},
 		{[]string{"--host", "http://localhost:8999", "profile", "default", "work"}, "profile", []string{"default", "--host", "http://localhost:8999", "work"}},
-		{[]string{"claude", "--", "--help"}, "claude", []string{"--", "--help"}},
-		{[]string{"claude", "--", "-p", "status"}, "claude", []string{"--", "-p", "status"}},
+		{[]string{"local", "claude", "--", "-p", "status"}, "local", []string{"claude", "--", "-p", "status"}},
 		{[]string{"--host", "http://localhost:8999", "shell", "attach", "ABC"}, "shell", []string{"--host", "http://localhost:8999", "attach", "ABC"}},
 		{[]string{"--data-dir", "d", "run", "--", "git", "--help"}, "run", []string{"--data-dir", "d", "--", "git", "--help"}},
-		{[]string{"session", "shell"}, "session", []string{"shell"}},
-		{[]string{"ccr", "--data-dir", "d", "terminal-hook"}, "terminal-hook", nil},
+		{[]string{"--data-dir", "d", "terminal-hook"}, "terminal-hook", nil},
 		{[]string{"permission-mcp"}, "permission-mcp", nil},
 		{[]string{"service", "supervise", "--listen", "127.0.0.1:8999", "--service-manager", "schtasks"}, "service", []string{"supervise", "--listen", "127.0.0.1:8999", "--service-manager", "schtasks"}},
 	} {
@@ -67,14 +63,12 @@ func TestConnectionContextBoundaries(t *testing.T) {
 		args    []string
 		port    string
 	}{
-		{"session", []string{"--append-system-prompt", "--data-dir", other}, "8999"},
-		{"session", []string{"--title", "--data-dir", other}, "8999"},
-		{"session", []string{"--data-dir", base, "--resume", "abc", "--data-dir", other}, "9000"},
-		{"session", []string{"--", "--data-dir", other}, "9000"},
-		{"session", []string{"-data-dir=" + other}, "9000"},
-		{"claude", []string{"--", "--data-dir", other}, "8999"},
-		{"claude", []string{"prompt", "--data-dir", other}, "8999"},
-		{"claude", []string{"--profile", "--data-dir", other}, "8999"},
+		{"claude", []string{"--title", "--data-dir", "--data-dir", other}, "9000"},
+		{"codex", []string{"--data-dir", base, "resume", "abc", "--data-dir", other}, "9000"},
+		{"codex", []string{"--", "--data-dir", other}, "8999"},
+		{"session", []string{"list", "-data-dir=" + other}, "9000"},
+		{"local", []string{"claude", "--", "--data-dir", other}, "8999"},
+		{"local", []string{"--supplier", "--data-dir", "claude"}, "8999"},
 		{"oauth", []string{"add", "--token", "--data-dir", "name"}, "8999"},
 		{"profile", []string{"default", "work", "--data-dir", other}, "9000"},
 		{"shell", []string{"attach", "--data-dir", other}, "9000"},
@@ -103,7 +97,7 @@ func TestServiceHostArgsRoute(t *testing.T) {
 
 func TestInternalHookRoutes(t *testing.T) {
 	for _, command := range []string{"hook", "permission-mcp", "channel", "channel-session-hook", "channel-ask-hook", "terminal-hook", "terminal-status"} {
-		got := routeCLI([]string{"ccr", "--host", "http://localhost:8999", "--data-dir", "data", command})
+		got := routeCLI([]string{"--host", "http://localhost:8999", "--data-dir", "data", command})
 		if got.command != command || len(got.args) != 0 {
 			t.Errorf("internal %s: got %+v", command, got)
 		}
@@ -111,7 +105,7 @@ func TestInternalHookRoutes(t *testing.T) {
 	previous := os.Args
 	defer func() { os.Args = previous }()
 	for _, command := range []string{"channel", "channel-session-hook"} {
-		os.Args = []string{"ccr", "ccr", "--host", "http://localhost:8999", "--data-dir", t.TempDir(), command}
+		os.Args = []string{"ccr", "--host", "http://localhost:8999", "--data-dir", t.TempDir(), command}
 		if err := run(); err != nil {
 			t.Errorf("retired hook %s: %v", command, err)
 		}
@@ -128,7 +122,7 @@ func TestEquivalentNamesOffline(t *testing.T) {
 	}
 	previousArgs, previousOut := os.Args, os.Stdout
 	defer func() { os.Args = previousArgs; os.Stdout = previousOut }()
-	for _, args := range [][]string{{"--help"}, {"--version"}, {"serve", "--help"}, {"session", "--help"}, {"service", "--help"}, {"oauth", "--help"}, {"profile", "--help"}, {"profile", "ls", "--help"}, {"oauth", "ls", "--help"}, {"--host", "http://localhost:8999", "--data-dir", dir, "profile", "ls", "--help"}, {"--host", "http://localhost:8999", "--data-dir", dir, "oauth", "ls", "--help"}, {"ccr", "--host", "http://localhost:8999", "--data-dir", "old", "service", "--help"}} {
+	for _, args := range [][]string{{"--help"}, {"--version"}, {"serve", "--help"}, {"session", "--help"}, {"service", "--help"}, {"oauth", "--help"}, {"profile", "--help"}, {"profile", "ls", "--help"}, {"oauth", "ls", "--help"}, {"--host", "http://localhost:8999", "--data-dir", dir, "profile", "ls", "--help"}, {"--host", "http://localhost:8999", "--data-dir", dir, "oauth", "ls", "--help"}, {"--host", "http://localhost:8999", "--data-dir", "old", "service", "--help"}, {"local", "--help"}, {"claude", "--help"}, {"codex", "--help"}, {"shell", "attach", "--help"}} {
 		var previous string
 		for i, name := range []string{"ccr", "cc-remote", "CCR.exe", "cc-remote.exe"} {
 			f, err := os.CreateTemp(t.TempDir(), "stdout")
@@ -163,12 +157,12 @@ func TestConnectionDefaults(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "service.json"), b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	got := connectionDefaults([]string{"--resume", "abc"})
-	if !reflect.DeepEqual(got, []string{"--host", "http://127.0.0.1:8999", "--resume", "abc"}) {
+	got := connectionDefaultsFor("claude", []string{"resume", "abc"})
+	if !reflect.DeepEqual(got, []string{"--host", "http://127.0.0.1:8999", "resume", "abc"}) {
 		t.Fatalf("defaults %q", got)
 	}
-	got = connectionDefaults([]string{"--host", "https://example.test", "--resume", "abc"})
-	if strings.Join(got, " ") != "--host http://127.0.0.1:8999 --host https://example.test --resume abc" {
+	got = connectionDefaultsFor("claude", []string{"--host", "https://example.test", "resume", "abc"})
+	if strings.Join(got, " ") != "--host http://127.0.0.1:8999 --host https://example.test resume abc" {
 		t.Fatalf("explicit context must override defaults: %q", got)
 	}
 }

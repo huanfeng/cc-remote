@@ -136,12 +136,12 @@ func TestPathMerge(t *testing.T) {
 }
 
 func TestAliasScript(t *testing.T) {
-	cmd := AliasScript("windows", `C:\Users\Me\100% stuff\cc-remote.exe`, []string{"--data-dir", `D:\data`})
-	if cmd != "@echo off\r\n\"C:\\Users\\Me\\100%% stuff\\cc-remote.exe\" ccr \"--data-dir\" \"D:\\data\" %*\r\n" {
+	cmd := AliasScript("windows", `C:\Users\Me\100% stuff\cc-remote.exe`)
+	if cmd != "@echo off\r\n\"C:\\Users\\Me\\100%% stuff\\cc-remote.exe\" %*\r\n" {
 		t.Fatalf("cmd = %q", cmd)
 	}
-	sh := AliasScript("linux", "/home/me/it's/cc-remote", nil)
-	if !strings.HasPrefix(sh, "#!/bin/sh\n") || !strings.Contains(sh, `exec '/home/me/it'"'"'s/cc-remote' ccr "$@"`) {
+	sh := AliasScript("linux", "/home/me/it's/cc-remote")
+	if !strings.HasPrefix(sh, "#!/bin/sh\n") || !strings.Contains(sh, `exec '/home/me/it'"'"'s/cc-remote' "$@"`) {
 		t.Fatalf("sh = %q", sh)
 	}
 }

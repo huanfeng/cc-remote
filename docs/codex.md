@@ -2,6 +2,18 @@
 
 在网页新建会话时选择 **Codex**，填写本机项目目录即可。宿主调用本机已登录的 Codex CLI，通过 `codex app-server` 的结构化协议处理对话、工具调用、审批与提问；不需要单独配置 API Key。
 
+## 原生终端
+
+```sh
+ccr codex --new
+ccr codex --prompt "检查构建失败"
+ccr codex resume --last
+ccr session list --agent codex
+ccr session attach <CCR会话ID>
+```
+
+终端由宿主持有，`Ctrl+]` 脱离后可以用同一个 CCR 会话 ID 接回。Codex TUI 使用宿主原生配置处理工作目录信任与审批。宿主重启或 TUI 退出后，用 `ccr codex resume` 选择已保存的历史。一个项目已有 Codex 终端时，先按提示接入现有终端，避免并行恢复可能正在运行的同一段历史。默认的宿主更新会等待 Codex TUI 退出，再重启服务。
+
 ## 准备
 
 安装 Codex CLI 并在运行宿主的同一个系统账户下执行 `codex login`。宿主默认从 PATH 找到 `codex`，配置与历史目录为 `CODEX_HOME` 或 `~/.codex`。指定自定义目录时，先创建目录并在该配置下登录。

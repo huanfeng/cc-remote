@@ -15,9 +15,10 @@ import (
 // keys differently (Shift+Enter, pastes). modeTracker records the modes in
 // force so each new front end can be put into the same state first.
 type modeTracker struct {
-	decset map[int]bool
-	kitty  []int // kitty keyboard flags stack (CSI > n u pushes, CSI < n u pops)
-	mok    int   // modifyOtherKeys level (CSI > 4 ; n m)
+	decset               map[int]bool
+	kitty                []int // kitty keyboard flags stack (CSI > n u pushes, CSI < n u pops)
+	mok                  int   // modifyOtherKeys level (CSI > 4 ; n m)
+	trackAlternateScreen bool
 }
 
 // trackedModes are the private modes replayed to a new front end.
@@ -38,7 +39,7 @@ func (m *modeTracker) observe(chunk []byte) {
 	for _, g := range decsetSeq.FindAllSubmatch(chunk, -1) {
 		on := string(g[2]) == "h"
 		for _, part := range strings.Split(string(g[1]), ";") {
-			if n, err := strconv.Atoi(part); err == nil && trackedModes[n] {
+			if n, err := strconv.Atoi(part); err == nil && (trackedModes[n] || m.trackAlternateScreen && n == 1049) {
 				m.decset[n] = on
 			}
 		}

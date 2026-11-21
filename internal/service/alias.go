@@ -20,10 +20,10 @@ type aliasOptions struct {
 func aliasUsage() string {
 	return i18n.T(`usage: ccr alias <install|uninstall|status> [--dir D]
 
-"ccr" runs "cc-remote ccr": see "ccr --help".
+"ccr" forwards its arguments to "cc-remote". See "ccr --help".
 `, `用法：ccr alias <install|uninstall|status> [--dir 目录]
 
-"ccr" 等同于 "cc-remote ccr"：见 "ccr --help"。
+"ccr" 将参数直接传给 "cc-remote"。参见 "ccr --help"。
 `)
 }
 
@@ -71,38 +71,30 @@ func aliasPath(dir string) (string, error) {
 
 // aliasTarget returns the stable executable for the unified launcher.
 // Connection defaults are resolved by the shared Go entry.
-func aliasTarget(out io.Writer) (string, []string, error) {
+func aliasTarget(out io.Writer) (string, error) {
 	cfg, _ := LoadConfig("")
 	if cfg != nil && cfg.Exe != "" {
 		if _, err := os.Stat(cfg.Exe); err == nil {
 			// The shared Go entry resolves defaults for both command names.
 			// Keeping configuration out of the wrapper also makes config changes
 			// effective without reinstalling the launcher.
-			return cfg.Exe, nil, nil
+			return cfg.Exe, nil
 		}
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	fmt.Fprint(out, warning(i18n.F("service is not installed; ccr will point to %s (rebuilding or moving it breaks the alias)", "服务未安装；ccr 将指向 %s（重新构建或移动它会使别名失效）", exe)))
-	return exe, nil, nil
+	return exe, nil
 }
 
 // AliasScript renders the ccr launcher for goos.
-func AliasScript(goos, exe string, flags []string) string {
+func AliasScript(goos, exe string) string {
 	if goos == "windows" {
-		parts := []string{WindowsCmdQuote(exe), "ccr"}
-		for _, f := range flags {
-			parts = append(parts, WindowsCmdQuote(f))
-		}
-		return "@echo off\r\n" + strings.Join(parts, " ") + " %*\r\n"
+		return "@echo off\r\n" + WindowsCmdQuote(exe) + " %*\r\n"
 	}
-	parts := []string{ShellQuote(exe), "ccr"}
-	for _, f := range flags {
-		parts = append(parts, ShellQuote(f))
-	}
-	return "#!/bin/sh\n# ccr: CC Remote unified command launcher\nexec " + strings.Join(parts, " ") + " \"$@\"\n"
+	return "#!/bin/sh\n# ccr: CC Remote unified command launcher\nexec " + ShellQuote(exe) + " \"$@\"\n"
 }
 
 // aliasInstalled reports whether the default ccr launcher exists.
@@ -116,7 +108,7 @@ func aliasInstalled() bool {
 }
 
 func installAlias(opts aliasOptions, out io.Writer) error {
-	exe, flags, err := aliasTarget(out)
+	exe, err := aliasTarget(out)
 	if err != nil {
 		return err
 	}
@@ -124,7 +116,7 @@ func installAlias(opts aliasOptions, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	script := AliasScript(runtime.GOOS, exe, flags)
+	script := AliasScript(runtime.GOOS, exe)
 	if opts.dryRun {
 		fmt.Fprint(out, i18n.F("[dry-run] write %s:\n%s\n", "[dry-run] 写入 %s：\n%s\n", path, script))
 	} else {

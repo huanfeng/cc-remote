@@ -47,7 +47,7 @@ func argOf(call []string, name string) string {
 func newTestBridge(h *herdrCalls) *herdrBridge {
 	now := time.Unix(1_000, 0)
 	return &herdrBridge{
-		bin: "herdr", pane: "w1:p1", resume: []string{"ccr", "abc12345"},
+		bin: "herdr", pane: "w1:p1", resume: []string{"ccr", "session", "attach", "abc12345"},
 		exec: h.exec,
 		now:  func() time.Time { now = now.Add(time.Second); return now },
 	}
@@ -85,7 +85,7 @@ func TestHerdrBridgeEnabledOnlyInsideHerdr(t *testing.T) {
 		}
 	}
 	b := newHerdrBridge(env(full), look, defaultHost, "abc12345")
-	if b.bin != "/usr/bin/herdr" || b.pane != "w1:p1" || !slices.Equal(b.resume, []string{"ccr", "abc12345"}) {
+	if b.bin != "/usr/bin/herdr" || b.pane != "w1:p1" || !slices.Equal(b.resume, []string{"ccr", "session", "attach", "abc12345"}) {
 		t.Errorf("bridge = %+v", b)
 	}
 	if b := newHerdrBridge(env(full), func(string) (string, error) { return "", errors.New("no") }, defaultHost, "abc12345"); b == nil || b.resume != nil {
@@ -157,7 +157,7 @@ func TestHerdrBridgeReportsStateWithResumeAndSource(t *testing.T) {
 	if argOf(r, "--source") != "custom:cc-remote" || argOf(r, "--agent") != "claude" || argOf(r, "--state") != "working" {
 		t.Errorf("report flags = %v", r)
 	}
-	if i := slices.Index(r, "--"); i < 0 || !slices.Equal(r[i+1:], []string{"ccr", "abc12345"}) {
+	if i := slices.Index(r, "--"); i < 0 || !slices.Equal(r[i+1:], []string{"ccr", "session", "attach", "abc12345"}) {
 		t.Errorf("resume command should follow --, got %v", r)
 	}
 	if argOf(r, "--message") != "" {
@@ -166,6 +166,14 @@ func TestHerdrBridgeReportsStateWithResumeAndSource(t *testing.T) {
 	m := calls[1]
 	if m[1] != "report-metadata" || argOf(m, "--title") != "demo" || argOf(m, "--source") != "user:cc-remote" {
 		t.Errorf("metadata call = %v", m)
+	}
+	x := session("running", true)
+	x.NativeID = "native-abc"
+	b.sync(context.Background(), x)
+	calls = h.all()
+	r = calls[len(calls)-1]
+	if i := slices.Index(r, "--"); len(calls) != 3 || i < 0 || !slices.Equal(r[i+1:], []string{"ccr", "claude", "resume", "native-abc"}) {
+		t.Errorf("updated history should change resume command, got %v", calls)
 	}
 }
 
@@ -416,7 +424,7 @@ func TestHerdrResumeKeepsANonDefaultHost(t *testing.T) {
 	}
 	look := func(string) (string, error) { return "/bin/ccr", nil }
 	b := newHerdrBridge(env, look, "https://box.example", "abc12345")
-	if !slices.Equal(b.resume, []string{"ccr", "--host", "https://box.example", "abc12345"}) {
+	if !slices.Equal(b.resume, []string{"ccr", "--host", "https://box.example", "session", "attach", "abc12345"}) {
 		t.Fatalf("resume = %v", b.resume)
 	}
 }

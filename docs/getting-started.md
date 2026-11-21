@@ -103,7 +103,7 @@ cat "$HOME/Library/Application Support/cc-remote/access-token"
 cd your-project
 ccr
 ccr ls                # 浏览最近的终端会话
-ccr --resume <会话ID> # 恢复 Claude Code 会话
+ccr claude resume <会话ID> # 恢复 Claude Code 会话
 ```
 
 `ccr` 与 `cc-remote` 完全等价。**这条终端接力路径用于 Claude Code**；Codex 请使用网页 / 客户端新建托管会话，或从「终端历史」导入并继续。导入原生历史前，应先停止原终端中的对应会话，避免并行操作同一个会话。

@@ -84,7 +84,7 @@ that picks one runs with the native Claude Code configuration and only that logi
   rename NAME NEW          rename
   rm NAME                  remove (sessions using it must pick another configuration)
 
-NAME may also be the id shown by ls. Use it with: ccr --new --profile oauth:<id>
+NAME may also be the id shown by ls. Use it with: ccr claude --new --supplier oauth:<id>
 `, `用法：ccr oauth <命令> [参数]
 
 管理保存在宿主上的 OAuth 令牌（由 "claude setup-token" 生成）。选用其中一项的会话
@@ -97,7 +97,7 @@ NAME may also be the id shown by ls. Use it with: ccr --new --profile oauth:<id>
   rename 名称 新名称        改名
   rm 名称                  删除（使用它的会话需要重新选择配置）
 
-名称也可以写 ls 显示的 id。使用方式：ccr --new --profile oauth:<id>
+名称也可以写 ls 显示的 id。使用方式：ccr claude --new --supplier oauth:<id>
 `)
 }
 
@@ -169,7 +169,7 @@ func runOAuth(api doer, out io.Writer, sub string, names []string, token func() 
 		if err = api.do("POST", "/api/profiles/oauth", map[string]string{"name": names[0], "token": t}, &made); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, i18n.F("Added %s (%s). Use: ccr --new --profile %s", "已添加 %s（%s）。使用：ccr --new --profile %s", made.Name, made.ID, made.ID))
+		fmt.Fprintln(out, i18n.F("Added %s (%s). Use: ccr claude --new --supplier %s", "已添加 %s（%s）。使用：ccr claude --new --supplier %s", made.Name, made.ID, made.ID))
 	case "token":
 		p, err := find(names[0])
 		if err != nil {

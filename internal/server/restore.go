@@ -19,7 +19,7 @@ func (s *Server) saveRunningTerminalsLocked() {
 	}
 	ids := []string{}
 	for id, ts := range s.terminals {
-		if !ts.closing {
+		if !ts.closing && !ts.codex {
 			ids = append(ids, id)
 		}
 	}
@@ -53,7 +53,7 @@ func (s *Server) RestoreTerminals() {
 	}
 	for _, id := range ids {
 		x, err := s.store.Get(id)
-		if err != nil || x.Mode != "terminal" {
+		if err != nil || x.Mode != "terminal" || x.Provider == "codex" {
 			continue
 		}
 		s.mu.Lock()

@@ -106,6 +106,9 @@ func terminalCommands(l i18n.Lang) []webCommand {
 // commandMenu lists the web commands plus, for managed sessions, Claude's own.
 func (s *Server) commandMenu(l i18n.Lang, x store.Session) []webCommand {
 	if x.Provider == "codex" {
+		if x.Mode == "terminal" {
+			return []webCommand{}
+		}
 		return codexCommandList(l)
 	}
 	if x.Mode == "terminal" {
@@ -150,6 +153,10 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		respond(w, 200, s.commandMenu(l, x))
+		return
+	}
+	if x.Provider == "codex" && x.Mode == "terminal" {
+		fail(w, 409, l.T("Enter commands in the Codex terminal", "请在 Codex 终端中输入命令"))
 		return
 	}
 	var req struct {

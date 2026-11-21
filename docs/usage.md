@@ -8,7 +8,7 @@
 
 从会话标题栏或侧栏项目组打开「项目终端」。同一主机和项目内的会话共用一个默认 Shell。收起面板或断开网页连接后，Shell 仍在后台运行，重新打开即可接回。需要结束进程时，在面板里选择「结束终端」，或执行 `exit`。多个页面可以查看同一终端，输入和尺寸由持有控制权的页面决定。
 
-用标签栏的「新建终端」在同一项目打开独立标签。终端和窗格按项目编号，默认名称为「终端 1」「终端 2」等。「运行中的终端」会同时显示名称和所属项目。右键标签可原位编辑名称，按 Enter 保存，按 Esc 取消。右键选择「结束终端」或中键点击标签，会结束该标签下的所有窗格。最后一个标签结束后面板关闭，再按快捷键会打开新 Shell。用 `ccr shell ls` 查看名称和 ID，再用 `ccr shell attach <ID>` 接入指定终端。
+用标签栏的「新建终端」在同一项目打开独立标签。终端和窗格按项目编号，默认名称为「终端 1」「终端 2」等。「运行中的终端」会同时显示名称和所属项目。右键标签可原位编辑名称，按 Enter 保存，按 Esc 取消。右键选择「结束终端」或中键点击标签，会结束该标签下的所有窗格。最后一个标签结束后面板关闭，再按快捷键会打开新 Shell。用 `ccr shell attach` 可以从本地终端选择并接入同一个窗格。
 
 用标签栏的搜索按钮查找当前窗格保留的输出。按 Enter 查找下一个匹配，按 Shift+Enter 查找上一个匹配。搜索栏也可以暂停跟随输出或回到最新一行。
 
@@ -29,7 +29,9 @@
 | `ccr run -- git status --short` | 在宿主上执行一次命令，转发标准输入、标准输出和错误输出，并返回该命令的退出码 |
 | `ccr shell` | 创建或打开当前项目的默认 Shell，也可以从 Web 接入同一个进程 |
 | `ccr shell ls` | 列出当前宿主记录的 Shell 和状态 |
-| `ccr shell attach [ID]` | 接入正在运行的 Shell，省略 ID 时按当前目录查找 |
+| `ccr shell attach` | 选择当前宿主上正在运行的 Shell，当前项目排在前面。按 `/` 可按名称、目录或 ID 筛选 |
+| `ccr shell attach <ID>` | 用完整 ID 或唯一前缀直接接入指定 Shell |
+| `ccr shell attach --cwd <目录>` | 接入指定项目正在运行的默认 Shell |
 | `ccr shell stop [ID]` | 结束 Shell 进程，省略 ID 时按当前目录查找 |
 
 按 `Ctrl+]` 可以从 CLI 脱离并让 Shell 继续运行。在 Shell 内执行 `exit` 也会结束进程。结束后可用 `ccr shell` 从启动目录重新打开。
@@ -49,31 +51,29 @@
 
 ### 用 ccr 启动
 
-`ccr` 与 `cc-remote` 共用全部行为，无参数均选择当前目录会话。帮助使用 `ccr --help`，前台宿主使用 `ccr serve`，后台管理使用 `ccr status/start/stop/restart/config/logs` 与 `ccr service ...`。
-
-`ccr` 的用法和 `claude` 一样，只是 Claude Code 由宿主运行：
+`ccr` 与 `cc-remote` 接受同样的参数。直接运行打开当前项目的选择器，没有可接入的终端时可选 Claude Code 或 Codex 新建。
 
 ```sh
-ccr                                   # 选择当前目录的终端会话接入，没有就新建
-ccr --model sonnet --add-dir ../lib   # 带 Claude Code 参数新建终端会话
-ccr "修复登录页"                       # 只有提示词时是「接入指定会话」；新建并发送请写 ccr -- "修复登录页"
-ccr --resume <会话 ID>                # 以终端会话继续 Claude Code 会话（Claude Code 退出时提示的命令，把 claude 换成 ccr）
-ccr -c                                # 继续当前目录最近的会话
-ccr --data-dir /path/to/data --add-dir ../lib   # 使用非默认数据目录
+ccr
+ccr ls                                            # 跨项目浏览最近的终端会话
+ccr claude --new --model sonnet --prompt "修复登录页" -- --add-dir ../lib
+ccr codex                                         # 打开或新建宿主上的 Codex 终端
+ccr claude resume <原生ID>
+ccr codex resume --last                           # 继续当前项目最近的 Codex 历史
+ccr session list --agent codex
+ccr session attach <CCR会话ID>
+ccr local --supplier work -- --help               # 在当前终端运行 Claude Code
 ```
 
-- 当前目录已有终端会话时，`ccr` 列出它们（状态、已接入的终端数、最近活动）让你选择：回车选最近一个没有终端接入的会话，都有终端接入时回车新建，`0` 新建。
-- 交互终端使用紧凑双行列表：显示模型、供应商、短 ID，进行中的会话排在前面；支持方向键、编号加回车、`/` 筛选、`r` 刷新和 `q` / Esc 退出。筛选态中的 `q` 作为搜索字符，Esc 退出筛选后可按 `q` 退出。非交互终端使用编号文本列表，输入 `q` 加回车退出，EOF 不会自动新建会话。
-- 供应商选择每项最多两行，显示已有缓存中的已用额度、重置倒计时和采集时间，例如 `5h 24% ↺2h · 7d 67% ↺3d · 采集2m前`。`r` 只重读缓存；没有用量或后台较旧时仍可正常选择配置。
-- 与管理命令同名的会话（如 `status`）使用 `ccr session status` 或 `ccr attach status`。旧的 `cc-remote` 无参数帮助入口已改为与 `ccr` 一样选择会话，查看帮助请加 `--help`。
-- 接入一个已有终端接入的会话前会先确认：两个终端画面同步，输入会进入同一个 Claude Code。
-- 在 Claude Code 还没信任过的目录（`~/.claude.json` 里没有它或上级目录的信任记录）新建会话时，`ccr` 先问是否信任，和直接运行 `claude` 时的信任对话框一样：目录里的设置可以运行命令（hooks、MCP 服务器），克隆来的陌生仓库请先确认再信任。已信任的目录不再询问。
-- 带了 Claude Code 参数（或用了 `--`）时总是新建会话，剩下的文字作为第一条消息发送；参数随会话保存，宿主重启后恢复时照样带上。
-- `--model`、`--effort`、`--permission-mode` 成为会话设置，可以在网页修改；宿主自己设置的参数（`--settings`、`--session-id`、`-p`、`--output-format` 等）会被拒绝。
-- 宿主持有的终端会话运行它配置的 Claude Code。`ccr claude -- [参数]` 则在当前终端运行原生 Claude，应用所选供应商。
+- `claude` 与 `codex` 按项目和 Agent 查找在线终端。需要另开一条会话时加 `--new`，指定宿主目录用 `--cwd`。原生启动选项放在 `--` 后，首条消息用 `--prompt`。
+- 选择器按最近活动显示会话，可用方向键、编号加回车、`/` 筛选、`r` 刷新、`q` 或 Esc 退出。选中「新建」可以另开终端。选择离线会话会提示如何恢复原生历史。
+- `session attach` 使用 `session list` 中的 CCR 会话 ID，也接受唯一 ID 前缀。`resume` 使用 Agent 的原生历史 ID，省略 ID 可从当前项目选择。已有其他终端接入时会询问是否继续。
+- Claude Code 新建或恢复时可用 `--supplier` 选择供应商，首次进入未信任的目录时会询问信任。Codex 终端使用宿主原生配置，在 TUI 中处理信任和审批。
+- 连接选项放在命令前，例如 `ccr --host https://ccr.example --data-dir /path/to/data session list`。前台宿主用 `ccr serve`，服务管理使用 `ccr status`、`ccr service` 等命令。
+
 - 接入本机宿主时，Claude Code 输出里提到的本机文件（绝对路径，如 `C:\Users\me\shot.png`、`/home/me/app/main.go`）可以点击打开：`ccr` 把它们标成终端超链接（OSC 8）。只在已知支持的终端里启用（Windows Terminal、VS Code、iTerm2、WezTerm、kitty、Ghostty、Alacritty、JetBrains、VTE 系终端），tmux / screen 里不启用；超链接不占位置，画面不变。用 `CC_REMOTE_HYPERLINKS=1` 强制开启、`=0` 关闭（同时关闭下面的点击打开）。
 - Claude Code 的全屏界面会接管鼠标（点击用来展开工具调用等），终端此时不会自己打开链接。所以 `ccr` 会记住当前画面：**Ctrl+点击**（与 Windows Terminal 打开链接的习惯一致）落在本机存在的文件路径上时，由 `ccr` 用默认程序打开该文件，这次点击不再交给 Claude Code；普通点击照常交给 Claude Code（展开工具调用、在输入框里定位等）。这适用于任何终端；工具调用里的相对路径（如 `Update(web/src/App.tsx)`）按会话目录查找，被折到下一行的长路径点任意一段都可以。其它点击、拖动和滚轮也照常交给 Claude Code。
-- 旧的共享终端（Claude Code 在你的终端里运行、网页经 Channels 接入）已移除；之前的共享会话已自动转为终端会话，下次发送消息或用 `ccr` 接入时恢复原来的上下文。
+- 旧的共享终端（Claude Code 在你的终端里运行、网页经 Channels 接入）已移除；之前的共享会话已自动转为终端会话，可用 `ccr claude resume` 恢复原来的上下文。
 
 ### 托管会话
 
@@ -93,23 +93,19 @@ ccr --data-dir /path/to/data --add-dir ../lib   # 使用非默认数据目录
 3. 点击标题栏的模型等标签打开会话状态，选「在本地终端接入」，复制接入命令，在宿主上运行即可在本地终端中操作同一个 Claude Code：
 
    ```sh
-   ccr                       # 选择当前目录的终端会话接入，没有就新建（宿主未运行时自动在后台启动）
-   ccr ls                    # 最近的终端会话（按活动时间，最多 20 个），选择编号接入，0 为新建
-   ccr <会话 ID 前缀或标题>
-   ccr --new --title 修复登录 --model sonnet
-   ccr --resume <会话 ID>    # 以终端会话继续 Claude Code 会话：ID、ID 前缀或标题关键词；不带值则从当前目录的会话中选择
-   ccr -c                    # 继续当前目录最近的 Claude Code 会话（同 claude --continue）
-   cc-remote attach --host http://127.0.0.1:8787 <会话>   # 缩写 cc-remote a
+   ccr claude --new --title 修复登录 --model sonnet
+   ccr claude resume <原生ID>
+   ccr session attach <CCR会话ID>
    ```
 
-   Claude Code 退出时提示的 `claude --resume <会话 ID>`，把 `claude` 换成 `ccr` 即可：宿主在该会话原来的目录里用 `--resume` 启动它，已经有对应终端会话时直接接入。不要让同一个会话同时在别的终端里运行。网页「终端历史」里的会话也可以「以终端会话继续」。
+   Claude Code 退出时显示的 `claude --resume <原生ID>`，可改写成 `ccr claude resume <原生ID>`。宿主会在原目录恢复历史，网页「终端历史」里的会话也可以「以终端会话继续」。
 
    按 `Ctrl+]` 断开，Claude Code 继续运行。多个前端可以同时接入。终端尺寸以本地终端为准：多个 `ccr` 同时接入时，以最近调整过窗口或打过字的那个为准，网页不会改动它。Windows 的 ConPTY 只发送变化的字符，终端偶尔会留下没刷新的字符：每轮回复结束时会自动整屏重画，也可以按 `Ctrl+L`。
 6. 网页标题栏显示 Claude Code 状态栏数据：模型、推理强度、上下文用量（圆环，60% 起变黄、80% 起变红）、时长和费用；Claude 工作时显示和终端相同的状态行（如 `Composing… (8m 33s · ↓ 26.2k tokens)`）。终端里的状态栏仍是你自己配置的那个。
 7. 点模型或推理强度标签直接弹出列表切换（托管会话同样可用，作用于下一轮）。终端会话里相当于执行 `/model`、`/effort`：切换模型会让当前对话的提示缓存失效，网页会先提示，确认后由宿主替你确认 Claude Code 的「Switch model?」。注意 Claude Code 会把 `/model` 选择的模型保存为新会话的默认值（写入 `~/.claude/settings.json`），和在终端里执行一样。输入框左下角的 `/` 按钮打开命令列表。
 8. 一轮结束后 Claude Code 在输入框里给出的下一步建议（灰色文字）显示在网页输入框上方：点击直接发送，「编辑」填入输入框。
 9. Claude Code 的 recap（离开一段时间后它写下的「你离开期间」回顾）显示在对话里，终端历史同样显示。终端会话里，宿主在没有终端接入、网页也没有打开这个会话时告诉 Claude Code「失去焦点」，回来时恢复，所以 recap 和在本地终端里一样会出现（是否生成由 Claude Code 决定，可在 /config 关闭）。
-4. 进程默认一直保留。宿主重启（包括 `cc-remote update` 升级）时，停止前正在运行的终端会话会在宿主恢复后自动用 `--resume` 重新启动；接入中的 `ccr` 不会退出，显示「宿主正在重启」，等宿主恢复（最多 3 分钟）后自动重新接入。Claude Code 自己退出的会话，下次发消息或接入时同样用 `--resume` 恢复上下文，提示缓存仍然有效。还没发过消息的会话会以全新会话启动。
+4. 进程默认一直保留。宿主重启（包括 `cc-remote update` 升级）时，停止前正在运行的终端会话会在宿主恢复后自动用 `--resume` 重新启动；接入中的 `ccr` 不会退出，显示「宿主正在重启」，等宿主恢复（最多 3 分钟）后自动重新接入。Claude Code 自己退出的会话，可从命令行用 `ccr claude resume` 或在网页发送消息恢复上下文，提示缓存仍然有效。还没发过消息的会话会以全新会话启动。
 5. 在终端里执行 `/clear` 或 `/resume` 时，网页会跟随新的 Claude 会话 ID。切换到的 Claude 会话若正被另一个网页会话使用（在执行、等待回答或 Claude Code 还在运行），网页不会跟随并提示；空闲的会话会自动让出：它的网页历史保留，下次继续时开始新的 Claude 对话。
 
 #### 网页终端视图
@@ -135,7 +131,7 @@ ccr --data-dir /path/to/data --add-dir ../lib   # 使用非默认数据目录
 
 - 在手机或网页上回答了待答请求后，Herdr 里的「需要回答」随之消失；状态来自宿主的 Hook 与记录，比 Herdr 看屏幕判断更准确。
 - 按 `Ctrl+]` 断开、会话结束或宿主离线时，`ccr` 会取消上报，pane 回到普通 shell；再次接入后恢复。
-- 上报时同时告诉 Herdr 恢复命令 `ccr <会话 ID>`：Herdr 服务重启并恢复布局后会在该 pane 里重新运行，自动接回同一个会话（需要 Herdr 0.9.2 或更高，且 `ccr` 在 `PATH` 里）。
+- Herdr 恢复 pane 时会执行 `ccr claude resume <原生ID>`，有活跃进程时接回，离线时从历史恢复。没有原生 ID 时用 `ccr session attach <CCR会话ID>` 接入活跃进程（需要 Herdr 0.9.2 或更高，且 `ccr` 在 `PATH` 里）。
 - 两种 Herdr 都支持，`ccr` 按环境自动选择：Herdr 终端版（环境里有 `HERDR_ENV`、`HERDR_PANE_ID`）通过它的 `herdr pane report-agent` 命令上报；Herdr 桌面版（`herdr-app` / `herdr-core`，命令行 `hc`，环境里有 `HC_TERMINAL_ID`）直接往终端写 [OSC 7501](https://mitchellh.com/writing/program-status-osc7501) 状态序列，不需要额外命令。设置 `CC_REMOTE_HERDR=0` 可全部关闭；`CC_REMOTE_OSC7501=1` 可在其它认 OSC 7501 的终端里强制启用。Herdr 不可用时静默忽略，不影响终端使用。
 - 目前只支持 Claude Code 的终端会话，Codex 不在其中。设计说明见 [design/herdr-bridge.md](design/herdr-bridge.md)。
 

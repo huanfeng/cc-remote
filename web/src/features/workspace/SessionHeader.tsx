@@ -43,6 +43,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const running = session.status === 'running';
   const tasks = session.activeTasks ?? 0;
   const isTerminal = session.mode === 'terminal';
+  const terminalOnly = isTerminal && session.provider === 'codex';
 
   const toggleView = () => setTerminalView(session.id, !terminalView);
 
@@ -81,11 +82,11 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
             !native && <SessionStatusPopover session={session}><span className={cn('flex items-center gap-1 text-ui-xs', tone === 'retrying' ? 'text-warning' : 'text-foreground-subtle')}>{sessionStatusLabel(display)}</span></SessionStatusPopover>
           ) : null}
         </div>
-        {!mobile && !native && <ModelChips session={session} />}
+        {!mobile && !native && !terminalOnly && <ModelChips session={session} />}
         {!mobile && session.cwd && <PathChip cwd={session.cwd} />}
       </div>
 
-      {!native && <UsageMeter session={session} mobile={mobile} />}
+      {!native && !terminalOnly && <UsageMeter session={session} mobile={mobile} />}
 
       {canSearch && (
         <Tooltip>
@@ -125,7 +126,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
         </Tooltip>
       )}
 
-      {!native && isTerminal && !mobile && (
+      {!native && isTerminal && !terminalOnly && !mobile && (
         <div role="tablist" className="flex h-7 items-center rounded-lg bg-surface p-0.5">
           <ViewTab active={!terminalView} onClick={toggleView} icon={<MessageSquare className="size-3.5" />} label={t('Chat', '对话')} />
           <ViewTab active={!!terminalView} onClick={toggleView} icon={<SquareTerminal className="size-3.5" />} label={t('Terminal', '终端')} />
@@ -152,7 +153,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            {mobile && isTerminal && (
+            {mobile && isTerminal && !terminalOnly && (
               <DropdownMenuItem onSelect={toggleView}>
                 {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
               </DropdownMenuItem>

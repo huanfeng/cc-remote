@@ -37,7 +37,7 @@ type Config struct {
 	StartCodexProcess                                                        ProcessStarter
 	UploadDir                                                                string
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL string
-	AttachCommand                                                            string // cc-remote attach with this host's flags; the web appends a session
+	AttachCommand                                                            string // ccr session attach with this host's flags; the web appends a session
 	// ClaudeConfigEnv is the CLAUDE_CONFIG_DIR given to Claude Code: empty unless
 	// a config directory was chosen (setting it to ~/.claude would move .claude.json).
 	ClaudeConfigEnv string
@@ -444,10 +444,14 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		// request must confirm trusting the directory (Claude asks on first use).
 		Mode        string `json:"mode"`
 		TrustFolder bool   `json:"trustFolder"`
-		// Resume is a Claude Code session ID a terminal session continues (as claude --resume).
+		// Start asks for a live terminal before creation responds.
+		Start bool `json:"start"`
+		// Resume is a native session ID a terminal session continues.
 		Resume string `json:"resume"`
 		// ClaudeArgs are Claude Code options a terminal session starts with.
 		ClaudeArgs []string `json:"claudeArgs"`
+		CodexArgs  []string `json:"codexArgs"`
+		Prompt     string   `json:"prompt"`
 		overrideRequest
 	}
 	if !decode(w, r, &req) {
@@ -460,8 +464,20 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Invalid session provider")
 		return
 	}
-	if req.Provider == "codex" && (req.Mode == "terminal" || len(req.ClaudeArgs) > 0 || req.Resume != "") {
-		fail(w, 400, s.lang(r).T("Codex uses managed sessions; resume native threads from history", "Codex 使用托管会话；请从历史记录导入原生线程"))
+	if req.Provider == "codex" && req.Mode == "terminal" {
+		if len(req.ClaudeArgs) > 0 || profileValue(req.ProfileID) != "" || req.Model != nil || req.Effort != nil || req.PermissionMode != nil {
+			fail(w, 400, s.lang(r).T("Use native options to configure a Codex terminal", "请通过 Codex 原生参数配置终端"))
+			return
+		}
+		s.createCodexTerminal(w, r, codexTerminalRequest{Title: req.Title, Cwd: req.Cwd, Resume: req.Resume, Prompt: req.Prompt, Args: req.CodexArgs})
+		return
+	}
+	if len(req.CodexArgs) > 0 || req.Prompt != "" {
+		fail(w, 400, s.lang(r).T("These options require a Codex terminal", "这些参数需要 Codex 终端"))
+		return
+	}
+	if req.Provider == "codex" && (len(req.ClaudeArgs) > 0 || req.Resume != "") {
+		fail(w, 400, s.lang(r).T("Import native threads to use them in managed Codex sessions", "请先导入原生对话，然后在 Codex 托管会话中使用"))
 		return
 	}
 	req.Title = strings.TrimSpace(req.Title)
@@ -469,7 +485,7 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Resume != "" {
-		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.ClaudeArgs, req.overrideRequest, req.ProfileID)
+		s.createResumed(w, r, req.Title, req.Resume, req.Mode, req.TrustFolder, req.Start, req.ClaudeArgs, req.overrideRequest, req.ProfileID)
 		return
 	}
 	profile, profileErr := s.selectProfile(req.Provider, profileValue(req.ProfileID))
@@ -502,9 +518,17 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("Invalid session type", "无效的会话类型"))
 		return
 	}
+	if req.Start && req.Mode != "terminal" {
+		fail(w, 400, s.lang(r).T("Only a terminal session can be started without a message", "只有终端会话可以在不发送消息的情况下启动"))
+		return
+	}
 	if req.Mode == "terminal" && !req.TrustFolder && !s.claudeTrusts(cwd) {
 		s.trustRequired(w, r)
 		return
+	}
+	if req.Start {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 	}
 	x, e := s.store.CreateProvider(req.Title, cwd, store.ID(), false, req.Provider)
 	if e == nil {
@@ -528,7 +552,26 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, s.lang(r).T("Could not create the session", "无法创建会话"))
 		return
 	}
+	if req.Start && !s.startClaudeTerminalLocked(w, r, &x, true) {
+		return
+	}
 	respond(w, 201, x)
+}
+
+// startClaudeTerminalLocked eagerly launches a terminal for CLI clients.
+// Web clients may still register a session and start it later.
+func (s *Server) startClaudeTerminalLocked(w http.ResponseWriter, r *http.Request, x *store.Session, created bool) bool {
+	if _, err := s.terminalLocked(*x); err != nil {
+		if created {
+			if deleteErr := s.store.Delete(x.ID); deleteErr != nil {
+				log.Printf("remove failed Claude terminal %s: %v", x.ID, deleteErr)
+			}
+		}
+		fail(w, 500, s.lang(r).T("Could not start Claude Code: ", "无法启动 Claude Code：")+err.Error())
+		return false
+	}
+	s.decorate(x)
+	return true
 }
 
 // trustRequired refuses a terminal session in a folder Claude Code does not
@@ -540,7 +583,7 @@ func (s *Server) trustRequired(w http.ResponseWriter, r *http.Request) {
 
 // createResumed answers a terminal session continuing a Claude Code session:
 // the one that already does, or a new one in the session's own directory.
-func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust bool, claudeArgs []string, o overrideRequest, profileID *string) {
+func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, claudeID, mode string, trust, start bool, claudeArgs []string, o overrideRequest, profileID *string) {
 	l := s.lang(r)
 	if mode != "terminal" {
 		fail(w, 400, l.T("Only a terminal session can resume a Claude Code session", "只有终端会话可以恢复 Claude Code 会话"))
@@ -572,7 +615,32 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 			fail(w, 409, err.Error())
 			return
 		}
-		s.decorate(&x)
+		if start {
+			if s.terminals[x.ID] == nil {
+				if err := o.apply(l, &x); err != nil {
+					fail(w, 400, i18n.Text(l, err))
+					return
+				}
+				if o.PermissionMode != nil || o.Model != nil || o.Effort != nil {
+					if err := s.store.SetOverrides(x.ID, x.PermissionMode, x.Model, x.Effort); err != nil {
+						fail(w, 500, l.T("Could not save session settings", "无法保存会话设置"))
+						return
+					}
+				}
+				if len(claudeArgs) > 0 {
+					if err := s.store.SetClaudeArgs(x.ID, claudeArgs); err != nil {
+						fail(w, 500, l.T("Could not save session settings", "无法保存会话设置"))
+						return
+					}
+					x.ClaudeArgs = claudeArgs
+				}
+			}
+			if !s.startClaudeTerminalLocked(w, r, &x, false) {
+				return
+			}
+		} else {
+			s.decorate(&x)
+		}
 		respond(w, 200, x)
 		return
 	} else if !errors.Is(e, sql.ErrNoRows) {
@@ -614,6 +682,9 @@ func (s *Server) createResumed(w http.ResponseWriter, r *http.Request, title, cl
 	}
 	if e != nil {
 		fail(w, 500, l.T("Could not create the session", "无法创建会话"))
+		return
+	}
+	if start && !s.startClaudeTerminalLocked(w, r, &x, true) {
 		return
 	}
 	respond(w, 201, x)
@@ -773,6 +844,11 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if x.Mode == "terminal" {
+		if x.Provider == "codex" {
+			s.mu.Unlock()
+			fail(w, 409, s.lang(r).T("Send messages through the Codex terminal", "请在 Codex 终端中发送消息"))
+			return
+		}
 		// Claude Code's own terminal runs every command and skill itself.
 		if strings.HasPrefix(req.Text, "/") && len(req.AttachmentIDs) > 0 {
 			s.mu.Unlock()
@@ -891,7 +967,7 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) withdrawQueue(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	ts := s.terminals[r.PathValue("id")]
-	if ts == nil {
+	if ts == nil || ts.codex {
 		s.mu.Unlock()
 		fail(w, 409, s.lang(r).T("Only a running terminal session has queued messages to withdraw", "只有运行中的终端会话可以撤回排队消息"))
 		return
@@ -918,9 +994,11 @@ func (s *Server) exitSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var closed bool
 	if ts := s.terminals[id]; ts != nil {
-		delete(s.terminals, id)
-		if s.channels[ts.claudeID] == ts.conn {
-			delete(s.channels, ts.claudeID)
+		if !ts.codex {
+			delete(s.terminals, id)
+			if s.channels[ts.claudeID] == ts.conn {
+				delete(s.channels, ts.claudeID)
+			}
 		}
 		s.closeTerminalAsync(ts)
 		closed = true
@@ -961,11 +1039,16 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run := s.runs[id]
+	var stopped <-chan struct{}
 	if ts := s.terminals[id]; ts != nil {
 		// Deleting ends the terminal session's Claude Code (its history stays).
-		delete(s.terminals, id)
-		if s.channels[ts.claudeID] == ts.conn {
-			delete(s.channels, ts.claudeID)
+		if ts.codex {
+			stopped = ts.cleaned
+		} else {
+			delete(s.terminals, id)
+			if s.channels[ts.claudeID] == ts.conn {
+				delete(s.channels, ts.claudeID)
+			}
 		}
 		s.closeTerminalAsync(ts)
 	}
@@ -976,13 +1059,14 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		run.cancel()
+		stopped = run.done
 	}
 	s.mu.Unlock()
-	if run != nil {
+	if stopped != nil {
 		timer := time.NewTimer(deleteStopTimeout)
 		defer timer.Stop()
 		select {
-		case <-run.done:
+		case <-stopped:
 		case <-timer.C:
 			fail(w, 504, s.lang(r).T("Timed out stopping the run; try again later", "停止执行超时，请稍后重试"))
 			return
@@ -1263,6 +1347,10 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 	if x, e := s.store.FindNative(provider, id); e == nil {
 		if x.Provider != provider {
 			fail(w, 409, "Native session belongs to another provider")
+			return
+		}
+		if provider == "codex" && x.Mode == "terminal" {
+			fail(w, 409, s.lang(r).T("This thread is registered as a Codex terminal session", "这个对话已登记为 Codex 终端会话"))
 			return
 		}
 		if err := s.applyResumeProfile(&x, profile); err != nil {

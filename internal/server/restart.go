@@ -36,7 +36,8 @@ func localAdmin(w http.ResponseWriter, r *http.Request, l i18n.Lang, action stri
 
 // busySessions names the sessions a restart would interrupt: a turn running
 // or waiting for an answer, or background tasks (subagents, background
-// commands) still running, in a managed or a terminal session.
+// commands) still running, in a managed or a terminal session. A Codex TUI
+// has no host-visible turn state, so leave it intact until it exits.
 func (s *Server) busySessions() []string {
 	list, err := s.store.List()
 	if err != nil {
@@ -51,7 +52,9 @@ func (s *Server) busySessions() []string {
 		if rt := s.procs[x.ID]; rt != nil && rt.proc != nil {
 			tasks = tasks || rt.proc.BackgroundTasks() > 0
 		}
-		if x.Status == "running" || x.Status == "waiting" || tasks {
+		ts := s.terminals[x.ID]
+		codexTerminal := ts != nil && ts.codex && !isDone(ts.runner.Done())
+		if x.Status == "running" || x.Status == "waiting" || tasks || codexTerminal {
 			busy = append(busy, x.Title)
 		}
 	}

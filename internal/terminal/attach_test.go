@@ -7,44 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
-
-// ccr reads like claude: the resume command Claude Code prints on exit and
-// Claude Code's own options work with ccr in place of claude.
-func TestSplitCCR(t *testing.T) {
-	for _, c := range []struct {
-		args []string
-		want ccrArgs
-	}{
-		{[]string{"--resume", "7d3ed0ff-f71c"}, ccrArgs{resume: resumeArgs{set: true, query: "7d3ed0ff-f71c"}}},
-		{[]string{"-r"}, ccrArgs{resume: resumeArgs{set: true}}},
-		{[]string{"--resume", "--model", "opus"}, ccrArgs{own: []string{"--model", "opus"}, resume: resumeArgs{set: true}}},
-		{[]string{"--resume=abc"}, ccrArgs{resume: resumeArgs{set: true, query: "abc"}}},
-		{[]string{"-c", "--effort", "high"}, ccrArgs{own: []string{"--effort", "high"}, resume: resumeArgs{set: true, last: true}}},
-		{[]string{"--new", "--title", "x"}, ccrArgs{own: []string{"--new", "--title", "x"}}},
-		{[]string{"--profile", "work", "--new"}, ccrArgs{own: []string{"--profile", "work", "--new"}}},
-		{[]string{"--profile=work"}, ccrArgs{own: []string{"--profile=work"}}},
-		{[]string{"abc"}, ccrArgs{words: []string{"abc"}}},
-		// Claude Code options, with the values Claude Code would take, and its prompt.
-		{[]string{"--host", "h", "--add-dir", "a", "b", "--chrome", "-n", "fix", "--dangerously-skip-permissions"},
-			ccrArgs{own: []string{"--host", "h"}, claude: []string{"--add-dir", "a", "b", "--chrome", "-n", "fix", "--dangerously-skip-permissions"}}},
-		{[]string{"--verbose", "fix the bug"}, ccrArgs{claude: []string{"--verbose"}, words: []string{"fix the bug"}}},
-		// cc-remote -- claude [options]: everything after "--" is Claude Code's.
-		{[]string{"--data-dir", "d", "--", "--model", "opus", "-c", "--mcp-config", "m.json"},
-			ccrArgs{own: []string{"--data-dir", "d", "--model", "opus"}, resume: resumeArgs{set: true, last: true}, claude: []string{"--mcp-config", "m.json"}, launch: true}},
-		{[]string{"--", "hello"}, ccrArgs{words: []string{"hello"}, launch: true}},
-	} {
-		if got := splitCCR(c.args); !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%v:\n got %+v\nwant %+v", c.args, got, c.want)
-		}
-	}
-	if n := splitCCR([]string{"--add-dir", "a", "-n", "Login fix"}).name(); n != "Login fix" {
-		t.Errorf("name %q", n)
-	}
-}
 
 func TestChooseProfile(t *testing.T) {
 	defer func(old *bufio.Reader) { stdin = old }(stdin)
@@ -109,55 +74,82 @@ func TestProfileOldHostAndFailures(t *testing.T) {
 	}
 }
 
-func TestProfileRejectsExistingSessionTargets(t *testing.T) {
-	for _, args := range [][]string{{"--profile", "work", "existing"}} {
-		called := false
-		err := CCR(args, t.TempDir(), func(string, string) error { called = true; return nil })
-		if err == nil || called {
-			t.Fatalf("%v: err=%v, contacted host=%v", args, err, called)
+func TestOpenAgentStartsOrAttachesWithinProvider(t *testing.T) {
+	cwd := t.TempDir()
+	var posts int
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			json.NewEncoder(w).Encode([]remoteSession{
+				{ID: "claude-live", Cwd: cwd, Mode: "terminal", Provider: "claude", Online: true},
+				{ID: "codex-dead", Cwd: cwd, Mode: "terminal", Provider: "codex"},
+			})
+		case http.MethodPost:
+			posts++
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["provider"] != "codex" || body["mode"] != "terminal" || body["start"] != true || body["cwd"] != cwd {
+				t.Errorf("create body: %+v", body)
+			}
+			json.NewEncoder(w).Encode(remoteSession{ID: "codex-new", Online: true})
+		}
+	}))
+	defer host.Close()
+	c := &client{host: host.URL}
+	if x, err := c.openAgent("claude", agentOptions{cwd: cwd}, false); err != nil || x.ID != "claude-live" || posts != 0 {
+		t.Fatalf("Claude open: %+v %v (%d POSTs)", x, err, posts)
+	}
+	if x, err := c.openAgent("codex", agentOptions{cwd: cwd}, false); err != nil || x.ID != "codex-new" || posts != 1 {
+		t.Fatalf("Codex open: %+v %v (%d POSTs)", x, err, posts)
+	}
+}
+
+func TestAttachRequiresLiveTerminalAndUniqueID(t *testing.T) {
+	all := []remoteSession{
+		{ID: "abc123", Provider: "codex", Mode: "terminal", Online: true},
+		{ID: "abc456", Provider: "codex", Mode: "terminal", NativeID: "saved"},
+		{ID: "def123", Provider: "claude", Mode: "managed", Online: true},
+	}
+	if x, err := attachedSession(all, "ABC1"); err != nil || x.ID != "abc123" {
+		t.Fatalf("exact unique prefix: %+v %v", x, err)
+	}
+	for id, hint := range map[string]string{"abc": "ambiguous", "abc456": "ccr codex resume saved", "def123": "managed", "saved": "not found"} {
+		if _, err := attachedSession(all, id); err == nil || !strings.Contains(err.Error(), hint) {
+			t.Errorf("attach %q: %v", id, err)
 		}
 	}
 }
 
-func TestCreateSendsSelectedProfile(t *testing.T) {
+func TestCodexTerminalOptionsAndExplicitResume(t *testing.T) {
+	cwd := t.TempDir()
+	requests := 0
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/profiles" {
-			w.Write([]byte(`{"profiles":[{"id":"work","name":"Work","app":"claude"}]}`))
-			return
+		requests++
+		var body struct {
+			Model, Cwd, Prompt, Resume string
+			CodexArgs                  []string
 		}
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["profileId"] != "work" || body["mode"] != "terminal" {
-			t.Errorf("create body: %+v", body)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" || json.NewDecoder(r.Body).Decode(&body) != nil {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":"new"}`))
+		if body.Model != "" || body.Cwd != cwd || strings.Join(body.CodexArgs, "|") != "--model=test model|--no-alt-screen" {
+			t.Errorf("wrong Codex options: %+v", body)
+		}
+		if requests == 1 && (body.Prompt != "查一下" || body.Resume != "") ||
+			requests == 2 && (body.Prompt != "" || body.Resume != "native-id") {
+			t.Errorf("wrong start action: %+v", body)
+		}
+		json.NewEncoder(w).Encode(remoteSession{ID: "remote-id", Online: true})
 	}))
 	defer host.Close()
-	if x, err := (&client{host: host.URL, token: "t"}).create("test", map[string]any{"profileId": "work"}); err != nil || x.ID != "new" {
-		t.Fatalf("create selected profile: %+v %v", x, err)
+	c := &client{host: host.URL}
+	o := agentOptions{cwd: cwd, model: "test model", prompt: "查一下", native: []string{"--no-alt-screen"}}
+	if _, err := c.openAgent("codex", o, false); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// here and recent start a session through create when the directory has none;
-// the client must remember that, so the caller does not offer the supplier
-// list a second time before attaching.
-func TestHereMarksCreated(t *testing.T) {
-	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/sessions" && r.Method == http.MethodGet {
-			w.Write([]byte(`[]`))
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id":"new"}`))
-	}))
-	defer host.Close()
-	c := &client{host: host.URL, token: "t"}
-	if x, err := c.here("test", map[string]any{}); err != nil || x.ID != "new" {
-		t.Fatalf("here created: %+v %v", x, err)
-	}
-	if !c.created {
-		t.Fatal("here via create did not mark the client as created")
+	o.prompt, o.nativeID = "", "native-id"
+	if _, err := c.resumeAgent("codex", o); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -276,6 +268,10 @@ func TestResumeSelectsSupplierBeforeStarting(t *testing.T) {
 		case "/api/profiles":
 			w.Write([]byte(`{"profiles":[{"id":"ccswitch:work","name":"Work","app":"claude"}]}`))
 		case "/api/sessions":
+			if r.Method == http.MethodGet {
+				w.Write([]byte("[]"))
+				return
+			}
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["resume"] != "native-id" || body["profileId"] != "work" {
@@ -287,7 +283,7 @@ func TestResumeSelectsSupplierBeforeStarting(t *testing.T) {
 		}
 	}))
 	defer host.Close()
-	x, err := (&client{host: host.URL, token: "t"}).resume(resumeArgs{set: true, last: true}, "", map[string]any{"profileId": "work"})
+	x, err := (&client{host: host.URL, token: "t"}).resumeAgent("claude", agentOptions{cwd: cwd, last: true, supplier: "work"})
 	if err != nil || x.ID != "remote-id" {
 		t.Fatalf("resume %v %v", x, err)
 	}

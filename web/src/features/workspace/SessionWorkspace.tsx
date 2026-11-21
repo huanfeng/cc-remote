@@ -35,7 +35,8 @@ function ManagedWorkspace({ session, mobile }: { session: Session; mobile: boole
   const backend = useBackend();
   const key = selectionKey({ kind: 'session', id: session.id });
   const transcript = useTranscript(key, session.id);
-  const terminalView = usePrefs(s => !!s.terminalView[session.id]) && session.mode === 'terminal';
+  const preferTerminal = usePrefs(s => !!s.terminalView[session.id]);
+  const terminalView = session.mode === 'terminal' && (session.provider === 'codex' || preferTerminal);
   const running = session.status === 'running';
   const stop = useCallback(() => { void backend.stop(session.id); }, [backend, session.id]);
   useUnclaimedEscape(running && !terminalView ? stop : undefined);

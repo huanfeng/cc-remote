@@ -70,8 +70,7 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 }
 func (b *tailBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return string(b.data) }
 
-// ResolveExecutable resolves PATH names without invoking a shell. npm's Windows
-// wrappers are handled by executableCommand, using node and the installed entry point.
+// ResolveExecutable resolves PATH names without invoking a shell.
 func ResolveExecutable(executable string) (string, error) {
 	if executable == "" {
 		executable = "codex"
@@ -83,7 +82,9 @@ func ResolveExecutable(executable string) (string, error) {
 	return filepath.Abs(p)
 }
 
-func executableCommand(executable string) (*exec.Cmd, error) {
+// Command invokes Codex without interpreting arguments through a shell. Use
+// Node directly for npm's Windows launchers.
+func Command(executable string, args ...string) (*exec.Cmd, error) {
 	p, err := ResolveExecutable(executable)
 	if err != nil {
 		return nil, err
@@ -101,12 +102,13 @@ func executableCommand(executable string) (*exec.Cmd, error) {
 				return nil, err
 			}
 		}
-		return exec.Command(node, entry, "app-server", "--listen", "stdio://"), nil
+		return exec.Command(node, append([]string{entry}, args...)...), nil
 	}
-	return exec.Command(p, "app-server", "--listen", "stdio://"), nil
+	return exec.Command(p, args...), nil
 }
 
-func childEnvironment(configDir string) []string {
+// Environment returns the Codex child environment for the host's Codex home.
+func Environment(configDir string) []string {
 	var env []string
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
@@ -123,12 +125,12 @@ func childEnvironment(configDir string) []string {
 }
 
 func startRPC(executable, configDir, cwd string, onMessage func(rpcMessage) error, onExit func(error), profileOptions ...claude.Options) (*rpcClient, error) {
-	cmd, err := executableCommand(executable)
+	cmd, err := Command(executable, "app-server", "--listen", "stdio://")
 	if err != nil {
 		return nil, err
 	}
 	cmd.Dir = cwd
-	cmd.Env = childEnvironment(configDir)
+	cmd.Env = Environment(configDir)
 	if len(profileOptions) > 0 {
 		o := profileOptions[0]
 		cmd.Env = claude.ProfileEnvironment(cmd.Env, o.ProfileEnv)

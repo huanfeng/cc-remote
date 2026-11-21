@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,27 @@ func TestProjectShellCLIOptions(t *testing.T) {
 	}
 	if _, err := pickProjectShell(shells, "ab"); err == nil {
 		t.Fatal("ambiguous ID was accepted")
+	}
+}
+
+func TestProjectShellItemsPrioritizeCurrentProject(t *testing.T) {
+	shells := []cliProjectShell{
+		{ID: "REMOTE", Name: "Review", Cwd: "/other", State: "running", RunID: "RUN-1"},
+		{ID: "OFFLINE", Cwd: "/project", State: "interrupted"},
+		{ID: "CURRENT", Cwd: "/canonical", Aliases: []string{"/project"}, State: "running", RunID: "RUN-2"},
+		{ID: "HERE", Cwd: "/project", State: "running", RunID: "CURRENT-RUN"},
+		{ID: "MISSING", Cwd: "/project", State: "running"},
+	}
+	items := projectShellItems(shells, "/project", "CURRENT-RUN")
+	var ids []string
+	for _, item := range items {
+		ids = append(ids, item.id)
+	}
+	if !slices.Equal(ids, []string{"CURRENT", "REMOTE"}) {
+		t.Fatalf("ordered attach candidates = %v", ids)
+	}
+	if !strings.Contains(items[1].search, "Review /other REMOTE") {
+		t.Fatalf("searchable shell details = %q", items[1].search)
 	}
 }
 
@@ -86,7 +108,14 @@ func TestProjectShellCLIAttach(t *testing.T) {
 		case r.URL.Path == hostauth.Path:
 			_ = json.NewEncoder(w).Encode(map[string]string{"proof": hostauth.Proof(token, r.URL.Query().Get("nonce"), r.Host)})
 		case r.URL.Path == projectShellAPI && r.Method == http.MethodGet && r.Header.Get("Authorization") == "Bearer "+token:
-			_ = json.NewEncoder(w).Encode([]cliProjectShell{{ID: "SHELL", State: "running", RunID: "RUN"}})
+			if r.URL.RawQuery != "" {
+				t.Errorf("interactive attach should list all running shells, query = %q", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode([]cliProjectShell{
+				{ID: "ANOTHER", Name: "First shell", Cwd: "/project-a", State: "running", RunID: "RUN-A"},
+				{ID: "SHELL", Name: "Target shell", Cwd: "/project-b", State: "running", RunID: "RUN"},
+				{ID: "HERE", Name: "Current shell", Cwd: "/project-c", State: "running", RunID: "OTHER"},
+			})
 		case r.URL.Path == ticketPath && r.Method == http.MethodPost && r.Header.Get("Authorization") == "Bearer "+token:
 			_ = json.NewEncoder(w).Encode(map[string]string{"ticket": "fixture"})
 		case r.URL.Path == streamPath && r.URL.Query().Get("ticket") == "fixture" && r.URL.Query().Get("after") == "0" && r.Header.Get("Authorization") == "":
@@ -144,7 +173,7 @@ func TestProjectShellCLIAttach(t *testing.T) {
 	}
 	defer p.Close()
 	cmd := p.Command(os.Args[0], "-test.run=^TestProjectShellCLIProcess$")
-	cmd.Env = append(CleanEnv(os.Environ()), "CC_PROJECT_SHELL_TEST_HOST="+server.URL, "CC_REMOTE_TOKEN="+token)
+	cmd.Env = append(CleanEnv(os.Environ()), "CC_PROJECT_SHELL_TEST_HOST="+server.URL, "CC_REMOTE_TOKEN="+token, projectShellRunEnv+"=OTHER", "TERM=dumb")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +211,10 @@ func TestProjectShellCLIAttach(t *testing.T) {
 			}
 		}
 	}
+	waitOutput("Target shell")
+	if _, err := io.WriteString(p, "2\r"); err != nil {
+		t.Fatal(err)
+	}
 	waitOutput("ready-marker")
 	if _, err := io.WriteString(p, "hello"); err != nil {
 		t.Fatal(err)
@@ -212,7 +245,7 @@ func outputTail(s string) string {
 
 func TestProjectShellCLIProcess(t *testing.T) {
 	if host := os.Getenv("CC_PROJECT_SHELL_TEST_HOST"); host != "" {
-		if err := ProjectShellCLI([]string{"attach", "SHELL", "--host", host}, t.TempDir()); err != nil {
+		if err := ProjectShellCLI([]string{"attach", "--host", host}, t.TempDir()); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -24,7 +24,7 @@ import (
 
 // Terminal sessions run an interactive Claude Code in a pseudo-terminal the
 // host owns (see docs/design/terminal-sessions.md). Terminal front ends
-// (cc-remote attach) stream its screen; the web shows the transcript and sends
+// (ccr session attach) stream its screen; the web shows the transcript and sends
 // messages as pasted text. A terminal session registers a channelConnection for
 // the transcript sync and the AskUserQuestion / ExitPlanMode hook bridge
 // (channels.go).
@@ -43,6 +43,7 @@ const firstPromptTries = 3
 
 type terminalSession struct {
 	id, claudeID string
+	codex        bool
 	// hookToken is what its hooks authenticate with, for their own endpoints
 	// only: Claude Code and every command it runs can read the hook files.
 	hookToken           string
@@ -101,6 +102,9 @@ func (s *Server) hookHost() string {
 // terminalLocked returns the running terminal of a session, starting Claude
 // Code when it is not running.
 func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
+	if x.Provider == "codex" {
+		return nil, i18n.Errorf("Start or resume this session through the Codex terminal", "请通过 Codex 终端启动或恢复会话")
+	}
 	if ts := s.terminals[x.ID]; ts != nil {
 		select {
 		case <-ts.runner.Done(): // exited; terminalExited cleans up shortly
@@ -208,7 +212,7 @@ func (s *Server) hookRequest(r *http.Request) bool {
 			}
 		}
 	}
-	return ts != nil && equalToken(r.Header.Get("Authorization"), ts.hookToken)
+	return ts != nil && ts.hookToken != "" && equalToken(r.Header.Get("Authorization"), ts.hookToken)
 }
 
 // writeTerminalConfig writes the hook settings and the files the hooks read.
@@ -583,11 +587,11 @@ func (s *Server) markViewed(r *http.Request, id string) {
 	}
 	s.mu.Lock()
 	ts := s.terminals[id]
-	if ts != nil {
+	if ts != nil && !ts.codex {
 		ts.viewedAt = time.Now()
 	}
 	s.mu.Unlock()
-	if ts != nil {
+	if ts != nil && !ts.codex {
 		s.updateFocus(ts)
 	}
 }
@@ -741,8 +745,11 @@ func (s *Server) terminalExited(ts *terminalSession) {
 	_ = os.RemoveAll(ts.dir)
 }
 
-// closeTerminalAsync ends a session's Claude Code (delete, host shutdown).
+// closeTerminalAsync ends a hosted terminal (delete, host shutdown).
 func (s *Server) closeTerminalAsync(ts *terminalSession) {
+	if ts.closing {
+		return
+	}
 	ts.closing = true
 	s.closers.Add(1)
 	go func() {
@@ -797,6 +804,10 @@ func (s *Server) terminalStopLocked(w http.ResponseWriter, r *http.Request, id s
 		fail(w, 409, s.lang(r).T("Claude Code is not running", "Claude Code 没有运行"))
 		return
 	}
+	if ts.codex {
+		fail(w, 409, s.lang(r).T("Interrupt the turn from the Codex terminal", "请在 Codex 终端中中断当前轮次"))
+		return
+	}
 	var err error
 	if time.Since(ts.lastStop) < terminalStopGrace {
 		err = ts.runner.Cancel()
@@ -839,7 +850,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.mu.Lock()
 	ts := s.terminals[id]
-	if ts == nil {
+	if ts == nil || ts.codex {
 		s.mu.Unlock()
 		fail(w, 404, s.lang(r).T("The terminal session is not running", "终端会话没有运行"))
 		return
@@ -1015,7 +1026,7 @@ func (s *Server) terminalStatus(w http.ResponseWriter, r *http.Request) {
 		ContextPercent: in.Context.UsedPercentage,
 	}
 	s.mu.Lock()
-	if ts := s.terminals[r.PathValue("id")]; ts != nil {
+	if ts := s.terminals[r.PathValue("id")]; ts != nil && !ts.codex {
 		ts.live = live
 	}
 	s.mu.Unlock()
@@ -1074,7 +1085,16 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	ts, err := s.terminalLocked(x)
+	ts := s.terminals[x.ID]
+	if x.Provider == "codex" || r.URL.Query().Get("attach") == "1" {
+		if ts == nil || ts.closing || isDone(ts.runner.Done()) {
+			s.mu.Unlock()
+			fail(w, 409, s.lang(r).T("The terminal is offline; resume it from native history", "终端已离线，请从原生历史恢复"))
+			return
+		}
+	} else {
+		ts, err = s.terminalLocked(x)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		fail(w, 500, s.lang(r).T("Could not start Claude Code: ", "无法启动 Claude Code：")+err.Error())
@@ -1167,13 +1187,16 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				s.mu.Lock()
 				closing := s.closing
 				s.mu.Unlock()
-				if closing { // the host stops: attach waits and attaches again
+				if closing && !ts.codex { // Claude restores on host restart
 					_ = c.Close(websocket.StatusGoingAway, "host restarting")
 					return
 				}
 				reason, status := i18n.T("Disconnected", "已断开"), websocket.StatusNormalClosure
 				if ts.runner.Exited() {
 					reason = i18n.T("Claude Code exited", "Claude Code 已退出")
+					if ts.codex {
+						reason = i18n.T("Codex exited", "Codex 已退出")
+					}
 					if web { // the web reconnects after any other close
 						status = statusExited
 					}
@@ -1199,6 +1222,16 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 // decorateTerminalLocked fills a terminal session's live fields.
 func (s *Server) decorateTerminalLocked(x *store.Session) {
 	ts := s.terminals[x.ID]
+	if x.Provider == "codex" {
+		// Codex can switch threads inside the TUI. The stored launch thread ID
+		// can prevent overlapping starts, but it cannot identify the live view.
+		x.ClaudeSessionID = ""
+		x.Online = ts != nil && !ts.closing && !ts.runner.Exited()
+		if x.Online {
+			x.Attached = ts.runner.Attached()
+		}
+		return
+	}
 	x.Online = ts != nil
 	if ts == nil {
 		return

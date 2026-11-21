@@ -46,6 +46,7 @@ type herdrBridge struct {
 	sent     string // the state Herdr holds for this pane; "" when none
 	metaSent bool   // the display name and title were accepted
 	title    string // the title Herdr shows
+	nativeID string // the Claude history ID in the last reported resume command
 	closed   bool
 	retryAt  time.Time
 }
@@ -70,9 +71,9 @@ func newHerdrBridge(getenv func(string) string, lookPath func(string) (string, e
 	}
 	b := &herdrBridge{bin: bin, pane: pane, now: time.Now}
 	if _, err := lookPath("ccr"); err == nil {
-		b.resume = []string{"ccr", sessionID}
+		b.resume = []string{"ccr", "session", "attach", sessionID}
 		if host != defaultHost { // the restarted pane must reach the same host
-			b.resume = []string{"ccr", "--host", host, sessionID}
+			b.resume = []string{"ccr", "--host", host, "session", "attach", sessionID}
 		}
 	}
 	b.exec = func(ctx context.Context, args []string) error {
@@ -106,16 +107,20 @@ func (b *herdrBridge) sync(ctx context.Context, x *remoteSession) {
 		return
 	}
 	state, title := herdrState(x.Status), herdrText(x.Title)
+	nativeID := ""
+	if b.resume != nil {
+		nativeID = x.NativeID
+	}
 	if x.ActiveTasks > 0 && (x.Status == "completed" || x.Status == "idle") {
 		state = "working"
 	}
-	if state == b.sent && b.metaSent && title == b.title {
+	if state == b.sent && nativeID == b.nativeID && b.metaSent && title == b.title {
 		return
 	}
 	if b.now().Before(b.retryAt) {
 		return
 	}
-	if state != b.sent {
+	if state != b.sent || nativeID != b.nativeID {
 		args := []string{"pane", "report-agent", b.pane, "--source", herdrSource, "--agent", herdrAgent, "--state", state}
 		if state == "blocked" {
 			args = append(args, "--message", i18n.T("Waiting for an answer", "等待回答"))
@@ -123,13 +128,19 @@ func (b *herdrBridge) sync(ctx context.Context, x *remoteSession) {
 		args = append(args, "--seq", b.nextSeq())
 		if b.resume != nil {
 			args = append(args, "--")
-			args = append(args, b.resume...)
+			if nativeID == "" {
+				args = append(args, b.resume...)
+			} else {
+				args = append(args, b.resume[:len(b.resume)-3]...)
+				args = append(args, "claude", "resume", nativeID)
+			}
 		}
 		if err := b.call(ctx, args); err != nil {
 			b.retryAt = b.now().Add(herdrBackoff)
 			return
 		}
 		b.sent = state
+		b.nativeID = nativeID
 	}
 	if !b.metaSent || title != b.title {
 		meta := []string{"pane", "report-metadata", b.pane, "--source", herdrMetaSource, "--agent", herdrAgent, "--display-agent", "Claude"}
@@ -158,7 +169,7 @@ func (b *herdrBridge) releaseLocked(ctx context.Context) {
 	if b.sent == "" {
 		return
 	}
-	b.sent, b.metaSent = "", false
+	b.sent, b.nativeID, b.metaSent = "", "", false
 	_ = b.call(ctx, []string{"pane", "release-agent", b.pane, "--source", herdrSource, "--agent", herdrAgent, "--seq", b.nextSeq()})
 }
 
@@ -234,7 +245,7 @@ func (c *client) startHerdr(x remoteSession, osc *oscStatus) (stop func()) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	poll := func() (*remoteSession, error) {
-		list, err := c.terminals()
+		list, err := c.sessions()
 		if err != nil {
 			return nil, err
 		}

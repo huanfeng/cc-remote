@@ -37,7 +37,7 @@
 ## 总体结构
 
 ```
- cc-remote 宿主 ── GET /api/sessions/{id} ──▶ ccr attach 客户端 ── herdr pane report-agent ──▶ Herdr
+ cc-remote 宿主 ── GET /api/sessions/{id} ──▶ ccr session attach 客户端 ── herdr pane report-agent ──▶ Herdr
  (hook + transcript 状态)   (轮询)           (运行在 Herdr pane 里，有 HERDR_PANE_ID)
 ```
 
@@ -97,7 +97,7 @@ attach 开始时检查环境：`HERDR_ENV=1`，且 `HERDR_PANE_ID`、`HERDR_BIN_
 
 ### 6. 恢复
 
-`report-agent` 带 `resume_argv`：`["ccr", "<会话 ID>"]`。Herdr 服务重启并恢复布局时会在该 pane 重跑此命令，`ccr` 接回宿主里同一个会话（会话已持久化，宿主离线时 `ccr` 自带等待和 `--resume` 恢复）。
+`report-agent` 带 `resume_argv`。已知 Claude 原生 ID 时使用 `ccr claude resume <原生ID>`，可接回活跃终端或恢复历史。其余情况使用 `ccr session attach <CCR会话ID>` 接入活跃终端。Herdr 恢复布局时会在该 pane 重跑该命令。
 
 约束（Herdr 文档）：首个元素必须是裸命令名；需要 Herdr 0.9.2 或更高；该 source 必须已持有 pane，所以 `resume_argv` 与首次 `report-agent` 同时发出。
 

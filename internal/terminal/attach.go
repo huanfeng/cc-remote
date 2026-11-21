@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +18,6 @@ import (
 	"time"
 	"unicode"
 
-	"cc-remote/internal/claude"
 	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 
@@ -30,13 +28,15 @@ import (
 // resetModes undoes terminal modes Claude Code's TUI turns on (bracketed paste,
 // focus and mouse reporting, keyboard protocols) so the local terminal works
 // normally after detaching.
-const resetModes = "\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2031l\x1b[?9001l\x1b[<99u\x1b[>4m\x1b[?25h\x1b[0m"
+const resetModes = "\x1b[?1049l\x1b[?2004l\x1b[?1004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2031l\x1b[?9001l\x1b[<99u\x1b[>4m\x1b[?25h\x1b[0m"
 
 type remoteSession struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	Cwd         string `json:"cwd"`
 	Mode        string `json:"mode"`
+	Provider    string `json:"provider"`
+	NativeID    string `json:"claudeSessionId"`
 	Status      string `json:"status"`
 	Online      bool   `json:"online"`
 	ActiveTasks int    `json:"activeTasks,omitempty"`
@@ -48,336 +48,6 @@ type remoteSession struct {
 	ProfileID   string `json:"profileId,omitempty"`
 	Model       string `json:"model,omitempty"`
 	ProfileName string `json:"profileName,omitempty"`
-}
-
-// Attach is `ccr attach`: it connects this terminal to a terminal
-// session the host holds.
-func Attach(args []string, defaultDataDir string) error {
-	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
-	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
-	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("cc-remote data directory (access token)", "cc-remote 数据目录（访问令牌所在）"))
-	create := fs.Bool("new", false, i18n.T("start a new terminal session in the current directory", "在当前目录新建终端会话"))
-	title := fs.String("title", "", newTitleHelp())
-	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), i18n.T("usage: ccr attach [--new [--title T]] [session id prefix or title]", "用法：ccr attach [--new [--title T]] [会话 ID 前缀或标题]"))
-		fs.PrintDefaults()
-	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	api, err := newClient(*host, *dataDir)
-	if err != nil {
-		return err
-	}
-	var target remoteSession
-	if *create {
-		target, err = api.create(*title, nil)
-	} else {
-		target, err = api.pick(strings.Join(fs.Args(), " "))
-	}
-	if err != nil {
-		return err
-	}
-	// An offline terminal session relaunches Claude Code on attach; its saved
-	// supplier may no longer work (renamed, deleted, logged out), so offer the
-	// list with the saved configuration as the default.
-	if !*create && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
-		if err = api.offerResumeProfile(&target); err != nil {
-			return err
-		}
-	}
-	if !confirmAttached(target) {
-		return errors.New(i18n.T("not attached", "未接入"))
-	}
-	return api.attach(target)
-}
-
-func newTitleHelp() string {
-	return i18n.T("title of a new session (default: directory name)", "新会话的标题（默认：目录名）")
-}
-
-// CCR is `ccr`: it attaches to this directory's terminal session, creating one
-// when there is none; with Claude Code options it starts one with them, and
-// -r/-c continue a Claude Code session. ensureHost starts a background host
-// when none runs.
-func CCR(args []string, defaultDataDir string, ensureHost func(dataDir, host string) error) error {
-	for _, a := range args {
-		if a == "--shared" {
-			return errors.New(i18n.T("the shared mode was removed: ccr [claude options] starts Claude Code with them in a terminal session", "共享模式已移除：ccr [claude 参数] 会带着这些参数在终端会话中启动 Claude Code"))
-		}
-	}
-	split := splitCCR(args)
-	resume := split.resume
-	fs := flag.NewFlagSet("ccr", flag.ContinueOnError)
-	host := fs.String("host", "http://127.0.0.1:8787", i18n.T("cc-remote host URL", "cc-remote 宿主 URL"))
-	dataDir := fs.String("data-dir", defaultDataDir, i18n.T("cc-remote data directory", "cc-remote 数据目录"))
-	create := fs.Bool("new", false, i18n.T("start a new terminal session in this directory", "在当前目录新建终端会话"))
-	title := fs.String("title", "", newTitleHelp())
-	model := fs.String("model", "", i18n.T("model of a new session", "新会话的模型"))
-	effort := fs.String("effort", "", i18n.T("reasoning effort of a new session", "新会话的推理强度"))
-	mode := fs.String("permission-mode", "", i18n.T("permission mode of a new session", "新会话的权限模式"))
-	profile := fs.String("profile", "", i18n.T("supplier configuration for a new session", "新会话使用的供应商配置"))
-	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), i18n.T(`usage: ccr [--new] [--profile ID] [--title T] [--model M] [--effort E] [--permission-mode P] [session id prefix or title]
-       ccr -r, --resume [id or search]   (continue a Claude Code session as a terminal session; no value: pick one of this directory's)
-       ccr -c, --continue                (continue this directory's most recent Claude Code session)
-       ccr ls                            (recent terminal sessions in every directory; pick one to attach)
-       ccr [claude options] [prompt]     (a new terminal session: Claude Code starts with the options; the prompt is its first message)
-       ccr -- [claude options] [prompt]  (the same, everything after -- is for Claude Code)
-
-ccr attaches to this directory's terminal session, or starts one. Ctrl+] detaches; Claude Code keeps running on the host.
-Claude Code options the host sets itself (--settings, --session-id, -p and the like) are refused.
-`, `用法：ccr [--new] [--profile ID] [--title T] [--model M] [--effort E] [--permission-mode P] [会话 ID 前缀或标题]
-      ccr -r, --resume [ID 或关键词]    （以终端会话继续 Claude Code 会话；不带值则从当前目录的会话中选择）
-      ccr -c, --continue                （继续当前目录最近的 Claude Code 会话）
-      ccr ls                            （所有目录最近的终端会话，选一个接入）
-      ccr [claude 参数] [提示词]        （新建终端会话：Claude Code 带这些参数启动，提示词作为第一条消息）
-      ccr -- [claude 参数] [提示词]     （同上，-- 之后都交给 Claude Code）
-
-ccr 接入当前目录的终端会话，没有则新建一个。Ctrl+] 断开；Claude Code 继续在宿主上运行。
-宿主自己设置的 Claude Code 参数（--settings、--session-id、-p 等）不能使用。
-`))
-		fs.PrintDefaults()
-	}
-	if err := fs.Parse(split.own); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	if *profile != "" && (!resume.set && !*create && !split.launch && len(split.claude) == 0 && len(split.words) > 0) {
-		return errors.New(i18n.T("--profile requires --new or --resume; an active session can switch suppliers in the web", "--profile 请搭配 --new 或 --resume；活动会话可在网页中切换供应商"))
-	}
-	if err := checkHost(*host); err != nil {
-		return err
-	}
-	if err := ensureHost(*dataDir, *host); err != nil {
-		return err
-	}
-	api, err := newClient(*host, *dataDir)
-	if err != nil {
-		return err
-	}
-	options := map[string]any{"model": *model, "effort": *effort, "permissionMode": *mode}
-	if *profile != "" {
-		options["profileId"] = *profile
-	}
-	if len(split.claude) > 0 {
-		options["claudeArgs"] = split.claude
-	}
-	if *title == "" {
-		*title = split.name()
-	}
-	// Claude Code options (or "--") start Claude Code with them, as claude
-	// does: the words are then its first message, not a session to attach.
-	launch := split.launch || len(split.claude) > 0
-	var target remoteSession
-	var created bool
-	switch {
-	case len(split.words) >= 1 && split.words[0] == "claude":
-		// Plain Claude Code in this terminal with a supplier applied; the words
-		// after "claude" are its arguments (flags must come after a "--").
-		return RunClaudeDirect(split.words[1:], *profile, *dataDir, ensureHost)
-
-	case resume.set:
-		target, err = api.resume(resume, *title, options)
-	case *create || launch || *profile != "":
-		created = true
-		target, err = api.create(*title, options)
-	case len(split.words) == 1 && (split.words[0] == "ls" || split.words[0] == "list"):
-		target, err = api.recent(*title, options)
-	case len(split.words) > 0:
-		target, err = api.pick(strings.Join(split.words, " "))
-	default:
-		target, err = api.here(*title, options)
-	}
-	if err != nil {
-		return err
-	}
-	// An offline terminal session relaunches Claude Code on attach; its saved
-	// supplier may no longer work (renamed, deleted, logged out), so offer the
-	// list with the saved configuration as the default. A session created above,
-	// directly or through here/recent falling back to create, already picked its
-	// supplier inside create.
-	if !resume.set && !created && !api.created && target.ID != "" && target.Status != "running" && target.Status != "waiting" {
-		if err = api.offerResumeProfile(&target); err != nil {
-			return err
-		}
-	}
-	if !confirmAttached(target) {
-		return errors.New(i18n.T("not attached; ccr --new starts another session in this directory", "未接入；ccr --new 可以在当前目录另开一个会话"))
-	}
-	if prompt := strings.Join(split.words, " "); prompt != "" && (launch || resume.set) {
-		if err = api.do("POST", "/api/sessions/"+target.ID+"/messages", map[string]string{"text": prompt}, nil); err != nil {
-			return err
-		}
-	}
-	// Mode banner before the Claude Code TUI takes over the screen.
-	fmt.Println(i18n.F("⏺ ccr managed session · %s · Ctrl+] detaches (the task keeps running on the host)", "⏺ ccr 托管会话 · %s · Ctrl+] 断开（任务在宿主继续）", printable(target.Title)))
-	return api.attach(target)
-}
-
-// resumeArgs are Claude Code's resume flags given to ccr, so the command
-// Claude Code prints on exit works with ccr in place of claude.
-type resumeArgs struct {
-	set   bool
-	query string // -r/--resume value: a session ID (or prefix) or words of its title
-	last  bool   // -c/--continue
-}
-
-// ccrArgs is a ccr command line split into ccr's own options, Claude Code's
-// resume options, other Claude Code options and positional words.
-type ccrArgs struct {
-	own    []string // ccr's options, for its flag set
-	resume resumeArgs
-	claude []string // Claude Code options the session starts with
-	words  []string // a session to attach, or Claude Code's first message
-	launch bool     // "--" was given: everything after it is for Claude Code
-}
-
-// ccr's own options; --model, --effort and --permission-mode are also Claude
-// Code's and become the session's settings.
-var ccrValueFlags = map[string]bool{"host": true, "data-dir": true, "title": true, "model": true, "effort": true, "permission-mode": true, "profile": true}
-
-func splitCCR(args []string) ccrArgs {
-	var out ccrArgs
-	afterDash := false
-	for i := 0; i < len(args); {
-		a := args[i]
-		if a == "--" && !afterDash {
-			out.launch, afterDash = true, true
-			i++
-			continue
-		}
-		name, _, inline := strings.Cut(strings.TrimLeft(a, "-"), "=")
-		switch {
-		case !strings.HasPrefix(a, "-") || a == "-":
-			out.words = append(out.words, a)
-			i++
-		case a == "-r" || a == "--resume" || a == "-resume" || strings.HasPrefix(a, "--resume="):
-			out.resume.set = true
-			switch {
-			case inline:
-				out.resume.query = a[strings.Index(a, "=")+1:]
-			case i+1 < len(args) && !strings.HasPrefix(args[i+1], "-"):
-				i++
-				out.resume.query = args[i]
-			}
-			i++
-		case a == "-c" || a == "--continue" || a == "-continue":
-			out.resume.set, out.resume.last = true, true
-			i++
-		case (strings.HasPrefix(a, "--") || !afterDash) && (ccrValueFlags[name] || name == "new" || name == "h" || name == "help"):
-			if ccrValueFlags[name] && !inline && i+1 < len(args) {
-				out.own = append(out.own, a, args[i+1])
-				i += 2
-			} else {
-				out.own = append(out.own, a)
-				i++
-			}
-		default: // a Claude Code option, with the values Claude Code would take
-			arg := claude.ParseArgs(args[i:])[0]
-			out.claude = append(out.claude, arg.Words()...)
-			i += len(arg.Words())
-		}
-	}
-	return out
-}
-
-// name is Claude Code's -n/--name option, the session's title by default.
-func (a ccrArgs) name() string {
-	for _, arg := range claude.ParseArgs(a.claude) {
-		if (arg.Name == "-n" || arg.Name == "--name") && len(arg.Values) > 0 {
-			return arg.Values[0]
-		}
-	}
-	return ""
-}
-
-// resume finds the Claude Code session to continue and the terminal session
-// continuing it (the host creates one in the session's own directory).
-func (c *client) resume(r resumeArgs, title string, options map[string]any) (remoteSession, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return remoteSession{}, err
-	}
-	var all []remoteSession // the host's list of Claude Code sessions, newest first
-	if err = c.do("GET", "/api/native/sessions", nil, &all); err != nil {
-		return remoteSession{}, err
-	}
-	var here []remoteSession
-	for _, x := range all {
-		if samePath(x.Cwd, cwd) {
-			here = append(here, x)
-		}
-	}
-	var list []remoteSession
-	switch {
-	case r.query != "":
-		q := strings.ToLower(r.query)
-		for _, x := range all {
-			if strings.HasPrefix(x.ID, q) {
-				list = append(list, x)
-			}
-		}
-		if len(list) == 0 {
-			for _, x := range here {
-				if strings.Contains(strings.ToLower(x.Title), q) {
-					list = append(list, x)
-				}
-			}
-		}
-		if len(list) == 0 {
-			return remoteSession{}, i18n.Errorf("no Claude Code session matches %q", "没有匹配 %q 的 Claude Code 会话", r.query)
-		}
-	case len(here) == 0:
-		return remoteSession{}, errors.New(i18n.T("no Claude Code session in this directory to continue", "当前目录没有可继续的 Claude Code 会话"))
-	case r.last:
-		list = here[:1]
-	default:
-		list = here
-	}
-	target := list[0]
-	if len(list) > 1 {
-		fmt.Println(i18n.T("Claude Code sessions:", "Claude Code 会话："))
-		if target, err = chooseWithReload(list, nil, c.reloadCandidates(list, true)); err != nil {
-			return remoteSession{}, err
-		}
-	}
-	profile, err := c.selectResumeProfile(options["profileId"], term.IsTerminal(int(os.Stdin.Fd())))
-	if err != nil {
-		return remoteSession{}, err
-	}
-	body := map[string]any{"title": title, "mode": "terminal", "resume": target.ID}
-	if profile != "" {
-		body["profileId"] = profile
-	}
-	for k, v := range options {
-		if v != "" && k != "profileId" {
-			body[k] = v
-		}
-	}
-	return c.start(body, target.Cwd)
-}
-
-// offerResumeProfile asks for a supplier before an offline session relaunches;
-// Enter keeps the session's saved configuration.
-func (c *client) offerResumeProfile(x *remoteSession) error {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return nil
-	}
-	profile, err := c.selectResumeProfile("", true)
-	if err != nil || profile == "" {
-		return err
-	}
-	var updated remoteSession
-	if err := c.do("POST", "/api/sessions/"+x.ID+"/profile", map[string]any{"profileId": profile, "force": true}, &updated); err != nil {
-		return err
-	}
-	if updated.ProfileID != "" {
-		x.ProfileID = updated.ProfileID
-	}
-	return nil
 }
 
 // checkHost refuses a host the token must not go to: the token runs code on
@@ -411,59 +81,6 @@ func newClient(host, dataDir string) (*client, error) {
 	return c, nil
 }
 
-// here returns this directory's terminal session: the only one, a choice
-// among several, or a new one.
-func (c *client) here(title string, options map[string]any) (remoteSession, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return remoteSession{}, err
-	}
-	all, err := c.terminals()
-	if err != nil {
-		return remoteSession{}, err
-	}
-	var list []remoteSession
-	for _, x := range all {
-		if samePath(x.Cwd, cwd) {
-			list = append(list, x)
-		}
-	}
-	if len(list) == 0 {
-		fmt.Println(i18n.T("No terminal session in this directory yet; starting one…", "这个目录还没有终端会话，正在新建…"))
-		return c.create(title, options)
-	}
-	// A directory usually has several sessions: always ask, Enter taking the
-	// most recent one no terminal is attached to.
-	fmt.Println(i18n.F("Terminal sessions in this directory (%d):", "这个目录的终端会话（%d 个）：", len(list)))
-	return chooseWithReload(list, func() (remoteSession, error) { return c.create(title, options) }, func() ([]remoteSession, error) {
-		all, e := c.terminals()
-		var out []remoteSession
-		for _, x := range all {
-			if samePath(x.Cwd, cwd) {
-				out = append(out, x)
-			}
-		}
-		return out, e
-	})
-}
-
-// recentLimit is how many sessions the pickers list.
-const recentLimit = 20
-
-// recent lists the most recently active terminal sessions to pick from.
-func (c *client) recent(title string, options map[string]any) (remoteSession, error) {
-	list, err := c.terminals()
-	if err != nil {
-		return remoteSession{}, err
-	}
-	if len(list) == 0 {
-		fmt.Println(i18n.T("No terminal sessions yet; starting one in this directory…", "还没有终端会话，正在当前目录新建…"))
-		return c.create(title, options)
-	}
-	fmt.Println(i18n.T("Recent terminal sessions:", "最近的终端会话："))
-	return chooseWithReload(list, func() (remoteSession, error) { return c.create(title, options) }, c.terminals)
-}
-
 func samePath(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
@@ -472,12 +89,15 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
+func (x remoteSession) agent() string {
+	if x.Provider == "" {
+		return "claude"
+	}
+	return x.Provider
+}
+
 type client struct {
 	host, token string
-	// created marks that create already ran in this command, and with it the
-	// supplier prompt: here and recent fall back to create, and the caller
-	// cannot see that from the outside.
-	created bool
 }
 
 // hostHTTP is shared: a client per request would keep every connection of a
@@ -515,33 +135,6 @@ func (c *client) do(method, path string, body any, out any) error {
 		return json.Unmarshal(data, out)
 	}
 	return nil
-}
-
-func (c *client) create(title string, options map[string]any) (remoteSession, error) {
-	// create asks for the supplier itself, so callers must not offer the list
-	// again for the session it returns.
-	c.created = true
-	cwd, err := os.Getwd()
-	if err != nil {
-		return remoteSession{}, err
-	}
-	if title == "" {
-		title = filepath.Base(cwd)
-	}
-	body := map[string]any{"title": title, "cwd": cwd, "mode": "terminal"}
-	for k, v := range options {
-		if v != "" {
-			body[k] = v
-		}
-	}
-	profile, err := c.selectProfile(body["profileId"], term.IsTerminal(int(os.Stdin.Fd())))
-	if err != nil {
-		return remoteSession{}, err
-	}
-	if profile != "" {
-		body["profileId"] = profile
-	}
-	return c.start(body, cwd)
 }
 
 type supplierProfile struct {
@@ -661,19 +254,13 @@ func printable(s string) string {
 	}, s)
 }
 
-func (c *client) terminals() ([]remoteSession, error) {
+func (c *client) sessions() ([]remoteSession, error) {
 	var all []remoteSession
 	if err := c.do("GET", "/api/sessions", nil, &all); err != nil {
 		return nil, err
 	}
-	var list []remoteSession
-	for _, x := range all {
-		if x.Mode == "terminal" {
-			list = append(list, x)
-		}
-	}
-	sort.SliceStable(list, func(i, j int) bool { return list[i].UpdatedAt > list[j].UpdatedAt }) // most recent first
-	return list, nil
+	sort.SliceStable(all, func(i, j int) bool { return all[i].UpdatedAt > all[j].UpdatedAt })
+	return all, nil
 }
 
 // ago is a short "how long ago" for an RFC 3339 time.
@@ -746,30 +333,6 @@ func chooseWithReload(list []remoteSession, create func() (remoteSession, error)
 	return remoteSession{}, errPickerCancelled
 }
 
-// Native/query results retain the original query scope when refreshed.
-func (c *client) reloadCandidates(original []remoteSession, native bool) func() ([]remoteSession, error) {
-	ids := map[string]bool{}
-	for _, x := range original {
-		ids[x.ID] = true
-	}
-	return func() ([]remoteSession, error) {
-		var all []remoteSession
-		var err error
-		if native {
-			err = c.do("GET", "/api/native/sessions", nil, &all)
-		} else {
-			all, err = c.terminals()
-		}
-		var out []remoteSession
-		for _, x := range all {
-			if ids[x.ID] {
-				out = append(out, x)
-			}
-		}
-		return out, err
-	}
-}
-
 // stdin is shared by the prompts, so a line typed ahead is not lost between them.
 var stdin = bufio.NewReader(os.Stdin)
 
@@ -780,7 +343,7 @@ func sessionState(x remoteSession) string {
 		return ago(x.UpdatedAt)
 	}
 	state := i18n.T("not running", "未运行")
-	if x.Online {
+	if x.Online || x.Mode != "terminal" {
 		state = statusText(x.Status)
 	}
 	if x.Attached > 0 {
@@ -790,41 +353,16 @@ func sessionState(x remoteSession) string {
 }
 
 // confirmAttached asks before attaching to a session another terminal is
-// attached to: both show the same screen and type into the same Claude Code.
+// attached to: both show the same screen and type into the same Agent.
 func confirmAttached(x remoteSession) bool {
 	if x.Attached == 0 {
 		return true
 	}
-	fmt.Print(i18n.F("“%s” already has %d terminal(s) attached: they share the screen and type into the same Claude Code. Attach anyway? [y/N] ",
-		"「%s」已有 %d 个终端接入：画面同步，输入会进入同一个 Claude Code。仍然接入？[y/N] ", printable(x.Title), x.Attached))
+	fmt.Print(i18n.F("“%s” already has %d terminal(s) attached: they share the screen and type into the same Agent. Attach anyway? [y/N] ",
+		"「%s」已有 %d 个终端接入：画面同步，输入会进入同一个 Agent。仍然接入？[y/N] ", printable(x.Title), x.Attached))
 	line, _ := stdin.ReadString('\n')
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes" || answer == "是"
-}
-
-func (c *client) pick(query string) (remoteSession, error) {
-	list, err := c.terminals()
-	if err != nil {
-		return remoteSession{}, err
-	}
-	if query != "" {
-		var matched []remoteSession
-		for _, x := range list {
-			if strings.HasPrefix(x.ID, strings.ToLower(query)) || strings.Contains(strings.ToLower(x.Title), strings.ToLower(query)) {
-				matched = append(matched, x)
-			}
-		}
-		list = matched
-	}
-	switch {
-	case len(list) == 0 && query != "":
-		return remoteSession{}, i18n.Errorf("no terminal session matches %q", "没有匹配 %q 的终端会话", query)
-	case len(list) == 0:
-		return remoteSession{}, errors.New(i18n.T("no terminal sessions yet; start one in this directory with ccr attach --new", "还没有终端会话；用 ccr attach --new 在当前目录新建一个"))
-	case len(list) == 1:
-		return list[0], nil
-	}
-	return chooseWithReload(list, nil, c.reloadCandidates(list, false))
 }
 
 // errHostRestart: the stream ended because the host stopped (an update, a
@@ -834,16 +372,17 @@ var errHostRestart = errors.New("host restarting")
 // hostWait is how long attach waits for a restarting host.
 const hostWait = 3 * time.Minute
 
-// attach connects this terminal to a session. When the host restarts (e.g.
-// an update), it waits for the host and attaches again: the host resumes the
-// session, so the terminal carries on instead of exiting.
+// attach reconnects after a transport failure. Claude sessions restored by a
+// restarting host may take longer to become available than its HTTP server.
 func (c *client) attach(x remoteSession) error {
 	var deadline time.Time // set while waiting for a restarting host
 	for {
 		err := c.attachOnce(x)
 		// A host that just came back may still be resuming its sessions (and
 		// starting Claude Code): its stream can fail for a moment. Try again.
-		if !deadline.IsZero() && retryableDial(err) && time.Now().Before(deadline) {
+		var refused *dialError
+		waitingForClaude := x.agent() == "claude" && errors.As(err, &refused) && refused.status == http.StatusConflict
+		if !deadline.IsZero() && (retryableDial(err) || waitingForClaude) && time.Now().Before(deadline) {
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -896,6 +435,7 @@ func (c *client) dialStream(ctx context.Context, id string) (*websocket.Conn, er
 		u.Scheme = "ws"
 	}
 	u.Path = "/api/terminals/" + id + "/stream"
+	u.RawQuery = "attach=1"
 	conn, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: &http.Transport{Proxy: nil}},
 		HTTPHeader: http.Header{"Authorization": {"Bearer " + c.token}},
@@ -935,7 +475,7 @@ func (c *client) attachOnce(x remoteSession) error {
 
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	if !term.IsTerminal(in) {
-		return errors.New(i18n.T("ccr attach must run in a terminal", "ccr attach 需要在终端里运行"))
+		return errors.New(i18n.T("ccr session attach must run in a terminal", "ccr session attach 需要在终端里运行"))
 	}
 	restoreOut := enableVT(os.Stdout)
 	defer restoreOut()
@@ -953,7 +493,9 @@ func (c *client) attachOnce(x remoteSession) error {
 	if osc != nil {
 		screenOut = osc.wrap(screenOut)
 	}
-	stopHerdr = c.startHerdr(x, osc) // inside a Herdr pane: report the session's state to it
+	if x.agent() == "claude" {
+		stopHerdr = c.startHerdr(x, osc)
+	}
 	detached := false
 	defer func() {
 		if links != nil {
@@ -962,7 +504,7 @@ func (c *client) attachOnce(x remoteSession) error {
 		os.Stdout.WriteString(resetModes)
 		_ = term.Restore(in, old)
 		if detached {
-			fmt.Print(i18n.F("\r\nDetached. The session keeps running on the host; run ccr in that directory, or ccr %s, to attach again.\r\n", "\r\n已断开。会话仍在宿主上运行，在该目录运行 ccr，或 ccr %s 重新接入。\r\n", x.ID[:8]))
+			fmt.Print(i18n.F("\r\nDetached. The session keeps running on the host; run ccr session attach %s to attach again.\r\n", "\r\n已断开。会话仍在宿主上运行，运行 ccr session attach %s 重新接入。\r\n", x.ID))
 		}
 	}()
 	os.Stdout.WriteString("\x1b[2J\x1b[H")

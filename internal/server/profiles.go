@@ -271,6 +271,11 @@ func (s *Server) switchProfile(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "会话不存在")
 		return
 	}
+	if x.Provider == "codex" && x.Mode == "terminal" {
+		s.mu.Unlock()
+		fail(w, 409, s.lang(r).T("Configure the supplier in the native Codex configuration", "请在 Codex 原生配置中设置供应商"))
+		return
+	}
 	if s.switching[id] {
 		s.mu.Unlock()
 		fail(w, 409, "正在切换配置")

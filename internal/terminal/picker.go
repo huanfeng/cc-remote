@@ -20,6 +20,8 @@ import (
 
 var errPickerCancelled = errors.New("selection cancelled")
 
+const recentLimit = 20
+
 type pickerItem struct {
 	id            string
 	lines         [2]string
@@ -208,7 +210,11 @@ func sessionItems(list []remoteSession, create bool) ([]pickerItem, string) {
 		if len(id) > 8 {
 			id = id[:8]
 		}
-		details := fmt.Sprintf("Claude · %s · %s · %d %s · %s", model, profile, x.Attached, i18n.T("terminals", "终端"), id)
+		agent := "Claude"
+		if x.agent() == "codex" {
+			agent = "Codex"
+		}
+		details := fmt.Sprintf("%s · %s · %s · %d %s · %s", agent, model, profile, x.Attached, i18n.T("terminals", "终端"), id)
 		if showCwd {
 			details = x.Cwd + " · " + details
 		}

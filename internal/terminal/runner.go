@@ -1,5 +1,5 @@
 // Package terminal runs an interactive Claude Code in a pseudo-terminal that
-// the host owns. Terminal front ends (cc-remote attach, the web terminal)
+// the host owns. Terminal front ends (ccr session attach, the web terminal)
 // subscribe to its output and send keystrokes; the web sends whole messages
 // as pasted text. Front ends come and go without touching the process, so
 // long-running work such as background agents survives switching between them.
@@ -25,7 +25,7 @@ func errExited() error { return errors.New(i18n.T("Claude Code has exited", "Cla
 
 // Options start a runner.
 type Options struct {
-	Executable string   // Claude Code executable (looked up in PATH when not absolute)
+	Executable string   // executable (looked up in PATH when not absolute)
 	Args       []string // arguments after the executable
 	Dir        string
 	Env        []string // full environment; CleanEnv it first
@@ -37,9 +37,11 @@ type Options struct {
 	// Code can pause output for seconds while its startup hooks run, before
 	// it accepts input.
 	AwaitStart bool
+	// ReplayAlternateScreen restores the full-screen buffer when reattaching.
+	ReplayAlternateScreen bool
 }
 
-// Runner is one interactive Claude Code in a pseudo-terminal.
+// Runner owns one interactive process in a pseudo-terminal.
 type Runner struct {
 	pty  pty.Pty
 	cmd  *pty.Cmd
@@ -147,7 +149,7 @@ func CleanEnv(env []string) []string {
 	return out
 }
 
-// Start launches Claude Code in a new pseudo-terminal.
+// Start launches an interactive process in a pseudo-terminal.
 func Start(o Options) (*Runner, error) {
 	exe, err := exec.LookPath(o.Executable) // go-pty resolves bare names against Dir on Windows
 	if err != nil {
@@ -177,6 +179,7 @@ func Start(o Options) (*Runner, error) {
 		return nil, err
 	}
 	r := &Runner{pty: p, cmd: c, done: make(chan struct{}), subs: map[*Sub]bool{}, cols: o.Cols, rows: o.Rows, trust: o.TrustFolder, lastOut: time.Now(), ready: make(chan struct{}), awaitStart: o.AwaitStart, launched: time.Now(), modes: newModeTracker(), scr: newScreen(o.Cols, o.Rows)}
+	r.modes.trackAlternateScreen = o.ReplayAlternateScreen
 	go r.read()
 	go r.watchReady()
 	go func() {
@@ -389,7 +392,16 @@ func (r *Runner) read() {
 			r.mu.Lock()
 			r.lastOut = time.Now()
 			r.outSeen = true
-			r.modes.observe(chunk)
+			modeBytes := chunk
+			if r.scr.state == stCSI || r.scr.state == stEsc {
+				// A mode change may span successive PTY reads.
+				modeBytes = []byte{0x1b}
+				if r.scr.state == stCSI {
+					modeBytes = append(append(modeBytes, '['), r.scr.seq...)
+				}
+				modeBytes = append(modeBytes, chunk...)
+			}
+			r.modes.observe(modeBytes)
 			r.scr.write(chunk)
 			r.recent = append(r.recent, ansi.ReplaceAll(chunk, nil)...)
 			if len(r.recent) > recentBytes {
@@ -491,7 +503,7 @@ func (r *Runner) subscribe(sub *Sub) *Sub {
 		close(sub.C)
 		return sub
 	}
-	// The front end's terminal first enters the modes Claude Code turned on.
+	// The front end's terminal first enters the modes the process turned on.
 	if replay := r.modes.replay(); len(replay) > 0 {
 		sub.C <- replay
 	}

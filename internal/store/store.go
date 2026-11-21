@@ -286,12 +286,21 @@ func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error
 }
 
 func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provider string) (Session, error) {
+	return s.createProvider(title, cwd, nativeID, resume, provider, "managed")
+}
+
+// CreateTerminal registers the terminal mode together with the native identity.
+func (s *Store) CreateTerminal(title, cwd, nativeID string, resume bool, provider string) (Session, error) {
+	return s.createProvider(title, cwd, nativeID, resume, provider, "terminal")
+}
+
+func (s *Store) createProvider(title, cwd, nativeID string, resume bool, provider, mode string) (Session, error) {
 	if provider != "claude" && provider != "codex" {
 		return Session{}, errors.New("invalid session provider")
 	}
-	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: nativeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: "managed", Provider: provider}
+	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: nativeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: mode, Provider: provider}
 	x.UpdatedAt = x.CreatedAt
-	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume,provider) VALUES(?,?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume, x.Provider)
+	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume,provider,mode) VALUES(?,?,?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume, x.Provider, x.Mode)
 	return x, err
 }
 

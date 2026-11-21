@@ -31,6 +31,10 @@ func TestMain(m *testing.M) {
 		fakeTerminal()
 		return
 	}
+	if os.Getenv("FAKE_CODEX_TERMINAL") == "1" {
+		fakeCodexTerminal()
+		return
+	}
 	os.Exit(m.Run())
 }
 
@@ -795,7 +799,7 @@ func TestTerminalStatusLine(t *testing.T) {
 	}
 }
 
-// ccr --resume: a terminal session continues a Claude Code session in its own
+// ccr claude resume: a terminal session continues a Claude Code session in its own
 // directory, and resuming it again finds that session instead of a second one.
 func TestTerminalResumesNativeSession(t *testing.T) {
 	s, ts, _ := setup(t, nil)

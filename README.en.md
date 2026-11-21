@@ -47,7 +47,7 @@ If the Zellij status bar shows question marks or boxes, install `Symbols Nerd Fo
 Configure API providers for Claude Code or Codex in CC Remote, or use existing **CC-Switch** profiles from the host. The web client and CLI share the default provider for new sessions.
 
 - **Web and desktop**. Pick a provider when creating a session, or switch it from an existing session's header. Switching preserves the conversation history and asks for confirmation before interrupting an active task.
-- **CLI**. Choose a provider when starting Claude Code with `ccr --new` or resuming with `ccr -r <session-id>`. Use `--profile <provider-id>` to select one in a script.
+- **CLI**. Choose a provider when starting Claude Code with `ccr claude --new` or resuming with `ccr claude resume <session-id>`. Use `--supplier <provider-id>` to select one in a script.
 
 See [provider selection and switching](docs/supplier-profiles.md) (Chinese).
 
@@ -150,10 +150,13 @@ The backend supports **Windows, Linux and macOS**. Native client downloads and t
 
 ```sh
 ccr                    # pick a session in this project, or create one
+ccr claude             # open a hosted Claude terminal
+ccr codex              # open a hosted Codex terminal
 ccr ls                 # browse and attach to recent terminal sessions
-ccr --resume <id>      # resume a Claude Code session
-ccr -c                 # continue this directory's latest Claude Code session
+ccr claude resume <id>      # resume a Claude Code session
+ccr claude resume --last                 # continue this directory's latest Claude Code session
 ccr shell              # open or attach to this project's shell
+ccr shell attach       # pick a running project shell
 ccr shell ls           # list project shells on the host
 ccr run -- git status --short # run a one-off command on the host
 ccr status             # inspect the host service

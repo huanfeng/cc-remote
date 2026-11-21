@@ -37,7 +37,7 @@ func TestCodexSessionValidation(t *testing.T) {
 	}
 	for _, body := range []map[string]any{
 		{"provider": "unknown", "cwd": t.TempDir()},
-		{"provider": "codex", "cwd": t.TempDir(), "mode": "terminal"},
+		{"provider": "codex", "cwd": t.TempDir(), "mode": "terminal", "codexArgs": []string{"exec"}},
 		{"provider": "codex", "cwd": t.TempDir(), "permissionMode": "bypassPermissions"},
 		{"provider": "codex", "cwd": t.TempDir(), "permissionMode": "danger-full-access"},
 		{"provider": "codex", "cwd": t.TempDir(), "effort": "invalid"},

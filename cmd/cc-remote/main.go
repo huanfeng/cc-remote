@@ -40,63 +40,54 @@ var version = "dev"
 
 const usageEN = `CC Remote · ccr (cc-remote is an equivalent name)
 
-Usage:
-  ccr                         attach to this directory's session, or start one
-  ccr --resume [ID]            resume Claude Code (-r); -c continues the latest
-  ccr ls                      choose a recent terminal session
-  ccr --new --model sonnet     start a new terminal session
-  ccr -- "prompt"              start with a first message
-  ccr claude -- [arguments]    native Claude Code with a supplier applied
-  ccr run -- command [args]   run a command on the host and return its exit code
-  ccr shell                   open this project's interactive shell
-  ccr shell ls|attach|stop    list, attach to or stop project shells
+  ccr                              choose a terminal in the current project
+  ccr ls                           choose a recent terminal across projects
+  ccr claude|codex [--new]           open or start a hosted Agent terminal
+  ccr claude|codex resume [ID]       resume native history (or use --last)
+  ccr session list                 list CC Remote sessions
+  ccr session attach <ID>           attach to a running Agent terminal
+  ccr local [--supplier ID]         run Claude Code in the current terminal
+  ccr shell                        open or attach to the project's default shell
+  ccr shell attach [ID]             pick or attach to a running project shell
+  ccr shell ls|stop                list or stop project shells
+  ccr run -- command [args]         run a one-off command on the host
 
-Management:
-  status / start / stop / restart / logs / config
-                              local host service operations
-  service install|uninstall   register or remove the background service
-  serve [host flags]          run the host in this terminal (serve --help)
-  profile ls|add|edit|rm|default  manage suppliers and choose the default
-  oauth ls|add|token|rename|rm manage OAuth logins
-  update                      update CC Remote
-  session [arguments]         explicit terminal entry; session --help for options
-  attach, a                   explicitly attach to an existing session
-  help / version              show help / CCR version
+  ccr status|start|stop|restart|logs|config
+  ccr service install|uninstall
+  ccr serve                        run the host in the foreground
+  ccr profile                      manage suppliers
+  ccr oauth                        manage OAuth logins
+  ccr update
+  ccr help|version
 
-Use "ccr <command> --help" for options. --host affects session, shell, run, profile and OAuth
-connections; service management always acts locally. Select a title matching a
-command with "ccr session <title>".
-
+Use ccr <command> --help for options. Put --host and --data-dir before the
+command to select a connection. Service operations act locally.
 `
 
-const usageZH = `CC Remote · ccr（cc-remote 是完全等价的名称）
+const usageZH = `CC Remote · ccr（cc-remote 是等价名称）
 
-用法：
-  ccr                         接入当前目录的会话，没有则新建
-  ccr --resume [ID]            恢复 Claude Code 会话（-r）；-c 继续最近会话
-  ccr ls                      选择最近的终端会话
-  ccr --new --model sonnet     新建终端会话
-  ccr -- "提示词"              新建并发送第一条消息
-  ccr claude -- [参数]         直连原生 Claude Code，并应用供应商配置
-  ccr run -- 命令 [参数]       在宿主执行命令并返回其退出码
-  ccr shell                   打开当前项目的交互式终端
-  ccr shell ls|attach|stop    列出、接入或结束项目终端
+  ccr                              选择当前项目的终端会话
+  ccr ls                           跨项目选择最近的终端会话
+  ccr claude|codex [--new]           打开或新建宿主 Agent 终端
+  ccr claude|codex resume [ID]       恢复原生对话历史（也可用 --last）
+  ccr session list                 列出 CC Remote 会话
+  ccr session attach <ID>           接入运行中的 Agent 终端
+  ccr local [--supplier ID]         在当前终端直接运行 Claude Code
+  ccr shell                        打开或接入当前项目的默认 Shell
+  ccr shell attach [ID]             选择或接入运行中的项目 Shell
+  ccr shell ls|stop                列出或结束项目 Shell
+  ccr run -- 命令 [参数]             在宿主执行一次命令
 
-管理：
-  status / start / stop / restart / logs / config
-                              本机宿主服务操作
-  service install|uninstall   安装或卸载后台服务
-  serve [宿主参数]            前台运行宿主（serve --help 查看参数）
-  profile ls|add|edit|rm|default  管理供应商或设置默认供应商
-  oauth ls|add|token|rename|rm 管理 OAuth 登录
-  update                      更新 CC Remote
-  session [参数]              显式终端入口；session --help 查看会话参数
-  attach, a                   明确接入已有会话
-  help / version              查看帮助 / CCR 版本
+  ccr status|start|stop|restart|logs|config
+  ccr service install|uninstall
+  ccr serve                        前台运行宿主
+  ccr profile                      管理供应商
+  ccr oauth                        管理 OAuth 登录
+  ccr update
+  ccr help|version
 
-使用 ccr <命令> --help 查看参数。--host 用于会话、项目终端、命令、供应商和 OAuth 连接；
-服务管理始终作用于本机。与命令同名的会话标题请用 ccr session <标题>。
-
+用 ccr <命令> --help 查看选项。连接参数 --host 和 --data-dir 放在命令前。
+服务管理作用于本机。
 `
 
 type stringList []string
@@ -119,12 +110,6 @@ func main() {
 	}
 }
 
-// runCCR is ccr: a terminal session for this directory, a new one started
-// with Claude Code options, or a Claude Code session to continue.
-func runCCR(args []string) error {
-	return terminal.CCR(args, config.DefaultDataDir(), channel.EnsureHost)
-}
-
 // cliLanguage is the language of commands run by hand: CC_REMOTE_LANG, else
 // the installed service's setting, else the system language.
 func cliLanguage() i18n.Lang {
@@ -139,9 +124,6 @@ func cliLanguage() i18n.Lang {
 
 func run() error {
 	args := os.Args[1:]
-	for len(args) > 0 && args[0] == "ccr" {
-		args = args[1:]
-	}
 	// Hooks and internal subcommands run often and print nothing for a
 	// person to read: dispatch them before cliLanguage reads service.json.
 	if route := routeCLI(args); internalCommand(route.command) {
@@ -486,7 +468,7 @@ func runHost(argv []string) error {
 		prefix = "& "
 		quote = func(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
 	}
-	attachCommand := prefix + quote(hostExe) + " attach --host " + quote(channelURL) + " --data-dir " + quote(absData)
+	attachCommand := prefix + quote(hostExe) + " --host " + quote(channelURL) + " --data-dir " + quote(absData) + " session attach"
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Under a service manager the host can restart itself: it exits with

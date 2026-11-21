@@ -185,7 +185,7 @@ cc-remote service config --env HTTPS_PROXY= # 删除
 
 ### ccr 别名
 
-`ccr` 启动或接入终端会话（等同 `cc-remote ccr`），不替换 `claude` 本身。安装脚本默认创建它，也可手动管理：
+`ccr` 启动或接入终端会话（等同 `cc-remote`），不替换 `claude` 本身。安装脚本默认创建它，也可手动管理：
 
 ```sh
 cc-remote alias install      # Windows：在副本目录写 ccr.cmd 并加入用户 PATH；Linux/macOS：写 ~/.local/bin/ccr，并链接 ~/.local/bin/cc-remote

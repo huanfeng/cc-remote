@@ -63,7 +63,7 @@ func TestRunCLINativeAndCatalogRoutes(t *testing.T) {
 	for _, native := range [][]string{{"--help"}, {"-p", "--data-dir"}, {"--resume", "status"}} {
 		capture := filepath.Join(t.TempDir(), "argv.json")
 		t.Setenv("CC_REMOTE_TEST_NATIVE_ARGV", capture)
-		args := append([]string{"claude", "--profile", "@native", "--claude", exe, "--"}, native...)
+		args := append([]string{"local", "claude", "--supplier", "@native", "--claude", exe, "--"}, native...)
 		if err := runCLI(args); err != nil {
 			t.Fatalf("native %q: %v", native, err)
 		}
