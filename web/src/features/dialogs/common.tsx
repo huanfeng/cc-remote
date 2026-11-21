@@ -14,6 +14,8 @@ import { useBackend } from '@/backend/backend';
 import type { ProfileCatalog } from '@/backend/types';
 import { copyText } from '@/domain/clipboard';
 import { t } from '@/lib/i18n';
+import { PickerDescription } from '@/features/pickers/PickerDescription';
+import type { PickerOption } from '@/features/pickers/options';
 
 /** A copy button that reports the result in place. */
 export function CopyButton({ text, label, className, size = 'icon-sm' }: { text: string; label?: string; className?: string; size?: 'icon-sm' | 'icon-md' | 'sm' }) {
@@ -77,22 +79,22 @@ export const NONE = '__none__';
 export const toSelect = (v: string) => v || NONE;
 export const fromSelect = (v: string) => (v === NONE ? '' : v);
 
-export interface Option { value: string; label: ReactNode; description?: ReactNode; disabled?: boolean }
+interface Option { value: string; label: ReactNode; description?: PickerOption['description']; disabled?: boolean }
 
 /** A Select over plain options, where '' is a valid value. */
 export function SimpleSelect({ value, onChange, options, disabled, className, ariaLabel, size = 'lg', placeholder }: {
-  value: string; onChange: (v: string) => void; options: Option[]; disabled?: boolean; className?: string; ariaLabel?: string;
+  value: string | null; onChange: (v: string) => void; options: Option[]; disabled?: boolean; className?: string; ariaLabel?: string;
   size?: 'default' | 'lg'; placeholder?: string;
 }) {
   return (
-    <Select value={toSelect(value)} onValueChange={v => onChange(fromSelect(v))} disabled={disabled}>
+    <Select value={value === null ? '' : toSelect(value)} onValueChange={v => onChange(fromSelect(v))} disabled={disabled}>
       <SelectTrigger size={size} aria-label={ariaLabel} className={cn('w-56 min-w-0 justify-between max-sm:w-full', className)}>
         <SelectValue placeholder={placeholder}>{options.find(option => option.value === value)?.label}</SelectValue>
       </SelectTrigger>
       <SelectContent position="popper" align="end">
         {options.map(o => (
           <SelectItem key={o.value || NONE} value={toSelect(o.value)} disabled={o.disabled}>
-            <span className="flex min-w-0 flex-col"><span>{o.label}</span>{o.description && <span className="whitespace-normal break-words text-ui-xs text-foreground-subtle">{o.description}</span>}</span>
+            <span className="flex min-w-0 flex-col"><span>{o.label}</span>{o.description && <PickerDescription description={o.description} className="text-ui-xs" />}</span>
           </SelectItem>
         ))}
       </SelectContent>

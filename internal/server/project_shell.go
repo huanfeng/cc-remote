@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -29,17 +30,20 @@ type projectShellRecord struct {
 	ProjectKey     string `json:"projectKey"`
 	Cwd            string `json:"cwd"`
 	Name           string `json:"name,omitempty"`
+	Ordinal        int    `json:"ordinal,omitempty"`
 	Default        *bool  `json:"default"`
 	TabID          string `json:"tabId,omitempty"`
 	SplitDirection string `json:"splitDirection,omitempty"`
+	PanePath       string `json:"panePath,omitempty"`
 }
 
 type projectShellView struct {
 	projectShellRecord
-	State     string   `json:"state"`
-	RunID     string   `json:"runId,omitempty"`
-	Aliases   []string `json:"aliases,omitempty"`
-	Recovered bool     `json:"recovered,omitempty"`
+	State     string            `json:"state"`
+	RunID     string            `json:"runId,omitempty"`
+	Aliases   []string          `json:"aliases,omitempty"`
+	Recovered bool              `json:"recovered,omitempty"`
+	PanePaths map[string]string `json:"panePaths,omitempty"`
 }
 
 type projectShellEntry struct {
@@ -105,15 +109,44 @@ func (m *projectShellRegistry) loadLocked(dataDir string) error {
 		m.entries = nil
 		return err
 	}
+	// Preserve existing numbers and name old records in their saved order, with
+	// each project's default shell first when the old records have no number.
+	slices.SortStableFunc(records, func(a, b projectShellRecord) int {
+		if (a.Default == nil || *a.Default) == (b.Default == nil || *b.Default) {
+			return 0
+		}
+		if a.Default == nil || *a.Default {
+			return -1
+		}
+		return 1
+	})
+	last := make(map[string]int)
+	for _, rec := range records {
+		last[rec.ProjectKey] = max(last[rec.ProjectKey], rec.Ordinal)
+	}
 	for _, rec := range records {
 		// Records written before multiple shells were introduced belong to the default shell.
 		if rec.Default == nil {
 			isDefault := true
 			rec.Default = &isDefault
 		}
+		if rec.Ordinal <= 0 {
+			last[rec.ProjectKey]++
+			rec.Ordinal = last[rec.ProjectKey]
+		}
 		m.entries[rec.ID] = &projectShellEntry{projectShellRecord: rec, restored: true}
 	}
 	return nil
+}
+
+func (m *projectShellRegistry) nextProjectShellOrdinal(key string) int {
+	last := 0
+	for _, entry := range m.entries {
+		if entry.ProjectKey == key && isOpenProjectShell(entry.state()) {
+			last = max(last, entry.Ordinal)
+		}
+	}
+	return last + 1
 }
 
 func (m *projectShellRegistry) saveLocked(dataDir, closingID string) error {
@@ -250,13 +283,7 @@ func (s *Server) listProjectShells(w http.ResponseWriter, r *http.Request) {
 		if order := strings.Compare(a.Cwd, b.Cwd); order != 0 {
 			return order
 		}
-		if *a.Default != *b.Default {
-			if *a.Default {
-				return -1
-			}
-			return 1
-		}
-		if order := strings.Compare(a.Name, b.Name); order != 0 {
+		if order := cmp.Compare(a.Ordinal, b.Ordinal); order != 0 {
 			return order
 		}
 		return strings.Compare(a.ID, b.ID)
@@ -296,6 +323,7 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		Name           string `json:"name"`
 		TabID          string `json:"tabId"`
 		SplitDirection string `json:"splitDirection"`
+		SplitFrom      string `json:"splitFrom"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -309,7 +337,7 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, l.T("Specify a project directory for the new shell", "请选择新终端的项目目录"))
 		return
 	}
-	if (req.TabID != "" || req.SplitDirection != "") &&
+	if (req.TabID != "" || req.SplitDirection != "" || req.SplitFrom != "") &&
 		(!req.Create || req.TabID == "" || (req.SplitDirection != "columns" && req.SplitDirection != "rows")) {
 		fail(w, http.StatusBadRequest, l.T("Specify a tab and a split direction for the new shell", "请为新终端指定标签页和分屏方向"))
 		return
@@ -342,14 +370,17 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var splitMember *projectShellEntry
+	var members []*projectShellEntry
 	if req.TabID != "" {
-		for _, member := range m.entries {
-			if member.ProjectKey == key && member.tabID() == req.TabID && isOpenProjectShell(member.state()) {
-				if splitMember != nil {
-					fail(w, http.StatusConflict, l.T("This tab already has two panes", "此标签页已有两个分屏"))
-					return
-				}
+		members = m.openTab(key, req.TabID)
+		if req.SplitFrom == "" && len(members) > 1 {
+			fail(w, http.StatusConflict, l.T("This tab already has two panes", "此标签页已有两个分屏"))
+			return
+		}
+		for _, member := range members {
+			if req.SplitFrom == "" || member.ID == req.SplitFrom {
 				splitMember = member
+				break
 			}
 		}
 		if splitMember == nil {
@@ -431,20 +462,24 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 	previous := *entry
 	if !isOpenProjectShell(entry.state()) {
 		entry.Name = name
+		entry.Ordinal = m.nextProjectShellOrdinal(entry.ProjectKey)
 	}
 	entry.restored = false
 	run := &projectShellRun{id: rand.Text(), pty: pty, released: make(chan struct{})}
 	entry.run = run
-	var previousDirection string
+	var panePaths map[string]string
+	var rollbackLayout func()
 	if splitMember != nil {
-		// The new pane owns the direction, including when it replaces a tab's original root.
-		previousDirection = splitMember.SplitDirection
-		splitMember.SplitDirection = ""
+		panePaths = projectShellPanePaths(members)
+		first, second := splitSides(req.SplitDirection)
+		path := panePaths[splitMember.ID]
+		panePaths[splitMember.ID], panePaths[entry.ID] = path+first, path+second
+		rollbackLayout = applyProjectShellPaths(append(members, entry), panePaths)
 	}
 	if err := m.saveLocked(s.cfg.DataDir, ""); err != nil {
 		*entry = previous
-		if splitMember != nil {
-			splitMember.SplitDirection = previousDirection
+		if rollbackLayout != nil {
+			rollbackLayout()
 		}
 		if newEntry {
 			delete(m.entries, entry.ID)
@@ -460,6 +495,7 @@ func (s *Server) startProjectShell(w http.ResponseWriter, r *http.Request) {
 	view := entry.view()
 	view.Aliases = aliases
 	view.Recovered = previous.restored
+	view.PanePaths = panePaths
 	respond(w, http.StatusOK, view)
 }
 
@@ -472,20 +508,24 @@ func (s *Server) renameProjectShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name *string `json:"name"`
+		Name           *string `json:"name"`
+		SplitDirection string  `json:"splitDirection"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	l := s.lang(r)
-	if req.Name == nil {
-		fail(w, http.StatusBadRequest, l.T("Specify a shell name", "请指定终端名称"))
+	if (req.Name == nil && req.SplitDirection != "columns" && req.SplitDirection != "rows") || (req.Name != nil && req.SplitDirection != "") {
+		fail(w, http.StatusBadRequest, l.T("Specify a shell name or a split direction", "请指定终端名称或分屏方向"))
 		return
 	}
-	name := strings.TrimSpace(*req.Name)
-	if !validProjectShellName(name) {
-		fail(w, http.StatusBadRequest, l.T("Shell names must be at most 80 characters without control characters", "终端名称不得超过 80 个字符或包含控制字符"))
-		return
+	var name string
+	if req.Name != nil {
+		name = strings.TrimSpace(*req.Name)
+		if !validProjectShellName(name) {
+			fail(w, http.StatusBadRequest, l.T("Shell names must be at most 80 characters without control characters", "终端名称不得超过 80 个字符或包含控制字符"))
+			return
+		}
 	}
 	m := &s.projectShells
 	m.mu.Lock()
@@ -501,6 +541,10 @@ func (s *Server) renameProjectShell(w http.ResponseWriter, r *http.Request) {
 	entry := m.entries[r.PathValue("id")]
 	if entry == nil {
 		fail(w, http.StatusNotFound, l.T("Project shell not found", "找不到项目终端"))
+		return
+	}
+	if req.Name == nil {
+		s.reorientProjectShell(w, r, entry, req.SplitDirection)
 		return
 	}
 	if name != entry.Name {

@@ -8,6 +8,7 @@ import { usePrefs, type ProjectShellShortcut, type ThemePref } from '@/lib/prefs
 import { useSystemDark } from '@/lib/theme';
 import { hostLang, langOverride, setLang, t } from '@/lib/i18n';
 import { notifySupported } from '@/domain/notify';
+import { isTerminalPalette, terminalPalettes } from '@/domain/preferences';
 import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { SimpleSelect } from '@/features/dialogs/common';
 import { GroupTitle, SectionHeader } from './parts';
@@ -18,9 +19,17 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
   const set = usePrefs(s => s.set);
   const theme = usePrefs(s => s.theme);
   const palette = usePrefs(s => s.palette);
+  const terminalPalette = usePrefs(s => s.terminalPalette);
   const sendKey = usePrefs(s => s.sendKey);
   const shellShortcut = usePrefs(s => s.projectShellShortcut);
   const [language] = useState(langOverride());
+  const terminalPaletteLabels = {
+    dark: t('Dark · default', '深色 · 默认'),
+    light: t('Light', '浅色'),
+    ocean: t('Ocean', '深海蓝'),
+    warm: t('Warm', '暖棕'),
+    app: t('Follow app theme', '跟随应用主题'),
+  };
   return (
     <div>
       {!mobile && <SectionHeader title={t('Appearance & interaction', '外观与交互')} description={t('Preferences are stored locally.', '偏好设置保存在本地。')} />}
@@ -38,6 +47,21 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
           label={t('Colour palette', '配色')}
           control={<SimpleSelect value={palette} onChange={v => set({ palette: v === 'default' ? 'default' : 'graphite' })} ariaLabel={t('Colour palette', '配色')}
             options={[{ value: 'graphite', label: t('Graphite', '石墨') }, { value: 'default', label: t('Classic', '经典') }]} />}
+        />
+        <Row
+          label={t('Terminal colours', '终端配色')}
+          description={t('Applies to project and session terminals.', '同时应用于项目终端和会话终端。')}
+          control={<div className="flex items-center gap-2">
+            <span aria-hidden className="flex h-7 items-center gap-0.5 rounded border border-border bg-terminal-bg px-1.5">
+              <span className="size-1.5 rounded-full bg-terminal-fg" />
+              <span className="size-1.5 rounded-full bg-terminal-green" />
+              <span className="size-1.5 rounded-full bg-terminal-blue" />
+              <span className="size-1.5 rounded-full bg-terminal-red" />
+            </span>
+            <SimpleSelect value={terminalPalette} onChange={v => { if (isTerminalPalette(v)) set({ terminalPalette: v }); }}
+              ariaLabel={t('Terminal colours', '终端配色')}
+              options={terminalPalettes.map(value => ({ value, label: terminalPaletteLabels[value] }))} />
+          </div>}
         />
         <Row
           label={t('Language', '语言')}

@@ -3,10 +3,15 @@
 import { t } from '../../lib/i18n.ts';
 import { codexPermissions, dangerousPermission, providerEfforts, type Provider } from '../../domain/providers.ts';
 
+export interface PickerDescriptionPart {
+  text: string;
+  tone?: 'ok' | 'warn' | 'high';
+}
+
 export interface PickerOption {
   value: string;
   label: string;
-  description?: string;
+  description?: string | PickerDescriptionPart[];
   tag?: string;
   tone?: 'danger' | 'warn';
 }

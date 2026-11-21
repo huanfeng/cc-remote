@@ -11,7 +11,7 @@ import { providerOf } from '@/domain/providers';
 import { t } from '@/lib/i18n';
 import { useApp } from '@/store/app';
 import { PickerGroup, PickerItem, PickerList, PickerSurface } from './PickerSurface';
-import { currentSupplierValue, profileLabel, profilesFor, supplierOptions, switchSupplier } from './supplierSwitch';
+import { currentSupplierValue, profileLabel, profilesFor, supplierSwitchOptions, switchSupplier } from './supplierSwitch';
 import { useSupplierUsage } from './useSupplierUsage';
 
 export function SupplierQuickSwitch({ session, open, onOpenChange, trigger, anchor, mobile }: {
@@ -46,7 +46,7 @@ export function SupplierQuickSwitch({ session, open, onOpenChange, trigger, anch
   const current = currentSupplierValue(session);
   const currentProfile = profilesFor(catalog, provider).find(p => p.id === current);
   const missing = !!current && current !== '@native' && !currentProfile;
-  const options = supplierOptions(catalog, provider, false, usage);
+  const options = supplierSwitchOptions(catalog, provider, usage);
   const run = async (value: string, force = false) => {
     if (pending.current || (!force && value === current)) return;
     pending.current = true; setBusy(true); setError('');
@@ -84,7 +84,9 @@ export function SupplierQuickSwitch({ session, open, onOpenChange, trigger, anch
         : !catalog ? <div role="status" className="flex items-center gap-2 px-2 py-3 text-ui-sm text-foreground-subtle"><Spinner className="size-3.5" />{t('Loading suppliers…', '正在读取供应商…')}</div>
         : !catalog.capabilities?.switchSupplier ? <p className="px-2 py-3 text-ui-sm text-foreground-subtle">{t('This host does not support switching suppliers. Update the host to continue.', '此宿主不支持切换供应商，请先更新宿主。')}</p>
         : <>
-          <PickerGroup>{options.map(option => <PickerItem key={option.value} option={option} selected={option.value === current} disabled={busy} mobile={mobile} onSelect={value => { void run(value); }} />)}</PickerGroup>
+          {options.length
+            ? <PickerGroup>{options.map(option => <PickerItem key={option.value} option={option} selected={option.value === current} disabled={busy} mobile={mobile} onSelect={value => { void run(value); }} />)}</PickerGroup>
+            : <p className="px-2 py-3 text-ui-sm text-foreground-subtle">{t('No suppliers available to switch to.', '暂无可切换的供应商。')}</p>}
           {missing && <p className="px-2 py-2 text-ui-sm text-foreground-subtlest">{t('The current supplier is unavailable; its saved session configuration is kept until you switch.', '当前供应商已不可用；切换前仍保留此会话保存的配置。')}</p>}
         </>}
       {busy && <div role="status" className="flex items-center gap-2 px-2 py-2 text-ui-sm text-foreground-subtle"><Spinner className="size-3.5" />{t('Switching…', '正在切换…')}</div>}

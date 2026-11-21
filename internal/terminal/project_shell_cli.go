@@ -34,6 +34,7 @@ type cliProjectShell struct {
 	ID      string   `json:"id"`
 	Cwd     string   `json:"cwd"`
 	Name    string   `json:"name"`
+	Ordinal int      `json:"ordinal"`
 	Default bool     `json:"default"`
 	Aliases []string `json:"aliases"`
 	State   string   `json:"state"`
@@ -205,8 +206,12 @@ func printProjectShells(out io.Writer, shells []cliProjectShell) error {
 	fmt.Fprintln(w, i18n.T("ID\tSTATE\tDIRECTORY\tNAME", "ID\t状态\t目录\t名称"))
 	for _, s := range shells {
 		name := s.Name
-		if name == "" && s.Default {
-			name = i18n.T("Default", "默认")
+		if name == "" {
+			if s.Ordinal > 0 {
+				name = i18n.F("Terminal %d", "终端 %d", s.Ordinal)
+			} else if s.Default {
+				name = i18n.T("Default", "默认")
+			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.ID, s.State, s.Cwd, name)
 	}

@@ -640,3 +640,83 @@
   --color-plugin-node-hover: rgba(224, 174, 112, 0.22);
   --color-plugin-node-foreground: #efc58f;
 }
+
+/* Terminal presets are independent of the surrounding application palette. */
+:root[data-palette]:is(:not([data-terminal-palette]), [data-terminal-palette="dark"], [data-terminal-palette="ocean"], [data-terminal-palette="warm"]) {
+  --color-terminal-bg: #17191e;
+  --color-terminal-fg: #e6e9ef;
+  --color-terminal-cursor: var(--color-terminal-fg);
+  --color-terminal-cursor-accent: var(--color-terminal-bg);
+  --color-terminal-selection: #607ca85c;
+  --color-terminal-selection-inactive: #607ca835;
+  --color-terminal-black: #272c36;
+  --color-terminal-red: #ff797c;
+  --color-terminal-green: #89d5a2;
+  --color-terminal-yellow: #eac778;
+  --color-terminal-blue: #83b6fb;
+  --color-terminal-magenta: #c9a0f5;
+  --color-terminal-cyan: #74d3d8;
+  --color-terminal-white: #c8d0dd;
+  --color-terminal-bright-black: #778296;
+  --color-terminal-bright-red: #ff9e9d;
+  --color-terminal-bright-green: #acf3bc;
+  --color-terminal-bright-yellow: #ffe5a5;
+  --color-terminal-bright-blue: #adcfff;
+  --color-terminal-bright-magenta: #e7bdff;
+  --color-terminal-bright-cyan: #a3eef0;
+  --color-terminal-bright-white: #f6f8fc;
+}
+
+:root[data-palette][data-terminal-palette="light"] {
+  --color-terminal-bg: #f7f8fb;
+  --color-terminal-fg: #242b36;
+  --color-terminal-cursor: var(--color-terminal-fg);
+  --color-terminal-cursor-accent: var(--color-terminal-bg);
+  --color-terminal-selection: #82a7e064;
+  --color-terminal-selection-inactive: #82a7e038;
+  --color-terminal-black: #202633;
+  --color-terminal-red: #a52437;
+  --color-terminal-green: #216840;
+  --color-terminal-yellow: #795300;
+  --color-terminal-blue: #1556a4;
+  --color-terminal-magenta: #753b96;
+  --color-terminal-cyan: #00606d;
+  --color-terminal-white: #464e5d;
+  --color-terminal-bright-black: #586274;
+  --color-terminal-bright-red: #ba2f42;
+  --color-terminal-bright-green: #197847;
+  --color-terminal-bright-yellow: #866100;
+  --color-terminal-bright-blue: #246cca;
+  --color-terminal-bright-magenta: #8948b0;
+  --color-terminal-bright-cyan: #127582;
+  --color-terminal-bright-white: #19212e;
+}
+
+:root[data-palette][data-terminal-palette="ocean"] {
+  --color-terminal-bg: #101e30;
+  --color-terminal-fg: #dceefa;
+  --color-terminal-selection: #558dc96e;
+  --color-terminal-selection-inactive: #558dc939;
+  --color-terminal-black: #283a51;
+  --color-terminal-blue: #7ebdff;
+  --color-terminal-magenta: #beaef8;
+  --color-terminal-cyan: #61d5e1;
+  --color-terminal-bright-black: #8297ae;
+  --color-terminal-bright-blue: #a0d4ff;
+  --color-terminal-bright-cyan: #a0f4fa;
+}
+
+:root[data-palette][data-terminal-palette="warm"] {
+  --color-terminal-bg: #252017;
+  --color-terminal-fg: #f0e2ca;
+  --color-terminal-selection: #c4985e66;
+  --color-terminal-selection-inactive: #c4985e36;
+  --color-terminal-black: #3d3427;
+  --color-terminal-red: #ef967d;
+  --color-terminal-green: #b7ce8f;
+  --color-terminal-yellow: #e8c37a;
+  --color-terminal-white: #e0ccb0;
+  --color-terminal-bright-black: #9a886d;
+  --color-terminal-bright-red: #ffb599;
+  --color-terminal-bright-yellow: #ffe0a2;
+}

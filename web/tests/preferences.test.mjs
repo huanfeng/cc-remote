@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { decodePreferences, mergePreferencePatch } from '../src/domain/preferences.ts';
 
 const defaults = {
-  theme:'system', palette:'graphite', sendKey:'enter', sidebarCollapsed:false, sidebarWidth:272,
+  theme:'system', palette:'graphite', terminalPalette:'dark', sendKey:'enter', sidebarCollapsed:false, sidebarWidth:272,
   collapsedProjects:{}, toolsExpanded:false, terminalView:{}, terminalZoom:1, terminalFit:false,
   newSessionMode:'terminal', hiddenRecaps:[], notify:{on:false,waiting:true,done:true,failed:true},
 };
@@ -36,8 +36,10 @@ test('dismissed recaps merge; existing envelopes migrate and corrupted settings 
   assert.equal(decodePreferences('{broken', defaults), undefined);
   const migrated = decodePreferences(JSON.stringify({version:1,state:{theme:'dark',hiddenRecaps:['old:1']}}), defaults);
   assert.equal(migrated.theme,'dark'); assert.deepEqual(migrated.hiddenRecaps,[]);
-  const invalid = decodePreferences(JSON.stringify({version:2,state:{theme:'bad',sidebarWidth:'huge',terminalView:null,notify:{on:true}}}), defaults);
+  assert.equal(migrated.terminalPalette,'dark');
+  const invalid = decodePreferences(JSON.stringify({version:2,state:{theme:'bad',terminalPalette:'bad',sidebarWidth:'huge',terminalView:null,notify:{on:true}}}), defaults);
   assert.equal(invalid.theme, 'system'); assert.equal(invalid.sidebarWidth,272);
+  assert.equal(invalid.terminalPalette,'dark');
   assert.deepEqual(invalid.terminalView,{}); assert.deepEqual(invalid.notify,{...defaults.notify,on:true});
 });
 
@@ -53,11 +55,12 @@ test('two stores synchronize without echo writes and stale layout edits cannot r
     };
     const {usePrefs:a} = await import('../src/lib/prefs.ts?view=a');
     const {usePrefs:b} = await import('../src/lib/prefs.ts?view=b');
-    a.getState().set({theme:'dark',sidebarWidth:400});
+    a.getState().set({theme:'dark',terminalPalette:'ocean',sidebarWidth:400});
     // B has not received the storage notification yet. Its layout write must
     // still preserve A's latest theme and its own independent layout.
     b.getState().set({sidebarWidth:300});
     assert.equal(b.getState().theme,'dark');
+    assert.equal(b.getState().terminalPalette,'ocean');
     const count = writes;
     for (const listener of listeners) listener({key:'ccn-prefs'});
     assert.equal(writes,count);

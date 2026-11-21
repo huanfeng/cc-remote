@@ -11,13 +11,14 @@ import type { Preferences, Session, SessionStats } from '@/backend/types';
 import { useApp } from '@/store/app';
 import { t, lang, locale } from '@/lib/i18n';
 import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
+import { currentSupplierValue, supplierSwitchOptions } from '@/features/pickers/supplierSwitch';
 import { dangerousPermission, providerName, providerOf } from '@/domain/providers';
 import { conversationTime } from '@/domain/conversationTime';
 import { modeLabel, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
 import { permissionLabel } from '@/features/pickers';
 import { GroupCard, InfoRow, Section, SurfaceShell } from '@/features/dialogs/SurfaceShell';
 import {
-  ConfirmDialog, CopyButton, ErrorText, SimpleSelect, errorMessage, profileLabel, profilesFor, supplierOptions, useProfileCatalog,
+  ConfirmDialog, CopyButton, ErrorText, SimpleSelect, errorMessage, profileLabel, profilesFor, useProfileCatalog,
 } from '@/features/dialogs/common';
 import { EffortField, ModelField, PermissionField } from '@/features/dialogs/pickers';
 import { DeleteSessionDialog } from '@/features/dialogs/DeleteSessionDialog';
@@ -143,20 +144,24 @@ function SupplierSection({ session: s }: { session: Session }) {
   const provider = providerOf(s);
   const supplierUsage = useSupplierUsage(provider);
   const { catalog, error: catalogError } = useProfileCatalog();
-  const [chosen, setChosen] = useState(s.profileId ?? '');
+  const currentValue = currentSupplierValue(s);
+  const [chosen, setChosen] = useState(currentValue);
   const [busy, setBusy] = useState(false);
   const [force, setForce] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  useEffect(() => { setChosen(s.profileId ?? ''); }, [s.profileId]);
+  useEffect(() => { setChosen(currentValue); }, [currentValue]);
 
   if (catalogError) return null;
   if (catalog && !catalog.capabilities?.switchSupplier) return null;
   const current = profilesFor(catalog, provider).find(p => p.id === s.profileId);
-  const options = supplierOptions(catalog, provider, false, supplierUsage);
-  if (s.profileId && !options.some(o => o.value === s.profileId)) options.push({ value: s.profileId, label: t(`Unavailable · ${s.profileId}`, `不可用 · ${s.profileId}`) });
+  const options = supplierSwitchOptions(catalog, provider, supplierUsage);
+  if (currentValue !== '@native' && !current) options.push({ value: currentValue, label: t(`Unavailable · ${currentValue}`, `不可用 · ${currentValue}`) });
+  const selected = options.some(option => option.value === chosen);
+  const canSwitch = !!catalog && selected && chosen !== currentValue;
 
   const run = async (withForce = false) => {
+    if (!canSwitch) return;
     setBusy(true); setError(''); setNotice('');
     try {
       await backend.switchProfile(s.id, chosen, withForce);
@@ -175,8 +180,8 @@ function SupplierSection({ session: s }: { session: Session }) {
       <GroupCard>
         <InfoRow label={t('Current', '当前')}>{s.profileName || (current && profileLabel(current)) || s.profileId || t('Native configuration', '原生配置')}</InfoRow>
         <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3">
-          <SimpleSelect value={chosen} onChange={v => { setChosen(v); setError(''); setNotice(''); }} options={options} disabled={!catalog || busy} className="min-w-0 flex-1 sm:w-auto" ariaLabel={t('Supplier', '供应商')} />
-          <Button variant="outline" size="lg" disabled={busy || !catalog || chosen === (s.profileId ?? '')} onClick={() => void run()}>
+          <SimpleSelect value={selected ? chosen : null} onChange={v => { setChosen(v); setError(''); setNotice(''); }} options={options} disabled={!catalog || busy || !options.length} placeholder={options.length ? t('Choose supplier', '选择供应商') : t('No suppliers available', '暂无可用供应商')} className="min-w-0 flex-1 sm:w-auto" ariaLabel={t('Supplier', '供应商')} />
+          <Button variant="outline" size="lg" disabled={busy || !canSwitch} onClick={() => void run()}>
             {busy && <Spinner className="size-3.5" />}
             {t('Switch', '切换')}
           </Button>

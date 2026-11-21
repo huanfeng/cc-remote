@@ -415,6 +415,7 @@ function SessionRow({ session, active, mobile, showFolder }: { session: Session;
   const key = selectionKey({ kind: 'session', id: s.id });
   const isCached = useTranscripts(st => key in st.byKey);
   const tone = statusTone(s);
+  const status = sessionStatusLabel(s);
   const time = conversationTime(s, Date.now(), lang);
   const canExit = hasFeature(info, 'queueControls') && (s.online || s.status === 'running');
   const canArchive = hasFeature(info, 'archive');
@@ -438,7 +439,7 @@ function SessionRow({ session, active, mobile, showFolder }: { session: Session;
       )}
     >
       <span className="mt-[7px] flex size-2 shrink-0 items-center justify-center">
-        <span className={cn('size-[7px] rounded-full', toneDot[tone])} title={sessionStatusLabel(s)} />
+        <span className={cn('size-[7px] rounded-full', toneDot[tone])} role="img" aria-label={status} title={status} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
@@ -449,7 +450,7 @@ function SessionRow({ session, active, mobile, showFolder }: { session: Session;
           {s.mode === 'terminal' && <SquareTerminal className="size-3 shrink-0" aria-label={t('Terminal', '终端')} />}
           <span className="truncate" title={showFolder ? s.cwd : undefined}>{showFolder ? `${folderName(s.cwd)} · ${sessionMeta(s)}` : sessionMeta(s)}</span>
           {s.archived && !showFolder && <span className="shrink-0">· {t('Archived', '已归档')}</span>}
-          {(tone === 'waiting' || tone === 'retrying') && <span className="shrink-0 text-warning">· {sessionStatusLabel(s)}</span>}
+          {(tone === 'waiting' || tone === 'retrying') && <span className="shrink-0 text-warning">· {status}</span>}
           {queued > 0 && <span className="shrink-0">· {t(`${queued} queued`, `${queued} 条排队`)}</span>}
         </div>
       </div>

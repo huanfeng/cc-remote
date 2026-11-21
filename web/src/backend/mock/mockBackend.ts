@@ -447,6 +447,7 @@ export class MockBackend implements Backend {
   watchProjectShells(): Unsubscribe { return () => {}; }
   async startProjectShell(): Promise<ProjectShell> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   async renameProjectShell(): Promise<ProjectShell> { throw new BackendError('演示宿主未启用项目终端。', 403); }
+  async reorientProjectShell(): Promise<ProjectShell> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   async stopProjectShell(): Promise<void> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   async dismissProjectShell(): Promise<void> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   openProjectShell(): ProjectShellStream { throw new BackendError('演示宿主未启用项目终端。', 403); }

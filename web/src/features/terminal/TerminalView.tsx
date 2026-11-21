@@ -181,7 +181,7 @@ function TerminalOverlay({ ui, onReconnect }: { ui: TerminalUi; onReconnect: () 
   if (ui.state === 'connecting' && ui.attempt === 0) {
     return (
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <div className="flex items-center gap-2 text-ui-sm text-foreground-subtle duration-300 animate-in fade-in-0">
+        <div className="flex items-center gap-2 text-ui-sm text-terminal-fg duration-300 animate-in fade-in-0">
           <Spinner className="size-3.5" />{t('Connecting to the terminal…', '正在连接终端…')}
         </div>
       </div>

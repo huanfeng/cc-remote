@@ -25,6 +25,7 @@ export function useResolvedDark() {
 export function useApplyTheme() {
   const dark = useResolvedDark();
   const palette = usePrefs(s => s.palette);
+  const terminalPalette = usePrefs(s => s.terminalPalette);
   const theme = usePrefs(s => s.theme);
   useEffect(() => {
     const root = document.documentElement;
@@ -39,4 +40,7 @@ export function useApplyTheme() {
     const bg = getComputedStyle(root).getPropertyValue('--color-background-win-alt').trim();
     if (meta && bg) meta.setAttribute('content', bg);
   }, [dark, palette, theme]);
+  useEffect(() => {
+    document.documentElement.dataset.terminalPalette = terminalPalette;
+  }, [terminalPalette]);
 }

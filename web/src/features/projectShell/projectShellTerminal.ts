@@ -175,6 +175,9 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
     });
   };
 
+  const applyTheme = () => { terminal.options.theme = mergeTerminalTheme(undefined); };
+  const themeObserver = new MutationObserver(applyTheme);
+  themeObserver.observe(document.documentElement, { attributeFilter: ['class', 'data-palette', 'data-terminal-palette'] });
   connect();
   return {
     focus: () => { if (visible) terminal.focus(); },
@@ -213,7 +216,6 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
     },
     send,
     take: () => { if (connected) stream?.take(); },
-    applyTheme: () => { terminal.options.theme = mergeTerminalTheme(undefined); },
     retry() {
       attempts = 0;
       update({ status: 'connecting', detail: '', control: false });
@@ -223,6 +225,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
       disconnect();
       output.dispose();
       observer.disconnect();
+      themeObserver.disconnect();
       resize.cancel();
       data.dispose();
       binary.dispose();

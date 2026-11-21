@@ -292,14 +292,16 @@ func TestProjectShellMultipleEntriesAndLegacyDefault(t *testing.T) {
 	}
 	defaultShell := viewRequest(host, "POST", path, map[string]any{"cwd": cwd})
 	named := viewRequest(host, "POST", path, map[string]any{"cwd": cwd, "create": true, "name": " Build "})
-	if defaultShell.ID != "legacy" || !*defaultShell.Default || named.ID == defaultShell.ID || named.RunID == "" || named.RunID == defaultShell.RunID || *named.Default || named.ProjectKey != defaultShell.ProjectKey || named.Name != "Build" {
+	if defaultShell.ID != "legacy" || !*defaultShell.Default || defaultShell.Ordinal != 1 ||
+		named.ID == defaultShell.ID || named.RunID == "" || named.RunID == defaultShell.RunID || *named.Default ||
+		named.ProjectKey != defaultShell.ProjectKey || named.Name != "Build" || named.Ordinal != 2 {
 		t.Fatalf("default shell: %+v, named shell: %+v", defaultShell, named)
 	}
 	if again := viewRequest(host, "POST", path, map[string]any{"cwd": cwd, "restart": true}); again.RunID != defaultShell.RunID {
 		t.Fatalf("opening by cwd replaced the default run: %+v", again)
 	}
 	renamed := viewRequest(host, "PATCH", path+"/"+named.ID, map[string]string{"name": "Logs"})
-	if renamed.RunID != named.RunID || renamed.Name != "Logs" {
+	if renamed.RunID != named.RunID || renamed.Name != "Logs" || renamed.Ordinal != named.Ordinal {
 		t.Fatalf("rename changed the run or did not save its name: %+v", renamed)
 	}
 	if code, b := request(t, host, "PATCH", path+"/"+named.ID, map[string]string{"name": "escaped\x1b[31m"}, testToken); code != http.StatusBadRequest {
@@ -313,14 +315,26 @@ func TestProjectShellMultipleEntriesAndLegacyDefault(t *testing.T) {
 	if code, b := request(t, host, "GET", path, nil, testToken); code != http.StatusOK || json.Unmarshal(b, &views) != nil || len(views) != 2 || views[0].ID != defaultShell.ID || views[1].ID != named.ID {
 		t.Fatalf("list project shells: %d %s", code, b)
 	}
+	numbered := viewRequest(host, "POST", path, map[string]any{"cwd": cwd, "create": true})
+	if numbered.Ordinal != 3 || numbered.Name != "" {
+		t.Fatalf("unnamed shell did not get the next project number: %+v", numbered)
+	}
+	other := viewRequest(host, "POST", path, map[string]any{"cwd": t.TempDir(), "create": true})
+	if other.Ordinal != 1 || other.ProjectKey == numbered.ProjectKey {
+		t.Fatalf("another project's numbering did not start from one: %+v", other)
+	}
 	closeShellTestHost(t, s)
 	newServer := New(st, s.cfg)
 	newHost := httptest.NewServer(newServer.Handler())
 	defer newHost.Close()
 	defer closeShellTestHost(t, newServer)
 	restored := viewRequest(newHost, "POST", path, map[string]any{"shellId": named.ID})
-	if restored.Name != "Logs" || *restored.Default || !restored.Recovered || restored.RunID == "" || restored.RunID == named.RunID {
+	if restored.Name != "Logs" || restored.Ordinal != named.Ordinal || *restored.Default || !restored.Recovered || restored.RunID == "" || restored.RunID == named.RunID {
 		t.Fatalf("restored named shell: %+v", restored)
+	}
+	next := viewRequest(newHost, "POST", path, map[string]any{"cwd": cwd, "create": true})
+	if next.Ordinal != 4 {
+		t.Fatalf("new shell reused a number held by an interrupted shell: %+v", next)
 	}
 }
 
@@ -390,6 +404,14 @@ func TestProjectShellKeepsOnlyOpenPanesAcrossHostRestart(t *testing.T) {
 	if views := list(); views[pane.ID].SplitDirection != "" || views[secondPane.ID].SplitDirection != "rows" {
 		t.Fatalf("the replacement pane should define the new layout: %+v", views)
 	}
+	thirdPane := start(map[string]any{"cwd": cwd, "create": true, "tabId": root.ID, "splitDirection": "columns", "splitFrom": secondPane.ID})
+	if thirdPane.PanePaths[pane.ID] != "U" || thirdPane.PanePaths[secondPane.ID] != "DL" || thirdPane.PanePath != "DR" {
+		t.Fatalf("expected a left/right split under the original top/bottom split: %+v", thirdPane)
+	}
+	expect("PATCH", path+"/"+thirdPane.ID, map[string]any{"splitDirection": "rows"}, http.StatusOK)
+	if views := list(); views[secondPane.ID].PanePath != "DU" || views[thirdPane.ID].PanePath != "DD" || views[thirdPane.ID].RunID != thirdPane.RunID {
+		t.Fatalf("changing direction should rearrange the same processes: %+v", views)
+	}
 	expect("DELETE", path+"/"+secondPane.ID+"/runs/"+secondPane.RunID, nil, http.StatusNoContent)
 	expect("POST", path, map[string]any{"shellId": secondPane.ID}, http.StatusNotFound)
 
@@ -398,10 +420,11 @@ func TestProjectShellKeepsOnlyOpenPanesAcrossHostRestart(t *testing.T) {
 	host = httptest.NewServer(restarted.Handler())
 	defer host.Close()
 	defer closeShellTestHost(t, restarted)
-	if views := list(); len(views) != 2 || views[pane.ID].State != "interrupted" || views[pane.ID].TabID != root.ID || views[freshDefault.ID].State != "interrupted" {
-		t.Fatalf("expected the open pane and the new default after restart: %+v", views)
+	if views := list(); len(views) != 3 || views[pane.ID].State != "interrupted" || views[pane.ID].TabID != root.ID || views[thirdPane.ID].PanePath != "DD" || views[freshDefault.ID].State != "interrupted" {
+		t.Fatalf("expected both open panes with their saved layout and the new default after restart: %+v", views)
 	}
 	expect("DELETE", path+"/"+pane.ID, nil, http.StatusNoContent)
+	expect("DELETE", path+"/"+thirdPane.ID, nil, http.StatusNoContent)
 	expect("POST", path, map[string]any{"shellId": pane.ID}, http.StatusNotFound)
 	if views := list(); len(views) != 1 || views[freshDefault.ID].State != "interrupted" {
 		t.Fatalf("dismissing the interrupted pane affected other shells: %+v", views)

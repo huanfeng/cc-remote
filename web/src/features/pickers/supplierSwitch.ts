@@ -30,6 +30,14 @@ export function supplierOptions(catalog: ProfileCatalog | undefined, app: Provid
   ];
 }
 
+export function supplierSwitchOptions(catalog: ProfileCatalog | undefined, app: Provider, usage: ProfileUsageReply | null | undefined): PickerOption[] {
+  const options = supplierOptions(catalog, app, false, usage);
+  const native = app === 'claude' ? usage?.profiles['@native'] : undefined;
+  if (native?.reason !== 'no-login' || native.available !== false || native.stale || native.error) return options;
+  const defaultID = catalog?.defaultProfiles[app] || '@native';
+  return options.filter(({ value }) => value !== '@native' && (value !== '' || defaultID !== '@native'));
+}
+
 /** A session stores its resolved supplier; an empty ID means native, not a default request. */
 export const currentSupplierValue = (session: Pick<Session, 'profileId'>): string => session.profileId || '@native';
 

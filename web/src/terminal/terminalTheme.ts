@@ -21,6 +21,7 @@ const colorNormalizeCtx: CanvasRenderingContext2D | null = (() => {
 })();
 
 function normalizeCssColor(raw: string, fallback: string): string {
+  if (/^#[\da-f]{6}(?:[\da-f]{2})?$/i.test(raw)) return raw;
   if (!raw || !colorResolverEl || !colorNormalizeCtx || !document.body) {
     return raw || fallback;
   }
@@ -66,7 +67,7 @@ const TERMINAL_THEME_TOKENS = {
   brightWhite: ["--color-terminal-bright-white", "#f9fafb"],
 } satisfies Partial<Record<keyof ITheme, readonly [string, string]>>;
 
-/** 从 CSS 变量读取 terminal 主题色，跟随 dark/light 切换 */
+/** Read the active terminal preset, including app tokens when it follows the app theme. */
 function getTerminalTheme() {
   const style = getComputedStyle(document.documentElement);
   return Object.fromEntries(
@@ -85,9 +86,7 @@ export function restrictInheritedTerminalTheme(
   }
 
   const inheritedTheme = { ...profileTheme };
-  // macOS iTerm2 / Terminal profile 会带回 background / foreground / cursor，
-  // 直接覆盖 ZCode 主题 token 会让浅色 app 里出现深色终端块，或光标和当前背景撞色后不可见。
-  // 这些基础可读性颜色必须跟随 app 主题；系统 profile 只继承 ANSI、选区等终端细节色。
+  // Keep the active preset's surface and cursor colours when importing ANSI and selection colours.
   delete inheritedTheme.background;
   delete inheritedTheme.foreground;
   delete inheritedTheme.cursor;
@@ -97,7 +96,8 @@ export function restrictInheritedTerminalTheme(
 }
 
 export function mergeTerminalTheme(profileTheme: ITheme | undefined): ITheme {
-  const appTheme = getTerminalTheme();
+  const theme = getTerminalTheme();
+  if (document.documentElement.dataset.terminalPalette !== 'app') return theme;
   const inheritedTheme = restrictInheritedTerminalTheme(profileTheme);
-  return inheritedTheme ? { ...appTheme, ...inheritedTheme } : appTheme;
+  return inheritedTheme ? { ...theme, ...inheritedTheme } : theme;
 }

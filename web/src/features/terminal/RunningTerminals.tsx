@@ -10,7 +10,8 @@ import { providerName, providerOf } from '@/domain/providers';
 import { useConnection } from '@/features/auth/connection';
 import { ConfirmDialog } from '@/features/dialogs/common';
 import { SurfaceShell } from '@/features/dialogs/SurfaceShell';
-import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
+import { projectShellLabel } from '@/features/projectShell/projectShellLabel';
+import { isOpenProjectShell, useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 import { folderName, sessionStatusLabel } from '@/features/session/status';
 import { useNow } from '@/lib/hooks';
 import { lang, t } from '@/lib/i18n';
@@ -18,8 +19,9 @@ import { overlayHistory } from '@/lib/overlayHistory';
 import { setTerminalView } from '@/lib/prefs';
 import { select, useApp } from '@/store/app';
 
-type Terminal = { id: string; title: string; cwd: string; detail: string; activity?: string; runId?: string };
+type Terminal = { id: string; title: string; cwd: string; detail: string; activity?: string; runId?: string; project?: string };
 const terminalKey = (item: Terminal) => item.runId ? `shell:${item.id}/${item.runId}` : `session:${item.id}`;
+const terminalTitle = (item: Terminal) => item.project ? `${item.title} · ${item.project}` : item.title;
 
 export function RunningTerminals({ open, onOpenChange, mobile }: {
   open: boolean;
@@ -54,9 +56,16 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
       activity: last.iso ? t(`Last conversation ${last.label}`, `最近对话 ${last.label}`) : undefined,
     };
   });
+  const projectCounts = new Map<string, number>();
   for (const shell of workspace.enabled ? workspace.shells : []) {
+    if (!isOpenProjectShell(shell)) continue;
+    const ordinal = (projectCounts.get(shell.projectKey) ?? 0) + 1;
+    projectCounts.set(shell.projectKey, ordinal);
     if (shell.state !== 'running' || !shell.runId) continue;
-    terminals.push({ id: shell.id, runId: shell.runId, title: shell.name || folderName(shell.cwd), cwd: shell.cwd, detail: t('Project terminal', '项目终端') });
+    terminals.push({
+      id: shell.id, runId: shell.runId, title: projectShellLabel(shell, ordinal), cwd: shell.cwd,
+      project: folderName(shell.cwd), detail: t('Project terminal', '项目终端'),
+    });
   }
   const shellError = workspace.enabled && workspace.shellListState === 'error';
   const loading = !sessionsLoaded || (workspace.enabled && workspace.shellListState === 'loading');
@@ -138,8 +147,8 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
       setTarget(undefined);
       if (failures.length) {
         const { item, message } = failures[0];
-        setBatchError(t(`Ended ${ended.size}. Could not end ${failures.length}. ${item.title} — ${message}`,
-          `已结束 ${ended.size} 个终端，${failures.length} 个未能结束。${item.title} — ${message}`));
+        setBatchError(t(`Ended ${ended.size}. Could not end ${failures.length}. ${terminalTitle(item)} — ${message}`,
+          `已结束 ${ended.size} 个终端，${failures.length} 个未能结束。${terminalTitle(item)} — ${message}`));
       } else {
         toast(target.bulk ? t(`Ended ${ended.size} terminals`, `已结束 ${ended.size} 个终端`) : t('Terminal ended', '终端已结束'));
       }
@@ -177,14 +186,14 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
               <li key={key} className="flex items-start gap-2.5 px-3 py-2.5">
                 <label className="flex min-w-0 flex-1 items-start gap-2.5">
                   <Checkbox className="mt-1" checked={checked.has(key)} disabled={disabled}
-                    aria-label={t(`Select ${item.title}`, `选择 ${item.title}`)} onCheckedChange={value => setChecked(current => {
+                    aria-label={t(`Select ${terminalTitle(item)}`, `选择 ${terminalTitle(item)}`)} onCheckedChange={value => setChecked(current => {
                       const next = new Set(current);
                       if (value === true) next.add(key);
                       else next.delete(key);
                       return next;
                     })} />
                   <span className="min-w-0 flex-1">
-                    <span className="block break-words text-ui-base font-medium">{item.title}</span>
+                    <span className="block break-words text-ui-base font-medium">{terminalTitle(item)}</span>
                     <span className="block break-all text-ui-xs text-foreground-subtle">{item.cwd}</span>
                     <span className="mt-1 block text-ui-xs text-foreground-subtle">{item.detail}{item.activity && ` · ${item.activity}`}</span>
                   </span>
@@ -205,7 +214,7 @@ export function RunningTerminals({ open, onOpenChange, mobile }: {
         description={t('Any work still running in these terminals will be interrupted.', '终端中仍在运行的任务将被中断。')}
         confirmLabel={busy ? t('Ending…', '正在停止…') : target?.bulk ? t('End selected', '批量停止') : t('End terminal', '结束终端')}
         destructive busy={busy} confirmDisabled={offline} onConfirm={() => void stop()}>
-        {target && !target.bulk && <p className="break-words text-ui-sm font-medium">{target.items[0].title}</p>}
+        {target && !target.bulk && <p className="break-words text-ui-sm font-medium">{terminalTitle(target.items[0])}</p>}
         {error && <p role="alert" className="break-words text-ui-sm text-destructive">{error}</p>}
       </ConfirmDialog>
     </SurfaceShell>

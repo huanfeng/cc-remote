@@ -375,7 +375,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	_, codexErr := exec.LookPath(codexBin)
 	features := hostFeatures
 	if s.projectShellEnabled() {
-		features = slices.Concat(features, []string{"project-shell", "project-shell-tabs", "project-shell-pane-groups"})
+		features = slices.Concat(features, []string{"project-shell", "project-shell-tabs", "project-shell-pane-groups", "project-shell-pane-layout"})
 	}
 	respond(w, 200, map[string]any{"version": s.cfg.Version, "cwd": s.cfg.Cwd, "claudeAvailable": err == nil, "claudeVersion": version, "codexAvailable": codexErr == nil, "providers": []string{"claude", "codex"}, "attachCommand": s.cfg.AttachCommand, "restartPending": s.pendingRestart(), "language": s.language(), "name": name, "color": hex, "icon": id.Icon, "features": features})
 }

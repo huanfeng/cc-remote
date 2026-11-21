@@ -553,6 +553,10 @@ export class HttpBackend implements Backend {
     return this.client.json<ProjectShell>(`${projectShellsPath}/${encodeURIComponent(shellId)}`, { method: 'PATCH', body: { name }, signal });
   }
 
+  reorientProjectShell(shellId: string, splitDirection: NonNullable<ProjectShell['splitDirection']>) {
+    return this.client.json<ProjectShell>(`${projectShellsPath}/${encodeURIComponent(shellId)}`, { method: 'PATCH', body: { splitDirection } });
+  }
+
   async dismissProjectShell(shellId: string) {
     try {
       await this.client.json<void>(`${projectShellsPath}/${encodeURIComponent(shellId)}`, { method: 'DELETE' });

@@ -315,9 +315,9 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
     return true;
   });
 
-  // Theme switches (.dark, palette) change the --color-terminal-* tokens.
+  // The terminal preset and the app appearance (in follow mode) change the terminal tokens.
   const themeObserver = new MutationObserver(() => { term.options.theme = mergeTerminalTheme(undefined); });
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-palette'] });
+  themeObserver.observe(document.documentElement, { attributeFilter: ['class', 'data-palette', 'data-terminal-palette'] });
 
   const onVisible = () => {
     if (exited || refused) return; // only "Start again" / "Connect again" tries again

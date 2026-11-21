@@ -14,7 +14,7 @@ export const SIDEBAR_DEFAULT = 272;
 
 const KEY = 'ccn-prefs';
 const defaults: PreferenceValues = {
-  theme: 'system', palette: 'graphite', sendKey: 'enter', projectShellShortcut: 'default',
+  theme: 'system', palette: 'graphite', terminalPalette: 'dark', sendKey: 'enter', projectShellShortcut: 'default',
   sidebarCollapsed: false, sidebarWidth: SIDEBAR_DEFAULT,
   collapsedProjects: {}, toolsExpanded: false, terminalView: {},
   terminalZoom: 1, terminalFit: false, newSessionMode: 'terminal',

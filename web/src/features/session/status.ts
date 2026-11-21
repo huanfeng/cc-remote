@@ -1,11 +1,16 @@
 import type { Session, SessionStatus } from '@/backend/types';
-import { lang, t } from '@/lib/i18n';
-import { sessionRetry } from '@/domain/sessionRetry';
-import { providerName, providerOf } from '@/domain/providers';
+import { lang, t } from '../../lib/i18n.ts';
+import { sessionRetry } from '../../domain/sessionRetry.ts';
+import { providerName, providerOf } from '../../domain/providers.ts';
 
-export type Tone = 'running' | 'retrying' | 'waiting' | 'failed' | 'done' | 'idle' | 'interrupted';
+export type Tone = 'running' | 'retrying' | 'waiting' | 'failed' | 'done' | 'idle' | 'terminal-idle' | 'interrupted';
+type StatusSession = Pick<Session, 'status' | 'activeTasks' | 'live' | 'mode' | 'online'>;
 
-export function statusTone(s: Pick<Session, 'status' | 'activeTasks' | 'live'>): Tone {
+function hasIdleTerminal(s: StatusSession): boolean {
+  return (s.status ?? 'idle') === 'idle' && !(s.activeTasks ?? 0) && s.mode === 'terminal' && s.online === true;
+}
+
+export function statusTone(s: StatusSession): Tone {
   if (sessionRetry(s)) return 'retrying';
   switch (s.status) {
     case 'running': return 'running';
@@ -13,11 +18,12 @@ export function statusTone(s: Pick<Session, 'status' | 'activeTasks' | 'live'>):
     case 'failed': case 'error': return 'failed';
     case 'interrupted': case 'stopped': return 'interrupted';
     case 'completed': return (s.activeTasks ?? 0) > 0 ? 'running' : 'done';
-    default: return (s.activeTasks ?? 0) > 0 ? 'running' : 'idle';
+    default: return (s.activeTasks ?? 0) > 0 ? 'running' : hasIdleTerminal(s) ? 'terminal-idle' : 'idle';
   }
 }
 
-export function sessionStatusLabel(s: Pick<Session, 'status' | 'activeTasks' | 'live'>): string {
+export function sessionStatusLabel(s: StatusSession): string {
+  if (hasIdleTerminal(s)) return t('Idle, terminal still running', '空闲，终端仍在运行');
   return sessionRetry(s, lang)?.label ?? statusLabel(s.status, s.activeTasks);
 }
 
@@ -45,6 +51,7 @@ export const toneDot: Record<Tone, string> = {
   interrupted: 'bg-foreground-subtlest',
   done: 'bg-success',
   idle: 'bg-foreground-subtlest/50',
+  'terminal-idle': 'border-[1.5px] border-violet-600 dark:border-violet-400',
 };
 
 /** Classes for a status pill (badge). */
@@ -56,6 +63,7 @@ export const tonePill: Record<Tone, string> = {
   interrupted: 'bg-surface text-foreground-subtle',
   done: 'bg-success-surface text-success-surface-foreground',
   idle: 'bg-surface text-foreground-subtle',
+  'terminal-idle': 'bg-surface text-violet-700 dark:text-violet-300',
 };
 
 export function modeLabel(s: Session): string {

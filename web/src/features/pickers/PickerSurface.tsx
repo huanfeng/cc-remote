@@ -9,6 +9,7 @@ import {
 } from '@/components/mobile-ui/bottom-sheet';
 import { cn } from '@/components/lib/utils';
 import type { PickerOption } from './options';
+import { PickerDescription } from './PickerDescription';
 
 export interface PickerSurfaceProps {
   open: boolean;
@@ -118,7 +119,7 @@ export function PickerItem({ option, selected, onSelect, mobile, id, disabled }:
             )}>{option.tag}</span>
           )}
         </span>
-        {option.description && <span title={option.description} className="whitespace-normal break-words text-ui-sm text-foreground-subtle">{option.description}</span>}
+        {option.description && <PickerDescription description={option.description} className="text-ui-sm" />}
       </span>
     </CommandPrimitive.Item>
   );

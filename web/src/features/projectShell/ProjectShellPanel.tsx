@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, ChevronLeft, Columns2, Copy, GripHorizontal, Minus, Pencil, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
+import { ArrowDownToLine, ArrowRightLeft, ChevronLeft, Columns2, Copy, GripHorizontal, Minus, Pencil, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import { BackendError } from '@/backend/errors';
 import type { ProjectShell } from '@/backend/types';
@@ -11,12 +11,12 @@ import { toast } from '@/components/ui/toast';
 import { copyText } from '@/domain/clipboard';
 import { currentHost } from '@/lib/hosts';
 import { t } from '@/lib/i18n';
-import { usePrefs } from '@/lib/prefs';
-import { useResolvedDark } from '@/lib/theme';
 import { hasFeature, useApp } from '@/store/app';
 import { createProjectShellTerminal, initialShellTerminalState } from './projectShellTerminal';
 import { findOpenProjectShell, isOpenProjectShell, matchesShellPath, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
 import { ProjectShellSearch } from './ProjectShellSearch';
+import { projectShellLabel } from './projectShellLabel';
+import { projectShellLayout, type PaneRect, type SplitDirection } from './projectShellLayout';
 import { useProjectShellFrame } from './useProjectShellFrame';
 
 const resizeHandles = [
@@ -29,9 +29,6 @@ const resizeHandles = [
   ['sw', 'bottom-0 left-0 size-2.5 cursor-nesw-resize'],
 ] as const;
 
-type SplitDirection = 'columns' | 'rows';
-type PaneGroup = { tabId: string; splitDirection?: SplitDirection };
-const shellLabel = (shell: ProjectShell) => shell.name || (shell.default ? t('Default', '默认') : shell.id.slice(0, 6));
 const shellTarget = (shell: ProjectShell): ProjectShellTarget => ({ cwd: shell.cwd, shellId: shell.id });
 const searchLabel = () => t('Search terminal output', '搜索终端输出');
 
@@ -41,7 +38,9 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
   const hostName = useApp(s => s.info?.name);
   const tabsEnabled = useApp(s => hasFeature(s.info, 'project-shell-tabs'));
   const groupsEnabled = useApp(s => hasFeature(s.info, 'project-shell-pane-groups'));
-  const [localGroups, setLocalGroups] = useState<Record<string, PaneGroup>>({});
+  const layoutEnabled = useApp(s => hasFeature(s.info, 'project-shell-pane-layout'));
+  const [localGroups, setLocalGroups] = useState<Record<string, string>>({});
+  const [localDirections, setLocalDirections] = useState<Record<string, SplitDirection>>({});
   const [searchTarget, setSearchTarget] = useState<ProjectShellTarget>();
   const [busy, setBusy] = useState(false);
   const mutation = useRef(false);
@@ -51,7 +50,7 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
   const activeId = activeTarget && shellIdFor(activeTarget);
   const activeShell = shells.find(shell => shell.id === activeId);
   const directory = activeShell?.cwd ?? activeTarget?.cwd ?? '';
-  const groupOf = useCallback((shell: ProjectShell) => shell.tabId ?? localGroups[shell.id]?.tabId ?? shell.id, [localGroups]);
+  const groupOf = useCallback((shell: ProjectShell) => shell.tabId ?? localGroups[shell.id] ?? shell.id, [localGroups]);
   const activeGroup = activeShell ? groupOf(activeShell) : activeId;
   const projectShells = shells.filter(shell => isOpenProjectShell(shell) &&
     (shell.id === activeId || shell.projectKey === activeShell?.projectKey || matchesShellPath(shell, directory)));
@@ -62,13 +61,13 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
     if (panes) panes.push(shell);
     else groups.set(key, [shell]);
   }
-  const directionOf = (shell: ProjectShell) => shell.splitDirection ?? localGroups[shell.id]?.splitDirection;
   for (const [key, panes] of groups) {
-    panes.sort((a, b) => Number(b.id === key) - Number(a.id === key) || Number(Boolean(directionOf(a))) - Number(Boolean(directionOf(b))));
+    panes.sort((a, b) => Number(b.id === key) - Number(a.id === key) || Number(Boolean(a.splitDirection)) - Number(Boolean(b.splitDirection)));
   }
-  const activePanes = activeGroup ? groups.get(activeGroup) : undefined;
-  const paired = !mobile && activePanes && activePanes.length > 1 ? activePanes : undefined;
-  const direction = paired?.map(directionOf).find(Boolean);
+  const activePanes = (activeGroup && groups.get(activeGroup)) || [];
+  const legacyDirection = (activeGroup && localDirections[activeGroup]) || activePanes.find(pane => pane.splitDirection)?.splitDirection;
+  const layout = projectShellLayout(mobile ? [] : activePanes, legacyDirection);
+  const labelFor = (shell: ProjectShell) => projectShellLabel(shell, projectShells.findIndex(item => item.id === shell.id) + 1);
   const canStop = (shell: ProjectShell) => Boolean(shell.runId) || groupsEnabled;
   const preferredTarget = (shell?: ProjectShell) => shell && (retainedTargets.find(item => shellIdFor(item) === shell.id) ?? shellTarget(shell));
 
@@ -95,31 +94,48 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
       setBusy(false);
     }
   };
+  const rememberLayout = (result: ProjectShell) => {
+    if (result.panePaths) {
+      for (const pane of activePanes) {
+        const path = result.panePaths[pane.id];
+        if (path !== undefined && pane.id !== result.id) remember({ ...pane, panePath: path, splitDirection: undefined }, directory);
+      }
+    }
+    remember(result, directory);
+  };
   const add = (splitDirection?: SplitDirection) => void manage(async () => {
     const tabId = splitDirection && activeGroup;
     const shell = await backend.startProjectShell({
-      cwd: directory, create: true, ...(groupsEnabled && tabId && splitDirection ? { tabId, splitDirection } : {}),
+      cwd: directory, create: true,
+      ...(groupsEnabled && tabId && splitDirection ? { tabId, splitDirection, ...(layoutEnabled && activeId ? { splitFrom: activeId } : {}) } : {}),
     });
     if (tabId && splitDirection) {
-      if (shell.tabId) {
-        for (const pane of activePanes ?? []) {
+      if (!shell.tabId) setLocalGroups(current => ({ ...current, [shell.id]: tabId }));
+      if (!layoutEnabled) {
+        setLocalDirections(current => ({ ...current, [tabId]: splitDirection }));
+        for (const pane of activePanes) {
           if (pane.splitDirection) remember({ ...pane, splitDirection: undefined }, directory);
         }
-      } else {
-        setLocalGroups(current => ({
-          ...Object.fromEntries(Object.entries(current).map(([id, group]) => [id, group.tabId === tabId ? { tabId } : group])),
-          [shell.id]: { tabId, splitDirection },
-        }));
       }
     }
-    remember(shell, directory);
+    rememberLayout(shell);
     open(shellTarget(shell));
   });
+  const reorient = (direction: SplitDirection) => {
+    if (!activeGroup || !activeId) return;
+    if (layoutEnabled) void manage(async () => rememberLayout(await backend.reorientProjectShell(activeId, direction)));
+    else setLocalDirections(current => ({ ...current, [activeGroup]: direction }));
+  };
+  const focusNext = () => {
+    const index = activePanes.findIndex(pane => pane.id === activeId);
+    const next = activePanes[(index + 1) % activePanes.length];
+    if (next) open(shellTarget(next));
+  };
   const stop = (items: ProjectShell[]) => void manage(async () => {
     items = items.filter(canStop);
     const selected = closingShells.current = new Set(items.map(shell => shell.id));
     const remaining = (shell: ProjectShell) => !selected.has(shell.id);
-    const survivor = activePanes?.find(remaining) ?? projectShells.find(remaining);
+    const survivor = activePanes.find(remaining) ?? projectShells.find(remaining);
     const results = await Promise.allSettled(items.map(async shell => {
       try {
         if (shell.runId) await backend.stopProjectShell(shell.id, shell.runId);
@@ -172,8 +188,10 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
           const tab = panes[0];
           const selected = id === activeGroup;
           const canEnd = panes.some(canStop);
-          return <ProjectShellTab key={id} {...{ tab, panes, selected, busy, canEnd, mobile }}
-            onOpen={shell => open(selected && !mobile ? target : shellTarget(shell))}
+          return <ProjectShellTab key={id} {...{ tab, panes, selected, busy, canEnd, labelFor }}
+            onOpen={shell => open(shellTarget(shell))}
+            onTabClick={() => open(selected ? target : shellTarget(tab))}
+            onReorient={selected && !mobile && panes.length > 1 ? reorient : undefined}
             onRename={tabsEnabled ? name => manage(async () => remember(await backend.renameProjectShell(tab.id, name), directory)) : undefined}
             onEnd={() => stop(panes)} />;
         })}
@@ -186,20 +204,22 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
         onClick={() => add()}><Plus /></Button>}
       {tabsEnabled && !mobile && ([['columns', Columns2, t('Split side by side', '左右分屏')], ['rows', Rows2, t('Split top and bottom', '上下分屏')]] as const)
         .map(([axis, Icon, label]) => <Button key={axis} type="button" variant="ghost" size="icon-sm" title={label} aria-label={label}
-          disabled={busy || !activePanes?.some(shell => shell.state === 'running') || activePanes.length > 1} onClick={() => add(axis)}><Icon /></Button>)}
+          disabled={busy || activeShell?.state !== 'running' || (!layoutEnabled && activePanes.length > 1)} onClick={() => add(axis)}><Icon /></Button>)}
+      {activePanes.length > 1 && <Button type="button" variant="ghost" size="icon-sm" disabled={busy}
+        aria-label={t('Focus next pane', '切换到下一个窗格')} title={t('Focus next pane', '切换到下一个窗格')} onClick={focusNext}><ArrowRightLeft /></Button>}
       <Button type="button" variant={searchTarget === target ? 'secondary' : 'ghost'} size="icon-sm"
         title={searchLabel()} aria-label={searchLabel()} aria-expanded={searchTarget === target} disabled={!activeShell?.runId}
         onClick={() => setSearchTarget(searchTarget === target ? undefined : target)}><Search /></Button>
     </div>}
-    <div data-project-shell-layout={direction ?? 'single'} className={cn('grid min-h-0 flex-1', direction === 'columns' ? 'grid-cols-2 grid-rows-1' : direction === 'rows' ? 'grid-cols-1 grid-rows-2' : 'grid-cols-1 grid-rows-1')}>
+    <div data-project-shell-layout={layout.direction ?? 'single'} className="relative min-h-0 flex-1">
       {retainedTargets.map(entry => {
         const active = entry === target;
         const shellId = shellIdFor(entry);
-        const splitIndex = paired?.findIndex(shell => shell.id === shellId) ?? -1;
-        const visible = Boolean(target && (active || splitIndex >= 0));
+        const pane = shellId ? layout.rects.get(shellId) : undefined;
+        const visible = Boolean(target && (active || pane));
         const metadata = shells.find(item => item.id === shellId);
         return <Panel key={targetKey(entry)} target={entry} visible={visible} active={active} mobile={mobile}
-          splitPosition={splitIndex >= 0 ? splitIndex + 1 : undefined} label={metadata && shellLabel(metadata)}
+          pane={pane} split={Boolean(layout.direction)} label={metadata && labelFor(metadata)}
           searching={searchTarget === entry} onSearch={value => { if (value) open(entry); setSearchTarget(value ? entry : undefined); }}
           onActivate={() => open(entry)} onEnd={() => {
             const remaining = (shell: ProjectShell) => shell.id !== shellId && !closingShells.current.has(shell.id);
@@ -212,9 +232,10 @@ export function ProjectShellPanel({ mobile = false }: { mobile?: boolean }) {
   </section>;
 }
 
-function ProjectShellTab({ tab, panes, selected, busy, canEnd, mobile, onOpen, onRename, onEnd }: {
-  tab: ProjectShell; panes: ProjectShell[]; selected: boolean; busy: boolean; canEnd: boolean; mobile: boolean;
-  onOpen(shell: ProjectShell): void; onRename?: (name: string) => Promise<void>; onEnd(): void;
+function ProjectShellTab({ tab, panes, selected, busy, canEnd, labelFor, onOpen, onTabClick, onReorient, onRename, onEnd }: {
+  tab: ProjectShell; panes: ProjectShell[]; selected: boolean; busy: boolean; canEnd: boolean;
+  labelFor(shell: ProjectShell): string; onOpen(shell: ProjectShell): void; onTabClick(): void;
+  onReorient?: (direction: SplitDirection) => void; onRename?: (name: string) => Promise<void>; onEnd(): void;
 }) {
   const [name, setName] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
@@ -227,7 +248,7 @@ function ProjectShellTab({ tab, panes, selected, busy, canEnd, mobile, onOpen, o
     const next = input.current?.value.trim();
     if (save && next !== undefined && next !== (tab.name ?? '')) void onRename?.(next);
   };
-  const label = shellLabel(tab);
+  const label = labelFor(tab);
   return <ContextMenu>
     <ContextMenuTrigger asChild>
       <div data-project-shell-tab={tab.id} className="shrink-0"
@@ -239,7 +260,7 @@ function ProjectShellTab({ tab, panes, selected, busy, canEnd, mobile, onOpen, o
           }
         }}>
         {name === undefined ? <Button type="button" variant={selected ? 'secondary' : 'ghost'} size="sm"
-          className="max-w-40" aria-pressed={selected} title={label} onClick={() => onOpen(tab)}>
+          className="max-w-40" aria-pressed={selected} title={label} onClick={onTabClick}>
           <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', panes.some(pane => pane.state === 'running') ? 'bg-emerald-500' : 'bg-foreground-subtlest')} />
           <span className="truncate">{label}</span>
         </Button> : <Input ref={input} autoFocus size="sm" className="h-7 w-[clamp(5rem,15ch,10rem)] px-2" value={name}
@@ -258,9 +279,16 @@ function ProjectShellTab({ tab, panes, selected, busy, canEnd, mobile, onOpen, o
       event.preventDefault();
       input.current?.focus();
     }}>
-      {mobile && panes.length > 1 && panes.map(pane => <ContextMenuItem key={pane.id} onSelect={() => onOpen(pane)}>
-        <SquareTerminal />{shellLabel(pane)}
-      </ContextMenuItem>)}
+      {panes.length > 1 && <>
+        {panes.map(pane => <ContextMenuItem key={pane.id} onSelect={() => onOpen(pane)}>
+          <SquareTerminal />{labelFor(pane)}
+        </ContextMenuItem>)}
+        {onReorient && <>
+          <ContextMenuItem disabled={busy} onSelect={() => onReorient('columns')}><Columns2 />{t('Arrange current split side by side', '将当前分屏改为左右排列')}</ContextMenuItem>
+          <ContextMenuItem disabled={busy} onSelect={() => onReorient('rows')}><Rows2 />{t('Arrange current split top and bottom', '将当前分屏改为上下排列')}</ContextMenuItem>
+        </>}
+        <ContextMenuSeparator />
+      </>}
       {onRename && <ContextMenuItem disabled={busy} onSelect={() => {
         renameFromMenu.current = true;
         editing.current = true;
@@ -271,9 +299,9 @@ function ProjectShellTab({ tab, panes, selected, busy, canEnd, mobile, onOpen, o
   </ContextMenu>;
 }
 
-function Panel({ target, mobile, visible, active, splitPosition, label, searching, onSearch, onActivate, onEnd }: {
+function Panel({ target, mobile, visible, active, pane, split, label, searching, onSearch, onActivate, onEnd }: {
   target: ProjectShellTarget; mobile: boolean; visible: boolean; active: boolean;
-  splitPosition?: number; label?: string; searching: boolean; onSearch(value: boolean): void; onActivate(): void; onEnd(): void;
+  pane?: PaneRect; split: boolean; label?: string; searching: boolean; onSearch(value: boolean): void; onActivate(): void; onEnd(): void;
 }) {
   const backend = useBackend();
   const { bind, remember, finishRun, shellListState, shells } = useProjectShellWorkspace();
@@ -368,9 +396,9 @@ function Panel({ target, mobile, visible, active, splitPosition, label, searchin
   return (
     <section ref={region} hidden={!visible} tabIndex={-1} onFocusCapture={() => { if (!active) onActivate(); }}
       aria-label={label ?? 'Shell'} data-shell-pane data-shell-pane-active={active || undefined}
-      style={splitPosition ? { order: splitPosition } : undefined}
-      className={cn('min-h-0 min-w-0 flex-col overflow-hidden outline-none', visible && 'flex',
-        splitPosition && 'border border-border', splitPosition && active && 'border-ring/70')}>
+      style={pane ? { left: `${pane.x}%`, top: `${pane.y}%`, width: `${pane.width}%`, height: `${pane.height}%` } : undefined}
+      className={cn('absolute min-h-0 min-w-0 flex-col overflow-hidden outline-none', !pane && 'inset-0', visible && 'flex',
+        split && 'border', split && (active ? 'border-ring/70' : 'border-border'))}>
       {error && <div role="alert" className="flex items-center justify-between gap-2 px-3 py-1.5 text-ui-sm text-destructive">
         <span className="min-w-0 break-words">{error}</span>
         {!shell && !busy && <Button type="button" variant="outline" size="sm" onClick={() => start()}>{t('Try again', '重试')}</Button>}
@@ -397,8 +425,6 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, searching, 
   const [ui, setUi] = useState(initialShellTerminalState);
   const [hasSelection, setHasSelection] = useState(false);
   const searchFromMenu = useRef(false);
-  const dark = useResolvedDark();
-  const palette = usePrefs(s => s.palette);
   useLayoutEffect(() => {
     visibility.current = visible;
     terminal.current?.setVisible(visible);
@@ -420,7 +446,6 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, searching, 
       engine.dispose();
     };
   }, [backend, mobile, runId, shellId]);
-  useEffect(() => { terminal.current?.applyTheme(); }, [dark, palette]);
   useEffect(() => {
     if (ui.status === 'exited') onExit(ui.detail === 'stopped' ? 'stopped' : 'exited');
     else if (ui.status === 'unavailable') onUnavailable();

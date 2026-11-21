@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { currentSupplierValue, supplierOptions, defaultSupplierLabel, profilesFor, switchSupplier } from '../src/features/pickers/supplierSwitch.ts';
+import { currentSupplierValue, supplierOptions, supplierSwitchOptions, defaultSupplierLabel, profilesFor, switchSupplier } from '../src/features/pickers/supplierSwitch.ts';
 import { BackendError } from '../src/backend/errors.ts';
 
 const catalog = {
@@ -23,6 +23,26 @@ test('missing defaults/current suppliers remain explicit without leaking cross-p
   assert.equal(defaultSupplierLabel(undefined, 'claude'), 'Default · native configuration');
   assert.deepEqual(profilesFor(undefined, 'claude'), []);
   assert.equal(profilesFor(catalog, 'claude').find(p => p.id === 'x'), undefined);
+});
+
+test('switching hides signed-out native Claude and any default that resolves to it', () => {
+  const usage = { profiles: { '@native': { reason: 'no-login', available: false, windows: [] } } };
+  assert.deepEqual(supplierSwitchOptions(catalog, 'claude', usage).map(o => o.value), ['', 'c', 'o']);
+  for (const defaultProfiles of [{}, { claude: '@native' }]) {
+    assert.deepEqual(supplierSwitchOptions({ ...catalog, defaultProfiles }, 'claude', usage).map(o => o.value), ['c', 'o']);
+  }
+  assert.deepEqual(supplierSwitchOptions({ profiles: [], defaultProfiles: {} }, 'claude', usage), []);
+  assert.deepEqual(supplierSwitchOptions(catalog, 'codex', usage).map(o => o.value), ['', '@native', 'x']);
+});
+
+test('switching keeps native available with API credentials, cached failures or an older host', () => {
+  const native = { reason: 'no-login', available: false, windows: [] };
+  for (const usage of [null, undefined, { profiles: {} }, ...[
+    { ...native, reason: 'api-key' }, { ...native, reason: 'third-party' },
+    { ...native, reason: 'pending' }, { ...native, stale: true }, { ...native, error: 'request-failed' },
+  ].map(reading => ({ profiles: { '@native': reading } }))]) {
+    assert.deepEqual(supplierSwitchOptions(catalog, 'claude', usage).map(o => o.value), ['', '@native', 'c', 'o']);
+  }
 });
 
 test('busy managed and terminal switches require a separate explicit forced request', async () => {
