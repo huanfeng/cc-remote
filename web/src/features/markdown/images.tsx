@@ -61,7 +61,8 @@ export function HostImage({ file, alt, bases, onOpen }: { file: FileRef; alt?: s
   if (!current?.url) return <span className="text-ui-sm text-foreground-subtlest">{t(`Loading ${name}…`, `加载 ${name}…`)}</span>;
   const img = <img src={current.url} alt={alt || ''} loading="lazy" className="max-w-full rounded-lg" />;
   if (!onOpen) return img;
+  const label = t(`Preview ${name}`, `预览 ${name}`);
   return (
-    <a href="#" title={t(`Open ${file.path}`, `打开 ${file.path}`)} onClick={e => { e.preventDefault(); onOpen(); }}>{img}</a>
+    <button type="button" aria-label={label} title={label} className="inline-block max-w-full cursor-zoom-in" onClick={onOpen}>{img}</button>
   );
 }

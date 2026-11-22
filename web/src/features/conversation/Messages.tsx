@@ -8,7 +8,9 @@ import { compactSummary, type TranscriptEvent } from '@/domain/toolGroups';
 import { providerName, providerOf } from '@/domain/providers';
 import { usePrefs } from '@/lib/prefs';
 import { cn } from '@/components/lib/utils';
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { t } from '@/lib/i18n';
+import { ImageView } from '@/features/files/ImageView';
 import { Markdown } from '@/features/markdown/Markdown';
 import { slashCommand } from './fold';
 import { useConversation } from './context';
@@ -38,10 +40,23 @@ function AttachmentThumb({ attachment: a, mobile }: { attachment: Attachment; mo
   const src = useAssetUrl(a.url);
   const box = cn('block overflow-hidden rounded-lg border border-border/60 bg-surface transition-opacity hover:opacity-90', mobile ? 'size-20' : 'size-24');
   if (!src) return <span className={box} title={a.name} aria-label={a.name} />;
+  const label = t(`Preview ${a.name}`, `预览 ${a.name}`);
   return (
-    <a href={src} target="_blank" rel="noopener noreferrer" title={a.name} className={box}>
-      <img src={src} alt={a.name} loading="lazy" className="size-full object-cover" />
-    </a>
+    <Dialog>
+      <DialogTrigger asChild>
+        <button type="button" title={label} aria-label={label} className={cn(box, 'cursor-zoom-in')}>
+          <img src={src} alt={a.name} loading="lazy" className="size-full object-cover" />
+        </button>
+      </DialogTrigger>
+      <DialogContent aria-describedby={undefined} className="flex h-[85dvh] w-[calc(100%-1rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-xl p-0 sm:w-[calc(100%-2rem)]">
+        <DialogTitle className="flex h-14 shrink-0 items-center border-b border-border/60 pr-14 pl-4">
+          <span className="truncate" title={a.name}>{a.name}</span>
+        </DialogTitle>
+        <div className="min-h-0 flex-1">
+          <ImageView src={src} alt={a.name} />
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

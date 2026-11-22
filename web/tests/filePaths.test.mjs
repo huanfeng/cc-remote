@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { absoluteDirs, dirname, fileKind, headingSlug, languageOf, parseFileHref, pathInCode, relativeTarget, remarkFilePaths, splitPaths } from '../src/domain/filePaths.ts';
+import { absoluteDirs, dirname, fileKind, headingSlug, languageOf, parseFileHref, pathInCode, rehypeHostImages, relativeTarget, remarkFilePaths, splitPaths } from '../src/domain/filePaths.ts';
 
 const paths = text => splitPaths(text).filter(item => typeof item !== 'string').map(item => item.line ? `${item.path}@${item.line}` : item.path);
 
@@ -90,4 +90,17 @@ test('the remark pass turns paths into file links, and leaves links alone', () =
   assert.deepEqual(parseFileHref(nodes[3].url), { path: 'web/src/设计.md', line: undefined });
   assert.equal(nodes[4].children[0].value, 'docs/b.md');
   assert.equal(parseFileHref('https://x'), undefined);
+});
+
+test('the rehype pass preserves host image paths for the file viewer', () => {
+  const image = src => ({ tagName: 'img', properties: { src } });
+  const relative = image('../docs/a%20b.png');
+  const absolute = image('C:/work/example.png');
+  const other = ['https://example.com/a.png', '//example.com/a.png', 'data:image/png;base64,xxx'].map(image);
+  const linked = { tagName: 'a', properties: { href: 'https://example.com/' }, children: [relative] };
+  rehypeHostImages()({ children: [linked, absolute, ...other] });
+  assert.equal(parseFileHref(relative.properties.src)?.path, '../docs/a b.png');
+  assert.equal(parseFileHref(absolute.properties.src)?.path, 'C:/work/example.png');
+  assert.equal(linked.properties.href, 'https://example.com/');
+  assert.deepEqual(other.map(node => node.properties.src), ['https://example.com/a.png', '//example.com/a.png', 'data:image/png;base64,xxx']);
 });

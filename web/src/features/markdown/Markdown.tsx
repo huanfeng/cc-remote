@@ -22,7 +22,7 @@ import { cjk } from '@streamdown/cjk';
 import { CheckIcon, CopyIcon, SparklesIcon } from 'lucide-react';
 import { cn } from '@/components/lib/utils';
 import { normalizeClaudeMarkdown, INSIGHT_LANG } from '@/domain/markdownPreprocess';
-import { absoluteDirs, FILE_SCHEME, headingSlug, parseFileHref, relativeTarget, remarkFilePaths, type FileRef } from '@/domain/filePaths';
+import { absoluteDirs, FILE_SCHEME, headingSlug, parseFileHref, rehypeHostImages, relativeTarget, remarkFilePaths, type FileRef } from '@/domain/filePaths';
 import { remarkCjkAutolinks } from '@/domain/autolinks';
 import { copyText } from '@/domain/clipboard';
 import { t } from '@/lib/i18n';
@@ -37,13 +37,15 @@ export type OpenFile = (ref: FileRef, bases: string[]) => void;
 export const MarkdownFiles = createContext<OpenFile | null>(null);
 /** Directories relative paths in the Markdown being rendered may be relative to. */
 const Bases = createContext<string[]>([]);
+const InsideLink = createContext(false);
 
 /** An image named by a host path; other sources (http(s), data:) as they are. */
 function MarkdownImage({ src, alt }: { src?: unknown; alt?: string }) {
   const open = useContext(MarkdownFiles);
   const bases = useContext(Bases);
-  const file = typeof src === 'string' ? relativeTarget(src) : undefined;
-  if (file) return <HostImage file={file} alt={alt} bases={bases} onOpen={open ? () => open(file, bases) : undefined} />;
+  const insideLink = useContext(InsideLink);
+  const file = typeof src === 'string' ? parseFileHref(src) || relativeTarget(src) : undefined;
+  if (file) return <HostImage file={file} alt={alt} bases={bases} onOpen={open && !insideLink ? () => open(file, bases) : undefined} />;
   return typeof src === 'string' ? <img src={src} alt={alt || ''} loading="lazy" className="max-w-full rounded-lg" /> : null;
 }
 
@@ -84,10 +86,11 @@ const remarkBreaks = () => splitBreaks;
 const remarkPlugins = [...Object.values(defaultRemarkPlugins), remarkCjkAutolinks, remarkBreaks, remarkFilePaths];
 const plugins = { cjk };
 
-// streamdown's sanitize schema allows only web protocols in href; file links use their own scheme.
+// Keep host file links and image paths through sanitization using the app's file scheme.
 const [sanitize, schema] = defaultRehypePlugins.sanitize as unknown as [unknown, { protocols?: Record<string, string[]> }];
-const fileSchema = { ...schema, protocols: { ...schema.protocols, href: [...(schema.protocols?.href ?? []), FILE_SCHEME.slice(0, -1)] } };
-const rehypePlugins = Object.entries(defaultRehypePlugins).map(([name, plugin]) => name === 'sanitize' ? [sanitize, fileSchema] : plugin) as never;
+const fileProtocol = FILE_SCHEME.slice(0, -1);
+const fileSchema = { ...schema, protocols: { ...schema.protocols, href: [...(schema.protocols?.href ?? []), fileProtocol], src: [...(schema.protocols?.src ?? []), fileProtocol] } };
+const rehypePlugins = [defaultRehypePlugins.raw, rehypeHostImages, [sanitize, fileSchema], defaultRehypePlugins.harden] as never;
 const urlTransform = (url: string, key: string, node: never) => url.startsWith(FILE_SCHEME) ? url : defaultUrlTransform(url, key, node);
 
 // ---------- Code ----------
@@ -184,11 +187,12 @@ const components: Components = {
   td: ({ children, node: _n, className: _c, ...props }) => <td {...props} className="px-3 py-1.5 align-top">{children}</td>,
   a: ({ href, children, node: _n, className: _c, ...props }) => {
     const file = parseFileHref(href) || relativeTarget(href);
-    if (file) return <FileLink file={file}>{children}</FileLink>;
+    const content = <InsideLink.Provider value={true}>{children}</InsideLink.Provider>;
+    if (file) return <FileLink file={file}>{content}</FileLink>;
     if (href?.startsWith('#')) {
-      return <a {...props} href={href} className="text-icon-blue hover:underline" onClick={e => { e.preventDefault(); scrollToHeading(e.currentTarget, href.slice(1)); }}>{children}</a>;
+      return <a {...props} href={href} className="text-icon-blue hover:underline" onClick={e => { e.preventDefault(); scrollToHeading(e.currentTarget, href.slice(1)); }}>{content}</a>;
     }
-    return <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="text-icon-blue underline-offset-2 hover:underline">{children}</a>;
+    return <a {...props} href={href} target="_blank" rel="noopener noreferrer" className="text-icon-blue underline-offset-2 hover:underline">{content}</a>;
   },
   img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} />,
   code: ({ children, className, node: _n, ...props }) => {

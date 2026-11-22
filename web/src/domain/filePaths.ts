@@ -154,3 +154,16 @@ function linkPaths(node: MdNode): void {
 
 /** remark plugin: file paths in the text become ccfile: links. */
 export const remarkFilePaths = () => linkPaths;
+
+type HtmlNode = { tagName?: string; properties?: Record<string, unknown>; children?: HtmlNode[] };
+
+// Retain the original host path through URL hardening, which resolves or blocks relative image URLs.
+function markHostImages(node: HtmlNode): void {
+  if (node.tagName === 'img' && typeof node.properties?.src === 'string') {
+    const file = relativeTarget(node.properties.src);
+    if (file) node.properties.src = fileHref(file);
+  }
+  node.children?.forEach(markHostImages);
+}
+
+export const rehypeHostImages = () => markHostImages;
