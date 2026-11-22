@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
-	"cc-remote/internal/codex"
 	"cc-remote/internal/hostauth"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
@@ -108,41 +107,43 @@ type pending struct {
 	dialogGone time.Time
 }
 type Server struct {
-	store           *store.Store
-	cfg             Config
-	mu              sync.Mutex
-	switching       map[string]bool
-	downloads       downloadTickets // links the browser downloads files with (downloads.go)
-	sent            sends           // messages taken, by the page's send ID (sends.go)
-	mentionIndex    mentionIndex    // files offered after @ in the message box (mentions.go)
-	streamTickets   downloadTickets // the web's terminal streams, once each (terminal.go)
-	projectShells   projectShellRegistry
-	projectCommands projectCommandRegistry
-	streamPing      time.Duration            // tests: ping terminal streams this often instead
-	origins         atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
-	reloadMu        sync.Mutex               // one reload at a time, so listen ends up current
-	files           fileRoots
-	runs            map[string]*execution
-	procs           map[string]*sessionRuntime
-	terminals       map[string]*terminalSession // running terminal sessions by session ID
-	startProcess    ProcessStarter
-	stopReaper      chan struct{}
-	closers         sync.WaitGroup // detached processes being closed
-	reaperStopped   bool
-	idleTimeout     time.Duration // guarded by mu
-	requests        map[string]*pending
-	closing         bool
-	restartPending  bool   // a restart waits for busy sessions (update installed)
-	listen          string // bound addresses, guarded by mu; changed by a reload
-	closedOnce      bool   // Close saved the running terminal sessions
-	channels        map[string]*channelConnection
-	modelCache      modelsCache
-	statusCache     statusCache
-	usageCache      usageCache
-	accountUsage    accountUsage
-	codexUsageCache codexUsageCache
-	monitor         usageMonitor
-	monitorDone     chan struct{}
+	store             *store.Store
+	cfg               Config
+	mu                sync.Mutex
+	switching         map[string]bool
+	downloads         downloadTickets // links the browser downloads files with (downloads.go)
+	sent              sends           // messages taken, by the page's send ID (sends.go)
+	mentionIndex      mentionIndex    // files offered after @ in the message box (mentions.go)
+	streamTickets     downloadTickets // the web's terminal streams, once each (terminal.go)
+	projectShells     projectShellRegistry
+	projectCommands   projectCommandRegistry
+	streamPing        time.Duration            // tests: ping terminal streams this often instead
+	origins           atomic.Pointer[[]string] // allowed web frontends once reloaded (cors.go)
+	reloadMu          sync.Mutex               // one reload at a time, so listen ends up current
+	files             fileRoots
+	runs              map[string]*execution
+	procs             map[string]*sessionRuntime
+	terminals         map[string]*terminalSession // running terminal sessions by session ID
+	startProcess      ProcessStarter
+	stopReaper        chan struct{}
+	closers           sync.WaitGroup // detached processes being closed
+	reaperStopped     bool
+	idleTimeout       time.Duration // guarded by mu
+	requests          map[string]*pending
+	closing           bool
+	restartPending    bool   // a restart waits for busy sessions (update installed)
+	listen            string // bound addresses, guarded by mu; changed by a reload
+	closedOnce        bool   // Close saved the running terminal sessions
+	channels          map[string]*channelConnection
+	modelCache        modelsCache
+	statusCache       statusCache
+	usageCache        usageCache
+	accountUsage      accountUsage
+	codexAccounts     codexAccountRegistry
+	codexAccountUsers map[string]int // child processes using each account home, guarded by mu
+	codexUsageCache   codexUsageCache
+	monitor           usageMonitor
+	monitorDone       chan struct{}
 	// configMu serializes writers of preferences.json, Claude settings.json and
 	// session overrides, keeping their file I/O off s.mu. Order: configMu, then s.mu.
 	configMu sync.Mutex
@@ -169,6 +170,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+hostauth.Path, s.hello)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/profiles", s.profilesAPI)
+	mux.HandleFunc("GET /api/profiles/codex-accounts", s.listCodexAccountsAPI)
+	mux.HandleFunc("POST /api/profiles/codex-accounts/login", s.codexAccountLoginAPI)
+	mux.HandleFunc("GET /api/profiles/codex-accounts/login/{id}", s.codexAccountLoginAPI)
+	mux.HandleFunc("DELETE /api/profiles/codex-accounts/login/{id}", s.codexAccountLoginAPI)
+	mux.HandleFunc("PATCH /api/profiles/codex-accounts/{id}", s.codexAccountAPI)
+	mux.HandleFunc("DELETE /api/profiles/codex-accounts/{id}", s.codexAccountAPI)
 	mux.HandleFunc("POST /api/supplier-probe", s.supplierProbeAPI)
 	mux.HandleFunc("POST /api/supplier-import/cc-switch", s.ccSwitchImportAPI)
 	mux.HandleFunc("PUT /api/supplier-import/cc-switch/visibility", s.ccSwitchVisibilityAPI)
@@ -1285,7 +1292,7 @@ func (s *Server) nativeList(w http.ResponseWriter, r *http.Request) {
 	var x []claude.NativeSession
 	var e error
 	if provider == "codex" {
-		x, e = codex.ListNative(s.cfg.CodexConfigDir)
+		x, e = s.listCodexNative()
 	} else {
 		x, e = claude.ListNative(s.cfg.ClaudeConfigDir)
 	}
@@ -1336,11 +1343,6 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("Stop the native session before handing it over", "请先停止原生会话再交接"))
 		return
 	}
-	profile, err := s.resumeProfile(provider, req.ProfileID)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
 	id := r.PathValue("id")
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1353,10 +1355,20 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, s.lang(r).T("This thread is registered as a Codex terminal session", "这个对话已登记为 Codex 终端会话"))
 			return
 		}
+		accountID := ""
+		if isCodexAccountID(x.ProfileID) {
+			accountID = x.ProfileID
+		}
+		profile, err := s.nativeImportProfile(provider, accountID, req.ProfileID)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
 		if err := s.applyResumeProfile(&x, profile); err != nil {
 			fail(w, 409, err.Error())
 			return
 		}
+		s.decorate(&x)
 		respond(w, 200, x)
 		return
 	} else if !errors.Is(e, sql.ErrNoRows) {
@@ -1366,6 +1378,11 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 	x, ev, e := s.nativeHistory(r, id)
 	if e != nil {
 		fail(w, 404, s.lang(r).T("Could not read the native session: ", "无法读取原生会话：")+e.Error())
+		return
+	}
+	profile, err := s.nativeImportProfile(provider, x.ProfileID, req.ProfileID)
+	if err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	cwd, e := validateCwd(s.lang(r), x.Cwd)
@@ -1397,6 +1414,7 @@ func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, e.Error())
 		return
 	}
+	s.decorate(&managed)
 	respond(w, 201, managed)
 }
 
@@ -1472,6 +1490,9 @@ func (s *Server) Close(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 	s.projectCommands.shutdown(ctx)
+	if err := s.closeCodexAccountLogins(ctx); err != nil {
+		return err
+	}
 	if s.monitorDone != nil {
 		select {
 		case <-s.monitorDone:

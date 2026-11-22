@@ -30,11 +30,23 @@ export function supplierOptions(catalog: ProfileCatalog | undefined, app: Provid
   ];
 }
 
-export function supplierSwitchOptions(catalog: ProfileCatalog | undefined, app: Provider, usage: ProfileUsageReply | null | undefined): PickerOption[] {
+type SupplierSwitchSession = Pick<Session, 'profileId' | 'codexAccountLocked'>;
+
+export const isCodexAccount = (id: string | undefined) => id?.startsWith('codex-account:') ?? false;
+
+export const hasLockedCodexAccount = (session: SupplierSwitchSession) =>
+  !!session.codexAccountLocked && isCodexAccount(session.profileId);
+
+export function supplierSwitchOptions(catalog: ProfileCatalog | undefined, app: Provider, usage: ProfileUsageReply | null | undefined, session?: SupplierSwitchSession): PickerOption[] {
   const options = supplierOptions(catalog, app, false, usage);
-  const native = app === 'claude' ? usage?.profiles['@native'] : undefined;
-  if (native?.reason !== 'no-login' || native.available !== false || native.stale || native.error) return options;
   const defaultID = catalog?.defaultProfiles[app] || '@native';
+  if (app === 'codex') {
+    if (!session?.codexAccountLocked) return options;
+    if (hasLockedCodexAccount(session)) return [];
+    return options.filter(({ value }) => !isCodexAccount(value || defaultID));
+  }
+  const native = usage?.profiles['@native'];
+  if (native?.reason !== 'no-login' || native.available !== false || native.stale || native.error) return options;
   return options.filter(({ value }) => value !== '@native' && (value !== '' || defaultID !== '@native'));
 }
 

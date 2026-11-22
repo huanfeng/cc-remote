@@ -31,6 +31,7 @@ type Session struct {
 	LastConversationAt        string `json:"lastConversationAt,omitempty"`
 	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
 	Resume                    bool   `json:"-"`
+	CodexAccountLocked        bool   `json:"codexAccountLocked,omitempty"`
 	Mode                      string `json:"mode"`
 	Online                    bool   `json:"online"`
 	// Archived sessions are left out of the web's list until they have a new

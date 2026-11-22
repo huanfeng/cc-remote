@@ -35,6 +35,14 @@ func TestMain(m *testing.M) {
 		fakeCodexTerminal()
 		return
 	}
+	if os.Getenv("FAKE_CODEX_ACCOUNT") != "" {
+		fakeCodexAccount()
+		return
+	}
+	if os.Getenv("FAKE_CODEX_MODEL_HOST") != "" {
+		fakeCodexModelCatalog()
+		return
+	}
 	os.Exit(m.Run())
 }
 

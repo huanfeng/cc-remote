@@ -3,6 +3,8 @@ package codex
 import (
 	"context"
 	"errors"
+
+	"cc-remote/internal/claude"
 )
 
 type Model struct {
@@ -15,10 +17,10 @@ type Model struct {
 }
 
 // Models reads the native catalog without starting a thread or inference turn.
-func Models(ctx context.Context, executable, configDir, cwd string) ([]Model, error) {
+func Models(ctx context.Context, o claude.Options) ([]Model, error) {
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
-	r, err := startRPC(executable, configDir, cwd, nil, nil)
+	r, err := startRPC(o.Executable, o.ConfigDir, o.Cwd, nil, nil, o)
 	if err != nil {
 		return nil, err
 	}

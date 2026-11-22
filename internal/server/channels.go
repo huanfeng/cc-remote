@@ -39,6 +39,7 @@ func (s *Server) channelLive(c *channelConnection) bool {
 	return c != nil && time.Since(c.seen) < channelTTL
 }
 func (s *Server) decorate(x *store.Session) {
+	x.CodexAccountLocked = x.Provider == "codex" && (x.Resume || s.procs[x.ID] != nil)
 	if rt := s.procs[x.ID]; rt != nil && rt.live != nil && x.Provider == "codex" {
 		live := *rt.live
 		x.Live = &live

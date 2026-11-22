@@ -11,7 +11,7 @@ import type { Preferences, Session, SessionStats } from '@/backend/types';
 import { useApp } from '@/store/app';
 import { t, lang, locale } from '@/lib/i18n';
 import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
-import { currentSupplierValue, supplierSwitchOptions } from '@/features/pickers/supplierSwitch';
+import { currentSupplierValue, hasLockedCodexAccount, supplierSwitchOptions } from '@/features/pickers/supplierSwitch';
 import { dangerousPermission, providerName, providerOf } from '@/domain/providers';
 import { conversationTime } from '@/domain/conversationTime';
 import { modeLabel, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
@@ -151,6 +151,7 @@ function SupplierSection({ session: s }: { session: Session }) {
   const supplierUsage = useSupplierUsage(provider);
   const { catalog, error: catalogError } = useProfileCatalog();
   const currentValue = currentSupplierValue(s);
+  const accountLocked = hasLockedCodexAccount(s);
   const [chosen, setChosen] = useState(currentValue);
   const [busy, setBusy] = useState(false);
   const [force, setForce] = useState(false);
@@ -158,11 +159,10 @@ function SupplierSection({ session: s }: { session: Session }) {
   const [notice, setNotice] = useState('');
   useEffect(() => { setChosen(currentValue); }, [currentValue]);
 
-  if (catalogError) return null;
-  if (catalog && !catalog.capabilities?.switchSupplier) return null;
+  if (!accountLocked && (catalogError || (catalog && !catalog.capabilities?.switchSupplier))) return null;
   const current = profilesFor(catalog, provider).find(p => p.id === s.profileId);
-  const options = supplierSwitchOptions(catalog, provider, supplierUsage);
-  if (currentValue !== '@native' && !current) options.push({ value: currentValue, label: t(`Unavailable · ${currentValue}`, `不可用 · ${currentValue}`) });
+  const options = supplierSwitchOptions(catalog, provider, supplierUsage, s);
+  if (!accountLocked && currentValue !== '@native' && !current) options.push({ value: currentValue, label: t(`Unavailable · ${currentValue}`, `不可用 · ${currentValue}`) });
   const selected = options.some(option => option.value === chosen);
   const canSwitch = !!catalog && selected && chosen !== currentValue;
 
@@ -182,16 +182,18 @@ function SupplierSection({ session: s }: { session: Session }) {
   };
 
   return (
-    <Section title={t('Supplier', '供应商')} description={t('Switching restarts the session process with its saved context; file changes stay.', '切换会重启会话进程并恢复已有上下文，已经完成的文件修改会保留。')}>
+    <Section title={t('Supplier', '供应商')} description={accountLocked
+      ? t('This session is bound to its original ChatGPT account. Start a new session to choose another supplier.', '此会话绑定了原 ChatGPT 账号。要使用其他供应商，请新建会话。')
+      : t('Switching restarts the session process with its saved context; file changes stay.', '切换会重启会话进程并恢复已有上下文，已经完成的文件修改会保留。')}>
       <GroupCard>
         <InfoRow label={t('Current', '当前')}>{s.profileName || (current && profileLabel(current)) || s.profileId || t('Native configuration', '原生配置')}</InfoRow>
-        <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3">
+        {!accountLocked && <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3">
           <SimpleSelect value={selected ? chosen : null} onChange={v => { setChosen(v); setError(''); setNotice(''); }} options={options} disabled={!catalog || busy || !options.length} placeholder={options.length ? t('Choose supplier', '选择供应商') : t('No suppliers available', '暂无可用供应商')} className="min-w-0 flex-1 sm:w-auto" ariaLabel={t('Supplier', '供应商')} />
           <Button variant="outline" size="lg" disabled={busy || !canSwitch} onClick={() => void run()}>
             {busy && <Spinner className="size-3.5" />}
             {t('Switch', '切换')}
           </Button>
-        </div>
+        </div>}
       </GroupCard>
       <ErrorText>{error}</ErrorText>
       {notice && <p role="status" className="text-ui-sm text-success">{notice}</p>}

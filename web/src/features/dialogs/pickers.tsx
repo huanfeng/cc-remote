@@ -24,12 +24,12 @@ export function PermissionField({ inheritLabel, className, ...p }: FieldProps & 
   return <PermissionPicker {...p} mobile={mobile} variant="field" inheritLabel={inheritLabel ?? t('Use default', '跟随默认')} className={cn(width, className)} />;
 }
 
-export function ModelField({ inheritLabel, className, ...p }: FieldProps & { sessionId?: string }) {
+export function ModelField({ inheritLabel, className, ...p }: FieldProps & { sessionId?: string; codexAccountId?: string }) {
   const mobile = useIsMobile();
   return <ModelPicker {...p} mobile={mobile} variant="field" inheritLabel={inheritLabel ?? t('Use default', '跟随默认')} className={cn(width, className)} />;
 }
 
-export function EffortField({ inheritLabel, className, ...p }: FieldProps & { model?: string; sessionId?: string }) {
+export function EffortField({ inheritLabel, className, ...p }: FieldProps & { model?: string; sessionId?: string; codexAccountId?: string }) {
   const mobile = useIsMobile();
   return <EffortPicker {...p} mobile={mobile} variant="field" inheritLabel={inheritLabel ?? t('Use default', '跟随默认')} className={cn(width, className)} />;
 }

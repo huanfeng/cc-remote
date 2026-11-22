@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { currentSupplierValue, supplierOptions, supplierSwitchOptions, defaultSupplierLabel, profilesFor, switchSupplier } from '../src/features/pickers/supplierSwitch.ts';
+import { currentSupplierValue, hasLockedCodexAccount, supplierOptions, supplierSwitchOptions, defaultSupplierLabel, profilesFor, switchSupplier } from '../src/features/pickers/supplierSwitch.ts';
 import { BackendError } from '../src/backend/errors.ts';
 
 const catalog = {
@@ -43,6 +43,33 @@ test('switching keeps native available with API credentials, cached failures or 
   ].map(reading => ({ profiles: { '@native': reading } }))]) {
     assert.deepEqual(supplierSwitchOptions(catalog, 'claude', usage).map(o => o.value), ['', '@native', 'c', 'o']);
   }
+});
+
+test('started Codex sessions keep their original account and cannot select another account via default', () => {
+  const work = 'codex-account:00000000-0000-0000-0000-000000000001';
+  const personal = 'codex-account:00000000-0000-0000-0000-000000000002';
+  const withAccounts = {
+    ...catalog,
+    profiles: [...catalog.profiles,
+      { id: work, name: 'Work', app: 'codex', kind: 'oauth' },
+      { id: personal, name: 'Personal', app: 'codex', kind: 'oauth' },
+    ],
+    defaultProfiles: { ...catalog.defaultProfiles, codex: work },
+  };
+  const bound = { profileId: personal, codexAccountLocked: true };
+  const fresh = { profileId: personal };
+  const startedNative = { codexAccountLocked: true };
+
+  assert.equal(hasLockedCodexAccount(bound), true);
+  assert.equal(hasLockedCodexAccount(fresh), false);
+  assert.equal(hasLockedCodexAccount(startedNative), false);
+  assert.deepEqual(supplierSwitchOptions(withAccounts, 'codex', null, bound), []);
+  assert.deepEqual(supplierSwitchOptions(catalog, 'codex', null, bound), [], 'a signed-out account remains bound');
+  assert.deepEqual(supplierSwitchOptions(withAccounts, 'codex', null, startedNative).map(o => o.value), ['@native', 'x']);
+  const withAPIDefault = { ...withAccounts, defaultProfiles: { codex: 'x' } };
+  assert.deepEqual(supplierSwitchOptions(withAPIDefault, 'codex', null, startedNative).map(o => o.value), ['', '@native', 'x']);
+  assert.deepEqual(supplierSwitchOptions(withAccounts, 'codex', null, fresh).map(o => o.value), ['', '@native', 'x', work, personal]);
+  assert.deepEqual(supplierOptions(withAccounts, 'codex').map(o => o.value), ['', '@native', 'x', work, personal]);
 });
 
 test('busy managed and terminal switches require a separate explicit forced request', async () => {

@@ -14,10 +14,10 @@ import { useModels } from './useModels';
 
 const SEARCH_AT = 8;
 
-export function ModelList({ provider, sessionId, value, onPick, inheritLabel, mobile }: {
-  provider: Provider; sessionId?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
+export function ModelList({ provider, sessionId, codexAccountId, value, onPick, inheritLabel, mobile }: {
+  provider: Provider; sessionId?: string; codexAccountId?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
 }) {
-  const { list, loading, error, refresh } = useModels(provider, sessionId);
+  const { list, loading, error, refresh } = useModels(provider, sessionId, true, codexAccountId);
   const [query, setQuery] = useState('');
   const models = list?.models ?? [];
   const groups = groupModels(models, query);
@@ -80,11 +80,11 @@ export function ModelList({ provider, sessionId, value, onPick, inheritLabel, mo
   );
 }
 
-export function EffortList({ provider, sessionId, model, value, onPick, inheritLabel, mobile }: {
-  provider: Provider; sessionId?: string; model?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
+export function EffortList({ provider, sessionId, codexAccountId, model, value, onPick, inheritLabel, mobile }: {
+  provider: Provider; sessionId?: string; codexAccountId?: string; model?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
 }) {
   // Codex models advertise their own efforts; Claude uses the generic list.
-  const { list } = useModels(provider, sessionId, provider === 'codex');
+  const { list } = useModels(provider, sessionId, provider === 'codex', codexAccountId);
   const levels = modelEfforts(list?.models, model ?? '', provider);
   const options: PickerOption[] = levels.map(l => ({ value: l, label: l, description: EFFORT_NOTES[l] }));
   if (value && !levels.includes(value)) options.push({ value, label: value });

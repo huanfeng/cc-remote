@@ -67,7 +67,7 @@ function NativeWorkspace({ id, provider, mobile }: { id: string; provider: Provi
       <SessionHeader session={session} mobile={mobile} native />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <ConversationView tkey={key} session={session} transcript={transcript} native={provider} mobile={mobile} />
-        <NativeFooter id={id} provider={provider} cwd={session.cwd} />
+        <NativeFooter id={id} provider={provider} cwd={session.cwd} profileId={session.profileId} loaded={!!transcript.session} />
       </div>
     </div>
   );

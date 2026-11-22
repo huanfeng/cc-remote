@@ -133,6 +133,9 @@ func startRPC(executable, configDir, cwd string, onMessage func(rpcMessage) erro
 	cmd.Env = Environment(configDir)
 	if len(profileOptions) > 0 {
 		o := profileOptions[0]
+		if o.CodexAccount {
+			cmd.Env = AccountEnvironment(configDir)
+		}
 		cmd.Env = claude.ProfileEnvironment(cmd.Env, o.ProfileEnv)
 		args, err := ConfigArgs(o.ConfigOverrides)
 		if err != nil {

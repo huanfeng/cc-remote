@@ -15,9 +15,9 @@ ccr session attach <CCR会话ID>
 
 终端由宿主持有，`Ctrl+]` 脱离后可以用同一个 CCR 会话 ID 接回。Codex TUI 使用宿主原生配置处理工作目录信任与审批。宿主重启或 TUI 退出后，用 `ccr codex resume` 选择已保存的历史。一个项目已有 Codex 终端时，先按提示接入现有终端，避免并行恢复可能正在运行的同一段历史。默认的宿主更新会等待 Codex TUI 退出，再重启服务。
 
-新建终端的供应商来自与网页共用的目录，包含本地 API 配置、可用的 CC-Switch 配置和「宿主原生配置」。用 `ccr profile ls --app codex` 查看 ID，用 `--supplier @native` 指定宿主原生配置。
+新建终端与网页共用供应商目录，包含独立连接的 ChatGPT 账号、本地 API 配置、可用的 CC-Switch 配置以及「宿主原生配置」。用 `ccr profile ls --app codex` 查看 ID，用 `--supplier @native` 指定宿主原生配置。
 
-`ccr codex resume` 和 `ccr --resume <原生ID>` 都沿用会话记录中的供应商。尝试指定不同的供应商，或原供应商已不可用时，宿主会报错。对于尚未登记到 CCR、也没有供应商记录的原生历史，首次恢复默认使用宿主配置，也可通过 `--supplier <供应商ID>` 显式指定。新会话默认供应商只影响新建。
+`ccr codex resume` 和 `ccr --resume <原生ID>` 都沿用会话记录中的供应商。尝试指定不同的供应商，或原供应商已不可用时，宿主会报错。首次恢复宿主原生目录中尚未登记到 CCR 的历史时，默认使用宿主配置，也可通过 `--supplier <供应商ID>` 选择 API 供应商。新会话默认供应商只影响新建。
 
 从一个供应商的终端切换到另一个供应商的历史时，退出当前 TUI 后用 CCR 的恢复命令。TUI 内的 `/resume` 由 Codex 按当前进程配置处理。
 
@@ -26,6 +26,12 @@ ccr session attach <CCR会话ID>
 ## 准备
 
 安装 Codex CLI。使用 ChatGPT 登录时，在运行宿主的同一个系统账户下执行 `codex login`。宿主默认从 PATH 找到 `codex`，配置与历史目录为 `CODEX_HOME` 或 `~/.codex`。指定自定义目录时，先创建目录，再按需登录。
+
+## 添加 ChatGPT 账号
+
+在网页打开「设置 → 供应商 → Codex」，选择「添加 ChatGPT 账号」，填写名称，再到官方登录页输入一次性验证码。个人账号可在 ChatGPT 安全设置里启用设备码登录，组织账号由工作区管理员启用。授权完成后，网页新建会话和 `ccr codex --new` 都能选到这个账号。通过 `ccr profile ls --app codex` 查看对应 ID。[官方设备码登录说明](https://learn.chatgpt.com/docs/auth#login-on-headless-devices)
+
+每个账号有自己的 Codex 配置、登录状态和历史目录。按原生 ID 恢复会话会使用所属账号，修改默认供应商只影响新建。需要用另一个账号时新建会话。移除某个账号前先结束使用它的进程。移除后仍可查看其历史，重新添加同一 ChatGPT 账号会创建新的 Codex 配置目录。
 
 可直接指定路径：
 
@@ -45,7 +51,7 @@ Windows 上支持 npm 安装生成的 `codex.cmd`；宿主直接调用其 Node �
 
 - 一个活跃托管会话对应一个常驻 app-server。消息按发送顺序执行；停止只中断当前轮，排队消息继续处理。
 - 线程 ID 在创建后保存，空闲释放进程或重启宿主后，下次消息通过 `thread/resume` 继续。`/clear` 开始新线程，保留网页历史。
-- 模型列表来自本机 Codex 的 `model/list`。可填写自定义模型 ID；模型与推理强度是否可用由当前 Codex 和账户决定。
+- 模型列表来自本机 Codex 的 `model/list`，网页会按所选 ChatGPT 账号查询。可填写自定义模型 ID，模型与推理强度是否可用由当前 Codex 和账号决定。
 - 新建会话用上下两块卡片选择 Claude / Codex；两种提供方共享最近项目目录。权限、模型和推理强度可在创建时配置，Full Access 对应 `danger-full-access`。
 - 运行时顶部显示 CLI 返回的模型、推理强度、权限和上下文占用。点击配置摘要可切换模型、推理强度；修改在下一轮生效，当前任务继续运行。权限和供应商修改仍等待进程可安全重启后生效。
 - 在「设置」中切换到 Codex 可修改独立默认值，保存在数据目录的 `codex/preferences.json`。Claude 默认值、模型别名和权限模式不会用于 Codex。

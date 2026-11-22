@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cc-remote/internal/claude"
+	"cc-remote/internal/codex"
 	"cc-remote/internal/store"
 )
 
@@ -76,6 +77,15 @@ func (s *Server) profileCatalog() (profileFile, error) {
 	for _, e := range entries {
 		f.Profiles = append(f.Profiles, e.profile())
 	}
+	accounts, err := s.loadCodexAccounts()
+	if err != nil {
+		f.Unavailable = append(f.Unavailable, unavailableProfile{"codex-accounts", "ChatGPT", "codex", "无法读取 Codex 登录配置"})
+	}
+	for _, account := range accounts {
+		if !account.Disabled {
+			f.Profiles = append(f.Profiles, codexAccountProfile(account))
+		}
+	}
 	local, localErr := s.localSupplierProfiles()
 	if localErr != nil {
 		f.Unavailable = append(f.Unavailable, unavailableProfile{"local", "Local", "claude", "无法读取本地供应商配置"})
@@ -102,6 +112,9 @@ func (s *Server) profileCatalog() (profileFile, error) {
 }
 func (p supplierProfile) validate() error {
 	if p.Settings.Kind == oauthKind {
+		if p.App == "codex" && isCodexAccountID(p.ID) {
+			return nil
+		}
 		if p.App != "claude" || !strings.HasPrefix(p.ID, oauthIDPrefix) || len(p.Settings.Env) != 1 || p.Settings.Env[claude.OAuthEnvKey] == "" {
 			return errors.New("OAuth 供应商配置无效")
 		}
@@ -166,7 +179,7 @@ func profileIDMatches(canonical, requested string) bool {
 	if canonical == requested {
 		return true
 	}
-	if strings.HasPrefix(requested, localSupplierPrefix) || strings.HasPrefix(requested, oauthIDPrefix) || strings.HasPrefix(requested, "ccswitch:") {
+	if strings.HasPrefix(requested, localSupplierPrefix) || strings.HasPrefix(requested, oauthIDPrefix) || strings.HasPrefix(requested, "ccswitch:") || strings.HasPrefix(requested, codexAccountIDPrefix) {
 		return false // a qualified ID must never resolve to a different supplier
 	}
 	raw, imported := strings.CutPrefix(canonical, "ccswitch:")
@@ -182,7 +195,7 @@ func (s *Server) profilesAPI(w http.ResponseWriter, r *http.Request) {
 	for _, p := range f.Profiles {
 		items = append(items, map[string]string{"id": p.ID, "name": p.Name, "app": p.App, "kind": p.Settings.Kind})
 	}
-	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true, "oauthNotes": true, "defaultProfile": true}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "configuredDefaults": f.ConfiguredDefaults, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
+	respond(w, 200, map[string]any{"schemaVersion": 1, "capabilities": map[string]bool{"resumeSelection": true, "switchSupplier": true, "oauthProfiles": true, "oauthNotes": true, "defaultProfile": true, "codexAccounts": s.cfg.DataDir != ""}, "profiles": items, "defaultProfiles": f.DefaultProfiles, "configuredDefaults": f.ConfiguredDefaults, "source": f.Source, "found": f.Found, "unavailable": f.Unavailable})
 }
 
 // supplierEnvAPI returns one supplier's connection variables so the terminal
@@ -215,6 +228,9 @@ func (s *Server) sessionProfile(x store.Session) (supplierProfile, error) {
 	}
 	if json.Unmarshal([]byte(x.ProfileJSON), &p) != nil || p.ID != x.ProfileID || p.App != x.Provider {
 		return p, errors.New("会话供应商配置无效")
+	}
+	if p.App == "codex" && p.Settings.Kind == oauthKind {
+		return s.activeCodexAccountProfile(p.ID)
 	}
 	if p.Settings.Kind == oauthKind {
 		// Snapshots carry no token: the entry is read now, so a replaced token
@@ -251,6 +267,8 @@ func (s *Server) profileOptions(x store.Session, o *claude.Options) error {
 		if x.Model == "" && p.Settings.Kind != oauthKind {
 			o.Model = "" // a relay decides its own model; an OAuth overlay keeps the host default
 		}
+	} else if p.Settings.Kind == oauthKind {
+		s.configureCodexAccount(o, p.ID)
 	} else {
 		o.ProfileEnv = map[string]string{"OPENAI_API_KEY": p.Settings.Auth["OPENAI_API_KEY"]}
 		o.ConfigOverrides = p.Settings.ConfigOverrides
@@ -260,6 +278,12 @@ func (s *Server) profileOptions(x store.Session, o *claude.Options) error {
 		}
 	}
 	return nil
+}
+
+func (s *Server) configureCodexAccount(o *claude.Options, id string) {
+	o.CodexAccount = true
+	o.ConfigDir = s.codexAccountHome(id)
+	o.ConfigOverrides = codex.AccountConfig()
 }
 
 // Switching detaches the old process before storing a new launch snapshot. It
@@ -302,6 +326,11 @@ func (s *Server) switchProfile(w http.ResponseWriter, r *http.Request) {
 		s.decorate(&x)
 		s.mu.Unlock()
 		respond(w, 200, x)
+		return
+	}
+	if err := checkCodexAccountSwitch(x, p.ID, s.procs[id] != nil); err != nil {
+		s.mu.Unlock()
+		fail(w, 400, err.Error())
 		return
 	}
 	rt := s.procs[id]
@@ -359,6 +388,13 @@ func (s *Server) switchProfile(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.switching, id)
+	if isCodexAccountID(p.ID) {
+		p, e = s.activeCodexAccountProfile(p.ID)
+		if e != nil {
+			fail(w, 400, e.Error())
+			return
+		}
+	}
 	// Terminal cleanup may have marked the prior turn interrupted; preserve ID/history.
 	if e = s.store.SetProfile(id, p.ID, p.snapshot()); e != nil {
 		fail(w, 500, "无法保存会话配置")

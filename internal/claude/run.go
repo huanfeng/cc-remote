@@ -34,6 +34,7 @@ type Options struct {
 	ProfileEnv                                                                             map[string]string
 	ConfigOverrides                                                                        map[string]any
 	ModelProvider                                                                          string
+	CodexAccount                                                                           bool
 	Provider                                                                               string
 	Executable, SessionID, Cwd, Message, BridgeURL, BridgeToken, HostExecutable, ConfigDir string
 	Resume                                                                                 bool

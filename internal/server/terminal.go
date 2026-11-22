@@ -42,8 +42,9 @@ var firstPromptWait = 12 * time.Second
 const firstPromptTries = 3
 
 type terminalSession struct {
-	id, claudeID string
-	codex        bool
+	id, claudeID   string
+	codex          bool
+	codexAccountID string
 	// hookToken is what its hooks authenticate with, for their own endpoints
 	// only: Claude Code and every command it runs can read the hook files.
 	hookToken           string

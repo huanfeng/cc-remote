@@ -21,9 +21,10 @@ import { shortPath } from '@/features/session/status';
 import { SurfaceShell } from './SurfaceShell';
 import { ErrorText, SimpleSelect, errorMessage, supplierOptions, useProfileCatalog } from './common';
 import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
+import { isCodexAccount } from '@/features/pickers/supplierSwitch';
 import { EffortField, ModelField, PermissionField } from './pickers';
 
-type Resume = { id: string; provider: Provider; cwd: string };
+type Resume = { id: string; provider: Provider; cwd: string; profileId?: string };
 
 /** Opens a session just created (or imported) here, with the sidebar on the session list it is in. */
 function openCreated(id: string) {
@@ -88,6 +89,8 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const { catalog } = useProfileCatalog();
+  const selectedSupplier = profileId || catalog?.defaultProfiles[provider];
+  const codexAccountId = provider === 'codex' && isCodexAccount(selectedSupplier) ? selectedSupplier : undefined;
   const supplierUsage = useSupplierUsage(provider, open);
   const recent = useRecentProjects();
 
@@ -262,10 +265,10 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
                 <PermissionField provider={provider} value={overrides.permissionMode} onChange={permissionMode => setOverrides(o => ({ ...o, permissionMode }))} />
               </InlineField>
               <InlineField label={t('Model', '模型')}>
-                <ModelField key={provider} provider={provider} value={overrides.model} onChange={model => setOverrides(o => ({ ...o, model }))} />
+                <ModelField key={provider} provider={provider} codexAccountId={codexAccountId} value={overrides.model} onChange={model => setOverrides(o => ({ ...o, model }))} />
               </InlineField>
               <InlineField label={t('Effort', '推理强度')}>
-                <EffortField provider={provider} model={overrides.model} value={overrides.effort} onChange={effort => setOverrides(o => ({ ...o, effort }))} />
+                <EffortField provider={provider} codexAccountId={codexAccountId} model={overrides.model} value={overrides.effort} onChange={effort => setOverrides(o => ({ ...o, effort }))} />
               </InlineField>
               <p className="text-ui-xs text-foreground-subtlest">{t('Empty choices follow the CC Remote defaults in Settings.', '未选择的项跟随设置中的 CC Remote 默认值。')}</p>
             </div>
@@ -289,6 +292,10 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
   const supplierUsage = useSupplierUsage(resume.provider, open);
   const claude = resume.provider !== 'codex';
   const canPick = !!catalog?.capabilities?.resumeSelection;
+  const originalAccount = !claude && isCodexAccount(resume.profileId) ? resume.profileId : undefined;
+  const accountName = originalAccount && catalog?.profiles.find(p => p.app === 'codex' && p.id === originalAccount)?.name;
+  const choices = supplierOptions(catalog, resume.provider, true, supplierUsage);
+  const importChoices = claude ? choices : choices.filter(option => !option.value.startsWith('codex-account:'));
 
   const run = async (kind: 'terminal' | 'import') => {
     if (!stopped || busy) return;
@@ -296,7 +303,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
     try {
       const session = kind === 'terminal'
         ? await backend.createSession({ mode: 'terminal', trustFolder: true, resume: resume.id, cwd: resume.cwd, title: '', ...(profileId ? { profileId } : {}) })
-        : await backend.importNative(resume.id, resume.provider, profileId || undefined);
+        : await backend.importNative(resume.id, resume.provider, originalAccount ? undefined : profileId || undefined);
       onOpenChange(false);
       openCreated(session.id);
     } catch (err) {
@@ -338,9 +345,13 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <span>{t('Running the same session in two places at once makes its state and file edits conflict. Stop it in its original terminal first.', '同一个会话同时在两处运行会导致状态和文件修改冲突。请先在原终端停止该会话。')}</span>
         </div>
-        {canPick && (
+        {originalAccount ? (
           <Field label={t('Supplier', '供应商')}>
-            <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, resume.provider, true, supplierUsage)} className="w-full" ariaLabel={t('Supplier', '供应商')} />
+            <span className="text-ui-sm text-foreground-subtle">{accountName || t('Original ChatGPT account', '原 ChatGPT 账号')}</span>
+          </Field>
+        ) : canPick && (
+          <Field label={t('Supplier', '供应商')}>
+            <SimpleSelect value={profileId} onChange={setProfileId} options={importChoices} className="w-full" ariaLabel={t('Supplier', '供应商')} />
           </Field>
         )}
         <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border/70 px-3 py-2.5 max-md:min-h-11">

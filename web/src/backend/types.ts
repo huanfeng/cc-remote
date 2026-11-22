@@ -130,6 +130,8 @@ export interface Session {
   provider?: Provider;
   profileId?: string;
   profileName?: string;
+  /** A started Codex session cannot switch into or out of an isolated account. */
+  codexAccountLocked?: boolean;
   title: string;
   cwd: string;
   truncated?: boolean;
@@ -160,6 +162,7 @@ export interface Session {
 /** A session from the provider's own history (~/.claude/projects, Codex threads). */
 export interface NativeSession {
   provider?: Provider;
+  profileId?: string;
   id: string;
   title: string;
   cwd: string;
@@ -265,9 +268,26 @@ export interface SupplierProfile {
   kind?: 'oauth' | string;
 }
 
+export interface CodexAccount {
+  id: string;
+  name: string;
+  disabled?: boolean;
+  signOutPending?: boolean;
+}
+
+export interface CodexAccountLogin {
+  id: string;
+  verificationUrl: string;
+  userCode: string;
+}
+
+export type CodexAccountLoginStatus =
+  | { status: 'pending' | 'complete' }
+  | { status: 'failed'; error?: string };
+
 export interface ProfileCatalog {
   schemaVersion?: number;
-  capabilities?: { resumeSelection?: boolean; switchSupplier?: boolean; oauthProfiles?: boolean; oauthNotes?: boolean; defaultProfile?: boolean };
+  capabilities?: { resumeSelection?: boolean; switchSupplier?: boolean; oauthProfiles?: boolean; oauthNotes?: boolean; defaultProfile?: boolean; codexAccounts?: boolean };
   source?: string;
   found?: boolean;
   unavailable?: { id: string; name: string; app: Provider; reason: string }[];

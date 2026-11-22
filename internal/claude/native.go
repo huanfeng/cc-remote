@@ -20,6 +20,7 @@ import (
 
 type NativeSession struct {
 	Provider                  string `json:"provider,omitempty"`
+	ProfileID                 string `json:"profileId,omitempty"`
 	ModelProvider             string `json:"-"` // Codex's original model_provider, if recorded
 	ID                        string `json:"id"`
 	Title                     string `json:"title"`

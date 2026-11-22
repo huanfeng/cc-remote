@@ -50,7 +50,7 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	var x store.Session
-	var modelProvider string
+	var native claude.NativeSession
 	if req.Resume != "" {
 		x, err = s.store.FindNative("codex", req.Resume)
 		switch {
@@ -73,13 +73,12 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 			fail(w, 500, l.T("Could not read sessions", "无法读取会话"))
 			return
 		}
-		native, _, err := codex.NativeHistory(s.cfg.CodexConfigDir, req.Resume)
+		native, _, err = s.codexNativeHistory(r.Context(), req.Resume)
 		if err != nil {
 			fail(w, 404, l.T("Codex thread not found", "找不到这个 Codex 对话"))
 			return
 		}
 		req.Cwd = native.Cwd
-		modelProvider = native.ModelProvider
 		if req.Title == "" {
 			req.Title = native.Title
 		}
@@ -93,7 +92,7 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		// An unbound TUI may have opened this native thread from its picker.
 		project, _ := os.Stat(cwd)
 		for _, ts := range s.terminals {
-			if !ts.codex || isDone(ts.runner.Done()) {
+			if !ts.codex || ts.codexAccountID != native.ProfileID || isDone(ts.runner.Done()) {
 				continue
 			}
 			dir, _ := os.Stat(ts.cwd)
@@ -104,12 +103,12 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		}
 	}
 	created := x.ID == ""
-	x, err = s.codexTerminalProfile(x, req, modelProvider, args)
+	x, err = s.codexTerminalProfile(x, req, native, args)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
-	var options claude.Options
+	options := claude.Options{ConfigDir: s.cfg.CodexConfigDir}
 	if err := s.profileOptions(x, &options); err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -137,8 +136,13 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 			return
 		}
 	}
-	env := claude.ProfileEnvironment(codex.Environment(s.cfg.CodexConfigDir), options.ProfileEnv)
-	if err := s.startCodexTerminalLocked(x.ID, cwd, req.Resume, req.Prompt, append(configArgs, args...), env); err != nil {
+	env := claude.ProfileEnvironment(codex.Environment(options.ConfigDir), options.ProfileEnv)
+	accountID := ""
+	if options.CodexAccount {
+		env = codex.AccountEnvironment(options.ConfigDir)
+		accountID = x.ProfileID
+	}
+	if err := s.startCodexTerminalLocked(x.ID, cwd, req.Resume, req.Prompt, accountID, append(configArgs, args...), env); err != nil {
 		if created {
 			if deleteErr := s.store.Delete(x.ID); deleteErr != nil {
 				log.Printf("remove failed Codex terminal %s: %v", x.ID, deleteErr)
@@ -163,9 +167,9 @@ func codexTerminalSupplierAlias(id string) string {
 	return codexTerminalSupplierPrefix + base64.RawURLEncoding.EncodeToString([]byte(id))
 }
 
-func (s *Server) codexTerminalProfile(x store.Session, req codexTerminalRequest, modelProvider string, args []string) (store.Session, error) {
+func (s *Server) codexTerminalProfile(x store.Session, req codexTerminalRequest, native claude.NativeSession, args []string) (store.Session, error) {
 	wanted := req.ProfileID
-	var recorded string
+	recorded := native.ProfileID
 	nativeOptions := false
 	for _, arg := range args {
 		name, _, _ := strings.Cut(arg, "=")
@@ -176,12 +180,14 @@ func (s *Server) codexTerminalProfile(x store.Session, req codexTerminalRequest,
 	}
 	if req.Resume != "" {
 		bound := x.ProfileID
-		if encoded, ok := strings.CutPrefix(modelProvider, codexTerminalSupplierPrefix); ok {
+		if encoded, ok := strings.CutPrefix(native.ModelProvider, codexTerminalSupplierPrefix); ok && recorded == "" {
 			id, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
 			if err != nil || len(id) == 0 {
 				return x, i18n.Errorf("Invalid supplier in this Codex thread", "这个 Codex 对话的供应商标识无效")
 			}
 			recorded = string(id)
+		}
+		if recorded != "" {
 			bound = recorded
 			if x.ID != "" && x.ProfileID != bound {
 				return x, i18n.Errorf("The saved supplier does not match this Codex thread", "保存的供应商与这个 Codex 对话不一致")
@@ -197,6 +203,9 @@ func (s *Server) codexTerminalProfile(x store.Session, req codexTerminalRequest,
 			wanted = bound
 		} else if wanted == "" {
 			wanted = "@native" // older native threads must not inherit a new CCR default
+		}
+		if isCodexAccountID(wanted) && native.ProfileID != wanted {
+			return x, i18n.Errorf("This Codex thread belongs to its original home", "此 Codex 对话属于其原始目录")
 		}
 	}
 	if nativeOptions {
@@ -221,6 +230,9 @@ func (s *Server) codexTerminalProfile(x store.Session, req codexTerminalRequest,
 func codexTerminalConfigArgs(options claude.Options, args []string, profileID string) ([]string, error) {
 	if profileID == "" {
 		return nil, nil
+	}
+	if options.CodexAccount {
+		return codex.ConfigArgs(options.ConfigOverrides)
 	}
 	config := maps.Clone(options.ConfigOverrides)
 	providers := config["model_providers"].(map[string]any) // checked by profileOptions
@@ -290,7 +302,7 @@ func codexTerminalArgs(args []string) ([]string, error) {
 	return options, nil
 }
 
-func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt string, options, env []string) error {
+func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt, accountID string, options, env []string) error {
 	if s.switching[id] {
 		return fmt.Errorf("正在切换配置")
 	}
@@ -316,7 +328,7 @@ func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt string, opti
 	if err != nil {
 		return err
 	}
-	ts := &terminalSession{id: id, codex: true, runner: runner, cleaned: make(chan struct{}), cwd: cwd, started: time.Now()}
+	ts := &terminalSession{id: id, codex: true, codexAccountID: accountID, runner: runner, cleaned: make(chan struct{}), cwd: cwd, started: time.Now()}
 	s.terminals[id] = ts
 	s.closers.Add(1)
 	go func() {

@@ -149,6 +149,10 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	rt := &sessionRuntime{id: x.ID, provider: x.Provider, token: store.ID() + store.ID(), key: key, ready: make(chan struct{}), outcome: "completed", idleSince: time.Now()}
 	opts.BridgeToken = rt.token
 	s.procs[x.ID] = rt
+	var releaseAccount func()
+	if opts.CodexAccount {
+		releaseAccount = s.holdCodexAccountLocked(x.ProfileID)
+	}
 	hooks := claude.ProcessHooks{
 		Event:  func(e claude.Event) error { return s.processEvent(rt, e) },
 		Replay: func(content string) { s.replay(rt, content) },
@@ -158,6 +162,9 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 	// Starting can take seconds (Windows, antivirus); it runs outside s.mu and
 	// messages queue meanwhile.
 	go func() {
+		if releaseAccount != nil {
+			defer releaseAccount()
+		}
 		proc, err := starter(opts, hooks)
 		s.mu.Lock()
 		rt.proc = proc
@@ -187,6 +194,9 @@ func (s *Server) runtimeLocked(x store.Session) *sessionRuntime {
 		s.mu.Unlock()
 		if detached {
 			proc.Close()
+		}
+		if releaseAccount != nil {
+			<-proc.Done()
 		}
 	}()
 	return rt

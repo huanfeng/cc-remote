@@ -36,3 +36,49 @@ test('advanced supplier fields are sent without runtime snapshots or unrelated c
   assert.ok(!JSON.stringify(sent).includes('never-send'));
   b.dispose();
 });
+
+test('Codex account management polls the authenticated login without sending device codes back', async () => {
+  const calls = [];
+  const account = { id: 'codex-account:one', name: 'Work' };
+  const attempt = { id: 'attempt-one', verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'TEST-CODE' };
+  const b = make(async (url, init) => {
+    calls.push([new URL(url).pathname, init.method, init.body && JSON.parse(init.body)]);
+    assert.equal(init.headers.Authorization, 'Bearer token');
+    if (init.method === 'POST') return Response.json(attempt);
+    if (init.method === 'GET') return Response.json(url.endsWith(attempt.id) ? { status: 'complete' } : { profiles: [account] });
+    return new Response(null, { status: 204 });
+  });
+  try {
+    assert.deepEqual(await b.codexAccounts.list(), [account]);
+    assert.deepEqual(await b.codexAccounts.begin(account.name), attempt);
+    const result = await new Promise((resolve, reject) => b.codexAccounts.watch(attempt.id, resolve, reject));
+    assert.deepEqual(result, { status: 'complete' });
+    await b.codexAccounts.cancel(attempt.id);
+    await b.codexAccounts.rename(account.id, 'Renamed');
+    await b.codexAccounts.remove(account.id);
+    const base = '/api/profiles/codex-accounts';
+    assert.deepEqual(calls, [
+      [base, 'GET', undefined],
+      [`${base}/login`, 'POST', { name: 'Work' }],
+      [`${base}/login/${attempt.id}`, 'GET', undefined],
+      [`${base}/login/${attempt.id}`, 'DELETE', undefined],
+      [`${base}/codex-account%3Aone`, 'PATCH', { name: 'Renamed' }],
+      [`${base}/codex-account%3Aone`, 'DELETE', undefined],
+    ]);
+  } finally { b.dispose(); }
+});
+
+test('closing the Codex login watcher ignores an in-flight status response', async () => {
+  let finish;
+  const result = new Promise(resolve => { finish = resolve; });
+  let signal;
+  const b = make(async (_url, init) => { signal = init.signal; return result; });
+  let delivered = 0;
+  const stop = b.codexAccounts.watch('pending', () => { delivered++; }, () => { delivered++; });
+  stop();
+  finish(Response.json({ status: 'complete' }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(signal.aborted, true);
+  assert.equal(delivered, 0);
+  b.dispose();
+});

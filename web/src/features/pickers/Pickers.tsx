@@ -54,7 +54,7 @@ const PickerTrigger = forwardRef<HTMLButtonElement, ComponentProps<'button'> & {
   },
 );
 
-export function ModelPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, sessionId }: PickerProps & { sessionId?: string }) {
+export function ModelPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, sessionId, codexAccountId }: PickerProps & { sessionId?: string; codexAccountId?: string }) {
   const [open, setOpen] = useState(false);
   const label = value ? shortModel(value) : inheritLabel || t('Default model', '默认模型');
   return (
@@ -62,13 +62,13 @@ export function ModelPicker({ value, onChange, provider, inheritLabel, variant =
       open={open} onOpenChange={setOpen} mobile={mobile} title={t('Model', '模型')} className="w-80"
       trigger={<PickerTrigger variant={variant} label={label} mobile={mobile} disabled={disabled} className={className} />}
     >
-      <ModelList provider={provider} sessionId={sessionId} value={value} inheritLabel={inheritLabel} mobile={mobile}
+      <ModelList provider={provider} sessionId={sessionId} codexAccountId={codexAccountId} value={value} inheritLabel={inheritLabel} mobile={mobile}
         onPick={v => { setOpen(false); onChange(v); }} />
     </PickerSurface>
   );
 }
 
-export function EffortPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, model, sessionId }: PickerProps & { model?: string; sessionId?: string }) {
+export function EffortPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, model, sessionId, codexAccountId }: PickerProps & { model?: string; sessionId?: string; codexAccountId?: string }) {
   const [open, setOpen] = useState(false);
   const label = value || inheritLabel || t('Default effort', '默认强度');
   return (
@@ -76,7 +76,7 @@ export function EffortPicker({ value, onChange, provider, inheritLabel, variant 
       open={open} onOpenChange={setOpen} mobile={mobile} title={t('Reasoning effort', '推理强度')} className="w-64"
       trigger={<PickerTrigger variant={variant} label={label} mobile={mobile} disabled={disabled} className={className} />}
     >
-      <EffortList provider={provider} sessionId={sessionId} model={model} value={value} inheritLabel={inheritLabel} mobile={mobile}
+      <EffortList provider={provider} sessionId={sessionId} codexAccountId={codexAccountId} model={model} value={value} inheritLabel={inheritLabel} mobile={mobile}
         onPick={v => { setOpen(false); onChange(v); }} />
     </PickerSurface>
   );

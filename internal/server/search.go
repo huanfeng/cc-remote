@@ -135,7 +135,12 @@ func (s *Server) searchMessages(w http.ResponseWriter, r *http.Request) {
 		// hit order uses the original message timestamp and native identity.
 		search, dir := claude.SearchNative, s.cfg.ClaudeConfigDir
 		if native == "codex" {
-			search, dir = codex.SearchNative, s.cfg.CodexConfigDir
+			home, err := s.codexNativeHomeForThread(ctx, id)
+			if err != nil {
+				fail(w, 404, s.lang(r).T("Could not search this native history", "无法搜索这段原生历史"))
+				return
+			}
+			search, dir = codex.SearchNative, home.dir
 		}
 		n, err := search(ctx, dir, id, func(e claude.Event, locator string) bool {
 			add(nativeHit(native, claude.NativeSession{ID: id}, e, locator), e.Text)
@@ -154,14 +159,33 @@ func (s *Server) searchMessages(w http.ResponseWriter, r *http.Request) {
 			if provider != "" && source != provider {
 				continue
 			}
-			search, dir := claude.SearchNativeAll, s.cfg.ClaudeConfigDir
-			if source == "codex" {
-				search, dir = codex.SearchNativeAll, s.cfg.CodexConfigDir
-			}
-			err := search(ctx, dir, include, func(n claude.NativeSession, e claude.Event, locator string) bool {
+			visit := func(n claude.NativeSession, e claude.Event, locator string) bool {
 				add(nativeHit(source, n, e, locator), e.Text)
 				return ctx.Err() == nil
-			})
+			}
+			if source == "codex" {
+				homes, err := s.codexNativeHomes()
+				partial = partial || err != nil
+				threadCounts := map[string]int{}
+				if len(homes) > 1 {
+					for _, home := range homes {
+						threads, err := codex.ListNative(home.dir)
+						partial = partial || err != nil
+						for _, thread := range threads {
+							threadCounts[strings.ToLower(thread.ID)]++
+						}
+					}
+				}
+				codexInclude := func(n claude.NativeSession) bool {
+					return threadCounts[strings.ToLower(n.ID)] <= 1 && include(n)
+				}
+				for _, home := range homes {
+					err := codex.SearchNativeAll(ctx, home.dir, codexInclude, visit)
+					partial = partial || err != nil
+				}
+				continue
+			}
+			err := claude.SearchNativeAll(ctx, s.cfg.ClaudeConfigDir, include, visit)
 			partial = partial || err != nil
 		}
 	}
@@ -237,7 +261,12 @@ func (s *Server) searchContext(w http.ResponseWriter, r *http.Request) {
 	} else {
 		contextFor, dir := claude.NativeSearchContext, s.cfg.ClaudeConfigDir
 		if native == "codex" {
-			contextFor, dir = codex.NativeSearchContext, s.cfg.CodexConfigDir
+			home, err := s.codexNativeHomeForThread(r.Context(), id)
+			if err != nil {
+				fail(w, 404, s.lang(r).T("This message is no longer available", "此消息已不可用"))
+				return
+			}
+			contextFor, dir = codex.NativeSearchContext, home.dir
 		}
 		n, messages, at, readErr := contextFor(r.Context(), dir, id, locator)
 		err = readErr

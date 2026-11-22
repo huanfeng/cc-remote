@@ -6,12 +6,12 @@
 //
 // Plain TypeScript with explicit .ts imports and no React: node --test loads it.
 import type {
-  Backend, ClaudeSettings, StatuslineSettings, StatuslineOptions, StatuslineStyle, TranscriptUpdate, Unsubscribe, UploadOptions,
+  Backend, ClaudeSettings, CodexAccountsAPI, StatuslineSettings, StatuslineOptions, StatuslineStyle, TranscriptUpdate, Unsubscribe, UploadOptions,
 } from '../backend.ts';
 import { BackendError } from '../errors.ts';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from '../supplierConfig.ts';
 import type {
-  Attachment, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
+  Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
@@ -44,6 +44,7 @@ export interface HttpBackendOptions {
 
 const enc = encodeURIComponent;
 const EMPTY: PendingRequest[] = [];
+const CODEX_ACCOUNTS = '/api/profiles/codex-accounts';
 
 type Native = Provider | undefined;
 
@@ -65,6 +66,7 @@ export class HttpBackend implements Backend {
   /** Watched transcripts, for a poll right after an action on their session. */
   private transcriptPollers = new Map<string, Set<Poller>>();
   private usagePollers = new Set<Poller>();
+  private codexLoginWatchers = new Set<Unsubscribe>();
   private projectShellWatchers = new Map<Unsubscribe, () => void>();
   private streams = new Set<TerminalStream>();
   private assets = new Map<string, Promise<string>>();
@@ -87,6 +89,7 @@ export class HttpBackend implements Backend {
     this.transcriptPollers.clear();
     for (const p of this.usagePollers) p.stop();
     this.usagePollers.clear();
+    for (const stop of this.codexLoginWatchers) stop();
     for (const stop of this.projectShellWatchers.keys()) stop();
     for (const s of this.streams) s.close();
     this.streams.clear();
@@ -596,9 +599,10 @@ export class HttpBackend implements Backend {
   }
 
   // ---------- configuration ----------
-  models(opts: { provider: Provider; sessionId?: string; refresh?: boolean }) {
+  models(opts: { provider: Provider; sessionId?: string; codexAccountId?: string; refresh?: boolean }) {
     const q = new URLSearchParams();
     if (opts.sessionId) q.set('sessionId', opts.sessionId);
+    else if (opts.codexAccountId) q.set('codexAccountId', opts.codexAccountId);
     if (opts.refresh) q.set('refresh', '1');
     return this.get<ModelList>(providerQuery(withQuery('/api/models', q.toString()), opts.provider));
   }
@@ -670,6 +674,30 @@ export class HttpBackend implements Backend {
   async addOAuthProfile(name: string, token: string, notes?: string) { await this.call('POST', '/api/profiles/oauth', defined({ name, token, notes })); }
   async editOAuthProfile(id: string, patch: { name: string; token?: string; notes?: string }) { await this.call('PATCH', this.oauthPath(id), defined({ name: patch.name, token: patch.token, notes: patch.notes })); }
   async removeOAuthProfile(id: string) { await this.call('DELETE', this.oauthPath(id)); }
+
+  readonly codexAccounts: CodexAccountsAPI = {
+    list: async signal => (await this.get<{ profiles: CodexAccount[] | null }>(CODEX_ACCOUNTS, signal)).profiles ?? [],
+    begin: name => this.call('POST', `${CODEX_ACCOUNTS}/login`, { name }),
+    watch: (id, onChange, onError) => {
+      const controller = new AbortController();
+      const watcher = poll(async () => {
+        const value = await this.get<CodexAccountLoginStatus>(`${CODEX_ACCOUNTS}/login/${enc(id)}`, controller.signal);
+        if (controller.signal.aborted) return;
+        if (value.status !== 'pending') stop();
+        onChange(value);
+      }, 2500, { pauseHidden: true, onError });
+      const stop = () => {
+        controller.abort();
+        watcher.stop();
+        this.codexLoginWatchers.delete(stop);
+      };
+      this.codexLoginWatchers.add(stop);
+      return stop;
+    },
+    cancel: id => this.call('DELETE', `${CODEX_ACCOUNTS}/login/${enc(id)}`),
+    rename: (id, name) => this.call('PATCH', `${CODEX_ACCOUNTS}/${enc(id)}`, { name }),
+    remove: id => this.call('DELETE', `${CODEX_ACCOUNTS}/${enc(id)}`),
+  };
 
   // ---------- usage and status ----------
   watchUsage(opts: { provider: Provider; sessionId?: string }, onChange: (u: UsageReply) => void): Unsubscribe {

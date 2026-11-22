@@ -321,6 +321,20 @@ func ListNative(configDir string) ([]claude.NativeSession, error) {
 	return out, nil
 }
 
+// NativeMetadata finds the recorded thread without reading conversation events.
+func NativeMetadata(ctx context.Context, configDir, id string) (claude.NativeSession, error) {
+	if !nativeUUID.MatchString(id) {
+		return claude.NativeSession{}, os.ErrNotExist
+	}
+	root, err := nativeRoot(configDir)
+	if err != nil {
+		return claude.NativeSession{}, err
+	}
+	defer root.Close()
+	_, session, err := nativeHistoryPath(ctx, root, id)
+	return session, err
+}
+
 // NativeHistory returns response items as the shared Claude history event shape.
 func NativeHistory(configDir, id string) (claude.NativeSession, []claude.Event, error) {
 	if !nativeUUID.MatchString(id) {

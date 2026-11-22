@@ -10,7 +10,7 @@
 - Claude 使用官方 profile 接口确认 account UUID + organization UUID；Codex 使用 CLI app-server 返回的 user ID 和 workspace account ID。持久化的历史键为哈希，不使用邮箱、显示名称或 profile 名作为账号依据。
 - 同一已确认账号重新登录、轮换 token、删除后重新添加授权，均延续其历史。切换到不同账号或组织会单独记录。删除授权停止后续采集，保留此前历史。
 - 某些 `claude setup-token` 缺少 profile scope，无法确认真实身份。这类 token 独立记录；同一个 token 改名仍连续，新 token 不能安全自动归并。后续成功确认身份时，自动迁移该凭证自己的隔离记录。
-- 旧版 Codex CLI 如果不提供稳定账号 ID，只展示当前额度，不积累可能混用账号的历史；升级 CLI 后启用按账号记录。Codex 本次支持本机当前官方登录，尚不包含多个独立 Codex OAuth profile。
+- 旧版 Codex CLI 如果不提供稳定账号 ID，只展示当前额度。订阅监控采样宿主的原生 Codex 登录，独立连接的 ChatGPT 账号可通过对应托管会话查看额度。
 - 延用 cc-remote 现有 OAuth 授权添加流程，本次没有新增浏览器 OAuth 登录向导，也不主动刷新 Claude token；过期登录由官方客户端更新后继续读取，避免干扰正在运行的登录。
 
 Claude 额度读取延用现有机制：先调用官方 usage 接口；403/429 时可能发起一次 **最大输出 1 token 的推理请求**，读取额度响应头，可能消耗少量额度。setup-token 可能需要此回退。Codex 只调用 `account/read` 和 `account/rateLimits/read`，不启动推理回合。

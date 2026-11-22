@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"cc-remote/internal/claude"
-	"cc-remote/internal/codex"
 	"cc-remote/internal/i18n"
 )
 
@@ -44,7 +43,7 @@ func requestProvider(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 func (s *Server) nativeHistory(r *http.Request, id string) (claude.NativeSession, []claude.Event, error) {
 	if r.URL.Query().Get("provider") == "codex" {
-		return codex.NativeHistory(s.cfg.CodexConfigDir, id)
+		return s.codexNativeHistory(r.Context(), id)
 	}
 	return claude.NativeHistory(s.cfg.ClaudeConfigDir, id)
 }

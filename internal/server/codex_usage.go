@@ -33,7 +33,15 @@ func (s *Server) codexUsage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		o.Cwd = x.Cwd
-		if x.ProfileID != "" {
+		if isCodexAccountID(x.ProfileID) {
+			release, err := s.holdCodexAccount(x.ProfileID)
+			if err != nil {
+				respond(w, 200, codexUsageReply{SubscriptionUsage: codex.SubscriptionUsage{Reason: "no-login"}})
+				return
+			}
+			defer release()
+			s.configureCodexAccount(&o, x.ProfileID)
+		} else if x.ProfileID != "" {
 			// Supplier profiles carry API credentials and their own accounting.
 			respond(w, 200, codexUsageReply{SubscriptionUsage: codex.SubscriptionUsage{Reason: "third-party", Provider: x.ProfileName}})
 			return

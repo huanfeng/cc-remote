@@ -312,7 +312,7 @@ func (s *Server) preferenceCommand(l i18n.Lang, x store.Session, name, args stri
 	// Model discovery reads files and may call the API, so it runs before taking s.mu.
 	var models *modelList
 	if value == "" && name == "model" {
-		list := s.providerModels(l, x.Provider, x.Cwd, false)
+		list := s.providerModels(l, x, false)
 		models = &list
 	}
 	s.configMu.Lock()

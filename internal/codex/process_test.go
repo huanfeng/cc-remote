@@ -487,7 +487,7 @@ func TestAdapterBridgeFailureDeclines(t *testing.T) {
 func TestAdapterModelsAndTimeout(t *testing.T) {
 	o := fakeOptions(t)
 	t.Setenv("CODEX_ADAPTER_TEST_MODE", "models")
-	models, err := Models(context.Background(), o.Executable, o.ConfigDir, o.Cwd)
+	models, err := Models(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func TestAdapterModelsAndTimeout(t *testing.T) {
 	t.Setenv("CODEX_ADAPTER_TEST_MODE", "stall")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, err = Models(ctx, o.Executable, o.ConfigDir, o.Cwd); err == nil {
+	if _, err = Models(ctx, o); err == nil {
 		t.Fatal("handshake did not time out")
 	}
 }
@@ -569,7 +569,7 @@ func TestAdapterInstalledModelsSmoke(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	models, err := Models(ctx, "codex", t.TempDir(), t.TempDir())
+	models, err := Models(ctx, claude.Options{Executable: "codex", ConfigDir: t.TempDir(), Cwd: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

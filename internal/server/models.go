@@ -21,6 +21,7 @@ import (
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/jsonedit"
 	"cc-remote/internal/prefs"
+	"cc-remote/internal/store"
 )
 
 type modelOption struct {
@@ -44,8 +45,13 @@ type modelList struct {
 // key wait for the one in-flight collection instead.
 type modelsCache struct {
 	mu       sync.Mutex
-	entries  map[string]cachedModels
-	inflight map[string]*modelsCall
+	entries  map[modelCacheKey]cachedModels
+	inflight map[modelCacheKey]*modelsCall
+}
+
+type modelCacheKey struct {
+	provider, cwd, accountID string
+	lang                     i18n.Lang
 }
 
 type modelsCall struct {
@@ -125,31 +131,46 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cwd := ""
+	x := store.Session{Provider: provider}
 	if id := r.URL.Query().Get("sessionId"); id != "" {
-		x, err := s.store.Get(id)
+		var err error
+		x, err = s.store.Get(id)
 		if err != nil {
 			fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 			return
 		}
-		cwd = x.Cwd
-		provider = x.Provider
+	} else if account := r.URL.Query().Get("codexAccountId"); provider == "codex" && isCodexAccountID(account) {
+		x.ProfileID = account
 	}
-	respond(w, 200, s.providerModels(s.lang(r), provider, cwd, r.URL.Query().Get("refresh") == "1"))
+	respond(w, 200, s.providerModels(s.lang(r), x, r.URL.Query().Get("refresh") == "1"))
 }
 
 // modelList must not be called with s.mu held: collection reads files and may call the API.
 // Lists are cached per language, as their descriptions and warnings are text.
 func (s *Server) modelList(l i18n.Lang, cwd string, refresh bool) modelList {
-	return s.providerModels(l, "claude", cwd, refresh)
+	return s.providerModels(l, store.Session{Provider: "claude", Cwd: cwd}, refresh)
 }
 
-func (s *Server) providerModels(l i18n.Lang, provider, cwd string, refresh bool) modelList {
-	key := provider + "|" + string(l) + "|" + cwd
+func (s *Server) providerModels(l i18n.Lang, x store.Session, refresh bool) modelList {
+	key := modelCacheKey{provider: x.Provider, cwd: x.Cwd, lang: l}
+	o := claude.Options{Executable: s.cfg.CodexExecutable, ConfigDir: s.cfg.CodexConfigDir, Cwd: x.Cwd}
+	if x.Provider == "codex" && isCodexAccountID(x.ProfileID) {
+		release, err := s.holdCodexAccount(x.ProfileID)
+		if err != nil {
+			return modelList{
+				Models:    []modelOption{},
+				FetchedAt: time.Now().UTC().Format(time.RFC3339Nano),
+				Warnings:  []string{l.T("The original Codex account is unavailable", "原 Codex 账号已不可用")},
+			}
+		}
+		defer release()
+		s.configureCodexAccount(&o, x.ProfileID)
+		key.accountID = x.ProfileID
+	}
 	c := &s.modelCache
 	c.mu.Lock()
 	if c.entries == nil {
-		c.entries, c.inflight = map[string]cachedModels{}, map[string]*modelsCall{}
+		c.entries, c.inflight = map[modelCacheKey]cachedModels{}, map[modelCacheKey]*modelsCall{}
 	}
 	if e, ok := c.entries[key]; ok && !refresh && time.Since(e.at) < modelsTTL {
 		c.mu.Unlock()
@@ -166,10 +187,10 @@ func (s *Server) providerModels(l i18n.Lang, provider, cwd string, refresh bool)
 
 	var list modelList
 	cacheable := true
-	if provider == "codex" {
-		list = s.collectCodexModels(l, cwd)
+	if x.Provider == "codex" {
+		list = collectCodexModels(l, o)
 	} else {
-		list, cacheable = s.collectModels(l, cwd)
+		list, cacheable = s.collectModels(l, x.Cwd)
 	}
 	call.list = list
 	c.mu.Lock()
@@ -182,13 +203,17 @@ func (s *Server) providerModels(l i18n.Lang, provider, cwd string, refresh bool)
 	return list
 }
 
-func (s *Server) collectCodexModels(l i18n.Lang, cwd string) modelList {
+func collectCodexModels(l i18n.Lang, o claude.Options) modelList {
 	list := modelList{Models: []modelOption{}, FetchedAt: time.Now().UTC().Format(time.RFC3339)}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	models, err := codex.Models(ctx, s.cfg.CodexExecutable, s.cfg.CodexConfigDir, cwd)
+	models, err := codex.Models(ctx, o)
 	if err != nil {
-		list.Warnings = []string{l.T("Could not read Codex models: ", "无法读取 Codex 模型：") + err.Error()}
+		warning := l.T("Could not read Codex models", "无法读取 Codex 模型")
+		if !o.CodexAccount {
+			warning += l.T(": ", "：") + err.Error()
+		}
+		list.Warnings = []string{warning}
 		return list
 	}
 	for _, m := range models {

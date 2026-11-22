@@ -2,7 +2,7 @@
 
 ## 本地供应商配置
 
-新版设置的「供应商配置」支持直接添加 Claude Code / Codex API 供应商，并保留原有 OAuth 账号管理及 CC-Switch 只读导入。API 供应商可配置名称、HTTP(S) 端点、默认模型和认证方式；Claude 支持 API Key / Auth Token，新增自定义配置默认使用 Auth Token（网页和命令行一致），官方 Anthropic 模板使用 API Key，编辑时保留原认证方式。Codex 使用 API Key 与 Responses API。
+「供应商配置」支持添加 Claude Code 和 Codex 的 API 供应商、官方登录以及只读导入 CC-Switch。API 供应商可配置名称、HTTP(S) 端点、默认模型和认证方式。Claude 支持 API Key 和 Auth Token，新增自定义配置默认使用 Auth Token，官方 Anthropic 模板使用 API Key，编辑时保留原认证方式。Codex API 供应商使用 API Key 与 Responses API。
 
 编辑已有配置时凭据框始终为空，留空表示保留原凭据；列表及保存响应仅返回“已配置凭据”状态。端点不能包含用户名、密码、查询参数或片段。授权信息保存在宿主数据目录的 `supplier-configs.json`，不会写入本地供应商会话快照或回传到设置页。
 
@@ -27,13 +27,13 @@ cc-remote service config --env "CC_REMOTE_CC_SWITCH_DB=D:\Config\cc-switch.db"
 ## 使用
 
 - Web 新建会话：选择 Claude Code 或 Codex，再选择对应供应商。默认使用宿主设置的新会话供应商，也可明确选择“宿主原生配置”。
-- Web 原生历史：Claude 会话可用终端继续或导入托管会话，确认时可选择沿用原配置。Codex 原生历史可导入托管会话，供应商在导入时选择。
+- Web 原生历史：Claude 会话可用终端继续或导入托管会话，确认时可选择沿用原配置。独立 ChatGPT 账号的 Codex 历史使用原账号导入，宿主原生目录中的历史可在导入时选择 API 供应商。
 - `ccr claude --new`：交互终端会列出 Claude 供应商；`ccr claude resume` / `ccr claude resume --last` 在恢复时同样可以选择，回车沿用原配置。
 - `ccr claude --new --supplier <供应商ID>` 或 `ccr claude resume <会话ID> --supplier <供应商ID>`：指定供应商。支持数据库原 ID 或列表中的 `ccswitch:` ID。
 - `ccr codex --new`：从与网页相同的供应商目录选择，回车采用新会话默认。也可用 `ccr codex --new --supplier <供应商ID>` 直接指定。
-- Codex 终端恢复使用原会话记录的供应商。指定不同的供应商或原供应商不可用时，宿主会报错。尚未登记且没有供应商记录的 Codex 原生历史默认使用宿主配置，也可以用 `--supplier <供应商ID>` 显式指定。
+- Codex 终端恢复使用原会话记录的供应商。指定不同的供应商或原供应商不可用时，宿主会报错。首次恢复宿主原生目录中尚未登记的历史时，默认使用宿主配置，也可以用 `--supplier <供应商ID>` 选择 API 供应商。
 - `--supplier @native`：明确使用宿主原生配置。Claude 非交互恢复且没有指定 `--supplier` 时保持原会话配置。
-- Claude 和托管 Codex 会话可在设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。Codex 终端的供应商在会话状态和详情中可查看。
+- Claude 和托管 Codex 会话可在设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。已经启动的 Codex 对话使用原账号目录，需要换用独立 ChatGPT 账号时新建会话。Codex 终端的供应商在会话状态和详情中可查看。
 
 ## 命令行管理本地供应商
 
@@ -53,7 +53,7 @@ ccr profile rm "Work API"
 
 `add` 必须提供 `--name` 与 `--base-url`，默认认证方式为 `apiKey`；Claude 也支持 `--auth-type authToken`。Codex 使用 `--app codex`，仅支持 API Key 与 Responses API。`edit` 仅修改明确提供的字段，`--name` 重命名，`--model ""` 清除默认模型。
 
-编辑、删除支持完整 ID 或对应应用内唯一名称，完整 ID 优先；同名时必须使用 ID。此处仅管理本地 API 配置，OAuth 使用 `ccr oauth`，CC-Switch 导入项在原程序中管理。所有命令支持 `--host`、`--data-dir`；目标宿主不支持此功能时会提示升级。并发修改会明确报错，请重新查看配置后再执行，不自动覆盖他人的更改。
+编辑、删除支持完整 ID 或对应应用内唯一名称，完整 ID 优先；同名时必须使用 ID。Claude OAuth 令牌使用 `ccr oauth` 管理，Codex ChatGPT 账号通过网页管理，CC-Switch 导入项在原程序中管理。所有命令支持 `--host`、`--data-dir`；目标宿主不支持此功能时会提示升级。并发修改会明确报错，请重新查看配置后再执行，不自动覆盖他人的更改。
 
 ## 默认供应商
 
@@ -97,7 +97,7 @@ CC-Switch 的供应商是「整体替换」：端点、密钥、模型变量都�
 
 读取仅依赖 providers 的 id、app_type、name、settings_config，允许额外列和版本变化。可选读取 meta、is_current、sort_index、公共配置和同目录 settings.json 的当前供应商标记。cc-remote 不写入 CC-Switch 数据库，也不修改其全局选中项。
 
-Claude 读取 API 连接环境变量，按 commonConfigEnabled 合并公共配置；不导入权限、hooks 或 MCP。Codex 读取 auth.OPENAI_API_KEY 与 config TOML 的模型和连接字段，支持普通/带引号的表名、标量与独立公共配置。连接字段中的内联表、数组、多行字符串等未支持语法会列为不可用，不猜测解析。官方 OAuth 登录请选择“宿主原生配置”，使用宿主已有登录。
+Claude 读取 API 连接环境变量，按 commonConfigEnabled 合并公共配置；不导入权限、hooks 或 MCP。Codex 读取 auth.OPENAI_API_KEY 与 config TOML 的模型和连接字段，支持普通/带引号的表名、标量与独立公共配置。连接字段中的内联表、数组、多行字符串等未支持语法会列为不可用。选择“宿主原生配置”可使用宿主已有登录。需要添加另一个 Codex 账号时，在供应商设置的 Codex 标签页通过 ChatGPT 登录。
 
 数据库缺失时可使用原生配置；损坏或必要字段缺失时显示明确错误。单个供应商不可用会显示原因，不阻止其它有效供应商使用。
 

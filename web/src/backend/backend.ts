@@ -7,7 +7,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { BackendError } from './errors';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from './supplierConfig';
 import type {
-  Attachment, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
+  Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
@@ -16,6 +16,15 @@ import type {
 } from './types';
 
 export type Unsubscribe = () => void;
+
+export interface CodexAccountsAPI {
+  list(signal?: AbortSignal): Promise<CodexAccount[]>;
+  begin(name: string): Promise<CodexAccountLogin>;
+  watch(id: string, onChange: (status: CodexAccountLoginStatus) => void, onError: (error: unknown) => void): Unsubscribe;
+  cancel(id: string): Promise<void>;
+  rename(id: string, name: string): Promise<void>;
+  remove(id: string): Promise<void>;
+}
 
 export type StatuslineStyle = 'compact' | 'color' | 'multiline';
 export interface StatuslineOptions { order?: string[]; segments: string[]; colors: Record<string, string>; shortLabels?: boolean; bars: boolean; warning: number; critical: number; separator: string }
@@ -132,7 +141,7 @@ export interface Backend {
   openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream;
 
   // Configuration
-  models(opts: { provider: Provider; sessionId?: string; refresh?: boolean }): Promise<ModelList>;
+  models(opts: { provider: Provider; sessionId?: string; codexAccountId?: string; refresh?: boolean }): Promise<ModelList>;
   profiles(): Promise<ProfileCatalog>;
   profileUsage?(provider: Provider): Promise<ProfileUsageReply | null>;
   setDefaultProfile(app: Provider, profileId: string): Promise<void>;
@@ -157,6 +166,7 @@ export interface Backend {
   /** Edits the entry without changing its id; an omitted token keeps the stored credential. */
   editOAuthProfile(id: string, patch: { name: string; token?: string; notes?: string }): Promise<void>;
   removeOAuthProfile(id: string): Promise<void>;
+  codexAccounts?: CodexAccountsAPI;
 
   // Usage and status
   watchUsage(opts: { provider: Provider; sessionId?: string }, onChange: (u: UsageReply) => void): Unsubscribe;
