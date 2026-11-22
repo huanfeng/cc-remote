@@ -69,7 +69,7 @@ function MeterRow({ w, split }: { w: QuotaWindow & { segments: number[]; resetTe
   return (
     <span className="flex items-center gap-1.5 leading-none" title={w.resetText || undefined}>
       <span className="w-4 text-left text-ui-xs text-foreground-subtlest">{w.label}</span>
-      <QuotaBar window={w.window} segments={split ? w.segments : undefined} className={split ? 'w-28' : 'w-12'} />
+      <QuotaBar window={w.window} segments={split ? w.segments : undefined} className={split ? 'w-28 @max-xl/session-header:w-16' : 'w-12'} />
       <span className="w-7 text-right text-ui-xs tabular-nums text-foreground-subtle">{percentText(w.window)}</span>
     </span>
   );

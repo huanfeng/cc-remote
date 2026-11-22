@@ -1,4 +1,4 @@
-// Conversation header. Desktop: one 48px row, also the window drag region.
+// Conversation header. Desktop: controls wrap below the title in narrow panes.
 // Phone: back/menu, title + status, and the usage orb; the rest moves into ⋯.
 import {
   ChevronLeft, FolderOpen, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Search, Square, SquareTerminal,
@@ -53,14 +53,14 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const toggleView = () => setTerminalView(session.id, !terminalView);
 
   const status = (
-    <span className={cn('inline-flex h-5 shrink-0 items-center gap-1 rounded-full px-2 text-ui-xs font-medium', tonePill[tone])}>
-      {sessionStatusLabel(display)}
+    <span className={cn('inline-flex h-5 min-w-0 items-center rounded-full px-2 text-ui-xs font-medium', tonePill[tone])}>
+      <span className="truncate">{sessionStatusLabel(display)}</span>
     </span>
   );
 
   return (
     <header
-      className={cn('flex shrink-0 items-center gap-1 border-b border-border/60 bg-background', mobile ? 'h-12 px-1 pt-safe' : 'h-12 px-3')}
+      className={cn('@container/session-header flex shrink-0 items-center gap-1 border-b border-border/60 bg-background', mobile ? 'h-12 px-1 pt-safe' : 'min-h-12 flex-wrap px-3 py-1')}
     >
       {mobile ? (
         <>
@@ -77,109 +77,115 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
         </Button>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-ui-lg font-medium">{session.title}</h1>
-            {!native && !mobile && <SessionStatusPopover session={session}>{status}</SessionStatusPopover>}
-          </div>
-          {mobile ? (
-            !native && <SessionStatusPopover session={session}><span className={cn('flex items-center gap-1 text-ui-xs', tone === 'retrying' ? 'text-warning' : 'text-foreground-subtle')}>{sessionStatusLabel(display)}</span></SessionStatusPopover>
-          ) : null}
+      <div className={cn('flex min-w-0 flex-1 items-center gap-2', !mobile && 'basis-60')}>
+        <div className={mobile ? 'min-w-0' : 'contents'}>
+          <h1 className="min-w-0 truncate text-ui-lg font-medium" title={session.title}>{session.title}</h1>
+          {mobile && !native && (
+            <SessionStatusPopover session={session}>
+              <span className={cn('truncate text-ui-xs', tone === 'retrying' ? 'text-warning' : 'text-foreground-subtle')}>{sessionStatusLabel(display)}</span>
+            </SessionStatusPopover>
+          )}
         </div>
+        {!mobile && !native && (
+          <div className="flex max-w-1/4 shrink-0 items-center">
+            <SessionStatusPopover session={session}>{status}</SessionStatusPopover>
+          </div>
+        )}
         {!mobile && !native && !terminalOnly && <ModelChips session={session} />}
         {!mobile && session.cwd && <PathChip cwd={session.cwd} />}
       </div>
 
-      {!native && !terminalOnly && <UsageMeter session={session} mobile={mobile} />}
+      <div className={mobile ? 'contents' : 'ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1'}>
+        {!native && !terminalOnly && <UsageMeter session={session} mobile={mobile} />}
 
-      {canSearch && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'}
-              aria-label={t('Search this conversation', '搜索此会话')}
-              onClick={() => open({ type: 'session-search', id: session.id, native: native ? session.provider ?? 'claude' : undefined })}>
-              <Search className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('Search this conversation', '搜索此会话')}{!mobile && ' · Ctrl F'}</TooltipContent>
-        </Tooltip>
-      )}
+        {canSearch && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'}
+                aria-label={t('Search this conversation', '搜索此会话')}
+                onClick={() => open({ type: 'session-search', id: session.id, native: native ? session.provider ?? 'claude' : undefined })}>
+                <Search className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Search this conversation', '搜索此会话')}{!mobile && ' · Ctrl F'}</TooltipContent>
+          </Tooltip>
+        )}
 
-      {!native && shell.enabled && !!session.cwd && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} data-project-shell-trigger className="relative"
-              aria-label={shellLabel} aria-expanded={shell.isOpen(session.cwd)}
-              onClick={() => shell.toggle({ cwd: session.cwd })}>
-              <SquareTerminal className="size-4" />
-              {shellCounts.total > 0 && <span aria-hidden className={cn(
-                'pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-ui-2xs font-semibold tabular-nums ring-1 ring-background',
-                shellCounts.running ? 'bg-success-surface text-success-surface-foreground' : 'bg-surface text-foreground-subtle',
-              )}>{shellCounts.total > 99 ? '99+' : shellCounts.total}</span>}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{[shellLabel, projectShellShortcutLabel(shellShortcut, DESKTOP)].filter(Boolean).join(' · ')}</TooltipContent>
-        </Tooltip>
-      )}
+        {!native && shell.enabled && !!session.cwd && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} data-project-shell-trigger className="relative"
+                aria-label={shellLabel} aria-expanded={shell.isOpen(session.cwd)}
+                onClick={() => shell.toggle({ cwd: session.cwd })}>
+                <SquareTerminal className="size-4" />
+                {shellCounts.total > 0 && <span aria-hidden className={cn(
+                  'pointer-events-none absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-ui-2xs font-semibold tabular-nums ring-1 ring-background',
+                  shellCounts.running ? 'bg-success-surface text-success-surface-foreground' : 'bg-surface text-foreground-subtle',
+                )}>{shellCounts.total > 99 ? '99+' : shellCounts.total}</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{[shellLabel, projectShellShortcutLabel(shellShortcut, DESKTOP)].filter(Boolean).join(' · ')}</TooltipContent>
+          </Tooltip>
+        )}
 
-      {!native && running && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="outline" size={mobile ? 'icon-lg' : 'sm'} onClick={() => void backend.stop(session.id)} aria-label={t('Stop', '停止')}>
-              <Square className="size-3 fill-current" />
-              {!mobile && t('Stop', '停止')}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('Stop the running turn (Esc)', '停止当前任务（Esc）')}</TooltipContent>
-        </Tooltip>
-      )}
+        {!native && running && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size={mobile ? 'icon-lg' : 'sm'} onClick={() => void backend.stop(session.id)} aria-label={t('Stop', '停止')}>
+                <Square className="size-3 fill-current" />
+                {!mobile && t('Stop', '停止')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Stop the running turn (Esc)', '停止当前任务（Esc）')}</TooltipContent>
+          </Tooltip>
+        )}
 
-      {!native && isTerminal && !terminalOnly && !mobile && (
-        <div role="tablist" className="flex h-7 items-center rounded-lg bg-surface p-0.5">
-          <ViewTab active={!terminalView} onClick={toggleView} icon={<MessageSquare className="size-3.5" />} label={t('Chat', '对话')} />
-          <ViewTab active={!!terminalView} onClick={toggleView} icon={<SquareTerminal className="size-3.5" />} label={t('Terminal', '终端')} />
-        </div>
-      )}
+        {!native && isTerminal && !terminalOnly && !mobile && (
+          <div role="tablist" className="flex h-7 items-center rounded-lg bg-surface p-0.5">
+            <ViewTab active={!terminalView} onClick={toggleView} icon={<MessageSquare className="size-3.5" />} label={t('Chat', '对话')} />
+            <ViewTab active={!!terminalView} onClick={toggleView} icon={<SquareTerminal className="size-3.5" />} label={t('Terminal', '终端')} />
+          </div>
+        )}
 
-      {!native && !mobile && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-md" aria-label={t('Tasks', '任务')} onClick={() => open({ type: 'tasks', id: session.id })} className="relative">
-              <ListTree className="size-4" />
-              {tasks > 0 && <span className="absolute right-0.5 top-0.5 flex size-3.5 items-center justify-center rounded-full bg-icon-blue text-ui-2xs font-semibold text-foreground-inverse">{tasks}</span>}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t('Subagents and background tasks', '子代理与后台任务')}</TooltipContent>
-        </Tooltip>
-      )}
+        {!native && !mobile && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-md" aria-label={t('Tasks', '任务')} onClick={() => open({ type: 'tasks', id: session.id })} className="relative">
+                <ListTree className="size-4" />
+                {tasks > 0 && <span className="absolute right-0.5 top-0.5 flex size-3.5 items-center justify-center rounded-full bg-icon-blue text-ui-2xs font-semibold text-foreground-inverse">{tasks}</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('Subagents and background tasks', '子代理与后台任务')}</TooltipContent>
+          </Tooltip>
+        )}
 
-      {!native && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={t('More', '更多')}>
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            {mobile && isTerminal && !terminalOnly && (
-              <DropdownMenuItem onSelect={toggleView}>
-                {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
-              </DropdownMenuItem>
-            )}
-            {mobile && <DropdownMenuItem onSelect={() => open({ type: 'tasks', id: session.id })}><ListTree /> {t('Tasks', '任务')}</DropdownMenuItem>}
-            <DropdownMenuItem onSelect={() => open({ type: 'session-details', id: session.id })}>{t('Session details', '会话详情')}</DropdownMenuItem>
-            {isTerminal && <DropdownMenuItem onSelect={() => open({ type: 'attach', id: session.id })}>{t('Attach from a local terminal', '从本地终端接入')}</DropdownMenuItem>}
-            <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem checked={toolsExpanded} onCheckedChange={v => setPrefs({ toolsExpanded: !!v })}>
-              {t('Expand tool calls', '展开工具调用')}
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem checked={sendKey === 'mod-enter'} onCheckedChange={v => setPrefs({ sendKey: v ? 'mod-enter' : 'enter' })}>
-              {t('Send with Ctrl+Enter', '用 Ctrl+Enter 发送')}
-            </DropdownMenuCheckboxItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+        {!native && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={t('More', '更多')}>
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {mobile && isTerminal && !terminalOnly && (
+                <DropdownMenuItem onSelect={toggleView}>
+                  {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
+                </DropdownMenuItem>
+              )}
+              {mobile && <DropdownMenuItem onSelect={() => open({ type: 'tasks', id: session.id })}><ListTree /> {t('Tasks', '任务')}</DropdownMenuItem>}
+              <DropdownMenuItem onSelect={() => open({ type: 'session-details', id: session.id })}>{t('Session details', '会话详情')}</DropdownMenuItem>
+              {isTerminal && <DropdownMenuItem onSelect={() => open({ type: 'attach', id: session.id })}>{t('Attach from a local terminal', '从本地终端接入')}</DropdownMenuItem>}
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem checked={toolsExpanded} onCheckedChange={v => setPrefs({ toolsExpanded: !!v })}>
+                {t('Expand tool calls', '展开工具调用')}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuCheckboxItem checked={sendKey === 'mod-enter'} onCheckedChange={v => setPrefs({ sendKey: v ? 'mod-enter' : 'enter' })}>
+                {t('Send with Ctrl+Enter', '用 Ctrl+Enter 发送')}
+              </DropdownMenuCheckboxItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
     </header>
   );
 }

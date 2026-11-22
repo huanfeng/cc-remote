@@ -231,8 +231,9 @@ func inspectIdentity(line []byte, s *NativeSession) {
 	}
 	if v.Type == "user" && !v.IsMeta && !v.IsSidechain && s.Title == "Claude session" {
 		for _, e := range contentEvents(v.Message.Content, "user") {
-			if e.Kind == "user" && !syntheticText(e.Text) {
-				title := []rune(strings.ReplaceAll(strings.TrimSpace(e.Text), "\n", " "))
+			text := UnwrapPastes(e.Text)
+			if e.Kind == "user" && !syntheticText(text) {
+				title := []rune(strings.ReplaceAll(strings.TrimSpace(text), "\n", " "))
 				if len(title) > 80 {
 					title = title[:80]
 				}

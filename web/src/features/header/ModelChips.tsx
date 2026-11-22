@@ -20,7 +20,7 @@ export function ModelChips({ session }: { session: Session }) {
   const supplier = session.profileName || session.profileId || t('Host configuration', '宿主原生配置');
   const toggle = (k: QuickKind | 'supplier') => (o: boolean) => setOpen(o ? k : null);
   return (
-    <div className="flex min-w-0 shrink items-center gap-0.5">
+    <div className="flex max-w-[45%] shrink-0 items-center gap-0.5">
       <SupplierQuickSwitch session={session} open={open === 'supplier'} onOpenChange={toggle('supplier')} mobile={mobile}
         trigger={<Chip icon={<Building2 />} className="max-w-44" aria-label={t(`Supplier: ${supplier}. Switch`, `供应商：${supplier}，点击切换`)}>{supplier}</Chip>} />
       <QuickSwitch session={session} kind="model" open={open === 'model'} onOpenChange={toggle('model')}
@@ -38,7 +38,7 @@ export const Chip = forwardRef<HTMLButtonElement, ComponentProps<'button'> & { i
     <button
       ref={ref} type="button"
       className={cn(
-        'inline-flex cursor-pointer disabled:cursor-not-allowed h-6 min-w-0 shrink-0 items-center gap-1 rounded-md px-1.5 text-ui-sm text-foreground-subtle transition-colors',
+        'inline-flex cursor-pointer disabled:cursor-not-allowed h-6 min-w-7 shrink items-center gap-1 rounded-md px-1.5 text-ui-sm text-foreground-subtle transition-colors',
         'hover:bg-surface-hover hover:text-foreground aria-expanded:bg-surface-hover aria-expanded:text-foreground',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:opacity-70',
         className,

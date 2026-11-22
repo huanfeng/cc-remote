@@ -1,6 +1,20 @@
 package claude
 
-import "testing"
+import (
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func TestNativeFallbackTitleUnwrapsLongPaste(t *testing.T) {
+	want := "分析一下 " + strings.Repeat("中", 75)
+	text := "<pasted_content id=\"test\">\n分析一下\n" + strings.Repeat("中", 90) + "\n</pasted_content id=\"test\">"
+	s := NativeSession{Title: "Claude session"}
+	inspectMetadata([]byte(`{"type":"user","message":{"content":`+strconv.Quote(text)+`}}`), &s)
+	if s.Title != want {
+		t.Fatalf("title = %q, want %q", s.Title, want)
+	}
+}
 
 func TestNativeAITitleAndCustomTitlePrecedence(t *testing.T) {
 	s := NativeSession{Title: "Claude session"}

@@ -58,7 +58,7 @@ export function SessionStatusPopover({ session, children }: { session: Session; 
     </Popover>
   );
 
-  const anchor = <span className="inline-flex min-w-0">{surface}</span>;
+  const anchor = <span className="inline-flex min-w-0 max-w-full">{surface}</span>;
   return <>
     <QuickSwitch
       session={session} kind={quick === 'effort' ? 'effort' : 'model'} open={quick === 'model' || quick === 'effort'} onOpenChange={o => { if (!o) setQuick(null); }} mobile={mobile}
