@@ -189,3 +189,22 @@ command = "ignored"
 		t.Fatal("unsupported syntax must fail without disclosing value")
 	}
 }
+
+func TestCCSwitchRawIDDoesNotShadowMissingLocalSupplier(t *testing.T) {
+	s, _, _ := setup(t, nil)
+	db := switchFixture(t, s)
+	settings, _ := json.Marshal(map[string]any{
+		"auth": map[string]string{"OPENAI_API_KEY": "fake-secret"},
+		"config": `model_provider = "relay"
+[model_providers.relay]
+base_url = "https://relay.example/v1"
+wire_api = "responses"`,
+	})
+	switchProvider(t, db, "local:deleted", "codex", string(settings), "{}", false)
+	if _, err := s.selectProfile("codex", "local:deleted"); err == nil {
+		t.Fatal("a missing local supplier resolved to a CC-Switch supplier")
+	}
+	if profile, err := s.selectProfile("codex", "ccswitch:local:deleted"); err != nil || profile.ID != "ccswitch:local:deleted" {
+		t.Fatalf("qualified CC-Switch supplier ID failed: %q %v", profile.ID, err)
+	}
+}

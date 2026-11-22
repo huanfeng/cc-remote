@@ -66,6 +66,7 @@ ccr --new                                         # 选择 Claude Code 或 Codex
 ccr --resume <原生ID>                               # 根据原生会话 ID 自动识别 Agent 并恢复
 ccr claude --new --model sonnet --prompt "修复登录页" -- --add-dir ../lib
 ccr codex                                         # 打开或新建宿主上的 Codex 终端
+ccr codex --new --supplier <供应商ID>                 # 指定供应商，省略时可手动选
 ccr claude resume <原生ID>
 ccr codex resume --last                           # 继续当前项目最近的 Codex 历史
 ccr session list --agent codex
@@ -76,7 +77,7 @@ ccr local --supplier work -- --help               # 在当前终端运行 Claude
 - `claude` 与 `codex` 按项目和 Agent 查找在线终端。需要另开一条会话时加 `--new`，指定宿主目录用 `--cwd`。原生启动选项放在 `--` 后，首条消息用 `--prompt`。
 - 选择器按最近活动显示会话，可用方向键、编号加回车、`/` 筛选、`r` 刷新、`q` 或 Esc 退出。选中「新建」可以另开终端。选择离线会话会提示如何恢复原生历史。
 - `session attach` 使用 `session list` 中的 CCR 会话 ID，也接受唯一 ID 前缀。`resume` 使用 Agent 的原生历史 ID，省略 ID 可从当前项目选择。已有其他终端接入时会询问是否继续。
-- Claude Code 新建或恢复时可用 `--supplier` 选择供应商，首次进入未信任的目录时会询问信任。Codex 终端使用宿主原生配置，在 TUI 中处理信任和审批。
+- Claude Code 和 Codex 都可在新建终端时选择供应商或用 `--supplier` 指定。用 `ccr profile ls --app codex` 查看 Codex 供应商 ID。Codex 恢复时沿用已记录的供应商，外部历史没有供应商记录时使用宿主原生配置。信任和审批由 Codex TUI 处理。Claude Code 首次进入未信任的目录时会询问信任。
 - 连接选项放在命令前，例如 `ccr --host https://ccr.example --data-dir /path/to/data session list`。前台宿主用 `ccr serve`，服务管理使用 `ccr status`、`ccr service` 等命令。
 
 - 接入本机宿主时，Claude Code 输出里提到的本机文件（绝对路径，如 `C:\Users\me\shot.png`、`/home/me/app/main.go`）可以点击打开：`ccr` 把它们标成终端超链接（OSC 8）。只在已知支持的终端里启用（Windows Terminal、VS Code、iTerm2、WezTerm、kitty、Ghostty、Alacritty、JetBrains、VTE 系终端），tmux / screen 里不启用；超链接不占位置，画面不变。用 `CC_REMOTE_HYPERLINKS=1` 强制开启、`=0` 关闭（同时关闭下面的点击打开）。

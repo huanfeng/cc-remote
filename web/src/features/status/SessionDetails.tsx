@@ -121,7 +121,13 @@ function Details({ session: s, onDirty, onDeleted }: { session: Session; onDirty
         </GroupCard>
       </Section>
 
-      <SupplierSection session={s} />
+      {s.mode === 'terminal' && providerOf(s) === 'codex' ? (
+        <Section title={t('Supplier', '供应商')}>
+          <GroupCard>
+            <InfoRow label={t('Current', '当前')}>{s.profileName || s.profileId || t('Native configuration', '原生配置')}</InfoRow>
+          </GroupCard>
+        </Section>
+      ) : <SupplierSection session={s} />}
       <ConfigSection session={s} prefs={prefs} onDirty={onDirty} />
       <StatsSection stats={stats} session={s} />
       <ManageSection session={s} onDeleted={onDeleted} />

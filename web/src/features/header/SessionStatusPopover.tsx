@@ -92,7 +92,9 @@ function StatusBody({ session: s, mobile, onSwitch, onDone }: { session: Session
     <div className="flex flex-col">
       <dl className="flex flex-col">
         <Row label={t('Agent', '代理')}>{providerName(provider)} · {modeLabel(s)}{terminal && !s.online ? ` · ${t('not running', '未运行')}` : ''}</Row>
-        <Row label={t('Supplier', '供应商')} action={<SwitchLink mobile={mobile} onClick={() => onSwitch('supplier')} />}>{s.profileName || s.profileId || t('Host configuration', '宿主原生配置')}</Row>
+        <Row label={t('Supplier', '供应商')} action={terminal && provider === 'codex' ? undefined : <SwitchLink mobile={mobile} onClick={() => onSwitch('supplier')} />}>
+          {s.profileName || s.profileId || t('Host configuration', '宿主原生配置')}
+        </Row>
         <Row label={t('Status', '状态')}>
           <span className="inline-flex items-center gap-1.5">
             <span className={cn('size-1.5 rounded-full', toneDot[statusTone(s)])} />

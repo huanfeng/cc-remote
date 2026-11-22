@@ -1,11 +1,12 @@
 # Codex
 
-在网页新建会话时选择 **Codex**，填写本机项目目录即可。宿主调用本机已登录的 Codex CLI，通过 `codex app-server` 的结构化协议处理对话、工具调用、审批与提问；不需要单独配置 API Key。
+在网页新建会话时选择 **Codex**，填写宿主上的项目目录并选供应商。宿主通过 `codex app-server` 的结构化协议处理对话、工具调用、审批与提问。选择「宿主原生配置」时可以使用宿主已有的 ChatGPT 登录。
 
 ## 原生终端
 
 ```sh
 ccr codex --new
+ccr codex --new --supplier <供应商ID>
 ccr codex --prompt "检查构建失败"
 ccr codex resume --last
 ccr session list --agent codex
@@ -14,9 +15,17 @@ ccr session attach <CCR会话ID>
 
 终端由宿主持有，`Ctrl+]` 脱离后可以用同一个 CCR 会话 ID 接回。Codex TUI 使用宿主原生配置处理工作目录信任与审批。宿主重启或 TUI 退出后，用 `ccr codex resume` 选择已保存的历史。一个项目已有 Codex 终端时，先按提示接入现有终端，避免并行恢复可能正在运行的同一段历史。默认的宿主更新会等待 Codex TUI 退出，再重启服务。
 
+新建终端的供应商来自与网页共用的目录，包含本地 API 配置、可用的 CC-Switch 配置和「宿主原生配置」。用 `ccr profile ls --app codex` 查看 ID，用 `--supplier @native` 指定宿主原生配置。
+
+`ccr codex resume` 和 `ccr --resume <原生ID>` 都沿用会话记录中的供应商。尝试指定不同的供应商，或原供应商已不可用时，宿主会报错。对于尚未登记到 CCR、也没有供应商记录的原生历史，首次恢复默认使用宿主配置，也可通过 `--supplier <供应商ID>` 显式指定。新会话默认供应商只影响新建。
+
+从一个供应商的终端切换到另一个供应商的历史时，退出当前 TUI 后用 CCR 的恢复命令。TUI 内的 `/resume` 由 Codex 按当前进程配置处理。
+
+使用宿主原生配置时可传入 Codex 的 `--profile`、`--oss` 和 `--local-provider`，例如 `ccr codex --new -- --profile <名称>` 或 `ccr codex resume <原生ID> -- --profile <名称>`。
+
 ## 准备
 
-安装 Codex CLI 并在运行宿主的同一个系统账户下执行 `codex login`。宿主默认从 PATH 找到 `codex`，配置与历史目录为 `CODEX_HOME` 或 `~/.codex`。指定自定义目录时，先创建目录并在该配置下登录。
+安装 Codex CLI。使用 ChatGPT 登录时，在运行宿主的同一个系统账户下执行 `codex login`。宿主默认从 PATH 找到 `codex`，配置与历史目录为 `CODEX_HOME` 或 `~/.codex`。指定自定义目录时，先创建目录，再按需登录。
 
 可直接指定路径：
 
@@ -64,7 +73,7 @@ API Key、第三方供应商和未登录状态会明确说明原因；读取失�
 
 ## 当前边界
 
-Codex 目前提供托管会话和历史导入；`ccr`、本地终端接力和网页终端仍用于 Claude Code。Codex 原生命令不会当作 Claude 命令或 Claude 技能执行；不把 Codex 使用量推算为美元费用。
+Codex 支持托管会话、历史导入和原生终端接入。终端里的原生命令由 Codex TUI 处理。官方订阅用量以 Codex 返回的额度窗口展示。
 
 原生 review/fork/goal 工作流、MCP elicitation/OAuth，以及会话级或策略级授权尚未映射到网页。普通 MCP 工具仍由 Codex 按配置执行。新增界面读取能力标志和可选事件，连接旧宿主时不调用新增接口。
 

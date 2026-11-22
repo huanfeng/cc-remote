@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 )
 
@@ -81,7 +80,7 @@ func (s *Server) defaultProfileAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		id = ""
 		for _, p := range f.Profiles {
-			if (p.ID == req.ProfileID || strings.TrimPrefix(p.ID, "ccswitch:") == req.ProfileID) && p.App == req.App {
+			if p.App == req.App && profileIDMatches(p.ID, req.ProfileID) {
 				id = p.ID
 			}
 		}

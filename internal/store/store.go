@@ -286,21 +286,22 @@ func (s *Store) Create(title, cwd, claudeID string, resume bool) (Session, error
 }
 
 func (s *Store) CreateProvider(title, cwd, nativeID string, resume bool, provider string) (Session, error) {
-	return s.createProvider(title, cwd, nativeID, resume, provider, "managed")
+	return s.createProvider(Session{Title: title, Cwd: cwd, ClaudeSessionID: nativeID, Resume: resume, Provider: provider, Mode: "managed"})
 }
 
-// CreateTerminal registers the terminal mode together with the native identity.
-func (s *Store) CreateTerminal(title, cwd, nativeID string, resume bool, provider string) (Session, error) {
-	return s.createProvider(title, cwd, nativeID, resume, provider, "terminal")
+// CreateTerminal registers the terminal mode, native identity and supplier together.
+func (s *Store) CreateTerminal(x Session) (Session, error) {
+	x.Mode = "terminal"
+	return s.createProvider(x)
 }
 
-func (s *Store) createProvider(title, cwd, nativeID string, resume bool, provider, mode string) (Session, error) {
-	if provider != "claude" && provider != "codex" {
+func (s *Store) createProvider(x Session) (Session, error) {
+	if x.Provider != "claude" && x.Provider != "codex" {
 		return Session{}, errors.New("invalid session provider")
 	}
-	x := Session{ID: ID(), Title: title, Cwd: cwd, ClaudeSessionID: nativeID, Status: "idle", CreatedAt: now(), Resume: resume, Mode: mode, Provider: provider}
+	x.ID, x.Status, x.CreatedAt = ID(), "idle", now()
 	x.UpdatedAt = x.CreatedAt
-	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume,provider,mode) VALUES(?,?,?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume, x.Provider, x.Mode)
+	_, err := s.db.Exec(`INSERT INTO sessions(id,title,cwd,claude_id,status,created_at,updated_at,resume,provider,mode,profile_id,profile_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, x.ID, x.Title, x.Cwd, x.ClaudeSessionID, x.Status, x.CreatedAt, x.UpdatedAt, x.Resume, x.Provider, x.Mode, x.ProfileID, x.ProfileJSON)
 	return x, err
 }
 

@@ -7,7 +7,7 @@
 | `ccr --resume <原生ID>` | 从宿主原生历史自动识别 Agent，在原项目恢复对话 |
 | `ccr ls` / `ccr list` | 跨项目选择近期活动的终端 |
 | `ccr claude` / `ccr codex` | 接入当前项目所选 Agent 的终端，没有则新建 |
-| `ccr claude --new` / `ccr codex --new` | 新建独立终端 |
+| `ccr claude --new` / `ccr codex --new` | 新建独立终端，可交互选供应商或用 `--supplier <ID>` 指定 |
 | `ccr claude resume [原生ID]` / `ccr codex resume [原生ID]` | 恢复原生历史，省略 ID 时从当前项目选择，`--last` 选最近的 |
 | `ccr local [claude]` | 在当前终端运行 Claude Code，可选 `--supplier ID` |
 | `ccr session list [--agent claude或codex]` | 列出 CCR 会话和运行状态 |
@@ -85,4 +85,4 @@ CC Remote · 当前项目
 
 ## 供应商选择器：附带最新订阅用量
 
-供应商选择沿用上述会话选择器的高亮、编号、筛选、窄屏与无色规则。在新建、恢复会话和 `ccr local` 的供应商选择中，显示配置对应账号的最新缓存用量。显式 `--supplier` 及非交互调用继续直接执行，不为展示用量额外弹出选择器。
+供应商选择沿用上述会话选择器的高亮、编号、筛选、窄屏与无色规则。Claude 在新建、恢复和 `ccr local` 的供应商选择中显示账号的缓存用量。Codex 新建时列出与网页共用的供应商和对应 ID。恢复时沿用已记录的供应商，原供应商不可用或指定与原会话不同的供应商时返回错误。没有供应商记录的原生历史默认使用宿主配置，可显式指定 `--supplier`。显式 `--supplier` 不打开选择器。

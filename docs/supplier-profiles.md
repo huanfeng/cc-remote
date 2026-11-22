@@ -26,13 +26,14 @@ cc-remote service config --env "CC_REMOTE_CC_SWITCH_DB=D:\Config\cc-switch.db"
 
 ## 使用
 
-- Web 新建会话：选择 Claude Code 或 Codex，再选择对应供应商。默认采用 CC-Switch 当前供应商；也可明确选择“宿主原生配置”。
-- Web 原生历史：选择会话，点击以终端继续或导入托管会话，在确认窗口选择供应商。默认沿用原配置；已导入的会话保持原供应商快照。
+- Web 新建会话：选择 Claude Code 或 Codex，再选择对应供应商。默认使用宿主设置的新会话供应商，也可明确选择“宿主原生配置”。
+- Web 原生历史：Claude 会话可用终端继续或导入托管会话，确认时可选择沿用原配置。Codex 原生历史可导入托管会话，供应商在导入时选择。
 - `ccr claude --new`：交互终端会列出 Claude 供应商；`ccr claude resume` / `ccr claude resume --last` 在恢复时同样可以选择，回车沿用原配置。
 - `ccr claude --new --supplier <供应商ID>` 或 `ccr claude resume <会话ID> --supplier <供应商ID>`：指定供应商。支持数据库原 ID 或列表中的 `ccswitch:` ID。
-- `--supplier @native`：明确使用宿主原生配置。非交互恢复且没有指定 `--supplier` 时保持原会话配置。
-- 已运行会话：设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。
-- 会话标题下方持续显示所选供应商，新建后尚未发送消息也会显示；名称来自会话保存的配置快照，刷新后保留。
+- `ccr codex --new`：从与网页相同的供应商目录选择，回车采用新会话默认。也可用 `ccr codex --new --supplier <供应商ID>` 直接指定。
+- Codex 终端恢复使用原会话记录的供应商。指定不同的供应商或原供应商不可用时，宿主会报错。尚未登记且没有供应商记录的 Codex 原生历史默认使用宿主配置，也可以用 `--supplier <供应商ID>` 显式指定。
+- `--supplier @native`：明确使用宿主原生配置。Claude 非交互恢复且没有指定 `--supplier` 时保持原会话配置。
+- Claude 和托管 Codex 会话可在设置中切换供应商；忙碌时需要确认中断，保留原会话 ID 和历史，不自动重发请求。Codex 终端的供应商在会话状态和详情中可查看。
 
 ## 命令行管理本地供应商
 
@@ -71,7 +72,7 @@ ccr profile rm "Work API"
   Codex 加 `--app codex`。设置保存在宿主数据目录的 `default-profiles.json`。
 - 只影响之后新建的会话；已有会话保持创建时的供应商，恢复时仍可「沿用原配置」。
 - 指定的默认供应商被删除或不可用时，新建会话会明确报错，提示重新选择，**不会悄悄换成别的供应商**。
-- `cc-remote claude` 交互选择时，回车同样采用默认供应商。
+- Claude Code 和 Codex 新建终端时，供应商选择器的回车默认与网页相同。
 
 ## OAuth 令牌配置
 

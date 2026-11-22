@@ -29,8 +29,10 @@ func TestChooseProfile(t *testing.T) {
 func TestSelectProfile(t *testing.T) {
 	defer func(old *bufio.Reader) { stdin = old }(stdin)
 	requests := 0
+	usageRequests := 0
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/profiles/usage" {
+			usageRequests++
 			w.WriteHeader(404)
 			return
 		}
@@ -42,17 +44,33 @@ func TestSelectProfile(t *testing.T) {
 	}))
 	defer host.Close()
 	c := &client{host: host.URL, token: "t"}
-	if got, err := c.selectProfile(nil, false); got != "" || err != nil || requests != 0 {
+	if got, err := c.selectProfile("claude", "", false, false); got != "" || err != nil || requests != 0 {
 		t.Fatalf("non-interactive default: %q %v, requests=%d", got, err, requests)
 	}
 	stdin = bufio.NewReader(strings.NewReader("1\n"))
-	if got, err := c.selectProfile(nil, true); got != "a" || err != nil {
+	if got, err := c.selectProfile("claude", "", true, false); got != "a" || err != nil {
 		t.Fatalf("Claude-only picker: %q %v", got, err)
 	}
-	if got, err := c.selectProfile("a", false); got != "a" || err != nil {
+	beforeUsage := usageRequests
+	stdin = bufio.NewReader(strings.NewReader("1\n"))
+	if got, err := c.selectProfile("codex", "", true, false); got != "codex-only" || err != nil {
+		t.Fatalf("Codex-only picker: %q %v", got, err)
+	}
+	stdin = bufio.NewReader(strings.NewReader("2\n"))
+	if got, err := c.selectProfile("codex", "", true, false); got != "@native" || err != nil {
+		t.Fatalf("Codex native picker item: %q %v", got, err)
+	}
+	before := requests
+	if got, err := c.selectProfile("codex", "", true, true); got != "" || err != nil || requests != before {
+		t.Fatalf("Codex resume should omit selection: %q %v, requests=%d", got, err, requests-before)
+	}
+	if usageRequests != beforeUsage {
+		t.Fatal("Codex picker queried the Claude quota endpoint")
+	}
+	if got, err := c.selectProfile("claude", "a", false, false); got != "a" || err != nil {
 		t.Fatalf("explicit: %q %v", got, err)
 	}
-	if _, err := c.selectProfile("codex-only", false); err == nil {
+	if _, err := c.selectProfile("claude", "codex-only", false, false); err == nil {
 		t.Fatal("accepted a Codex profile for Claude")
 	}
 }
@@ -62,15 +80,28 @@ func TestProfileOldHostAndFailures(t *testing.T) {
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
 	defer host.Close()
 	c := &client{host: host.URL, token: "t"}
-	if got, err := c.selectProfile(nil, true); got != "" || err != nil {
+	if got, err := c.selectProfile("claude", "", true, false); got != "" || err != nil {
 		t.Fatalf("old host default: %q %v", got, err)
 	}
-	if _, err := c.selectProfile("work", false); err == nil {
+	if _, err := c.selectProfile("claude", "work", false, false); err == nil {
 		t.Fatal("old host silently ignored explicit profile")
 	}
 	status = http.StatusUnauthorized
-	if _, err := c.selectProfile(nil, true); err == nil {
+	if _, err := c.selectProfile("claude", "", true, false); err == nil {
 		t.Fatal("ignored profile authentication failure")
+	}
+}
+
+func TestCodexPickerCanRecoverFromDeletedDefault(t *testing.T) {
+	defer func(old *bufio.Reader) { stdin = old }(stdin)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"profiles":[],"defaultProfiles":{"codex":"local:deleted"}}`))
+	}))
+	defer host.Close()
+	stdin = bufio.NewReader(strings.NewReader("1\n"))
+	c := &client{host: host.URL}
+	if got, err := c.selectProfile("codex", "", true, false); got != "@native" || err != nil {
+		t.Fatalf("available choice with deleted default: %q %v", got, err)
 	}
 }
 
@@ -210,6 +241,9 @@ func TestResumeNativeIDAutomatically(t *testing.T) {
 						body["provider"] != tc.provider || body["resume"] != id || body["cwd"] != cwd {
 						t.Errorf("unexpected resume request: %+v", body)
 					}
+					if tc.provider == "codex" && body["profileId"] != nil {
+						t.Errorf("automatic resume must preserve the supplier on the host: %+v", body)
+					}
 					json.NewEncoder(w).Encode(remoteSession{ID: "resumed", Online: true})
 				default:
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
@@ -260,6 +294,55 @@ func TestCodexTerminalOptionsAndExplicitResume(t *testing.T) {
 	o.prompt, o.nativeID = "", "native-id"
 	if _, err := c.resumeAgent("codex", o); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCodexTerminalSupplierSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, supplier, resume, wantProfile string
+		native                              []string
+		wantError                           bool
+	}{
+		{name: "explicit API supplier", supplier: "relay", wantProfile: "relay"},
+		{name: "default", wantProfile: ""},
+		{name: "explicit native", supplier: "@native", wantProfile: "@native"},
+		{name: "native profile", native: []string{"--profile", "native-testing"}, wantProfile: "@native"},
+		{name: "native local model", native: []string{"--oss"}, wantProfile: "@native"},
+		{name: "saved supplier", resume: "native-id", wantProfile: ""},
+		{name: "native resume uses the saved supplier", resume: "native-id", native: []string{"-p=native-testing"}, wantProfile: ""},
+		{name: "explicit resume supplier", supplier: "relay", resume: "native-id", wantProfile: "relay"},
+		{name: "Claude supplier", supplier: "claude-only", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/profiles":
+					if tc.supplier == "" || tc.supplier == "@native" || tc.resume != "" {
+						t.Errorf("unexpected supplier catalog lookup")
+					}
+					w.Write([]byte(`{"profiles":[{"id":"ccswitch:relay","app":"codex"},{"id":"claude-only","app":"claude"}],"defaultProfiles":{"codex":"ccswitch:relay"}}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Errorf("decode start: %v", err)
+					}
+					profile, hasProfile := body["profileId"]
+					if tc.wantError || hasProfile != (tc.wantProfile != "") || hasProfile && profile != tc.wantProfile {
+						t.Errorf("unexpected supplier in request: %+v", body)
+					}
+					json.NewEncoder(w).Encode(remoteSession{ID: "launched", Online: true})
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+					w.WriteHeader(500)
+				}
+			}))
+			defer host.Close()
+			c := &client{host: host.URL}
+			x, err := c.startAgent("codex", agentOptions{cwd: t.TempDir(), supplier: tc.supplier, native: tc.native}, tc.resume)
+			if (err != nil) != tc.wantError || !tc.wantError && x.ID != "launched" {
+				t.Fatalf("unexpected start result: %+v %v", x, err)
+			}
+		})
 	}
 }
 

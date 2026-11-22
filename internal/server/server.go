@@ -465,11 +465,11 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Provider == "codex" && req.Mode == "terminal" {
-		if len(req.ClaudeArgs) > 0 || profileValue(req.ProfileID) != "" || req.Model != nil || req.Effort != nil || req.PermissionMode != nil {
+		if len(req.ClaudeArgs) > 0 || req.Model != nil || req.Effort != nil || req.PermissionMode != nil {
 			fail(w, 400, s.lang(r).T("Use native options to configure a Codex terminal", "请通过 Codex 原生参数配置终端"))
 			return
 		}
-		s.createCodexTerminal(w, r, codexTerminalRequest{Title: req.Title, Cwd: req.Cwd, Resume: req.Resume, Prompt: req.Prompt, Args: req.CodexArgs})
+		s.createCodexTerminal(w, r, codexTerminalRequest{Title: req.Title, Cwd: req.Cwd, Resume: req.Resume, Prompt: req.Prompt, Args: req.CodexArgs, ProfileID: profileValue(req.ProfileID)})
 		return
 	}
 	if len(req.CodexArgs) > 0 || req.Prompt != "" {

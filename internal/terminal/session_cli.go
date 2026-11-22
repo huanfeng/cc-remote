@@ -79,9 +79,9 @@ func AgentCLI(args []string, agent string, recent bool, defaultDataDir string, e
 		fs.StringVar(&o.title, "title", "", i18n.T("session title", "会话标题"))
 		fs.StringVar(&o.prompt, "prompt", "", i18n.T("first message", "首条消息"))
 		fs.StringVar(&o.model, "model", "", i18n.T("model", "模型"))
+		fs.StringVar(&o.supplier, "supplier", "", i18n.T("supplier ID (or @native)", "供应商 ID（或 @native）"))
 		fs.BoolVar(&o.last, "last", false, i18n.T("resume the latest history in this project", "恢复当前项目最近的历史对话"))
 		if agent == "claude" {
-			fs.StringVar(&o.supplier, "supplier", "", i18n.T("supplier ID", "供应商 ID"))
 			fs.StringVar(&o.effort, "effort", "", i18n.T("reasoning effort", "推理强度"))
 			fs.StringVar(&o.permission, "permission-mode", "", i18n.T("permission mode", "权限模式"))
 		}
@@ -337,6 +337,17 @@ func (c *client) startAgent(agent string, o agentOptions, nativeID string) (remo
 	if nativeID != "" {
 		body["resume"] = nativeID
 	}
+	supplier := o.supplier
+	if agent == "codex" && nativeID == "" && supplier == "" && codexNativeSupplierOptions(o.native) {
+		supplier = "@native"
+	}
+	profile, err := c.selectProfile(agent, supplier, term.IsTerminal(int(os.Stdin.Fd())), nativeID != "")
+	if err != nil {
+		return remoteSession{}, err
+	}
+	if profile != "" {
+		body["profileId"] = profile
+	}
 	if agent == "claude" {
 		for key, value := range map[string]string{"model": o.model, "effort": o.effort, "permissionMode": o.permission} {
 			if value != "" {
@@ -353,17 +364,6 @@ func (c *client) startAgent(agent string, o agentOptions, nativeID string) (remo
 					break
 				}
 			}
-		}
-		pick := c.selectProfile
-		if nativeID != "" {
-			pick = c.selectResumeProfile
-		}
-		profile, err := pick(o.supplier, term.IsTerminal(int(os.Stdin.Fd())))
-		if err != nil {
-			return remoteSession{}, err
-		}
-		if profile != "" {
-			body["profileId"] = profile
 		}
 	} else {
 		native := o.native
@@ -387,6 +387,17 @@ func (c *client) startAgent(agent string, o agentOptions, nativeID string) (remo
 		}
 	}
 	return x, nil
+}
+
+func codexNativeSupplierOptions(args []string) bool {
+	for _, arg := range args {
+		name, _, _ := strings.Cut(arg, "=")
+		switch name {
+		case "-p", "--profile", "--oss", "--local-provider":
+			return true
+		}
+	}
+	return false
 }
 
 // SessionCLI lists recorded sessions or attaches to a live terminal by ID.

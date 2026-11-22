@@ -45,6 +45,7 @@ const usageEN = `CC Remote · ccr (cc-remote is an equivalent name)
   ccr --resume <native ID>         detect the Agent and resume the conversation
   ccr ls                           choose a recent terminal across projects
   ccr claude|codex [--new]           open or start a hosted Agent terminal
+  ccr codex --new --supplier <ID>   start a Codex terminal with a supplier
   ccr claude|codex resume [ID]       resume native history (or use --last)
   ccr session list                 list CC Remote sessions
   ccr session attach <ID>           attach to a running Agent terminal
@@ -73,6 +74,7 @@ const usageZH = `CC Remote · ccr（cc-remote 是等价名称）
   ccr --resume <原生ID>             自动识别 Agent 并恢复对话
   ccr ls                           跨项目选择最近的终端会话
   ccr claude|codex [--new]           打开或新建宿主 Agent 终端
+  ccr codex --new --supplier <ID>   指定供应商并新建 Codex 终端
   ccr claude|codex resume [ID]       恢复原生对话历史（也可用 --last）
   ccr session list                 列出 CC Remote 会话
   ccr session attach <ID>           接入运行中的 Agent 终端

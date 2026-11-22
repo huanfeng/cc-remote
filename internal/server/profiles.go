@@ -152,7 +152,7 @@ func (s *Server) selectProfile(app, id string) (supplierProfile, error) {
 		return supplierProfile{}, nil
 	}
 	for _, p := range f.Profiles {
-		if (p.ID == id || strings.TrimPrefix(p.ID, "ccswitch:") == id) && p.App == app {
+		if p.App == app && profileIDMatches(p.ID, id) {
 			return p, nil
 		}
 	}
@@ -160,6 +160,17 @@ func (s *Server) selectProfile(app, id string) (supplierProfile, error) {
 		return supplierProfile{}, errors.New("默认供应商已不存在，请在设置里重新选择")
 	}
 	return supplierProfile{}, errors.New("供应商不存在")
+}
+
+func profileIDMatches(canonical, requested string) bool {
+	if canonical == requested {
+		return true
+	}
+	if strings.HasPrefix(requested, localSupplierPrefix) || strings.HasPrefix(requested, oauthIDPrefix) || strings.HasPrefix(requested, "ccswitch:") {
+		return false // a qualified ID must never resolve to a different supplier
+	}
+	raw, imported := strings.CutPrefix(canonical, "ccswitch:")
+	return imported && raw == requested
 }
 func (s *Server) profilesAPI(w http.ResponseWriter, r *http.Request) {
 	f, e := s.profileCatalog()
@@ -273,7 +284,7 @@ func (s *Server) switchProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	if x.Provider == "codex" && x.Mode == "terminal" {
 		s.mu.Unlock()
-		fail(w, 409, s.lang(r).T("Configure the supplier in the native Codex configuration", "请在 Codex 原生配置中设置供应商"))
+		fail(w, 409, s.lang(r).T("Choose a supplier when starting a new Codex terminal", "请在新建 Codex 终端时选择供应商"))
 		return
 	}
 	if s.switching[id] {

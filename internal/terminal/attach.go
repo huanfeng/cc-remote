@@ -145,17 +145,10 @@ type supplierProfile struct {
 	Env  map[string]string `json:"env,omitempty"`
 }
 
-// Creation follows the CC-Switch default; resume keeps its saved supplier.
-// Reattaching an already running terminal never changes its supplier.
-func (c *client) selectProfile(value any, interactive bool) (string, error) {
-	return c.pickProfile(value, interactive, false)
-}
-func (c *client) selectResumeProfile(value any, interactive bool) (string, error) {
-	return c.pickProfile(value, interactive, true)
-}
-func (c *client) pickProfile(value any, interactive, resuming bool) (string, error) {
-	explicit, _ := value.(string)
-	if explicit == "@native" {
+// Creation follows the catalog default. On Codex resume the host checks any
+// explicit supplier against the thread's saved configuration.
+func (c *client) selectProfile(app, explicit string, interactive, resuming bool) (string, error) {
+	if explicit == "@native" || app == "codex" && resuming {
 		return explicit, nil
 	}
 	if explicit == "" && !interactive {
@@ -174,7 +167,7 @@ func (c *client) pickProfile(value any, interactive, resuming bool) (string, err
 	}
 	var list []supplierProfile
 	for _, p := range catalog.Profiles {
-		if p.App == "claude" {
+		if p.App == app {
 			list = append(list, p)
 			if explicit != "" && (p.ID == explicit || strings.TrimPrefix(p.ID, "ccswitch:") == explicit) {
 				return explicit, nil
@@ -182,17 +175,21 @@ func (c *client) pickProfile(value any, interactive, resuming bool) (string, err
 		}
 	}
 	if explicit != "" {
-		return "", i18n.Errorf("Claude supplier configuration %q was not found on the host", "宿主上找不到 Claude 供应商配置 %q", explicit)
+		agent := "Claude"
+		if app == "codex" {
+			agent = "Codex"
+		}
+		return "", i18n.Errorf("%s supplier configuration %q was not found on the host", "宿主上找不到 %s 供应商配置 %q", agent, explicit)
 	}
-	if len(list) == 0 {
+	defaultID := catalog.DefaultProfiles[app]
+	if len(list) == 0 && (app != "codex" || defaultID == "" || defaultID == "@native") {
 		return "", nil
 	}
-	list = append(list, supplierProfile{ID: "@native", Name: i18n.T("Native configuration", "宿主原生配置"), App: "claude"})
-	defaultID := catalog.DefaultProfiles["claude"]
+	list = append(list, supplierProfile{ID: "@native", Name: i18n.T("Native configuration", "宿主原生配置"), App: app})
 	if resuming {
 		defaultID = "@keep"
 	}
-	return c.chooseSupplier(list, defaultID)
+	return c.chooseSupplier(app, list, defaultID)
 }
 
 func chooseProfile(list []supplierProfile, defaultID string) (string, error) {

@@ -134,18 +134,11 @@ func startRPC(executable, configDir, cwd string, onMessage func(rpcMessage) erro
 	if len(profileOptions) > 0 {
 		o := profileOptions[0]
 		cmd.Env = claude.ProfileEnvironment(cmd.Env, o.ProfileEnv)
-		keys := make([]string, 0, len(o.ConfigOverrides))
-		for k := range o.ConfigOverrides {
-			keys = append(keys, k)
+		args, err := ConfigArgs(o.ConfigOverrides)
+		if err != nil {
+			return nil, err
 		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			value, e := tomlValue(o.ConfigOverrides[k])
-			if e != nil {
-				return nil, e
-			}
-			cmd.Args = append(cmd.Args, "-c", k+"="+value)
-		}
+		cmd.Args = append(cmd.Args, args...)
 	}
 	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
@@ -350,7 +343,24 @@ func (r *rpcClient) close() {
 
 func (r *rpcClient) kill() { r.killOnce.Do(func() { killProcessTree(r.cmd) }) }
 
-// JSON profiles are data, never shell syntax. Each override is one argv value.
+// ConfigArgs renders each TOML override as a separate argv value.
+func ConfigArgs(overrides map[string]any) ([]string, error) {
+	keys := make([]string, 0, len(overrides))
+	for k := range overrides {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var args []string
+	for _, k := range keys {
+		value, err := tomlValue(overrides[k])
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "-c", k+"="+value)
+	}
+	return args, nil
+}
+
 func tomlValue(v any) (string, error) {
 	switch x := v.(type) {
 	case string:

@@ -375,20 +375,21 @@ type rolloutRecord struct {
 	Type      string `json:"type"`
 	Timestamp string `json:"timestamp"`
 	Payload   struct {
-		Type         string          `json:"type"`
-		ID           string          `json:"id"`
-		Cwd          string          `json:"cwd"`
-		Timestamp    string          `json:"timestamp"`
-		Title        string          `json:"title"`
-		SessionTitle string          `json:"session_title"`
-		Role         string          `json:"role"`
-		Content      json.RawMessage `json:"content"`
-		Name         string          `json:"name"`
-		CallID       string          `json:"call_id"`
-		Arguments    json.RawMessage `json:"arguments"`
-		Output       json.RawMessage `json:"output"`
-		IsError      bool            `json:"is_error"`
-		Message      string          `json:"message"`
+		Type          string          `json:"type"`
+		ID            string          `json:"id"`
+		Cwd           string          `json:"cwd"`
+		Timestamp     string          `json:"timestamp"`
+		Title         string          `json:"title"`
+		SessionTitle  string          `json:"session_title"`
+		ModelProvider string          `json:"model_provider"`
+		Role          string          `json:"role"`
+		Content       json.RawMessage `json:"content"`
+		Name          string          `json:"name"`
+		CallID        string          `json:"call_id"`
+		Arguments     json.RawMessage `json:"arguments"`
+		Output        json.RawMessage `json:"output"`
+		IsError       bool            `json:"is_error"`
+		Message       string          `json:"message"`
 	} `json:"payload"`
 }
 
@@ -466,6 +467,7 @@ func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s 
 			}
 			if nativeUUID.MatchString(p.ID) && s.ID == "" {
 				s.ID = p.ID
+				s.ModelProvider = p.ModelProvider
 			}
 			if p.Cwd != "" {
 				s.Cwd = p.Cwd

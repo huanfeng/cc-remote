@@ -2,14 +2,17 @@ package server
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"cc-remote/internal/claude"
 	"cc-remote/internal/codex"
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/store"
@@ -19,6 +22,7 @@ import (
 type codexTerminalRequest struct {
 	Title, Cwd, Resume, Prompt string
 	Args                       []string
+	ProfileID                  string
 }
 
 func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req codexTerminalRequest) {
@@ -46,6 +50,7 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	var x store.Session
+	var modelProvider string
 	if req.Resume != "" {
 		x, err = s.store.FindNative("codex", req.Resume)
 		switch {
@@ -74,6 +79,7 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 			return
 		}
 		req.Cwd = native.Cwd
+		modelProvider = native.ModelProvider
 		if req.Title == "" {
 			req.Title = native.Title
 		}
@@ -98,6 +104,21 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		}
 	}
 	created := x.ID == ""
+	x, err = s.codexTerminalProfile(x, req, modelProvider, args)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	var options claude.Options
+	if err := s.profileOptions(x, &options); err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	configArgs, err := codexTerminalConfigArgs(options, args, x.ProfileID)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
 	if created {
 		if req.Title == "" {
 			req.Title = folderTitle(cwd)
@@ -109,13 +130,15 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		if nativeID == "" {
 			nativeID = store.ID() // internal placeholder until the native ID can be verified
 		}
-		x, err = s.store.CreateTerminal(req.Title, cwd, nativeID, req.Resume != "", "codex")
+		x.Title, x.Cwd, x.ClaudeSessionID, x.Resume = req.Title, cwd, nativeID, req.Resume != ""
+		x, err = s.store.CreateTerminal(x)
 		if err != nil {
 			fail(w, 500, l.T("Could not create the session", "无法创建会话"))
 			return
 		}
 	}
-	if err := s.startCodexTerminalLocked(x.ID, cwd, req.Resume, req.Prompt, args); err != nil {
+	env := claude.ProfileEnvironment(codex.Environment(s.cfg.CodexConfigDir), options.ProfileEnv)
+	if err := s.startCodexTerminalLocked(x.ID, cwd, req.Resume, req.Prompt, append(configArgs, args...), env); err != nil {
 		if created {
 			if deleteErr := s.store.Delete(x.ID); deleteErr != nil {
 				log.Printf("remove failed Codex terminal %s: %v", x.ID, deleteErr)
@@ -130,6 +153,88 @@ func (s *Server) createCodexTerminal(w http.ResponseWriter, r *http.Request, req
 		status = http.StatusCreated
 	}
 	respond(w, status, x)
+}
+
+const codexTerminalSupplierPrefix = "ccr_supplier_"
+
+// Codex writes its model_provider when it creates a thread. Use it to recover
+// the supplier even when CCR has never seen the native thread ID before.
+func codexTerminalSupplierAlias(id string) string {
+	return codexTerminalSupplierPrefix + base64.RawURLEncoding.EncodeToString([]byte(id))
+}
+
+func (s *Server) codexTerminalProfile(x store.Session, req codexTerminalRequest, modelProvider string, args []string) (store.Session, error) {
+	wanted := req.ProfileID
+	var recorded string
+	nativeOptions := false
+	for _, arg := range args {
+		name, _, _ := strings.Cut(arg, "=")
+		switch name {
+		case "-p", "--profile", "--oss", "--local-provider":
+			nativeOptions = true
+		}
+	}
+	if req.Resume != "" {
+		bound := x.ProfileID
+		if encoded, ok := strings.CutPrefix(modelProvider, codexTerminalSupplierPrefix); ok {
+			id, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+			if err != nil || len(id) == 0 {
+				return x, i18n.Errorf("Invalid supplier in this Codex thread", "这个 Codex 对话的供应商标识无效")
+			}
+			recorded = string(id)
+			bound = recorded
+			if x.ID != "" && x.ProfileID != bound {
+				return x, i18n.Errorf("The saved supplier does not match this Codex thread", "保存的供应商与这个 Codex 对话不一致")
+			}
+		}
+		if x.ID != "" || bound != "" {
+			if bound == "" {
+				bound = "@native"
+			}
+			if wanted != "" && !profileIDMatches(bound, wanted) {
+				return x, i18n.Errorf("Resume requires this Codex thread's original supplier", "恢复 Codex 对话需要沿用原来的供应商")
+			}
+			wanted = bound
+		} else if wanted == "" {
+			wanted = "@native" // older native threads must not inherit a new CCR default
+		}
+	}
+	if nativeOptions {
+		if wanted != "" && wanted != "@native" {
+			return x, i18n.Errorf("Native Codex provider options require --supplier @native", "Codex 原生供应商参数需要使用 --supplier @native")
+		}
+		wanted = "@native"
+	}
+	if x.ID == "" {
+		profile, err := s.selectProfile("codex", wanted)
+		if err != nil {
+			return x, err
+		}
+		if recorded != "" && profile.ID != recorded {
+			return x, i18n.Errorf("Invalid supplier in this Codex thread", "这个 Codex 对话的供应商标识无效")
+		}
+		x.Provider, x.ProfileID, x.ProfileJSON, x.ProfileName = "codex", profile.ID, profile.snapshot(), profile.Name
+	}
+	return x, nil
+}
+
+func codexTerminalConfigArgs(options claude.Options, args []string, profileID string) ([]string, error) {
+	if profileID == "" {
+		return nil, nil
+	}
+	config := maps.Clone(options.ConfigOverrides)
+	providers := config["model_providers"].(map[string]any) // checked by profileOptions
+	alias := codexTerminalSupplierAlias(profileID)
+	config["model_provider"] = alias
+	config["model_providers"] = map[string]any{alias: providers[options.ModelProvider]}
+	for _, arg := range args {
+		name, _, _ := strings.Cut(arg, "=")
+		if name == "-m" || name == "--model" {
+			delete(config, "model")
+			break
+		}
+	}
+	return codex.ConfigArgs(config)
 }
 
 // codexTerminalArgs accepts only options that keep this process an interactive
@@ -185,7 +290,7 @@ func codexTerminalArgs(args []string) ([]string, error) {
 	return options, nil
 }
 
-func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt string, options []string) error {
+func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt string, options, env []string) error {
 	if s.switching[id] {
 		return fmt.Errorf("正在切换配置")
 	}
@@ -207,7 +312,7 @@ func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt string, opti
 	if err != nil {
 		return err
 	}
-	runner, err := terminal.Start(terminal.Options{Executable: cmd.Path, Args: cmd.Args[1:], Dir: cwd, Env: codex.Environment(s.cfg.CodexConfigDir), ReplayAlternateScreen: true})
+	runner, err := terminal.Start(terminal.Options{Executable: cmd.Path, Args: cmd.Args[1:], Dir: cwd, Env: env, ReplayAlternateScreen: true})
 	if err != nil {
 		return err
 	}

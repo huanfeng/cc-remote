@@ -122,7 +122,7 @@ func (c *client) supplierEnvironment(explicit string, interactive bool) ([]strin
 	if chosen == "" && interactive && len(list) > 0 {
 		list = append(list, supplierProfile{ID: "@native", Name: i18n.T("Native configuration", "宿主原生配置"), App: "claude"})
 		var err error
-		chosen, err = c.chooseSupplier(list, catalog.DefaultProfiles["claude"])
+		chosen, err = c.chooseSupplier("claude", list, catalog.DefaultProfiles["claude"])
 		if err != nil {
 			return nil, "", err
 		}

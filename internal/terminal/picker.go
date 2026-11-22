@@ -499,11 +499,13 @@ func (c *client) readProfileUsage(parent context.Context) map[string]profileUsag
 	}
 	return reply.Profiles
 }
-func (c *client) chooseSupplier(list []supplierProfile, defaultID string) (string, error) {
+func (c *client) chooseSupplier(app string, list []supplierProfile, defaultID string) (string, error) {
 	makeItems := func(usage map[string]profileUsageSummary) []pickerItem {
 		label := i18n.T("Host configuration", "宿主配置")
 		if defaultID == "@keep" {
 			label = i18n.T("Keep session configuration", "沿用原会话配置")
+		} else if app == "codex" && defaultID != "" && defaultID != "@native" {
+			label = i18n.F("Unavailable (%s)", "不可用（%s）", defaultID)
 		}
 		for _, p := range list {
 			if p.ID == defaultID {
@@ -522,13 +524,19 @@ func (c *client) chooseSupplier(list []supplierProfile, defaultID string) (strin
 			if p.ID == defaultID {
 				name += " · " + i18n.T("default", "默认")
 			}
-			note := i18n.T("Quota unavailable", "用量暂不可用")
-			if u, ok := usage[p.ID]; ok {
-				note = usageSummary(u)
+			note := p.ID
+			if app == "claude" {
+				note = i18n.T("Quota unavailable", "用量暂不可用")
+				if u, ok := usage[p.ID]; ok {
+					note = usageSummary(u)
+				}
 			}
 			items = append(items, pickerItem{id: p.ID, lines: [2]string{name, note}, search: p.Name + " " + p.ID + " " + kind})
 		}
 		return items
+	}
+	if app != "claude" {
+		return pickItems(makeItems(nil), "", nil, nil)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
