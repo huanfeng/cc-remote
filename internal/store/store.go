@@ -31,6 +31,8 @@ type Session struct {
 	LastConversationAt        string `json:"lastConversationAt,omitempty"`
 	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
 	Resume                    bool   `json:"-"`
+	CanFork                   bool   `json:"canFork,omitempty"`
+	ForkedFromID              string `json:"forkedFromId,omitempty"`
 	CodexAccountLocked        bool   `json:"codexAccountLocked,omitempty"`
 	Mode                      string `json:"mode"`
 	Online                    bool   `json:"online"`
@@ -94,13 +96,16 @@ type QueuedMessage struct {
 }
 
 type Event struct {
-	Seq       int64           `json:"seq"`
-	SessionID string          `json:"sessionId"`
-	Kind      string          `json:"kind"`
-	Text      string          `json:"text"`
-	Payload   json.RawMessage `json:"payload"`
-	CreatedAt string          `json:"createdAt"`
-	Truncated bool            `json:"truncated,omitempty"` // long tool text was cut for a listing
+	Seq              int64           `json:"seq"`
+	SessionID        string          `json:"sessionId"`
+	Kind             string          `json:"kind"`
+	Text             string          `json:"text"`
+	Payload          json.RawMessage `json:"payload"`
+	CreatedAt        string          `json:"createdAt"`
+	Truncated        bool            `json:"truncated,omitempty"` // long tool text was cut for a listing
+	Branchable       bool            `json:"branchable,omitempty"`
+	EditableInBranch bool            `json:"editableInBranch,omitempty"`
+	BranchAnchor     string          `json:"branchAnchor,omitempty"`
 }
 
 type Interaction struct {
@@ -141,7 +146,7 @@ func ID() string {
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',profile_id TEXT NOT NULL DEFAULT '',profile_json TEXT NOT NULL DEFAULT '',archived_at TEXT NOT NULL DEFAULT '',UNIQUE(provider,claude_id)`
+const sessionSchema = `id TEXT PRIMARY KEY,title TEXT NOT NULL,cwd TEXT NOT NULL,claude_id TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,resume INTEGER NOT NULL DEFAULT 0,mode TEXT NOT NULL DEFAULT 'managed',permission_mode TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '',effort TEXT NOT NULL DEFAULT '',claude_args TEXT NOT NULL DEFAULT '[]',provider TEXT NOT NULL DEFAULT 'claude',profile_id TEXT NOT NULL DEFAULT '',profile_json TEXT NOT NULL DEFAULT '',archived_at TEXT NOT NULL DEFAULT '',forked_from_id TEXT NOT NULL DEFAULT '',UNIQUE(provider,claude_id)`
 
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
@@ -161,7 +166,7 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}, {"profile_id", "''"}, {"profile_json", "''"}, {"archived_at", "''"}} {
+	for _, c := range []struct{ name, def string }{{"mode", "'managed'"}, {"permission_mode", "''"}, {"model", "''"}, {"effort", "''"}, {"claude_args", "'[]'"}, {"provider", "'claude'"}, {"profile_id", "''"}, {"profile_json", "''"}, {"archived_at", "''"}, {"forked_from_id", "''"}} {
 		var n int
 		if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('sessions') WHERE name=?`, c.name).Scan(&n); err == nil && n == 0 {
 			_, err = db.Exec(`ALTER TABLE sessions ADD COLUMN ` + c.name + ` TEXT NOT NULL DEFAULT ` + c.def)
@@ -195,6 +200,10 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		return nil, err
 	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS session_completion(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,completed_at TEXT NOT NULL,event_seq INTEGER NOT NULL)`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS session_forks(source TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,attachments TEXT NOT NULL,PRIMARY KEY(source,request_id))`); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -308,14 +317,14 @@ func (s *Store) createProvider(x Session) (Session, error) {
 
 // sessionColumns are the columns migrateNativeIdentity copies; archived_at is
 // added before it runs, so it is always there.
-const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json,archived_at`
+const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json,archived_at,forked_from_id`
 
 const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0),COALESCE((SELECT completed_at FROM session_completion WHERE session_id=sessions.id),''),COALESCE((SELECT event_seq FROM session_completion WHERE session_id=sessions.id),0)`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.LastConversationAt, &x.ConversationTimeEstimated, &x.CompletedAt, &x.CompletionEventSeq)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.ForkedFromID, &x.LastConversationAt, &x.ConversationTimeEstimated, &x.CompletedAt, &x.CompletionEventSeq)
 	if err == nil {
 		x.Archived = archived(x)
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)

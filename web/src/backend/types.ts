@@ -35,7 +35,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'project-shell-pane-layout' | 'message-search';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'project-shell-pane-layout' | 'message-search' | 'session-fork';
 
 export interface MessageSearchQuery {
   q: string;
@@ -157,6 +157,9 @@ export interface Session {
   activeTasks?: number;
   /** Archived: hidden from the list until its next conversation (host feature `archive`). */
   archived?: boolean;
+  /** Whether the current native conversation can be forked. */
+  canFork?: boolean;
+  forkedFromId?: string;
 }
 
 /** A session from the provider's own history (~/.claude/projects, Codex threads). */
@@ -186,6 +189,9 @@ export interface SessionEvent {
   payload?: any;
   createdAt: string;
   truncated?: boolean;
+  branchable?: boolean;
+  editableInBranch?: boolean;
+  branchAnchor?: string;
 }
 
 export type RequestKind = 'approval' | 'question' | 'plan';
@@ -445,6 +451,20 @@ export interface SendRequest {
   attachmentIds?: string[];
   defer?: boolean;
   sendId?: string;
+}
+
+export interface SessionForkRequest {
+  requestId: string;
+  anchorSeq?: number;
+  anchorToken?: string;
+  before?: boolean;
+  attachmentIds?: string[];
+}
+
+export interface SessionForkReply {
+  session: Session;
+  attachmentIds?: string[];
+  attachments?: Attachment[];
 }
 
 export interface Transcript {

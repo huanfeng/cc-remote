@@ -43,6 +43,7 @@ type nativeMetadataEntry struct {
 	weight   int64
 	prefix   []byte
 	complete bool
+	forkTurn nativeForkTurn
 }
 
 type nativeMetadataStore struct {
@@ -91,19 +92,23 @@ func (c *nativeMetadataStore) read(root *os.Root, path string, history bool) (cl
 		c.order.Remove(e)
 		c.bytes -= cached.weight
 		delete(c.entries, key)
-		if history && cached.complete && info.Size() > cached.info.Size() && os.SameFile(cached.info, info) && len(prefix) >= len(cached.prefix) && bytes.Equal(prefix[:len(cached.prefix)], cached.prefix) {
+		if history && cached.complete && cached.forkTurn.active == "" && info.Size() > cached.info.Size() && os.SameFile(cached.info, info) && len(prefix) >= len(cached.prefix) && bytes.Equal(prefix[:len(cached.prefix)], cached.prefix) {
 			previous = &cached
 		}
 	}
 	var session claude.NativeSession
 	var events []claude.Event
+	forkTurn := nativeForkTurn{priorKnown: true}
 	if previous != nil && !previous.session.Truncated && info.Size() <= nativeHistoryLimit {
 		seed := previous.session
 		if seed.UpdatedAt == previous.info.ModTime().UTC().Format(time.RFC3339Nano) {
 			seed.UpdatedAt = info.ModTime().UTC().Format(time.RFC3339Nano)
 		}
-		session, events, err = parseNativeFrom(f, info, true, nativeHistoryLimit, seed, previous.info.Size())
+		forkTurn = previous.forkTurn
+		session, events, err = parseNativeFrom(f, info, true, nativeHistoryLimit, seed, previous.info.Size(), &forkTurn, nil)
 		events = append(previous.events[:len(previous.events):len(previous.events)], events...)
+	} else if history {
+		session, events, err = parseNativeFrom(f, info, true, nativeHistoryLimit, newNativeSession(info), 0, &forkTurn, nil)
 	} else {
 		session, events, err = parseNative(f, info, history, nativeHistoryLimit)
 	}
@@ -114,11 +119,11 @@ func (c *nativeMetadataStore) read(root *os.Root, path string, history bool) (cl
 	// read, the next poll sees a mismatch and reads the transcript again.
 	var weight int64
 	for _, ev := range events {
-		weight += int64(len(ev.Text)+len(ev.Payload)+len(ev.CreatedAt)) + 96
+		weight += int64(len(ev.Text)+len(ev.Payload)+len(ev.CreatedAt)+len(ev.NativeAnchor)+len(ev.NativeParentAnchor)) + 136
 	}
 	var last [1]byte
 	_, _ = f.ReadAt(last[:], info.Size()-1)
-	c.entries[key] = c.order.PushBack(nativeMetadataEntry{key: key, info: info, session: session, events: events, weight: weight, prefix: prefix, complete: last[0] == '\n'})
+	c.entries[key] = c.order.PushBack(nativeMetadataEntry{key: key, info: info, session: session, events: events, weight: weight, prefix: prefix, complete: last[0] == '\n', forkTurn: forkTurn})
 	c.bytes += weight
 	maxEntries := nativeFileLimit
 	if history {
@@ -345,11 +350,18 @@ func NativeHistory(configDir, id string) (claude.NativeSession, []claude.Event, 
 		return claude.NativeSession{}, nil, err
 	}
 	defer root.Close()
-	path, _, err := nativeHistoryPath(context.Background(), root, id)
+	path, meta, err := nativeHistoryPath(context.Background(), root, id)
 	if err != nil {
 		return claude.NativeSession{}, nil, err
 	}
-	s, events, err := nativeHistoryCache.read(root, path, true)
+	var s claude.NativeSession
+	var events []claude.Event
+	if meta.ForkedFromID != "" && meta.ForkedFromOrdinal != nil {
+		reader := linkedRolloutReader{root: root, remaining: nativeHistoryLimit, turn: nativeForkTurn{priorKnown: true}, seen: map[string]bool{}}
+		s, events, err = reader.read(path, meta, nil)
+	} else {
+		s, events, err = nativeHistoryCache.read(root, path, true)
+	}
 	if err == nil {
 		if title := nativeTitles(root)[strings.ToLower(s.ID)]; title != "" {
 			s.Title = title
@@ -386,24 +398,28 @@ func nativeHistoryPath(ctx context.Context, root *os.Root, id string) (string, c
 }
 
 type rolloutRecord struct {
-	Type      string `json:"type"`
-	Timestamp string `json:"timestamp"`
+	Type      string  `json:"type"`
+	Timestamp string  `json:"timestamp"`
+	Ordinal   *uint64 `json:"ordinal"`
 	Payload   struct {
-		Type          string          `json:"type"`
-		ID            string          `json:"id"`
-		Cwd           string          `json:"cwd"`
-		Timestamp     string          `json:"timestamp"`
-		Title         string          `json:"title"`
-		SessionTitle  string          `json:"session_title"`
-		ModelProvider string          `json:"model_provider"`
-		Role          string          `json:"role"`
-		Content       json.RawMessage `json:"content"`
-		Name          string          `json:"name"`
-		CallID        string          `json:"call_id"`
-		Arguments     json.RawMessage `json:"arguments"`
-		Output        json.RawMessage `json:"output"`
-		IsError       bool            `json:"is_error"`
-		Message       string          `json:"message"`
+		Type              string          `json:"type"`
+		ID                string          `json:"id"`
+		TurnID            string          `json:"turn_id"`
+		ForkedFromID      string          `json:"forked_from_id"`
+		ForkedFromOrdinal *uint64         `json:"forked_from_ordinal_exclusive"`
+		Cwd               string          `json:"cwd"`
+		Timestamp         string          `json:"timestamp"`
+		Title             string          `json:"title"`
+		SessionTitle      string          `json:"session_title"`
+		ModelProvider     string          `json:"model_provider"`
+		Role              string          `json:"role"`
+		Content           json.RawMessage `json:"content"`
+		Name              string          `json:"name"`
+		CallID            string          `json:"call_id"`
+		Arguments         json.RawMessage `json:"arguments"`
+		Output            json.RawMessage `json:"output"`
+		IsError           bool            `json:"is_error"`
+		Message           string          `json:"message"`
 	} `json:"payload"`
 }
 
@@ -420,12 +436,16 @@ func readNative(root *os.Root, path string, history bool, limit int64) (claude.N
 	return parseNative(f, info, history, limit)
 }
 
-func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claude.NativeSession, []claude.Event, error) {
-	s := claude.NativeSession{Provider: "codex", Title: "Codex session", UpdatedAt: info.ModTime().UTC().Format(time.RFC3339Nano)}
-	return parseNativeFrom(f, info, history, limit, s, 0)
+func newNativeSession(info fs.FileInfo) claude.NativeSession {
+	return claude.NativeSession{Provider: "codex", Title: "Codex session", UpdatedAt: info.ModTime().UTC().Format(time.RFC3339Nano)}
 }
 
-func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s claude.NativeSession, offset int64) (claude.NativeSession, []claude.Event, error) {
+func parseNative(f *os.File, info fs.FileInfo, history bool, limit int64) (claude.NativeSession, []claude.Event, error) {
+	forkTurn := nativeForkTurn{priorKnown: true}
+	return parseNativeFrom(f, info, history, limit, newNativeSession(info), 0, &forkTurn, nil)
+}
+
+func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s claude.NativeSession, offset int64, forkTurn *nativeForkTurn, bounds *rolloutReadBounds) (claude.NativeSession, []claude.Event, error) {
 	var events []claude.Event
 	customTitle, userTitle := s.Title != "Codex session", false
 	hasConversation := s.LastConversationAt != ""
@@ -466,12 +486,28 @@ func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s 
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), int(limit)+1)
+	reachedBoundary := false
 	for scanner.Scan() {
+		if bounds != nil {
+			bounds.read += int64(len(scanner.Bytes()) + 1)
+		}
 		var r rolloutRecord
 		if json.Unmarshal(scanner.Bytes(), &r) != nil {
 			continue
 		}
+		if bounds != nil && bounds.before != nil {
+			if r.Ordinal == nil {
+				return s, nil, errors.New("linked Codex rollout entry is missing its ordinal")
+			}
+			if *r.Ordinal >= *bounds.before {
+				reachedBoundary = true
+				break
+			}
+		}
 		p := r.Payload
+		if history && r.Type == "event_msg" {
+			forkTurn.observe(p.Type, p.TurnID, events)
+		}
 		if r.Type == "session_meta" {
 			if s.CreatedAt == "" {
 				s.CreatedAt = nativeTimestamp(p.Timestamp)
@@ -482,6 +518,7 @@ func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s 
 			if nativeUUID.MatchString(p.ID) && s.ID == "" {
 				s.ID = p.ID
 				s.ModelProvider = p.ModelProvider
+				s.ForkedFromID, s.ForkedFromOrdinal = p.ForkedFromID, p.ForkedFromOrdinal
 			}
 			if p.Cwd != "" {
 				s.Cwd = p.Cwd
@@ -561,10 +598,13 @@ func parseNativeFrom(f *os.File, info fs.FileInfo, history bool, limit int64, s 
 		ev.CreatedAt = nativeTimestamp(r.Timestamp)
 		noteActivity(r.Timestamp)
 		if history {
+			if forkTurn.active == "" && (ev.Kind == "user" || ev.Kind == "assistant") {
+				forkTurn.priorKnown = false
+			}
 			events = append(events, ev)
 		}
 	}
-	s.Truncated = history && info.Size()-offset > limit
+	s.Truncated = history && !reachedBoundary && info.Size()-offset > limit
 	if hasConversation && (s.LastConversationAt == "" || s.ConversationTimeEstimated) {
 		s.LastConversationAt = info.ModTime().UTC().Format(time.RFC3339Nano)
 		s.ConversationTimeEstimated = true

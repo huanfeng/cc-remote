@@ -8,12 +8,12 @@ import { compactSummary, type TranscriptEvent } from '@/domain/toolGroups';
 import { providerName, providerOf } from '@/domain/providers';
 import { usePrefs } from '@/lib/prefs';
 import { cn } from '@/components/lib/utils';
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { t } from '@/lib/i18n';
-import { ImageView } from '@/features/files/ImageView';
+import { AttachmentImageDialog } from '@/features/files/AttachmentImageDialog';
 import { Markdown } from '@/features/markdown/Markdown';
 import { slashCommand } from './fold';
 import { useConversation } from './context';
+import { MessageActions } from './MessageActions';
 import { Expand } from './tools/ToolGroup';
 
 const formatSize = (n: number) => n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
@@ -37,36 +37,27 @@ function Attachments({ items, mobile }: { items: Attachment[]; mobile: boolean }
 
 /** Host attachment URLs need the token: the image loads through the backend as an object URL. */
 function AttachmentThumb({ attachment: a, mobile }: { attachment: Attachment; mobile: boolean }) {
+  const { session, native, tkey } = useConversation();
   const src = useAssetUrl(a.url);
   const box = cn('block overflow-hidden rounded-lg border border-border/60 bg-surface transition-opacity hover:opacity-90', mobile ? 'size-20' : 'size-24');
   if (!src) return <span className={box} title={a.name} aria-label={a.name} />;
   const label = t(`Preview ${a.name}`, `预览 ${a.name}`);
   return (
-    <Dialog>
-      <DialogTrigger asChild>
+    <AttachmentImageDialog attachment={a} dockKey={native ? tkey : session.id} mobile={mobile} trigger={
         <button type="button" title={label} aria-label={label} className={cn(box, 'cursor-zoom-in')}>
           <img src={src} alt={a.name} loading="lazy" className="size-full object-cover" />
         </button>
-      </DialogTrigger>
-      <DialogContent aria-describedby={undefined} className="flex h-[85dvh] w-[calc(100%-1rem)] max-w-5xl flex-col gap-0 overflow-hidden rounded-xl p-0 sm:w-[calc(100%-2rem)]">
-        <DialogTitle className="flex h-14 shrink-0 items-center border-b border-border/60 pr-14 pl-4">
-          <span className="truncate" title={a.name}>{a.name}</span>
-        </DialogTitle>
-        <div className="min-h-0 flex-1">
-          <ImageView src={src} alt={a.name} />
-        </div>
-      </DialogContent>
-    </Dialog>
+    } />
   );
 }
 
-export const UserMessage = memo(function UserMessage({ event }: { event: TranscriptEvent }) {
+export const UserMessage = memo(function UserMessage({ event, nested }: { event: TranscriptEvent; nested?: boolean }) {
   const { mobile } = useConversation();
   const attachments: Attachment[] = Array.isArray(event.payload?.attachments) ? event.payload.attachments : [];
   const command = slashCommand(event.text);
   const text = command ? command.rest : event.text || '';
   return (
-    <div data-turn-seq={event.seq} className="flex scroll-mt-4 flex-col items-end gap-1.5 pt-2">
+    <div data-turn-seq={event.seq} className="group/message flex scroll-mt-4 flex-col items-end gap-1.5 pt-2">
       {event.payload?.steer && <span className="text-ui-sm text-foreground-subtlest">{t('Steered into the running turn', '已插入当前轮次')}</span>}
       {attachments.length > 0 && <Attachments items={attachments} mobile={mobile} />}
       {(command || text) && (
@@ -79,16 +70,17 @@ export const UserMessage = memo(function UserMessage({ event }: { event: Transcr
           {text && <Markdown text={text} className="[&_.cc-code]:my-2" />}
         </div>
       )}
+      {!nested && <MessageActions event={event} />}
     </div>
   );
 });
 
-export const AssistantMessage = memo(function AssistantMessage({ event, streaming, opener }: { event: TranscriptEvent; streaming: boolean; opener: boolean }) {
+export const AssistantMessage = memo(function AssistantMessage({ event, streaming, opener, nested }: { event: TranscriptEvent; streaming: boolean; opener: boolean; nested?: boolean }) {
   const { session } = useConversation();
   const provider = providerOf(session);
   const model = session.live?.model || session.model;
   return (
-    <div className="min-w-0">
+    <div className="group/message min-w-0">
       {opener && (
         <div className="mb-1.5 flex items-center gap-1.5 text-ui-sm text-foreground-subtlest">
           <span className={cn('size-1.5 rounded-full', provider === 'codex' ? 'bg-foreground-subtle' : 'bg-brand')} />
@@ -97,6 +89,7 @@ export const AssistantMessage = memo(function AssistantMessage({ event, streamin
         </div>
       )}
       <Markdown text={event.text || ''} streaming={streaming} />
+      {!nested && !streaming && <MessageActions event={event} />}
     </div>
   );
 });

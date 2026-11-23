@@ -34,6 +34,7 @@ type Config struct {
 	CCSwitchDBPath                                                           string
 	CodexExecutable, CodexConfigDir                                          string
 	StartCodexProcess                                                        ProcessStarter
+	ForkNativeSession                                                        func(context.Context, claude.Options, string) (string, error) // Overrides provider tooling in tests.
 	UploadDir                                                                string
 	Token, ClaudeExecutable, HostExecutable, Cwd, ClaudeConfigDir, BridgeURL string
 	AttachCommand                                                            string // ccr session attach with this host's flags; the web appends a session
@@ -110,6 +111,7 @@ type Server struct {
 	store             *store.Store
 	cfg               Config
 	mu                sync.Mutex
+	forkMu            sync.Mutex
 	switching         map[string]bool
 	downloads         downloadTickets // links the browser downloads files with (downloads.go)
 	sent              sends           // messages taken, by the page's send ID (sends.go)
@@ -217,6 +219,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("GET /api/sessions", s.list)
 	mux.HandleFunc("POST /api/sessions", s.create)
+	mux.HandleFunc("POST /api/sessions/{id}/fork", s.forkSession)
 	mux.HandleFunc("GET /api/sessions/{id}", s.get)
 	mux.HandleFunc("GET /api/sessions/{id}/events", s.events)
 	mux.HandleFunc("GET /api/sessions/{id}/events/{seq}", s.eventAt)
@@ -260,6 +263,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/native/sessions/{id}/events", s.nativeEventsList)
 	mux.HandleFunc("GET /api/native/sessions/{id}/events/{seq}", s.nativeEventAt)
 	mux.HandleFunc("POST /api/native/sessions/{id}/import", s.nativeImport)
+	mux.HandleFunc("POST /api/native/sessions/{id}/fork", s.forkNativeSession)
 	mux.HandleFunc("/", s.static)
 	served := condensed(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -757,6 +761,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	if q.Get("compact") == "1" {
 		events = trimEvents(events)
 	}
+	s.markForkEvents(r.Context(), x, events)
 	s.mu.Lock()
 	s.decorate(&x)
 	s.mu.Unlock()
@@ -767,7 +772,8 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	s.markViewed(r, id)
-	if _, e := s.store.Get(id); e != nil {
+	session, e := s.store.Get(id)
+	if e != nil {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
@@ -788,6 +794,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		if compact {
 			page = trimEvents(page)
 		}
+		s.markForkEvents(r.Context(), session, page)
 		respond(w, 200, map[string]any{"events": page, "hasMore": older})
 		return
 	}
@@ -804,6 +811,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if compact {
 		x = trimEvents(x)
 	}
+	s.markForkEvents(r.Context(), session, x)
 	respond(w, 200, x)
 }
 
@@ -1325,7 +1333,11 @@ func (s *Server) nativeGet(w http.ResponseWriter, r *http.Request) {
 	if q.Get("compact") == "1" {
 		out = trimEvents(out)
 	}
-	respond(w, 200, map[string]any{"session": x, "events": out, "hasMore": older})
+	_, cwdErr := validateCwd(s.lang(r), x.Cwd)
+	respond(w, 200, map[string]any{"session": struct {
+		claude.NativeSession
+		CanFork bool `json:"canFork"`
+	}{x, cwdErr == nil && len(ev) > 0}, "events": out, "hasMore": older})
 }
 func (s *Server) nativeImport(w http.ResponseWriter, r *http.Request) {
 	provider, ok := requestProvider(w, r)

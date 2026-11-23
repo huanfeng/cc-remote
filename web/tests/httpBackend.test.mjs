@@ -197,6 +197,68 @@ test('watchTranscript: native history uses /api/native/sessions with provider=co
   assert.match(host.log.at(-1).path, /^\/api\/native\/sessions\/n1\/events\?before=5&limit=200&compact=1&provider=codex$/);
 });
 
+test('watchTranscript refreshes fork anchors for messages first received during a turn', async () => {
+  const original = ev(1, 'user');
+  let current = { ...session('s1'), status: 'running', canFork: true };
+  const host = fakeHost((method, path) => {
+    if (path === '/api/sessions') return [current];
+    if (path.startsWith('/api/requests?')) return [];
+    if (path.startsWith('/api/sessions/s1?')) {
+      const events = current.status === 'running' ? [original] : [{ ...original, branchable: true, branchAnchor: 'anchor' }];
+      return { session: current, events, hasMore: true };
+    }
+    if (path.startsWith('/api/sessions/s1/events?')) return [];
+  });
+  const backend = make(host);
+  const updates = [];
+  const stop = backend.watchTranscript('s1', update => updates.push(update));
+  try {
+    await until(() => updates.some(u => u.reset && !u.events[0]?.branchable));
+    current = { ...current, status: 'completed' };
+    await until(() => updates.some(u => u.events[0]?.branchAnchor === 'anchor'));
+    assert.equal(updates.filter(u => u.reset).length, 1);
+    assert.equal(updates.find(u => u.events[0]?.branchAnchor === 'anchor').hasMore, true);
+  } finally { stop(); backend.dispose(); }
+});
+
+test('watchTranscript refreshes the prompt even when a long turn fills the tail', async () => {
+  const prompt = ev(1, 'user');
+  const annotated = { ...prompt, branchable: true, editableInBranch: true, branchAnchor: 'older-anchor' };
+  let current = { ...session('s1'), status: 'running', canFork: true };
+  const host = fakeHost((method, path) => {
+    if (path === '/api/sessions') return [current];
+    if (path.startsWith('/api/requests?')) return [];
+    if (path.startsWith('/api/sessions/s1?')) return {
+      session: current, events: current.status === 'running' ? [prompt] : [ev(202)], hasMore: false,
+    };
+    if (path.startsWith('/api/sessions/s1/events?')) return [];
+    if (path === '/api/sessions/s1/events/1') return annotated;
+  });
+  const backend = make(host);
+  const updates = [];
+  const stop = backend.watchTranscript('s1', update => updates.push(update));
+  try {
+    await until(() => updates.some(u => u.reset && u.events[0]?.seq === 1));
+    current = { ...current, status: 'completed' };
+    await until(() => updates.some(u => u.events[0]?.branchAnchor === 'older-anchor'));
+    assert.equal(updates.filter(u => u.reset).length, 1);
+  } finally { stop(); backend.dispose(); }
+});
+
+test('forkSession sends the verified boundary and attachments to the appropriate source route', async () => {
+  const reply = { session: session('child'), attachmentIds: ['upload'] };
+  const host = fakeHost(() => reply);
+  const backend = make(host);
+  const body = { requestId: 'request-1', anchorSeq: 2, anchorToken: 'anchor', before: true, attachmentIds: ['upload'] };
+  assert.deepEqual(await backend.forkSession('thread-1', body, 'codex'), reply);
+  assert.deepEqual(await backend.forkSession('source-1', { requestId: 'request-2' }), reply);
+  assert.deepEqual(host.log.map(({ method, path, body: payload }) => ({ method, path, payload })), [
+    { method: 'POST', path: '/api/native/sessions/thread-1/fork?provider=codex', payload: body },
+    { method: 'POST', path: '/api/sessions/source-1/fork', payload: { requestId: 'request-2' } },
+  ]);
+  backend.dispose();
+});
+
 test('unsubscribe stops polling and ignores replies still in flight', async () => {
   let release;
   const host = fakeHost(async (m, p) => {

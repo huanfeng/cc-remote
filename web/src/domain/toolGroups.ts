@@ -3,7 +3,19 @@
 // they are never buried. No React here so node tests can import it directly.
 import { t } from '../lib/i18n.ts'; // with extension: node tests import this file directly
 
-export type TranscriptEvent = { seq: number; kind: string; text?: string; payload?: any; createdAt: string; truncated?: boolean };
+export type TranscriptEvent = {
+  seq: number;
+  kind: string;
+  text?: string;
+  payload?: any;
+  createdAt: string;
+  truncated?: boolean;
+  branchable?: boolean;
+  editableInBranch?: boolean;
+  branchAnchor?: string;
+  /** The persisted final event for a reply rendered under its first streaming seq. */
+  actionSeq?: number;
+};
 export type CallStatus = 'ok' | 'error' | 'running' | 'missing';
 /** `truncated` lists the seqs of this call's events whose long text the host cut in the listing. */
 export type ToolCall = { seq: number; id: string; name: string; input: any; result?: TranscriptEvent; resultText: string; status: CallStatus; startedAt?: string; durationMs?: number; truncated?: number[] };

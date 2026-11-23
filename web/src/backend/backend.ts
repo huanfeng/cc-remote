@@ -10,7 +10,7 @@ import type {
   Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
-  SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
+  SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
   UsageHistory, UsageReply, UsageMonitor, MonitorHistory,
   MessageSearchQuery, MessageSearchPage, MessageSearchHit, MessageSearchContext,
 } from './types';
@@ -82,6 +82,7 @@ export interface Backend {
    */
   watchSessions(onChange: (sessions: Session[]) => void, onError?: (e: BackendError) => void): Unsubscribe;
   createSession(body: NewSessionRequest): Promise<Session>;
+  forkSession(id: string, body: SessionForkRequest, native?: Provider): Promise<SessionForkReply>;
   patchSession(id: string, patch: SessionPatch): Promise<Session>;
   deleteSession(id: string, opts?: { stop?: boolean }): Promise<void>;
   stop(id: string): Promise<void>;

@@ -23,10 +23,13 @@ test('assistant deltas merge into one message keyed by the first delta', () => {
 
 test('the final assistant event replaces the streamed text and ends streaming', () => {
   const d = ev('assistant_delta', { text: 'Hel' });
-  const { events, streamingSeq } = foldEvents([d, ev('assistant', { text: 'Hello!' })], true);
+  const final = ev('assistant', { text: 'Hello!', branchable: true, branchAnchor: 'native-reply' });
+  const { events, streamingSeq } = foldEvents([d, final], true);
   assert.equal(events.length, 1);
   assert.equal(events[0].text, 'Hello!');
   assert.equal(events[0].seq, d.seq);
+  assert.equal(events[0].actionSeq, final.seq);
+  assert.equal(events[0].branchAnchor, 'native-reply');
   assert.equal(streamingSeq, undefined);
 });
 

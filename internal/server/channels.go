@@ -39,6 +39,7 @@ func (s *Server) channelLive(c *channelConnection) bool {
 	return c != nil && time.Since(c.seen) < channelTTL
 }
 func (s *Server) decorate(x *store.Session) {
+	x.CanFork = canForkSession(*x)
 	x.CodexAccountLocked = x.Provider == "codex" && (x.Resume || s.procs[x.ID] != nil)
 	if rt := s.procs[x.ID]; rt != nil && rt.live != nil && x.Provider == "codex" {
 		live := *rt.live
@@ -442,10 +443,7 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		if ev.Kind == "user" && strings.HasPrefix(strings.TrimSpace(ev.Text), "<channel ") {
 			continue
 		}
-		hash := sha256.Sum256(append([]byte(ev.Kind+"\x00"+ev.Text+"\x00"), ev.Payload...))
-		key := hex.EncodeToString(hash[:])
-		occurrences[key]++
-		key = fmt.Sprintf("%s%s:%d", c.keyPrefix, key, occurrences[key])
+		key := transcriptEventKey(c.keyPrefix, ev, occurrences)
 		if ev.Kind == "assistant" || ev.Kind == "error" {
 			oldHash := sha256.Sum256(append([]byte("assistant\x00"+ev.Text+"\x00"), ev.Payload...))
 			oldKey := hex.EncodeToString(oldHash[:])
@@ -482,4 +480,11 @@ func (s *Server) applyTranscriptLocked(c *channelConnection, n claude.NativeSess
 		c.legacy = false
 		_ = s.store.ClearTranscriptFlag(c.sessionID, store.LegacyTasksKey)
 	}
+}
+
+func transcriptEventKey(prefix string, ev claude.Event, occurrences map[string]int) string {
+	hash := sha256.Sum256(append([]byte(ev.Kind+"\x00"+ev.Text+"\x00"), ev.Payload...))
+	key := hex.EncodeToString(hash[:])
+	occurrences[key]++
+	return fmt.Sprintf("%s%s:%d", prefix, key, occurrences[key])
 }

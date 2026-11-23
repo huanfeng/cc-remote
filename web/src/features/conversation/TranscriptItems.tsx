@@ -46,8 +46,8 @@ const Item = memo(function Item({ item, nested }: { item: TranscriptItem; nested
     case 'event': {
       const e = item.event;
       switch (e.kind) {
-        case 'user': return <UserMessage event={e} />;
-        case 'assistant': return <AssistantMessage event={e} streaming={!nested && e.seq === streamingSeq} opener={!nested && openers.has(item.key)} />;
+        case 'user': return <UserMessage event={e} nested={nested} />;
+        case 'assistant': return <AssistantMessage event={e} nested={nested} streaming={!nested && e.seq === streamingSeq} opener={!nested && openers.has(item.key)} />;
         case 'error': return <ErrorCallout event={e} />;
         case 'compact': return <CompactDivider event={e} />;
         case 'recap': return <Recap event={e} />;

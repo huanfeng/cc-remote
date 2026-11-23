@@ -94,5 +94,13 @@ if (typeof window !== 'undefined') {
 export const useSelectedSession = () =>
   useApp(s => (s.selection?.kind === 'session' ? s.sessions.find(x => x.id === s.selection!.id) : undefined));
 
+export function openFork(session: Session) {
+  useApp.setState(s => ({
+    sidebarTab: 'sessions',
+    sessions: s.sessions.some(x => x.id === session.id) ? s.sessions : [session, ...s.sessions],
+  }));
+  select({ kind: 'session', id: session.id });
+}
+
 export const hasFeature = (info: HostInfo | undefined, f: NonNullable<HostInfo['features']>[number]) =>
   !!info?.features?.includes(f);

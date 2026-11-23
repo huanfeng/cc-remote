@@ -14,7 +14,7 @@ import type {
   Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
-  SessionEvent, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
+  SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
   UsageReply, UsageMonitor, MonitorHistory,
   MessageSearchQuery, MessageSearchPage, MessageSearchHit, MessageSearchContext,
 } from '../types.ts';
@@ -225,6 +225,13 @@ export class HttpBackend implements Backend {
     return s;
   }
 
+  async forkSession(id: string, body: SessionForkRequest, native?: Provider): Promise<SessionForkReply> {
+    const path = providerQuery(`${this.transcriptBase(id, native)}/fork`, native);
+    const reply = await this.call<SessionForkReply>('POST', path, body);
+    this.refresh();
+    return reply;
+  }
+
   async deleteSession(id: string, opts?: { stop?: boolean }) {
     await this.call('DELETE', `${this.session(id)}${opts?.stop ? '?stop=1' : ''}`);
     this.refresh();
@@ -254,19 +261,40 @@ export class HttpBackend implements Backend {
     let hasMore = false;
     let session: Session | undefined;
     let requests: PendingRequest[] = EMPTY;
+    let refreshAnchors = false;
+    let latestPrompt: SessionEvent | undefined;
 
     const listed = () => (native ? undefined : this.list?.find(s => s.id === id));
-    const load = async () => {
+    const active = (s?: Session) => s?.status === 'running' || s?.status === 'waiting';
+    const rememberPrompt = (events: SessionEvent[]) => {
+      const prompt = events.findLast(e => e.kind === 'user' && !e.payload?.steer);
+      if (prompt && (!latestPrompt || prompt.seq >= latestPrompt.seq)) latestPrompt = prompt;
+    };
+    const setSession = (next: Session) => {
+      // The native turn may not have been durable when its message first arrived.
+      if (next.canFork && !active(next) && (!session?.canFork || active(session) || next.completedAt !== session.completedAt)) refreshAnchors = true;
+      session = next;
+    };
+    const load = async (reset = true) => {
       const data = await this.get<{ session: Session; events: SessionEvent[]; hasMore?: boolean }>(q(`${base}?tail=${PAGE}&compact=1${viewing()}`));
       const pending = native ? EMPTY : await this.pending(id);
       if (closed) return;
-      const events = data.events ?? [];
+      const events = [...(data.events ?? [])];
+      if (reset) latestPrompt = undefined;
       loaded = true;
-      lastSeq = events.at(-1)?.seq ?? 0;
-      hasMore = !!data.hasMore;
-      session = native ? { ...data.session, provider: data.session.provider ?? native } : data.session;
+      if (reset) hasMore = !!data.hasMore;
+      lastSeq = reset ? events.at(-1)?.seq ?? 0 : Math.max(lastSeq, events.at(-1)?.seq ?? 0);
+      const lastPrompt = latestPrompt;
+      // A long turn can push its original prompt outside the refreshed tail.
+      if (!reset && lastPrompt && !lastPrompt.branchAnchor && events.length && lastPrompt.seq < events[0].seq) {
+        const full = await this.fullEvent(id, lastPrompt.seq).catch(() => undefined);
+        if (closed) return;
+        if (full?.branchAnchor && full.kind === lastPrompt.kind && full.createdAt === lastPrompt.createdAt) events.unshift(full);
+      }
+      rememberPrompt(events);
+      session = native ? { ...data.session, provider: data.session.provider ?? native } : listed() ?? data.session;
       requests = pending;
-      onUpdate({ session, events, reset: true, hasMore, requests });
+      onUpdate({ session, events, reset, hasMore, requests });
     };
     const tick = async () => {
       if (!loaded) { await load(); return; }
@@ -282,23 +310,30 @@ export class HttpBackend implements Backend {
       if (closed) return;
       const fresh = (Array.isArray(events) ? events : []).filter(e => e.seq > lastSeq);
       if (fresh.length) lastSeq = fresh[fresh.length - 1].seq;
+      rememberPrompt(fresh);
       const nextSession = listed() ?? session!;
       // Unchanged replies keep their identity (ETag), so a quiet tick delivers nothing.
       // The session record (status, queue, live) comes with the list: when the
       // transcript moves, poll the list now instead of up to 3 s later.
       if (!native && (fresh.length || pending !== requests)) this.listPoller?.now();
-      if (!fresh.length && pending === requests && nextSession === session) return;
-      session = nextSession;
-      requests = pending;
-      onUpdate({ session, events: fresh, hasMore, requests });
+      if (fresh.length || pending !== requests || nextSession !== session) {
+        setSession(nextSession);
+        requests = pending;
+        onUpdate({ session: nextSession, events: fresh, hasMore, requests });
+      }
+      if (refreshAnchors) {
+        refreshAnchors = false;
+        try { await load(false); } catch (error) { refreshAnchors = true; throw error; }
+      }
     };
     // A new list delivers the refreshed session record right away.
     const follow = () => {
       if (closed || !loaded) return;
       const next = listed();
       if (!next || next === session) return;
-      session = next;
-      onUpdate({ session, events: [], hasMore, requests });
+      setSession(next);
+      onUpdate({ session: next, events: [], hasMore, requests });
+      if (refreshAnchors) poller.now();
     };
     if (!native) this.listFollowers.add(follow);
 

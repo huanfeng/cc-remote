@@ -1,9 +1,10 @@
 // Conversation header. Desktop: controls wrap below the title in narrow panes.
 // Phone: back/menu, title + status, and the usage orb; the rest moves into ⋯.
 import {
-  ChevronLeft, FolderOpen, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Search, Square, SquareTerminal,
+  ChevronLeft, FolderOpen, GitBranch, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Search, Square, SquareTerminal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -26,6 +27,7 @@ import { DESKTOP } from '@/platform/desktop';
 import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
 import { projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
 import { projectShellCounts } from '@/features/projectShell/projectShellStatus';
+import { useForkConversation } from '@/features/conversation/useForkConversation';
 
 export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
@@ -49,6 +51,7 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
   const tasks = session.activeTasks ?? 0;
   const isTerminal = session.mode === 'terminal';
   const terminalOnly = isTerminal && session.provider === 'codex';
+  const branch = useForkConversation(session, native ? session.provider ?? 'claude' : undefined);
 
   const toggleView = () => setTerminalView(session.id, !terminalView);
 
@@ -159,29 +162,36 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
           </Tooltip>
         )}
 
-        {!native && (
+        {(!native || branch.enabled) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={t('More', '更多')}>
-                <MoreHorizontal className="size-4" />
+                {branch.busy ? <Spinner className="size-4" /> : <MoreHorizontal className="size-4" />}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              {mobile && isTerminal && !terminalOnly && (
-                <DropdownMenuItem onSelect={toggleView}>
-                  {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
-                </DropdownMenuItem>
+              {branch.enabled && <DropdownMenuItem disabled={branch.busy || branch.unavailable} onSelect={() => void branch.fork()}>
+                <GitBranch /> {t('Branch conversation', '分支会话')}
+              </DropdownMenuItem>}
+              {!native && (
+                <>
+                  {mobile && isTerminal && !terminalOnly && (
+                    <DropdownMenuItem onSelect={toggleView}>
+                      {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
+                    </DropdownMenuItem>
+                  )}
+                  {mobile && <DropdownMenuItem onSelect={() => open({ type: 'tasks', id: session.id })}><ListTree /> {t('Tasks', '任务')}</DropdownMenuItem>}
+                  <DropdownMenuItem onSelect={() => open({ type: 'session-details', id: session.id })}>{t('Session details', '会话详情')}</DropdownMenuItem>
+                  {isTerminal && <DropdownMenuItem onSelect={() => open({ type: 'attach', id: session.id })}>{t('Attach from a local terminal', '从本地终端接入')}</DropdownMenuItem>}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem checked={toolsExpanded} onCheckedChange={v => setPrefs({ toolsExpanded: !!v })}>
+                    {t('Expand tool calls', '展开工具调用')}
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuCheckboxItem checked={sendKey === 'mod-enter'} onCheckedChange={v => setPrefs({ sendKey: v ? 'mod-enter' : 'enter' })}>
+                    {t('Send with Ctrl+Enter', '用 Ctrl+Enter 发送')}
+                  </DropdownMenuCheckboxItem>
+                </>
               )}
-              {mobile && <DropdownMenuItem onSelect={() => open({ type: 'tasks', id: session.id })}><ListTree /> {t('Tasks', '任务')}</DropdownMenuItem>}
-              <DropdownMenuItem onSelect={() => open({ type: 'session-details', id: session.id })}>{t('Session details', '会话详情')}</DropdownMenuItem>
-              {isTerminal && <DropdownMenuItem onSelect={() => open({ type: 'attach', id: session.id })}>{t('Attach from a local terminal', '从本地终端接入')}</DropdownMenuItem>}
-              <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem checked={toolsExpanded} onCheckedChange={v => setPrefs({ toolsExpanded: !!v })}>
-                {t('Expand tool calls', '展开工具调用')}
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuCheckboxItem checked={sendKey === 'mod-enter'} onCheckedChange={v => setPrefs({ sendKey: v ? 'mod-enter' : 'enter' })}>
-                {t('Send with Ctrl+Enter', '用 Ctrl+Enter 发送')}
-              </DropdownMenuCheckboxItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

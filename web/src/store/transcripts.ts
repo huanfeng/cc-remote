@@ -42,7 +42,13 @@ export function mergeEvents(prev: SessionEvent[], next: SessionEvent[]): Session
   const last = prev.at(-1)?.seq ?? -Infinity;
   if (next[0].seq > last) return [...prev, ...next];
   const map = new Map(prev.map(e => [e.seq, e]));
-  for (const e of next) map.set(e.seq, e);
+  for (const e of next) {
+    const cached = map.get(e.seq);
+    // A tail refresh can supply a new fork anchor for an already expanded event.
+    map.set(e.seq, cached && !cached.truncated && e.truncated && cached.createdAt === e.createdAt && cached.kind === e.kind
+      ? { ...cached, branchable: e.branchable, editableInBranch: e.editableInBranch, branchAnchor: e.branchAnchor }
+      : e);
+  }
   return [...map.values()].sort((a, b) => a.seq - b.seq);
 }
 

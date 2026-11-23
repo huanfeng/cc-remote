@@ -91,33 +91,12 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 			}
 		}
 	}
-	params := map[string]any{}
-	if o.ModelProvider != "" {
-		params["modelProvider"] = o.ModelProvider
-	}
+	params := threadOptions(o)
 	method := "thread/start"
 	if o.Resume {
 		method = "thread/resume"
 		params["threadId"] = o.SessionID
 		params["excludeTurns"] = true
-	}
-	if o.Cwd != "" {
-		params["cwd"] = o.Cwd
-	}
-	if o.Model != "" {
-		params["model"] = o.Model
-	}
-	if o.Effort != "" {
-		params["config"] = map[string]any{"model_reasoning_effort": o.Effort}
-	}
-	// Keep the adapter's approvals on the explicit human bridge.
-	params["approvalsReviewer"] = "user"
-	params["approvalPolicy"] = "on-request"
-	if o.PermissionMode != "" {
-		params["sandbox"] = o.PermissionMode
-	}
-	if o.PermissionMode == "danger-full-access" {
-		params["approvalPolicy"] = "never"
 	}
 	var response struct {
 		Model   string `json:"model"`
@@ -154,6 +133,30 @@ func StartProcess(o claude.Options, h claude.ProcessHooks) (*Process, error) {
 	go p.runQueue()
 	ready = true
 	return p, nil
+}
+
+func threadOptions(o claude.Options) map[string]any {
+	// Keep adapter approvals on the explicit human bridge.
+	params := map[string]any{"approvalsReviewer": "user", "approvalPolicy": "on-request"}
+	if o.Cwd != "" {
+		params["cwd"] = o.Cwd
+	}
+	if o.Model != "" {
+		params["model"] = o.Model
+	}
+	if o.ModelProvider != "" {
+		params["modelProvider"] = o.ModelProvider
+	}
+	if o.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": o.Effort}
+	}
+	if o.PermissionMode != "" {
+		params["sandbox"] = o.PermissionMode
+	}
+	if o.PermissionMode == "danger-full-access" {
+		params["approvalPolicy"] = "never"
+	}
+	return params
 }
 
 // Configure changes the next turn without interrupting active work. Native

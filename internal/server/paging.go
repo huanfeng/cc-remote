@@ -164,7 +164,9 @@ func nativeEvents(x claude.NativeSession, ev []claude.Event) []store.Event {
 		if at == "" {
 			at = x.LastConversationAt
 		}
-		out = append(out, store.Event{Seq: int64(i + 1), SessionID: x.ID, Kind: v.Kind, Text: v.Text, Payload: raw, CreatedAt: at})
+		anchor := eventBranchAnchor(x, v)
+		editable := anchor != "" && v.Kind == "user" && v.NativeParentKnown && (v.NativeParentAnchor != "" || !x.Truncated)
+		out = append(out, store.Event{Seq: int64(i + 1), SessionID: x.ID, Kind: v.Kind, Text: v.Text, Payload: raw, CreatedAt: at, Branchable: anchor != "", BranchAnchor: anchor, EditableInBranch: editable})
 	}
 	return out
 }
@@ -219,6 +221,11 @@ func (s *Server) eventAt(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, 500, s.lang(r).T("Could not read messages", "无法读取消息"))
 		return
+	}
+	if session, err := s.store.Get(id); err == nil {
+		events := []store.Event{e}
+		s.markForkEvents(r.Context(), session, events)
+		e = events[0]
 	}
 	respond(w, 200, e)
 }

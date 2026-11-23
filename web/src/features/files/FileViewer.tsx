@@ -5,13 +5,12 @@
 // stack; a new `path` from the surface store is pushed onto it as well.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { ArrowLeft, Download, FileCode2, FileImage, FileText, FileWarning, X } from 'lucide-react';
+import { ArrowLeft, Download, FileCode2, FileImage, FileText, FileWarning, PanelRightOpen, X } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import type { FileContent } from '@/backend/types';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/components/lib/utils';
 import { basename, dirname, type FileRef } from '@/domain/filePaths';
 import { useIsMobile } from '@/lib/hooks';
@@ -21,23 +20,23 @@ import { MarkdownImages, useImageResolver } from '@/features/markdown/images';
 import { CodeView } from './CodeView';
 import { ImageView } from './ImageView';
 import { PathMenu } from './PathMenu';
+import { ViewerIconButton } from './ViewerIconButton';
+import { fileDockStore, fileEntryKey, type FileEntry } from './fileDockState';
 import { MAX_RENDER_BYTES, dirOf, formatBytes, shikiLang, splitLine, svgDataUrl, viewKind } from './fileView';
 
-type Entry = { path: string; base?: string[] };
-const entryKey = (e: Entry) => `${e.path}\0${(e.base ?? []).join('\0')}`;
-
 export function FileViewer({ sessionId, path, base, onClose }: { sessionId: string; path: string; base?: string[]; onClose: () => void }) {
+  const backend = useBackend();
   const mobile = useIsMobile();
-  const [stack, setStack] = useState<Entry[]>(() => [{ path, base }]);
+  const [stack, setStack] = useState<FileEntry[]>(() => [{ path, base }]);
   // The surface store may open another file while this one is shown: it goes on the back stack.
-  const propKey = entryKey({ path, base });
+  const propKey = fileEntryKey({ path, base });
   const seen = useRef(propKey);
   useEffect(() => {
     if (seen.current === propKey) return;
     seen.current = propKey;
     setStack(old => [...old, { path, base }]);
   }, [propKey, path, base]);
-  const push = useCallback((e: Entry) => setStack(old => entryKey(old[old.length - 1]) === entryKey(e) ? old : [...old, e]), []);
+  const push = useCallback((e: FileEntry) => setStack(old => fileEntryKey(old[old.length - 1]) === fileEntryKey(e) ? old : [...old, e]), []);
   const back = useCallback(() => setStack(old => old.length > 1 ? old.slice(0, -1) : old), []);
   const top = stack[stack.length - 1];
 
@@ -54,13 +53,16 @@ export function FileViewer({ sessionId, path, base, onClose }: { sessionId: stri
         )}
       >
         <FilePane
-          key={`${stack.length}:${entryKey(top)}`}
+          key={`${stack.length}:${fileEntryKey(top)}`}
           sessionId={sessionId}
           entry={top}
           mobile={mobile}
-          canGoBack={stack.length > 1}
-          onBack={back}
+          onBack={stack.length > 1 ? back : undefined}
           onOpen={push}
+          onDock={(entry, source) => {
+            fileDockStore(backend).getState().open(sessionId, { kind: 'file', ...entry, source });
+            onClose();
+          }}
         />
       </DialogContent>
     </Dialog>
@@ -69,8 +71,9 @@ export function FileViewer({ sessionId, path, base, onClose }: { sessionId: stri
 
 type Loaded = { file: FileContent; src?: string };
 
-function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
-  sessionId: string; entry: Entry; mobile: boolean; canGoBack: boolean; onBack: () => void; onOpen: (e: Entry) => void;
+export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOpen, onDock }: {
+  sessionId: string; entry: FileEntry; mobile: boolean; initialSource?: boolean;
+  onBack?: () => void; onOpen: (entry: FileEntry) => void; onDock?: (entry: FileEntry, source: boolean) => void;
 }) {
   const backend = useBackend();
   const { path: requested, line } = useMemo(() => splitLine(entry.path), [entry.path]);
@@ -78,7 +81,7 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   // A Markdown file opened at a line shows its source, where the line is.
-  const [source, setSource] = useState(!!line);
+  const [source, setSource] = useState(initialSource ?? !!line);
 
   useEffect(() => {
     let live = true;
@@ -88,12 +91,20 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
     setLoaded(undefined);
     setError('');
     backend.readFile(sessionId, requested, entry.base).then(async file => {
-      let src: string | undefined;
-      if (viewKind(file) === 'image') src = await imageSource(file);
-      if (live) { held = file.url; setLoaded({ file, src }); } else release(file.url);
+      try {
+        const src = viewKind(file) === 'image' ? await imageSource(file) : undefined;
+        if (live) {
+          held = file.url;
+          setLoaded({ file, src });
+          return;
+        }
+      } catch (err) {
+        if (live) setError(err instanceof Error ? err.message : String(err));
+      }
+      release(file.url);
     }, err => { if (live) setError(err instanceof Error ? err.message : String(err)); });
     return () => { live = false; release(held); };
-  }, [backend, sessionId, requested, entry.base, attempt]);
+  }, [backend, sessionId, requested, entry, attempt]);
   const images = useImageResolver(sessionId);
 
   const file = loaded?.file;
@@ -101,6 +112,8 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
   const name = basename(shownPath);
   const kind = file ? viewKind(file) : undefined;
   const large = !!file?.text && Math.max(file.size, file.text.length) > MAX_RENDER_BYTES;
+  const Title = onDock ? DialogTitle : 'h2';
+  const iconClass = mobile ? 'size-9' : undefined;
   // The file in hand downloads at once; one sent without content (too large, or a binary) through a host link.
   const [saving, setSaving] = useState(false);
   const download = useCallback(async () => {
@@ -151,7 +164,7 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
       <div className="h-full overflow-auto">
         <MarkdownFiles.Provider value={openLink}>
           <MarkdownImages.Provider value={images}>
-            <div className={cn('mx-auto max-w-3xl', mobile ? 'px-4 py-4' : 'px-10 py-8')}>
+            <div className={cn('mx-auto max-w-3xl', mobile || !onDock ? 'px-4 py-4' : 'px-10 py-8')}>
               <Markdown text={file.text!} dir={dirname(shownPath)} />
             </div>
           </MarkdownImages.Provider>
@@ -164,13 +177,14 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
 
   return (
     <>
-      <header className={cn('flex shrink-0 items-center gap-1.5 border-b border-border/60 bg-background pr-2 pl-3', mobile ? 'min-h-12 pt-safe' : 'h-12')}>
-        {canGoBack && <IconButton label={t('Back', '返回')} onClick={onBack}><ArrowLeft /></IconButton>}
-        <KindIcon kind={kind} />
-        <DialogTitle className="flex min-w-0 flex-1 items-baseline gap-2 text-ui-base font-medium text-foreground">
-          <span className="shrink-0 truncate">{name}{line ? <span className="text-foreground-subtle">:{line}</span> : null}</span>
-          {!mobile && <span className="min-w-0 truncate text-ui-sm font-normal text-foreground-subtlest" title={shownPath}>{dirOf(shownPath)}</span>}
-        </DialogTitle>
+      <header className={cn('flex shrink-0 items-center border-b border-border/60 bg-background',
+        mobile ? 'gap-0.5 pr-1 pl-2' : 'gap-1.5 pr-2 pl-3', onDock ? (mobile ? 'min-h-12 pt-safe' : 'h-12') : 'h-9')}>
+        {onBack && <ViewerIconButton label={t('Back', '返回')} className={iconClass} onClick={onBack}><ArrowLeft /></ViewerIconButton>}
+        {!mobile && <KindIcon kind={kind} />}
+        <Title className="flex min-w-0 flex-1 items-baseline gap-2 text-ui-base font-medium text-foreground" title={shownPath}>
+          <span className="truncate">{name}{line ? <span className="text-foreground-subtle">:{line}</span> : null}</span>
+          {!mobile && onDock && <span className="min-w-0 truncate text-ui-sm font-normal text-foreground-subtlest">{dirOf(shownPath)}</span>}
+        </Title>
         {kind === 'markdown' && !large && (
           <div role="group" className={cn('mr-1 flex shrink-0 items-center rounded-lg bg-surface', mobile ? 'p-0' : 'p-0.5')}>
             {[false, true].map(isSource => (
@@ -181,20 +195,26 @@ function FilePane({ sessionId, entry, mobile, canGoBack, onBack, onOpen }: {
                 onClick={() => setSource(isSource)}
                 className={cn(
                   'rounded-md text-ui-sm transition-colors',
-                  mobile ? 'h-9 px-3' : 'h-6 px-2',
+                  mobile ? 'h-8 px-2' : 'h-6 px-2',
                   source === isSource ? 'bg-background text-foreground shadow-xs' : 'text-foreground-subtle hover:text-foreground',
                 )}
               >
-                {isSource ? t('Source', '源码') : t('Rendered', '渲染')}
+                {isSource ? t('Source', '源码') : mobile ? t('View', '预览') : t('Rendered', '渲染')}
               </button>
             ))}
           </div>
         )}
         <PathMenu path={shownPath} />
-        {file && <IconButton label={t('Download', '下载')} disabled={saving} onClick={() => void download()}>{saving ? <Spinner /> : <Download />}</IconButton>}
-        <DialogPrimitive.Close asChild>
-          <Button variant="ghost" size="icon-md" aria-label={t('Close', '关闭')} className={cn('text-foreground-subtle hover:text-foreground', mobile && 'size-9')}><X /></Button>
-        </DialogPrimitive.Close>
+        {file && <ViewerIconButton label={t('Download', '下载')} className={iconClass} disabled={saving} onClick={() => void download()}>{saving ? <Spinner /> : <Download />}</ViewerIconButton>}
+        {onDock && <>
+          <ViewerIconButton label={t('Move to the file panel', '移到文件栏')} className={iconClass} onClick={() => {
+            const loadedEntry = shownPath === requested ? entry : { path: line ? `${shownPath}:${line}` : shownPath };
+            onDock(loadedEntry, source);
+          }}><PanelRightOpen /></ViewerIconButton>
+          <DialogPrimitive.Close asChild>
+            <Button type="button" variant="ghost" size="icon-md" aria-label={t('Close', '关闭')} className={cn('text-foreground-subtle hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring', iconClass)}><X /></Button>
+          </DialogPrimitive.Close>
+        </>}
       </header>
       <div className="relative min-h-0 flex-1">{body}</div>
       {!mobile && file && (kind === 'code' || (kind === 'markdown' && (source || large))) && (
@@ -243,18 +263,6 @@ function DownloadButton({ saving, onClick }: { saving: boolean; onClick: () => v
     <Button variant="outline" size="lg" disabled={saving} onClick={onClick}>
       {saving ? <Spinner /> : <Download />}{saving ? t('Preparing…', '准备中…') : t('Download', '下载')}
     </Button>
-  );
-}
-
-function IconButton({ label, disabled, onClick, children }: { label: string; disabled?: boolean; onClick: () => void; children: ReactNode }) {
-  const mobile = useIsMobile();
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon-md" aria-label={label} disabled={disabled} className={cn('text-foreground-subtle hover:text-foreground [&_svg]:size-4', mobile && 'size-9')} onClick={onClick}>{children}</Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
-    </Tooltip>
   );
 }
 

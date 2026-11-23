@@ -27,6 +27,12 @@ type Event struct {
 	// Parent is the Agent tool call whose subagent produced this event; the
 	// payload carries it too (parent_tool_use_id) for the web to nest it.
 	Parent string `json:"-"`
+	// NativeAnchor is a provider's inclusive history boundary. The parent is
+	// the boundary to use before the message, with an empty known parent at
+	// the beginning of the conversation.
+	NativeAnchor       string `json:"-"`
+	NativeParentAnchor string `json:"-"`
+	NativeParentKnown  bool   `json:"-"`
 }
 
 type Options struct {

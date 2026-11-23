@@ -19,16 +19,18 @@ import (
 )
 
 type NativeSession struct {
-	Provider                  string `json:"provider,omitempty"`
-	ProfileID                 string `json:"profileId,omitempty"`
-	ModelProvider             string `json:"-"` // Codex's original model_provider, if recorded
-	ID                        string `json:"id"`
-	Title                     string `json:"title"`
-	Cwd                       string `json:"cwd"`
-	UpdatedAt                 string `json:"updatedAt"`
-	CreatedAt                 string `json:"createdAt,omitempty"`
-	LastConversationAt        string `json:"lastConversationAt,omitempty"`
-	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
+	Provider                  string  `json:"provider,omitempty"`
+	ProfileID                 string  `json:"profileId,omitempty"`
+	ModelProvider             string  `json:"-"` // Codex's original model_provider, if recorded
+	ForkedFromID              string  `json:"-"`
+	ForkedFromOrdinal         *uint64 `json:"-"` // Exclusive bound in a linked Codex rollout.
+	ID                        string  `json:"id"`
+	Title                     string  `json:"title"`
+	Cwd                       string  `json:"cwd"`
+	UpdatedAt                 string  `json:"updatedAt"`
+	CreatedAt                 string  `json:"createdAt,omitempty"`
+	LastConversationAt        string  `json:"lastConversationAt,omitempty"`
+	ConversationTimeEstimated bool    `json:"conversationTimeEstimated,omitempty"`
 	// Truncated: the transcript is too large and only its recent part was read.
 	Truncated       bool `json:"truncated,omitempty"`
 	customTitle     bool
@@ -281,7 +283,7 @@ type historyEntry struct {
 
 // eventWeight is about the memory one event holds.
 func eventWeight(ev Event) int64 {
-	return int64(len(ev.Kind)+len(ev.Text)+len(ev.Payload)+len(ev.Parent)+len(ev.CreatedAt)) + 80
+	return int64(len(ev.Kind)+len(ev.Text)+len(ev.Payload)+len(ev.Parent)+len(ev.CreatedAt)+len(ev.NativeAnchor)+len(ev.NativeParentAnchor)) + 120
 }
 
 func NativeHistory(configDir, id string) (NativeSession, []Event, error) {
@@ -556,6 +558,8 @@ func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 	var v struct {
 		Type        string          `json:"type"`
 		Subtype     string          `json:"subtype"`
+		UUID        string          `json:"uuid"`
+		ParentUUID  json.RawMessage `json:"parentUuid"`
 		Content     json.RawMessage `json:"content"`
 		IsMeta      bool            `json:"isMeta"`
 		IsSidechain bool            `json:"isSidechain"`
@@ -563,6 +567,7 @@ func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 		APIError    string          `json:"apiError"`
 		Error       string          `json:"error"`
 		Message     struct {
+			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 		// Origin tells typed prompts (kind "human") from text Claude Code adds
@@ -628,6 +633,9 @@ func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 	}
 	var out []Event
 	for _, e := range contentEvents(v.Message.Content, v.Type) {
+		if e.Kind == "assistant" && v.Message.Model == "<synthetic>" && e.Text == "No response requested." {
+			continue
+		}
 		// Synthetic API failures are turn errors, not normal assistant replies.
 		// Quota errors have an interactive terminal menu with its own lifecycle.
 		if e.Kind == "assistant" && v.IsAPIError && v.APIError != "usage_limit_reached" && v.Error != "rate_limit" {
@@ -646,6 +654,17 @@ func transcriptRecordEvents(line []byte, session *NativeSession) []Event {
 		}
 		if e.Kind == "user" && (syntheticText(e.Text) || v.Origin.Kind != "" && v.Origin.Kind != "human" || v.PromptSource == "system") {
 			continue
+		}
+		if uuidPattern.MatchString(v.UUID) {
+			e.NativeAnchor = v.UUID
+			if bytes.Equal(v.ParentUUID, []byte("null")) {
+				e.NativeParentKnown = true
+			} else {
+				var parent string
+				if json.Unmarshal(v.ParentUUID, &parent) == nil && uuidPattern.MatchString(parent) {
+					e.NativeParentAnchor, e.NativeParentKnown = parent, true
+				}
+			}
 		}
 		out = append(out, e)
 		switch e.Kind {

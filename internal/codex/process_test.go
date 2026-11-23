@@ -156,6 +156,23 @@ func fakeAppServer() {
 			}
 			sandbox := map[string]string{"read-only": "readOnly", "workspace-write": "workspaceWrite", "danger-full-access": "dangerFullAccess"}[mode]
 			reply(map[string]any{"thread": map[string]any{"id": "actual-thread"}, "model": model, "reasoningEffort": effort, "sandbox": map[string]any{"type": sandbox}})
+		case "thread/fork":
+			if !ack || params["threadId"] != testNativeID || params["excludeTurns"] != true {
+				fail("invalid thread fork request")
+			}
+			if params["lastTurnId"] != nil && params["lastTurnId"] != testFirstForkTurn {
+				fail("lost native fork boundary")
+			}
+			reply(map[string]any{"thread": map[string]any{"id": testForkChild, "sessionId": testNativeID}})
+		case "thread/turns/list":
+			if params["threadId"] != testForkChild || params["limit"] != float64(1) || params["sortDirection"] != "desc" {
+				fail("invalid child verification request")
+			}
+			id := testFirstForkTurn
+			if os.Getenv("CODEX_ADAPTER_TEST_MODE") == "ignore-fork-boundary" {
+				id = testSecondForkTurn
+			}
+			reply(map[string]any{"data": []map[string]string{{"id": id}}})
 		case "turn/start", "thread/compact/start":
 			if active != "" {
 				fail("overlapping turns")

@@ -7,7 +7,7 @@ import { BackendError, type Backend, type ClaudeSettings, type StatuslineOptions
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
   ProjectShell, ProjectShellStream,
-  Session, SessionEvent, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
+  Session, SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
   MessageSearchQuery, MessageSearchHit,
 } from '../types';
 import * as fx from './fixtures';
@@ -27,12 +27,18 @@ const nativeMessages: SessionEvent[] = [
   { seq: 2, kind: 'assistant', text: '原生历史会话只能查看；可以**以终端会话继续**，或**导入为托管会话**。', createdAt: fx.ago(299) },
 ];
 
+function withBranchAnchor(event: SessionEvent): SessionEvent {
+  if ((event.kind !== 'user' && event.kind !== 'assistant') || event.payload?.steer) return event;
+  return { ...event, branchable: true, editableInBranch: event.kind === 'user', branchAnchor: `mock:${event.seq}:${event.createdAt}` };
+}
+
 type Watcher = (u: TranscriptUpdate) => void;
 
 export class MockBackend implements Backend {
   readonly kind = 'mock' as const;
-  private sessions = clone(fx.sessions);
-  private events: Record<string, SessionEvent[]> = clone(fx.transcripts);
+  private sessions: Session[] = clone(fx.sessions).map(s => ({ ...s, canFork: s.mode !== 'terminal' || s.provider !== 'codex' }));
+  private events: Record<string, SessionEvent[]> = Object.fromEntries(Object.entries(clone(fx.transcripts)).map(([id, events]) => [id, events.map(withBranchAnchor)]));
+  private forked = new Map<string, SessionForkReply>();
   private requests: PendingRequest[] = clone(fx.requests);
   private listWatchers = new Set<(s: Session[]) => void>();
   private watchers = new Map<string, Set<Watcher>>();
@@ -71,7 +77,7 @@ export class MockBackend implements Backend {
     for (const w of ws) w(u);
   }
   private append(id: string, kind: string, fields: Partial<SessionEvent> = {}): SessionEvent {
-    const event: SessionEvent = { seq: this.nextSeq(id), kind, createdAt: now(), ...fields };
+    const event = withBranchAnchor({ seq: this.nextSeq(id), kind, createdAt: now(), ...fields });
     (this.events[id] ??= []).push(event);
     const s = this.session(id);
     s.updatedAt = event.createdAt;
@@ -154,6 +160,7 @@ export class MockBackend implements Backend {
     const s: Session = {
       id, provider: body.provider ?? 'claude', title: body.title || body.cwd.split(/[\\/]/).filter(Boolean).pop() || '新会话',
       cwd: body.cwd, status: 'idle', mode: body.mode ?? 'managed', online: true, createdAt: now(), updatedAt: now(),
+      canFork: body.mode !== 'terminal' || body.provider !== 'codex',
       permissionMode: body.permissionMode, model: body.model, effort: body.effort,
       live: { costUSD: 0, durationMs: 0, contextTokens: 0, contextSize: 200_000, contextPercent: 0 },
     };
@@ -161,6 +168,33 @@ export class MockBackend implements Backend {
     this.events[id] = [];
     this.emitList();
     return clone(s);
+  }
+
+  async forkSession(id: string, body: SessionForkRequest, native?: Provider) {
+    await latency();
+    const key = `${native ?? 'managed'}:${id}:${body.requestId}`;
+    const prior = this.forked.get(key);
+    if (prior) return clone(prior);
+    const source = native ? [...fx.nativeClaude, ...fx.nativeCodex].find(s => s.id === id) : this.session(id);
+    if (!source) throw new BackendError('Conversation not found', 404);
+    const history = native ? nativeMessages.map(withBranchAnchor) : this.history(id);
+    const index = body.anchorSeq === undefined ? history.length : history.findIndex(e => e.seq === body.anchorSeq && e.branchAnchor === body.anchorToken);
+    if (index < 0 || (body.before && history[index]?.kind !== 'user')) throw new BackendError('This message cannot be used as a branch point', 409);
+    const selected = (body.attachmentIds ?? []).map(a => this.uploads.get(a));
+    const attachments = selected.map(a => {
+      if (!a) throw new BackendError('Attachment not found', 404);
+      return { ...a, id: nanoid(8) };
+    });
+    const session = await this.createSession({ provider: native ?? source.provider, title: source.title, cwd: source.cwd });
+    this.events[session.id] = clone(history.slice(0, body.anchorSeq === undefined || body.before ? index : index + 1));
+    for (const a of attachments) this.uploads.set(a.id, a);
+    const reply = { session, attachments, attachmentIds: attachments.map(a => a.id) };
+    this.forked.set(key, reply);
+    return clone(reply);
+  }
+
+  private history(id: string) {
+    return id === 's5' ? [...earlierMessages.map(withBranchAnchor), ...(this.events[id] ?? [])] : this.events[id] ?? [];
   }
 
   async patchSession(id: string, patch: SessionPatch) {
@@ -190,8 +224,8 @@ export class MockBackend implements Backend {
   watchTranscript(id: string, onUpdate: Watcher, opts?: { native?: Provider }): Unsubscribe {
     if (opts?.native) {
       const native = [...fx.nativeClaude, ...fx.nativeCodex].find(n => n.id === id);
-      const session: Session = { id, title: native?.title ?? id, cwd: native?.cwd ?? '', provider: opts.native, updatedAt: native?.updatedAt ?? now() };
-      setTimeout(() => onUpdate({ session, events: clone(nativeMessages), hasMore: false, requests: [] }), 150);
+      const session: Session = { id, title: native?.title ?? id, cwd: native?.cwd ?? '', provider: opts.native, updatedAt: native?.updatedAt ?? now(), canFork: !!native };
+      setTimeout(() => onUpdate({ session, events: clone(nativeMessages.map(withBranchAnchor)), hasMore: false, requests: [] }), 150);
       return () => {};
     }
     let set = this.watchers.get(id);
@@ -208,7 +242,7 @@ export class MockBackend implements Backend {
 
   async loadOlder(id: string, beforeSeq: number) {
     await wait(500);
-    const events = id === 's5' ? earlierMessages.filter(event => event.seq < beforeSeq) : [];
+    const events = id === 's5' ? earlierMessages.filter(event => event.seq < beforeSeq).map(withBranchAnchor) : [];
     return { events, hasMore: false };
   }
 
@@ -265,9 +299,9 @@ export class MockBackend implements Backend {
     return { events: clone(messages.slice(Math.max(0, position - 10), position + 11)), matchSeq: messages[position].seq };
   }
 
-  async fullEvent(id: string, seq: number) {
+  async fullEvent(id: string, seq: number, opts?: { native?: Provider }) {
     await latency();
-    const e = this.events[id]?.find(x => x.seq === seq);
+    const e = (opts?.native ? nativeMessages.map(withBranchAnchor) : this.history(id)).find(x => x.seq === seq);
     if (!e) throw new BackendError('event not found', 404);
     return clone({ ...e, truncated: false });
   }

@@ -60,7 +60,14 @@ export function foldEvents(raw: readonly TranscriptEvent[], running: boolean): F
       continue;
     }
     if (event.kind === 'assistant') {
-      if (stream) { stream.text = event.text; stream = undefined; } else items.push(event);
+      if (stream) {
+        stream.text = event.text;
+        stream.truncated = event.truncated;
+        stream.branchable = event.branchable;
+        stream.branchAnchor = event.branchAnchor;
+        stream.actionSeq = event.seq;
+        stream = undefined;
+      } else items.push(event);
       continue;
     }
     if (event.kind === 'user' && (event.text || '').trimStart().startsWith(TASK_NOTIFICATION)) continue;

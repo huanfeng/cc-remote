@@ -53,7 +53,7 @@ export const hostInfo: HostInfo = {
   name: 'Cartech 工作站',
   color: '#3b82f6',
   icon: 'laptop',
-  features: ['sendId', 'mentions', 'codex', 'codexSteer', 'queueControls', 'archive', 'message-search'],
+  features: ['sendId', 'mentions', 'codex', 'codexSteer', 'queueControls', 'archive', 'message-search', 'session-fork'],
 };
 
 // ---------- s1: Claude managed, running, tool groups + subagent + queue ----------

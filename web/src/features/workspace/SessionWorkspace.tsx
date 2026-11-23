@@ -10,7 +10,9 @@ import { useUnclaimedEscape } from '@/lib/hooks';
 import { t } from '@/lib/i18n';
 import { SessionHeader } from './SessionHeader';
 import { ConversationView } from '@/features/conversation/ConversationView';
+import { HistoryComposer, HistoryEditProvider } from '@/features/conversation/HistoryComposer';
 import { Composer } from '@/features/composer/Composer';
+import { FileDockLayout } from '@/features/files/FileDock';
 import { NativeFooter } from './NativeFooter';
 import { TerminalView } from '@/features/terminal/TerminalView';
 
@@ -42,19 +44,22 @@ function ManagedWorkspace({ session, mobile }: { session: Session; mobile: boole
   useUnclaimedEscape(running && !terminalView ? stop : undefined);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <SessionHeader session={session} mobile={mobile} terminalView={terminalView} />
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        {terminalView ? (
-          <TerminalView session={session} mobile={mobile} />
-        ) : (
-          <>
-            <ConversationView tkey={key} session={session} transcript={transcript} mobile={mobile} />
+    <HistoryEditProvider>
+      <div className="flex h-full min-h-0 flex-col">
+        <SessionHeader session={session} mobile={mobile} terminalView={terminalView} />
+        <FileDockLayout dockKey={session.id} mobile={mobile} footer={!terminalView && (
+          <HistoryComposer session={session} mobile={mobile}>
             <Composer session={session} transcript={transcript} mobile={mobile} />
-          </>
-        )}
+          </HistoryComposer>
+        )}>
+          {terminalView ? (
+            <TerminalView session={session} mobile={mobile} />
+          ) : (
+            <ConversationView tkey={key} session={session} transcript={transcript} mobile={mobile} />
+          )}
+        </FileDockLayout>
       </div>
-    </div>
+    </HistoryEditProvider>
   );
 }
 
@@ -63,12 +68,17 @@ function NativeWorkspace({ id, provider, mobile }: { id: string; provider: Provi
   const transcript = useTranscript(key, id, provider);
   const session: Session = transcript.session ?? { id, provider, title: '…', cwd: '', updatedAt: '' };
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <SessionHeader session={session} mobile={mobile} native />
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <ConversationView tkey={key} session={session} transcript={transcript} native={provider} mobile={mobile} />
-        <NativeFooter id={id} provider={provider} cwd={session.cwd} profileId={session.profileId} loaded={!!transcript.session} />
+    <HistoryEditProvider>
+      <div className="flex h-full min-h-0 flex-col">
+        <SessionHeader session={session} mobile={mobile} native />
+        <FileDockLayout dockKey={key} mobile={mobile} footer={(
+          <HistoryComposer session={session} native={provider} mobile={mobile}>
+            <NativeFooter id={id} provider={provider} cwd={session.cwd} profileId={session.profileId} loaded={!!transcript.session} />
+          </HistoryComposer>
+        )}>
+          <ConversationView tkey={key} session={session} transcript={transcript} native={provider} mobile={mobile} />
+        </FileDockLayout>
       </div>
-    </div>
+    </HistoryEditProvider>
   );
 }

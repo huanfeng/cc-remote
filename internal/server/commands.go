@@ -229,7 +229,7 @@ func (s *Server) commands(w http.ResponseWriter, r *http.Request) {
 			fail(w, 404, l.T("Session not found", "会话不存在"))
 			return
 		}
-		if _, active := s.runs[id]; active {
+		if s.runs[id] != nil || s.switching[id] {
 			s.mu.Unlock()
 			fail(w, 409, l.T("Stop or wait for the current turn to finish first", "请先停止或等待当前轮次结束"))
 			return
