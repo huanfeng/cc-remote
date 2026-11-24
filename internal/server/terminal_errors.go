@@ -57,6 +57,7 @@ func (s *Server) syncTerminalFailureLocked(ts *terminalSession, events []claude.
 		}
 	}
 	ts.turnFailed, ts.failureMessage = true, message
+	ts.compacting = ""
 	_ = s.store.SetStatus(ts.id, "failed")
 	// Held messages remain editable and are not automatically sent into the
 	// same invalid model. The user can change the model and explicitly retry.

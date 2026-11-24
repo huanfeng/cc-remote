@@ -35,6 +35,10 @@ test('the working indicator renders a retry warning with the original cause and 
     assert.match(html, /whitespace-pre-wrap break-words/);
     assert.doesNotMatch(html, /正在工作|animated-gradient-text|animate-ping/);
     assert.match(render({ status: 'running', live: {} }), /正在工作/);
+    const compacting = render({ status: 'running', live: { compacting: true } });
+    assert.match(compacting, /正在压缩上下文/);
+    assert.doesNotMatch(compacting, /正在工作/);
+    assert.equal(render({ status: 'interrupted', live: { compacting: true } }), '');
     assert.equal(render({ status: 'completed', live: { retry } }), '');
     const background = render({ status: 'completed', activeTasks: 2 });
     assert.match(background, /2 个后台任务仍在运行/);

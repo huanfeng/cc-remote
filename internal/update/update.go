@@ -6,6 +6,7 @@ package update
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,6 +27,7 @@ const checksumsName = "checksums.txt"
 type updater struct {
 	repo, current string
 	force         bool // service install --force: restart the running host now
+	checkJSON     bool
 	goos, goarch  string
 	src           source
 	out           io.Writer
@@ -41,6 +43,7 @@ type updater struct {
 func Run(current string, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	check := fs.Bool("check", false, i18n.T("only report whether a newer release exists", "只检查是否有更新的版本"))
+	checkJSON := fs.Bool("json", false, i18n.T("print the check result as JSON (requires --check)", "以 JSON 输出检查结果（需与 --check 一起使用）"))
 	version := fs.String("version", "", i18n.T("install this release tag instead of the latest (e.g. v0.2.0)", "安装指定版本标签而不是最新版（例如 v0.2.0）"))
 	yes := fs.Bool("yes", false, i18n.T("install even when not newer (dev builds, reinstall, downgrade)", "即使不是更新的版本也安装（开发版、重装、降级）"))
 	force := fs.Bool("force", false, i18n.T("restart the running service right away, even with busy sessions (default: it restarts itself once no session is busy)", "立即重启运行中的服务，即使有忙碌的会话（默认：等没有忙碌的会话时自行重启）"))
@@ -50,6 +53,9 @@ func Run(current string, args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return i18n.Errorf("usage: ccr update [--check] [--version vX.Y.Z] [--yes] [--force]", "用法：ccr update [--check] [--version vX.Y.Z] [--yes] [--force]")
+	}
+	if *checkJSON && !*check {
+		return i18n.Errorf("--json requires --check", "--json 需与 --check 一起使用")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -67,7 +73,7 @@ func Run(current string, args []string) error {
 		repo = DefaultRepo
 	}
 	u := &updater{
-		repo: repo, current: current, force: *force,
+		repo: repo, current: current, force: *force, checkJSON: *checkJSON,
 		goos: runtime.GOOS, goarch: runtime.GOARCH,
 		src: pickSource(repo), out: os.Stdout,
 		exePath: exe, installedPath: installed,
@@ -88,7 +94,9 @@ func Run(current string, args []string) error {
 const downloadTimeout = 10 * time.Minute
 
 func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) error {
-	service.CleanupAside(u.exePath)
+	if !check {
+		service.CleanupAside(u.exePath)
+	}
 	rel, err := u.src.release(ctx, tag)
 	if errors.Is(err, errNotFound) {
 		if tag != "" {
@@ -101,6 +109,20 @@ func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) err
 		return err
 	}
 	cmp, comparable := compareVersions(rel.Tag, u.current)
+	if check && u.checkJSON {
+		available := comparable && cmp > 0
+		if available {
+			if _, _, err := u.releaseAssets(rel); err != nil {
+				return err
+			}
+		}
+		return json.NewEncoder(u.out).Encode(struct {
+			CurrentVersion string `json:"currentVersion"`
+			Version        string `json:"version"`
+			Comparable     bool   `json:"comparable"`
+			Available      bool   `json:"available"`
+		}{u.current, rel.Tag, comparable, available})
+	}
 	fmt.Fprint(u.out, i18n.F("current version: %s\nrelease version: %s (via %s)\n", "当前版本：%s\n发布版本：%s（通过 %s）\n", u.current, rel.Tag, u.src.name()))
 	if check {
 		switch {
@@ -134,16 +156,24 @@ func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) err
 	return u.apply(bin, rel.Tag)
 }
 
-// fetch downloads the platform archive and checksums.txt, verifies the
-// archive and extracts it. The returned cleanup removes the temp directory.
-func (u *updater) fetch(ctx context.Context, rel Release) (string, func(), error) {
+func (u *updater) releaseAssets(rel Release) (Asset, Asset, error) {
 	asset, err := selectAsset(rel.Assets, u.goos, u.goarch)
 	if err != nil {
-		return "", nil, err
+		return Asset{}, Asset{}, err
 	}
 	sumsAsset, ok := findAsset(rel.Assets, checksumsName)
 	if !ok {
-		return "", nil, i18n.Errorf("release %s has no %s; refusing to install unverified files", "版本 %s 没有 %s；拒绝安装未经校验的文件", rel.Tag, checksumsName)
+		return Asset{}, Asset{}, i18n.Errorf("release %s has no %s; refusing to install unverified files", "版本 %s 没有 %s；拒绝安装未经校验的文件", rel.Tag, checksumsName)
+	}
+	return asset, sumsAsset, nil
+}
+
+// fetch downloads the platform archive and checksums.txt, verifies the
+// archive and extracts it. The returned cleanup removes the temp directory.
+func (u *updater) fetch(ctx context.Context, rel Release) (string, func(), error) {
+	asset, sumsAsset, err := u.releaseAssets(rel)
+	if err != nil {
+		return "", nil, err
 	}
 	tmp, err := os.MkdirTemp("", "cc-remote-update-")
 	if err != nil {

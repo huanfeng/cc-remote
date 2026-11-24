@@ -302,6 +302,50 @@ func newTestUpdater(t *testing.T, srv *httptest.Server, token, current string) (
 	return u, &out, &ran
 }
 
+func TestUpdateJSONCheck(t *testing.T) {
+	files := releaseFiles(t, "0.3.0", false)
+	for _, tc := range []struct {
+		name, current         string
+		files                 map[string][]byte
+		available, comparable bool
+		wantError             bool
+	}{
+		{"newer", "v0.2.0", files, true, true, false},
+		{"current", "0.3.0", files, false, true, false},
+		{"development", "dev", files, false, false, false},
+		{"no platform archive", "0.2.0", map[string][]byte{checksumsName: nil}, false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeGitHub(t, "v0.3.0", tc.files, "tok")
+			u, out, ran := newTestUpdater(t, srv, "tok", tc.current)
+			u.checkJSON = true
+			err := u.run(context.Background(), true, "", false)
+			if tc.wantError {
+				if err == nil || out.Len() != 0 {
+					t.Fatalf("expected only an error, got %v and %q", err, out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var check struct {
+				CurrentVersion string
+				Version        string
+				Available      bool
+				Comparable     bool
+			}
+			if err := json.Unmarshal(out.Bytes(), &check); err != nil {
+				t.Fatal(err)
+			}
+			if check.CurrentVersion != tc.current || check.Version != "v0.3.0" ||
+				check.Available != tc.available || check.Comparable != tc.comparable || len(*ran) != 0 {
+				t.Fatalf("unexpected check result %+v or install commands %v", check, *ran)
+			}
+		})
+	}
+}
+
 func TestUpdateReplacesExecutable(t *testing.T) {
 	srv := fakeGitHub(t, "v0.3.0", releaseFiles(t, "0.3.0", false), "tok")
 	u, out, _ := newTestUpdater(t, srv, "tok", "v0.2.0")

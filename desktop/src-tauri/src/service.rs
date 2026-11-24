@@ -32,32 +32,54 @@ fn install_root() -> Option<PathBuf> {
     }
 }
 
-/// The installed copy, else a cc-remote on PATH.
-fn executable() -> Option<PathBuf> {
-    let name = if cfg!(windows) {
+fn executable_name() -> &'static str {
+    if cfg!(windows) {
         "cc-remote.exe"
     } else {
         "cc-remote"
-    };
-    if let Some(path) = install_root()
-        .map(|r| r.join("bin").join(name))
+    }
+}
+
+pub(crate) fn installed_executable() -> Option<PathBuf> {
+    install_root()
+        .map(|r| r.join("bin").join(executable_name()))
         .filter(|p| p.is_file())
-    {
+}
+
+pub(crate) fn portable_executable_exists() -> bool {
+    std::env::current_exe()
+        .ok()
+        .is_some_and(|path| path.with_file_name(executable_name()).is_file())
+}
+
+/// The installed copy, else a cc-remote on PATH.
+pub(crate) fn executable() -> Option<PathBuf> {
+    if let Some(path) = installed_executable() {
         return Some(path);
     }
     let paths = std::env::var_os("PATH")?;
     std::env::split_paths(&paths)
-        .map(|dir| dir.join(name))
+        .map(|dir| dir.join(executable_name()))
         .find(|p| p.is_file())
 }
 
-struct Output {
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
+pub(crate) struct Output {
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
 }
 
-async fn cc_remote(
+impl Output {
+    pub(crate) fn message(&self) -> &str {
+        if self.stderr.trim().is_empty() {
+            self.stdout.trim()
+        } else {
+            self.stderr.trim()
+        }
+    }
+}
+
+pub(crate) async fn cc_remote(
     exe: &PathBuf,
     args: &[&str],
     lang: &str,
@@ -85,7 +107,7 @@ async fn cc_remote(
     })
 }
 
-async fn status(exe: &PathBuf, lang: &str) -> Result<Value, String> {
+pub(crate) async fn status(exe: &PathBuf, lang: &str) -> Result<Value, String> {
     let out = cc_remote(
         exe,
         &["service", "status", "--json"],
@@ -94,14 +116,8 @@ async fn status(exe: &PathBuf, lang: &str) -> Result<Value, String> {
     )
     .await?;
     // Exit 3 is "not running", still with the JSON.
-    serde_json::from_str::<Value>(&out.stdout).map_err(|_| {
-        let text = if out.stderr.trim().is_empty() {
-            out.stdout
-        } else {
-            out.stderr
-        };
-        format!("cc-remote service status: {}", text.trim())
-    })
+    serde_json::from_str::<Value>(&out.stdout)
+        .map_err(|_| format!("cc-remote service status: {}", out.message()))
 }
 
 /// Resolve the local monitor without sharing credentials with the tray UI.
@@ -166,12 +182,7 @@ pub async fn local_service_action(action: String, lang: String) -> Result<String
     if out.code == Some(0) {
         Ok(out.stdout.trim().to_string())
     } else {
-        let text = if out.stderr.trim().is_empty() {
-            out.stdout
-        } else {
-            out.stderr
-        };
-        Err(text.trim().to_string())
+        Err(out.message().to_string())
     }
 }
 

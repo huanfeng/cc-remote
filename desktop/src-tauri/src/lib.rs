@@ -3,6 +3,7 @@
 // talks to them from Rust (net.rs, ws.rs) and manages the cc-remote service on
 // this computer (service.rs).
 mod about;
+mod core_update;
 mod history;
 mod links;
 mod net;
@@ -16,6 +17,8 @@ mod ws;
 pub fn run() {
     tauri::Builder::default()
         .manage(about::Requests::default())
+        .manage(core_update::CoreUpdate::default())
+        .manage(update::ComponentInstallLock::default())
         .manage(tabs::Tabs::default())
         .manage(history::Requests(std::sync::Mutex::new(
             history::HistoryRequest::from_args(std::env::args()),
@@ -80,6 +83,9 @@ pub fn run() {
             update::desktop_update_status,
             update::desktop_update_check,
             update::desktop_update_install,
+            core_update::core_update_status,
+            core_update::core_update_check,
+            core_update::core_update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the CC Remote desktop app");

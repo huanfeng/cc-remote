@@ -19,7 +19,7 @@ export type DesktopHostRequest = { hostId: string; hash: string; reload: boolean
 export type DesktopOpenHost = DesktopHostRequest;
 export type DesktopTabState = {
   label: string; hash: string; title: string; canBack: boolean; canForward: boolean;
-  phase: Phase; error: string; waiting: number; done?: number;
+  phase: Phase; error: string; waiting: number; done?: number; running?: number;
 };
 export type DesktopTabCommand = { action: 'state' | 'back' | 'forward' | 'reload' | 'navigate' | 'settings'; hash?: string };
 export type DesktopShortcut = { action: 'next' | 'previous' | 'close' | 'new' | 'new-window' | 'reopen' };
@@ -49,11 +49,13 @@ export function installDesktopTabNavigation() {
     const connection = useConnection.getState();
     const app = useApp.getState();
     const records = useCompletionRead.getState().records;
-    const attention = app.sessionsLoaded && connection.phase !== 'signed-out' ? attentionCounts(app.sessions, session => records[hostKey(session.id)]) : { waiting: 0, done: 0, total: 0 };
+    const sessions = app.sessionsLoaded && connection.phase !== 'signed-out' ? app.sessions : [];
+    const attention = attentionCounts(sessions, session => records[hostKey(session.id)]);
+    const running = new Set(sessions.filter(session => !session.archived && session.status === 'running').map(session => session.id)).size;
     void emitTo(shell(), DESKTOP_TAB_STATE, {
       label, hash: location.hash, title: document.title, canBack: journal.canBack || overlayHistory().hasOpen, canForward: journal.canForward,
       phase: connection.phase, error: connection.error || connection.offline,
-      waiting: attention.waiting, done: attention.done,
+      waiting: attention.waiting, done: attention.done, running,
     } satisfies DesktopTabState).catch(console.error);
   };
   const navigate = (hash: string) => {

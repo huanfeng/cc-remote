@@ -99,6 +99,7 @@ export interface LiveStatus {
   contextSize: number;
   contextPercent: number;
   activity?: string;
+  compacting?: boolean;
   /** The CLI is retrying its upstream API request; separate from the browser's terminal connection. */
   retry?: { message: string; attempt?: number; maxAttempts?: number };
   suggestion?: string;

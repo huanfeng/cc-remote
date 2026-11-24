@@ -5,14 +5,15 @@ import (
 	"strings"
 )
 
-// A model validation or expired-login failure leaves Claude Code alive at its
+// Some failures leave Claude Code alive at its
 // input prompt and may not emit a Stop hook. Match complete diagnostics, not
 // prose about a failed tool or a retrying request.
 var selectedModelFailure = regexp.MustCompile(`^There's an issue with the selected model \([^\r\n]+\)\. It may not exist or you may not have access to it\. Run /model to pick a different model\.$`)
 var expiredLoginFailure = regexp.MustCompile(`^Login expired\s*[.·]\s*Please run /login\.?$`)
+var compactionFailure = regexp.MustCompile(`^(?:Error during compaction:\s*\S|Compaction (?:failed|interrupted)\s*·\s*\S|Compaction blocked by PreCompact hook(?:[.:]|$))`)
 
 func terminalFailure(message string) bool {
-	return selectedModelFailure.MatchString(message) || expiredLoginFailure.MatchString(message)
+	return selectedModelFailure.MatchString(message) || expiredLoginFailure.MatchString(message) || compactionFailure.MatchString(message)
 }
 
 func (s *screen) modelError() string {

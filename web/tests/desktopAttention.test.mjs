@@ -4,8 +4,8 @@ import { readFileSync } from 'node:fs';
 import { aggregateDesktopAttention, createDesktopAttention } from '../src/platform/desktopAttention.ts';
 
 test('desktop attention includes inactive hosts once and drops closed or signed-out tabs', () => {
-  const a = { hostId: 'a', waiting: 2, done: 1, phase: 'ready' };
-  const b = { hostId: 'b', waiting: 0, done: 3, phase: 'ready' };
+  const a = { hostId: 'a', waiting: 2, done: 1, running: 9, phase: 'ready' };
+  const b = { hostId: 'b', waiting: 0, done: 3, running: 7, phase: 'ready' };
   assert.deepEqual(aggregateDesktopAttention([a, b, { ...a }]), { waiting: 2, done: 4, total: 6 });
   assert.deepEqual(aggregateDesktopAttention([a]), { waiting: 2, done: 1, total: 3 });
   assert.deepEqual(aggregateDesktopAttention([{ ...a, phase: 'signed-out' }]), { waiting: 0, done: 0, total: 0 });

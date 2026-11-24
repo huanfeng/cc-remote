@@ -41,15 +41,25 @@ test('tab route traversal keeps forward history despite synchronous store subscr
   try {
     const {installDesktopTabNavigation}=await import('../src/platform/desktopTabs.ts');
     stop=installDesktopTabNavigation();await new Promise(resolve=>setImmediate(resolve));
-    appState={sessionsLoaded:true,sessions:[{id:'waiting',status:'waiting'},{id:'archived',status:'waiting',archived:true},{id:'done',status:'completed',completedAt:'2026-11-20T00:00:00Z'}]};
+    appState={sessionsLoaded:true,sessions:[
+      {id:'waiting',status:'waiting'},
+      {id:'archived',status:'waiting',archived:true},
+      {id:'done',status:'completed',completedAt:'2026-11-20T00:00:00Z'},
+      {id:'running',status:'running'},
+      {id:'running',status:'running'},
+      {id:'archived-running',status:'running',archived:true},
+      {id:'idle-terminal',status:'idle',mode:'terminal',online:true},
+    ]};
     records={'a:done':{completedAt:'2026-11-20T00:00:00Z',viewedAt:''}};
     for(const callback of appListeners)callback();
     assert.equal(events.at(-1).payload.waiting,1);
     assert.equal(events.at(-1).payload.done,1);
+    assert.equal(events.at(-1).payload.running,1,'only distinct, unarchived running sessions count');
     phase='signed-out';
     for(const callback of connectionListeners)callback();
     assert.equal(events.at(-1).payload.waiting,0,'sign-out clears raw per-tab badges even while old sessions remain');
     assert.equal(events.at(-1).payload.done,0);
+    assert.equal(events.at(-1).payload.running,0);
     phase='ready';
     for(const callback of connectionListeners)callback();
     records={'a:done':{completedAt:'2026-11-20T00:00:00Z',viewedAt:'2026-11-20T00:00:00Z'}};

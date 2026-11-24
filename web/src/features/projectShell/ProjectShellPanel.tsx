@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowDownToLine, ArrowRightLeft, ChevronLeft, Columns2, Copy, GripHorizontal, Minus, Pencil, Pin, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
+import { ArrowDownToLine, ArrowRightLeft, ChevronLeft, Columns2, Copy, GripHorizontal, Maximize2, Minimize2, Minus, Pencil, Pin, Plus, RotateCcw, Rows2, Search, Square, SquareTerminal } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import { BackendError } from '@/backend/errors';
 import type { ProjectShell } from '@/backend/types';
@@ -15,6 +15,7 @@ import { hasFeature, useApp } from '@/store/app';
 import { createProjectShellTerminal, initialShellTerminalState } from './projectShellTerminal';
 import { findOpenProjectShell, useProjectShellWorkspace, type ProjectShellTarget } from './ProjectShellWorkspace';
 import { ProjectShellSearch } from './ProjectShellSearch';
+import { ProjectShellDivider } from './ProjectShellDivider';
 import { defaultProjectShellBindings, projectShellActionForKey, projectShellBindingLabel, type ProjectShellBindings } from './projectShellKeys';
 import { projectShellLabel } from './projectShellLabel';
 import { projectShellLayout, type PaneRect, type SplitDirection } from './projectShellLayout';
@@ -43,6 +44,8 @@ export function ProjectShellPanel({ mobile = false, bindings = defaultProjectShe
   const layoutEnabled = useApp(s => hasFeature(s.info, 'project-shell-pane-layout'));
   const [localGroups, setLocalGroups] = useState<Record<string, string>>({});
   const [localDirections, setLocalDirections] = useState<Record<string, SplitDirection>>({});
+  const [splitRatios, setSplitRatios] = useState<Record<string, Record<string, number>>>({});
+  const [maximized, setMaximized] = useState(false);
   const [searchTarget, setSearchTarget] = useState<ProjectShellTarget>();
   const [busy, setBusy] = useState(false);
   const mutation = useRef(false);
@@ -68,7 +71,9 @@ export function ProjectShellPanel({ mobile = false, bindings = defaultProjectShe
   }
   const activePanes = (activeGroup && groups.get(activeGroup)) || [];
   const legacyDirection = (activeGroup && localDirections[activeGroup]) || activePanes.find(pane => pane.splitDirection)?.splitDirection;
-  const layout = projectShellLayout(mobile ? [] : activePanes, legacyDirection);
+  const layout = projectShellLayout(mobile ? [] : activePanes, legacyDirection, activeGroup ? splitRatios[activeGroup] : undefined);
+  const floating = !mobile && !maximized;
+  const toggleMaximized = () => setMaximized(value => !value);
   const labelFor = (shell: ProjectShell) => projectShellLabel(shell, projectShells.findIndex(item => item.id === shell.id) + 1);
   const canStop = (shell: ProjectShell) => Boolean(shell.runId) || groupsEnabled;
   const preferredTarget = (shell?: ProjectShell) => shell && (retainedTargets.find(item => shellIdFor(item) === shell.id) ?? shellTarget(shell));
@@ -173,6 +178,8 @@ export function ProjectShellPanel({ mobile = false, bindings = defaultProjectShe
   if (!activeTarget || retainedTargets.length === 0) return null;
   const hostname = currentHost?.name || hostName || location.host;
   const closeLabel = mobile ? t('Back', '返回') : t('Minimize terminal', '最小化终端');
+  const maximizeLabel = maximized ? t('Restore terminal size', '还原终端大小') : t('Maximize terminal', '最大化终端');
+  const MaximizeIcon = maximized ? Minimize2 : Maximize2;
   const moveLabel = t('Drag the terminal or use arrow keys to move it', '拖动或使用方向键移动终端');
   const pinLabel = t('Pin terminal panel', '固定终端面板');
   const pinHint = pinned ? t('Unpin terminal panel', '取消固定终端面板') : pinLabel;
@@ -181,24 +188,28 @@ export function ProjectShellPanel({ mobile = false, bindings = defaultProjectShe
     [label, projectShellBindingLabel(binding)].filter(Boolean).join(' · ');
   return <section ref={region} data-terminal id="project-shell-panel" hidden={!target} tabIndex={-1}
     aria-label={t('Project terminal', '项目终端')} onKeyDownCapture={onShortcut}
-    style={frame ? { left: frame.x, top: frame.y, width: frame.width, height: frame.height } : undefined}
+    style={floating && frame ? { left: frame.x, top: frame.y, width: frame.width, height: frame.height } : undefined}
     className={cn('absolute z-30 min-h-0 flex-col overflow-hidden bg-background outline-none', target && 'flex', mobile
-      ? 'inset-0 pb-[env(safe-area-inset-bottom)]' : 'rounded-xl border border-border shadow-xl', !mobile && !frame && 'inset-x-3 bottom-3 h-[min(62%,30rem)]')}>
+      ? 'inset-0 pb-[env(safe-area-inset-bottom)]' : maximized ? 'inset-0' : 'rounded-xl border border-border shadow-xl', floating && !frame && 'inset-x-3 bottom-3 h-[min(62%,30rem)]')}>
     <ContextMenu>
-      <ContextMenuTrigger asChild><header className={cn('flex shrink-0 items-center gap-2 border-b border-border/70 bg-background-win-alt px-2', mobile ? 'min-h-12 pt-safe' : 'h-9 touch-none cursor-grab select-none active:cursor-grabbing focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring')}
-        {...(!mobile ? { ...handlers('move'), tabIndex: 0, role: 'group', 'aria-label': moveLabel, title: moveLabel } : {})}>
+      <ContextMenuTrigger asChild><header className={cn('flex shrink-0 items-center gap-2 border-b border-border/70 bg-background-win-alt px-2', mobile ? 'min-h-12 pt-safe' : 'h-9 select-none', floating && 'touch-none cursor-grab active:cursor-grabbing focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring')}
+        {...(floating ? { ...handlers('move'), tabIndex: 0, role: 'group', 'aria-label': moveLabel, title: moveLabel } : {})}>
         {mobile && <Button type="button" variant="ghost" size="icon-lg" onClick={close} aria-label={closeLabel}><ChevronLeft /></Button>}
-        {mobile ? <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden /> : <GripHorizontal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />}
+        {floating ? <GripHorizontal className="size-4 shrink-0 text-foreground-subtle" aria-hidden /> : <SquareTerminal className="size-4 shrink-0 text-foreground-subtle" aria-hidden />}
         {!mobile && <Button type="button" variant={pinned ? 'secondary' : 'ghost'} size="icon-sm"
           aria-label={pinLabel} aria-pressed={pinned} title={pinHint} onClick={togglePinned}><Pin /></Button>}
         <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate" title={`${hostname} · ${directory}`}>
           <h2 className="shrink-0 text-ui-sm font-medium">{t('Project terminal', '项目终端')}</h2>
           <span className="truncate text-ui-xs text-foreground-subtle" dir="auto">{hostname} · {directory}</span>
         </div>
-        {!mobile && <Button type="button" variant="ghost" size="icon-sm" onClick={close} aria-label={closeLabel} title={closeLabel}><Minus /></Button>}
+        {!mobile && <>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={close} aria-label={closeLabel} title={closeLabel}><Minus /></Button>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={toggleMaximized} aria-label={maximizeLabel} title={maximizeLabel}><MaximizeIcon /></Button>
+        </>}
       </header></ContextMenuTrigger>
       <ContextMenuContent>
-        {!mobile && <ContextMenuItem onSelect={reset}><RotateCcw />{t('Reset panel size and position', '重置面板大小和位置')}</ContextMenuItem>}
+        {!mobile && <ContextMenuItem onSelect={toggleMaximized}><MaximizeIcon />{maximizeLabel}</ContextMenuItem>}
+        {floating && <ContextMenuItem onSelect={reset}><RotateCcw />{t('Reset panel size and position', '重置面板大小和位置')}</ContextMenuItem>}
         <ContextMenuItem onSelect={close}><Minus />{closeLabel}</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" disabled={busy || !projectShells.some(canStop)} onSelect={() => stop(projectShells)}>
@@ -255,8 +266,12 @@ export function ProjectShellPanel({ mobile = false, bindings = defaultProjectShe
             end(entry, preferredTarget(survivor));
           }} />;
       })}
+      {target && activeGroup && layout.dividers.map(divider => <ProjectShellDivider key={JSON.stringify([activeGroup, divider.id])} divider={divider}
+        onResize={ratio => setSplitRatios(current => current[activeGroup]?.[divider.id] === ratio ? current : {
+          ...current, [activeGroup]: { ...current[activeGroup], [divider.id]: ratio },
+        })} />)}
     </div>
-    {!mobile && resizeHandles.map(([handle, position]) => <div key={handle} aria-hidden className={cn('absolute z-10 touch-none', position)} {...handlers(handle)} />)}
+    {floating && resizeHandles.map(([handle, position]) => <div key={handle} aria-hidden className={cn('absolute z-10 touch-none', position)} {...handlers(handle)} />)}
   </section>;
 }
 

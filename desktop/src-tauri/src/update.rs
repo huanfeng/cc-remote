@@ -85,6 +85,10 @@ pub struct DesktopUpdate {
     operation: tokio::sync::Mutex<()>,
 }
 
+/// The desktop installer can exit this process. Serialize installs that need it.
+#[derive(Default)]
+pub(crate) struct ComponentInstallLock(pub tokio::sync::Mutex<()>);
+
 fn change(app: &tauri::AppHandle, edit: impl FnOnce(&mut Inner)) -> View {
     let state = app.state::<DesktopUpdate>();
     let mut inner = state.inner.lock().unwrap();
@@ -181,6 +185,11 @@ pub async fn desktop_update_check(app: tauri::AppHandle) -> View {
 
 #[tauri::command]
 pub async fn desktop_update_install(app: tauri::AppHandle) -> Result<(), String> {
+    let installation = app.state::<ComponentInstallLock>();
+    let _install = installation
+        .0
+        .try_lock()
+        .map_err(|_| "Another component is being installed")?;
     let state = app.state::<DesktopUpdate>();
     let _guard = state
         .operation

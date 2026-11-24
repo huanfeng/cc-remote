@@ -72,6 +72,7 @@ type LiveStatus struct {
 	ContextSize    int          `json:"contextSize"`
 	ContextPercent float64      `json:"contextPercent"`
 	Activity       string       `json:"activity,omitempty"`
+	Compacting     bool         `json:"compacting,omitempty"`
 	Suggestion     string       `json:"suggestion,omitempty"` // Claude Code's suggested next prompt
 }
 

@@ -136,6 +136,7 @@ func fakeTerminal() {
 		os.Stdout.WriteString("\x1b[H\x1b[2J" + strings.ReplaceAll(menu, "\n", "\r\n"))
 	}
 	retryShown := false
+	compactTrigger := ""
 	modelErrorShown, modelRecovering := false, false
 	for {
 		n, err := os.Stdin.Read(buf)
@@ -184,6 +185,22 @@ func fakeTerminal() {
 				retryShown = false
 				os.Stdout.WriteString("\x1b[H\x1b[2J✻ Brewed for 5s")
 				hook("Stop", nil)
+			case compactTrigger != "" && pending[0] == 'f':
+				pending = pending[1:]
+				modelRecord(map[string]any{"type": "system", "subtype": "compact_boundary", "compactMetadata": map[string]any{"trigger": compactTrigger, "preTokens": 42000}})
+				hook("PostCompact", map[string]string{"trigger": compactTrigger})
+				compactTrigger = ""
+			case compactTrigger != "" && pending[0] == 'e':
+				pending = pending[1:]
+				compactTrigger = ""
+				os.Stdout.WriteString("\x1b[H\x1b[2J● Error during compaction: request failed\r\n" + rule + "\r\n❯ \r\n" + rule + "\r\n")
+			case compactTrigger != "" && pending[0] == 0x1b && len(pending) == 1:
+				pending = pending[1:]
+				// A late finish notification must leave an interrupted turn interrupted.
+				time.Sleep(150 * time.Millisecond)
+				hook("PostCompact", map[string]string{"trigger": compactTrigger})
+				logKey("COMPACT-LATE-POST")
+				compactTrigger = ""
 			case usageShown && len(pending) >= 3 && (bytes.HasPrefix(pending, []byte("\x1b[A")) || bytes.HasPrefix(pending, []byte("\x1b[B"))):
 				if pending[2] == 'A' {
 					usageSelected--
@@ -224,7 +241,17 @@ func fakeTerminal() {
 					continue // an empty box submits nothing
 				}
 				box("")
+				if text == "/compact" || strings.HasPrefix(text, "/compact ") {
+					compactTrigger = "manual"
+					hook("PreCompact", map[string]string{"trigger": compactTrigger})
+					continue
+				}
 				hook("UserPromptSubmit", map[string]string{"prompt": wrap(text)})
+				if text == "/compact-auto-test" {
+					compactTrigger = "auto"
+					hook("PreCompact", map[string]string{"trigger": compactTrigger})
+					continue
+				}
 				if text == "/model-error-test" || text == "/transcript-error-test" || text == "/model-error-recover-test" {
 					modelRecord(map[string]any{"type": "user", "message": map[string]any{"content": text}})
 					modelErrorShown = text != "/model-error-recover-test"

@@ -24,7 +24,10 @@ export function statusTone(s: StatusSession): Tone {
 
 export function sessionStatusLabel(s: StatusSession): string {
   if (hasIdleTerminal(s)) return t('Idle, terminal still running', '空闲，终端仍在运行');
-  return sessionRetry(s, lang)?.label ?? statusLabel(s.status, s.activeTasks);
+  const retry = sessionRetry(s, lang);
+  if (retry) return retry.label;
+  if (s.status === 'running' && s.live?.compacting) return t('Compacting context…', '正在压缩上下文…');
+  return statusLabel(s.status, s.activeTasks);
 }
 
 export function statusLabel(status: SessionStatus | undefined, activeTasks = 0): string {

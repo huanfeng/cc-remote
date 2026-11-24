@@ -374,7 +374,7 @@ func (r *Runner) ActivityState() (string, *RetryStatus) {
 	return r.scr.activityState()
 }
 
-// ModelError reads a fatal model-selection diagnostic and its paint revision
+// ModelError reads a fatal Claude Code diagnostic and its paint revision
 // atomically. Repainting identical diagnostics advances the revision, while
 // unrelated footer output does not. The host owns per-turn deduplication.
 func (r *Runner) ModelError() (string, uint64) {

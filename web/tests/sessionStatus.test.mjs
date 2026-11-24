@@ -23,3 +23,9 @@ test('activity and unread completion take precedence over an online terminal', (
   assert.equal(statusTone(displaySession(completed, unread)), 'done');
   assert.equal(statusTone(displaySession(completed, observeCompletion(completed))), 'terminal-idle');
 });
+
+test('terminal compaction labels only the running session', () => {
+  const live = { compacting: true };
+  assert.equal(sessionStatusLabel({ ...online, status: 'running', live }), 'Compacting context…');
+  assert.equal(sessionStatusLabel({ ...online, status: 'interrupted', live }), 'Interrupted');
+});

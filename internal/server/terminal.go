@@ -75,6 +75,7 @@ type terminalSession struct {
 	errorScan           int
 	turnStarted         time.Time
 	turnFailed          bool
+	compacting          string // Claude's PreCompact trigger until completion or interruption
 	failureMessage      string
 	ignoredModelError   string
 	ignoredModelVersion uint64
@@ -232,6 +233,8 @@ func (s *Server) writeTerminalConfig(ts *terminalSession) error {
 		"Notification":      state,
 		"SubagentStop":      state,
 		"PostToolUse":       state,
+		"PreCompact":        state,
+		"PostCompact":       state,
 	}}
 	// The status line reports model, context and cost to the host, then shows
 	// the user's own status line unchanged.
@@ -823,11 +826,16 @@ func (s *Server) terminalStopLocked(w http.ResponseWriter, r *http.Request, id s
 	}
 	// Claude Code runs no Stop hook for an interrupted turn, and Esc takes
 	// effect at once; the next prompt's hook marks the session running again.
-	if x, e := s.store.Get(id); e == nil && (x.Status == "running" || x.Status == "waiting") {
-		_ = s.store.SetStatus(id, "interrupted")
+	s.interruptTerminalTurnLocked(ts)
+	respond(w, 200, map[string]string{"status": "stopping"})
+}
+
+func (s *Server) interruptTerminalTurnLocked(ts *terminalSession) {
+	ts.compacting = ""
+	if x, err := s.store.Get(ts.id); err == nil && (x.Status == "running" || x.Status == "waiting") {
+		_ = s.store.SetStatus(ts.id, "interrupted")
 		s.drainTerminalQueueLocked(ts)
 	}
-	respond(w, 200, map[string]string{"status": "stopping"})
 }
 
 // terminalHook receives Claude Code's hook events from `cc-remote terminal-hook`.
@@ -842,6 +850,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		Message   string `json:"message"`
 		Type      string `json:"notification_type"`
 		Prompt    string `json:"prompt"`
+		Trigger   string `json:"trigger"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -857,7 +866,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var closeAfter *sessionRuntime
-	if req.Event == "Stop" {
+	if req.Event == "Stop" || (req.Event == "PostCompact" && req.Trigger == "manual" && ts.compacting == "manual" && strings.EqualFold(req.SessionID, ts.claudeID)) {
 		// Import final output before capturing the completed turn's read watermark.
 		s.mu.Unlock()
 		s.syncTerminal(ts)
@@ -879,6 +888,7 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 				}
 				ts.claudeID, ts.scan = next, -1
 				ts.errorScan = 0
+				ts.compacting = ""
 				s.resetTerminalFailureLocked(ts)
 				// /clear leaves no mark in either transcript: show where the context restarted.
 				if req.Source == "clear" {
@@ -911,7 +921,33 @@ func (s *Server) terminalHook(w http.ResponseWriter, r *http.Request) {
 		if x, err := s.store.Get(id); err == nil && x.Status == "waiting" {
 			_ = s.store.SetStatus(id, "running")
 		}
+	case "PreCompact":
+		if !strings.EqualFold(req.SessionID, ts.claudeID) || ts.compacting != "" {
+			break
+		}
+		switch req.Trigger {
+		case "manual":
+			// /compact is handled in the terminal without UserPromptSubmit.
+			s.resetTerminalFailureLocked(ts)
+			ts.compacting = req.Trigger
+			_ = s.store.SetStatus(id, "running")
+		case "auto":
+			// Automatic compaction within a turn is one phase of that turn.
+			if x, err := s.store.Get(id); err == nil && x.Status == "running" {
+				ts.compacting = req.Trigger
+			}
+		}
+	case "PostCompact":
+		if ts.compacting == "" || ts.compacting != req.Trigger || !strings.EqualFold(req.SessionID, ts.claudeID) {
+			break
+		}
+		ts.compacting = ""
+		if req.Trigger == "manual" {
+			_ = s.store.SetStatus(id, "completed")
+			s.drainTerminalQueueLocked(ts)
+		}
 	case "Stop":
+		ts.compacting = ""
 		if ts.runner.Viewers() > 0 {
 			go func() { // clears what a terminal drew differently from ConPTY
 				time.Sleep(500 * time.Millisecond)
@@ -1125,7 +1161,13 @@ func (s *Server) terminalStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if typ == websocket.MessageBinary {
-				_ = ts.runner.KeysFrom(sub, data)
+				if err := ts.runner.KeysFrom(sub, data); err == nil && len(data) == 1 && (data[0] == 0x1b || data[0] == 0x03) {
+					s.mu.Lock()
+					if s.terminals[ts.id] == ts && ts.compacting != "" {
+						s.interruptTerminalTurnLocked(ts)
+					}
+					s.mu.Unlock()
+				}
 				continue
 			}
 			var m struct {
@@ -1249,6 +1291,7 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 	// Retry is derived from the current screen, never retained from status-line data.
 	live.Retry = nil
 	if x.Status == "running" {
+		live.Compacting = ts.compacting != ""
 		activity, retry := ts.runner.ActivityState()
 		live.Activity = activity
 		if retry != nil {
@@ -1257,7 +1300,7 @@ func (s *Server) decorateTerminalLocked(x *store.Session) {
 	} else if len(ts.queued) == 0 {
 		live.Suggestion = ts.runner.Suggestion()
 	}
-	if ts.live != nil || live.Activity != "" || live.Suggestion != "" {
+	if ts.live != nil || live.Compacting || live.Activity != "" || live.Suggestion != "" {
 		x.Live = &live
 	}
 	if len(ts.queued) > 0 {

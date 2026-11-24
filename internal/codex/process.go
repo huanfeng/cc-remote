@@ -268,6 +268,7 @@ func (p *Process) runQueue() {
 			p.mu.Lock()
 			if p.turnDone == done {
 				p.turnDone = nil
+				p.compacting = false
 			}
 			p.mu.Unlock()
 			p.result(err)
@@ -377,11 +378,17 @@ func (p *Process) handle(m rpcMessage) error {
 	case "turn/started":
 		p.mu.Lock()
 		p.turnID = v.Turn.ID
+		compacting := p.compacting
 		interrupt := p.interruptPending
 		if interrupt {
 			p.interruptPending = false
 		}
 		p.mu.Unlock()
+		if compacting {
+			if err := p.emit("status", "", map[string]any{"subtype": "status", "status": "compacting"}); err != nil {
+				return err
+			}
+		}
 		if interrupt {
 			go func() {
 				if err := p.interruptTurn(v.ThreadID, v.Turn.ID); err != nil {
@@ -398,6 +405,7 @@ func (p *Process) handle(m rpcMessage) error {
 		done := p.turnDone
 		p.turnDone = nil
 		p.turnID = ""
+		p.compacting = false
 		p.interruptPending = false
 		p.mu.Unlock()
 		p.cancelRequests()
@@ -419,6 +427,26 @@ func (p *Process) handle(m rpcMessage) error {
 	case "item/agentMessage/delta":
 		return p.emit("assistant_delta", v.Delta, nil)
 	case "item/started", "item/completed":
+		if v.Item["type"] == "contextCompaction" {
+			p.mu.Lock()
+			active := p.turnDone != nil && p.turnID == v.TurnID
+			manual := p.compacting
+			p.mu.Unlock()
+			if !active {
+				return nil
+			}
+			if m.Method == "item/started" {
+				if manual {
+					return nil // turn/started already announced manual compaction
+				}
+				return p.emit("status", "", map[string]any{"subtype": "status", "status": "compacting"})
+			}
+			if manual {
+				return p.emit("compact", "", map[string]any{"compact_metadata": map[string]string{"trigger": "manual"}})
+			}
+			// An automatic compaction can complete without installing a summary.
+			return p.emit("status", "", map[string]any{"subtype": "status", "status": nil})
+		}
 		return p.itemEvent(v.Item, m.Method == "item/completed")
 	case "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
 		return p.emit("status", v.Delta, map[string]any{"subtype": m.Method, "threadId": v.ThreadID, "turnId": v.TurnID, "itemId": v.ItemID, "item_id": v.ItemID, "delta": v.Delta})

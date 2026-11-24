@@ -59,6 +59,9 @@ func fakeAppServer() {
 		notify("turn/completed", map[string]any{"threadId": "actual-thread", "turn": map[string]any{"id": fmt.Sprintf("turn-%d", turn), "status": status, "items": []any{}}})
 		active = ""
 	}
+	compactionItem := func(method string) {
+		notify(method, map[string]any{"threadId": "actual-thread", "turnId": fmt.Sprintf("turn-%d", turn), "item": map[string]string{"id": "compact-1", "type": "contextCompaction"}})
+	}
 	s := bufio.NewScanner(os.Stdin)
 	for s.Scan() {
 		var msg rpcMessage
@@ -220,7 +223,13 @@ func fakeAppServer() {
 			if msg.Method != "thread/compact/start" {
 				reply(map[string]any{"turn": map[string]any{"id": fmt.Sprintf("turn-%d", turn), "status": "inProgress", "items": []any{}}})
 			}
-			if msg.Method == "thread/compact/start" && os.Getenv("CODEX_ADAPTER_TEST_MODE") == "compact-delay" {
+			if msg.Method == "thread/compact/start" || active == "auto-compact" {
+				compactionItem("item/started")
+				if os.Getenv("CODEX_ADAPTER_TEST_MODE") == "compact-delay" {
+					continue
+				}
+				compactionItem("item/completed")
+				finish("completed")
 				continue
 			}
 			switch active {
@@ -661,6 +670,52 @@ func TestAdapterCompactDelayedTurnInterrupt(t *testing.T) {
 	if err := receive(t, l.results); err == nil || !strings.Contains(err.Error(), "interrupted") {
 		t.Fatalf("compact interrupt: %v", err)
 	}
+	if got := compactionEvents(l.events); got != "compacting,result" {
+		t.Fatalf("interrupted compaction events: %s", got)
+	}
+}
+
+func TestAdapterCompactionProgress(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{"/compact", "compacting,compact,result"},
+		{"auto-compact", "compacting,clear,result"},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			p, l := startFake(t, fakeOptions(t))
+			if err := p.Send(tc.text); err != nil {
+				t.Fatal(err)
+			}
+			if err := receive(t, l.results); err != nil {
+				t.Fatal(err)
+			}
+			if got := compactionEvents(l.events); got != tc.want {
+				t.Fatalf("compaction events: got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func compactionEvents(events <-chan claude.Event) string {
+	var steps []string
+	for len(events) > 0 {
+		e := <-events
+		switch e.Kind {
+		case "status":
+			var p struct {
+				Subtype string `json:"subtype"`
+				Status  string `json:"status"`
+			}
+			if json.Unmarshal(e.Payload, &p) == nil && p.Subtype == "status" {
+				if p.Status == "" {
+					p.Status = "clear"
+				}
+				steps = append(steps, p.Status)
+			}
+		case "compact", "result":
+			steps = append(steps, e.Kind)
+		}
+	}
+	return strings.Join(steps, ",")
 }
 
 func TestAdapterInterruptBeforeQueueWorker(t *testing.T) {

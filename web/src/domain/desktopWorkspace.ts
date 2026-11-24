@@ -8,6 +8,7 @@ export interface WorkspaceTab {
   canForward: boolean;
   waiting: number;
   done?: number;
+  running: number;
   phase?: 'connecting' | 'signed-out' | 'ready';
   error?: string;
 }

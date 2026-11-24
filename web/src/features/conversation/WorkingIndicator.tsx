@@ -26,7 +26,7 @@ export const WorkingIndicator = memo(function WorkingIndicator({ session, events
     );
   }
   if (running) {
-    const compacting = isCompacting(events);
+    const compacting = session.live?.compacting || isCompacting(events);
     const name = providerName(providerOf(session));
     const activity = session.live?.activity;
     return (

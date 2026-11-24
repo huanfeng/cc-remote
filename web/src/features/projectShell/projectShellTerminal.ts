@@ -31,7 +31,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   const terminal = new Terminal({
     fontFamily: [baseFonts, shellSymbolFonts, 'monospace'].filter(Boolean).join(', '),
     fontSize: mobile ? BASE_FONT_PHONE : BASE_FONT_DESKTOP,
-    scrollback: mobile ? 15000 : 30000,
+    scrollback: mobile ? 5000 : 10000,
     allowProposedApi: true,
     theme: mergeTerminalTheme(undefined),
     disableStdin: true,

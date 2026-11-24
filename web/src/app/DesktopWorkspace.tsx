@@ -111,7 +111,13 @@ export function DesktopWorkspace() {
             onAuxClick={event => { if (event.button === 1) { event.preventDefault(); requestDesktopTabClose(tab.label); } }}
             className={cn('group flex h-8 w-44 min-w-24 max-w-48 shrink-0 items-center rounded-md border', current ? 'border-border/80 bg-card shadow-xs' : 'border-transparent hover:bg-surface-hover')}>
             <button id={`tab-${tab.label}`} type="button" role="tab" aria-selected={current} tabIndex={active === tab.label ? 0 : -1}
-              title={[nameOf(tab.hostId), tab.error || (tab.phase === 'ready' ? t('Connected', '已连接') : tab.phase === 'connecting' ? t('Connecting…', '连接中…') : t('Disconnected', '未连接')), tab.waiting ? t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`) : '', tab.done ? t(`${tab.done} unread completions`, `${tab.done} 项完成待查看`) : ''].filter(Boolean).join(' · ')}
+              title={[
+                nameOf(tab.hostId),
+                tab.error || (tab.phase === 'ready' ? t('Connected', '已连接') : tab.phase === 'connecting' ? t('Connecting…', '连接中…') : t('Disconnected', '未连接')),
+                tab.waiting ? t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`) : '',
+                tab.running ? t(`${tab.running} running`, `${tab.running} 项运行中`) : '',
+                tab.done ? t(`${tab.done} unread completions`, `${tab.done} 项完成待查看`) : '',
+              ].filter(Boolean).join(' · ')}
               className="flex h-full min-w-0 flex-1 items-center gap-2 pl-2 text-left text-ui-xs" onClick={() => activateDesktopTab(tab.label)}
               onKeyDown={event => {
                 const index = tabs.indexOf(tab);
@@ -121,6 +127,7 @@ export function DesktopWorkspace() {
               <span className={cn('size-1.5 shrink-0 rounded-full', tab.phase === 'connecting' || !tab.phase ? 'animate-pulse bg-warning' : tab.error || tab.phase !== 'ready' ? 'bg-foreground-subtlest' : '')} style={tab.phase === 'ready' && !tab.error ? { backgroundColor: host?.color || 'var(--color-success)' } : undefined} />
               <span className="min-w-0 flex-1 truncate">{nameOf(tab.hostId)}</span>
               {tab.waiting > 0 && <span className="rounded bg-warning/15 px-1 text-[10px] text-warning">{tab.waiting}</span>}
+              {tab.running > 0 && <span className="rounded bg-icon-blue/15 px-1 text-[10px] text-icon-blue">{tab.running}</span>}
               {(tab.done ?? 0) > 0 && <span className="rounded bg-success/15 px-1 text-[10px] text-success">{tab.done}</span>}
             </button>
             <DesktopTabClose label={tab.label} name={nameOf(tab.hostId)} />

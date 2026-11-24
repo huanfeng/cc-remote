@@ -75,6 +75,13 @@ test('native tabs survive overlapping opens, wait for listeners, preserve focus 
     assert.equal(calls.filter(([name])=>name==='desktop_tab_activate').length,activations,'poll metadata never steals input focus');
     assert.equal(workspace.useDesktopWorkspace.getState().tabs.find(tab=>tab.label===b.label).done,3,'inactive host completion metadata is retained');
 
+    const a=state.tabs.find(tab=>tab.hostId==='a');
+    handlers.get('desktop-tab-state')({payload:{...a,phase:'ready',error:'',running:2}});
+    assert.equal(workspace.useDesktopWorkspace.getState().tabs.find(tab=>tab.label===a.label).running,2,'inactive hosts receive running counts');
+    assert.equal(workspace.useDesktopWorkspace.getState().active,b.label);
+    handlers.get('desktop-tab-state')({payload:{...a,phase:'ready',error:'',running:0}});
+    assert.equal(workspace.useDesktopWorkspace.getState().tabs.find(tab=>tab.label===a.label).running,0,'a later report clears the count');
+
     h.update.setState({aboutOpen:true});await settle();
     assert.equal(calls.filter(([name])=>name==='desktop_tab_activate').at(-1)[1].label,null);
     h.update.setState({aboutOpen:false});await settle();

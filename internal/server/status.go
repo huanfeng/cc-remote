@@ -297,7 +297,7 @@ func (s *Server) statusLight(r *http.Request, sessions []store.Session, counts m
 		"claude":          s.claudeVersion(),
 		"service":         map[string]any{"managed": manager != "", "manager": manager},
 		"sessions":        counts,
-		"pendingRequests": pendingRequests, "activeRuns": activeRuns,
+		"pendingRequests": pendingRequests, "activeRuns": activeRuns, "restartPending": s.pendingRestart(),
 		"storage": map[string]int64{"databaseBytes": dbBytes, "logBytes": fileSize(logFile)},
 	}
 }

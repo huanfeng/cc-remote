@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	projectShellJournalBytes  = 16 << 20
-	projectShellJournalEvents = 64 << 10
+	projectShellJournalBytes  = 4 << 20
+	projectShellJournalEvents = 16 << 10
 	projectShellSubscriber    = 128
 	projectShellWriteTimeout  = 2 * time.Second
 )

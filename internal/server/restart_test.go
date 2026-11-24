@@ -31,6 +31,9 @@ func TestRestartWaitsForIdleSessions(t *testing.T) {
 	if _, b := request(t, ts, "GET", "/api/info", nil, testToken); !strings.Contains(string(b), `"restartPending":true`) {
 		t.Fatalf("info does not show the pending restart: %s", b)
 	}
+	if _, b := request(t, ts, "GET", "/api/status", nil, testToken); !strings.Contains(string(b), `"restartPending":true`) {
+		t.Fatalf("service status does not show the pending restart: %s", b)
+	}
 	select {
 	case <-called:
 		t.Fatal("restarted while a session was running")
