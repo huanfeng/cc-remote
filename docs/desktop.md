@@ -47,7 +47,7 @@ Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号�
 | --- | --- |
 | Ctrl+T | 打开服务器选择页 |
 | Ctrl+Tab / Ctrl+Shift+Tab | 下一个 / 上一个服务器标签 |
-| Ctrl+W / 鼠标中键点击标签 | 关闭当前 / 对应标签 |
+| Ctrl+W / 鼠标中键点击标签 | 在关闭按钮旁确认关闭当前 / 对应标签 |
 | Ctrl+Shift+T | 恢复最近关闭的标签 |
 | Ctrl+Shift+N | 新建独立窗口 |
 | Alt+← / Alt+→ | 当前标签后退 / 前进 |
@@ -57,7 +57,8 @@ Release 工作流发布 Windows x64 的 NSIS 安装包和便携包，版本号�
 
 ## 结构
 
-- `web/src/platform/desktop.ts`：前端里的桌面桥接。`main.tsx` 最先导入它（`lib/hosts.ts` 加载时就要知道是不是桌面应用）。它把跨源的 `fetch` 转给 Rust，提供 `DesktopSocket`（终端），接管外部链接和 `window.open`，并在 `<html>` 上加 `desktop-shell` 和 `platform-<系统>-desktop` 类。
+- `web/src/platform/desktop.ts`：前端里的桌面桥接。`main.tsx` 最先导入它（`lib/hosts.ts` 加载时就要知道是不是桌面应用）。它把跨源的 `fetch` 转给 Rust，提供 `DesktopSocket`（终端），将页面及终端里的外部链接交给系统打开器，并在 `<html>` 上加 `desktop-shell` 和 `platform-<系统>-desktop` 类。
+- `desktop/src-tauri/src/links.rs`：统一处理 WebView 的外部导航和弹窗请求，也提供宿主列表及「新建窗口」使用的应用窗口命令。
 - `web/src/app/DesktopWorkspace.tsx`、`web/src/platform/desktopWorkspace.ts`、`desktopTabs.ts`：自定义标题栏、工作区保存、标签导航与父子页面事件；`desktop/src-tauri/src/tabs.rs` 管理独立 WebView 的创建、可见性、布局和连接清理。使用 Tauri 的 `unstable` 多 WebView API；HTTP 和 WebSocket 均按调用方 WebView 隔离。
 - `web/src/platform/localService.ts`、`web/src/features/desktop/LocalService.tsx`：本机服务（首页卡片和设置里的「本机服务」分区）。
 - `desktop/src-tauri/src/net.rs`：HTTP 转发。请求体就是 invoke 的原始字节，方法、地址和请求头放在 `x-cc-meta` 请求头里（百分号编码的 JSON）；回复是 `[元数据长度 u32 大端][元数据 JSON][响应体]`。页面不能设置 `Origin`、`Host`、`Cookie` 等请求头。

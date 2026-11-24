@@ -6,6 +6,7 @@ import type { Backend } from '@/backend/backend';
 import type { ProjectShellStream } from '@/backend/types';
 import { BASE_FONT_DESKTOP, BASE_FONT_PHONE, backoffDelay, MAX_ATTEMPTS, RESIZE_THROTTLE_MS, throttleLatest, usableDims } from '@/features/terminal/terminalSize';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
+import { desktopTerminalLinks } from '@/platform/desktop';
 import { projectShellOutput } from './projectShellOutput';
 import { findProjectShellMatch, type ShellSearchDirection } from './findProjectShellMatch';
 
@@ -35,12 +36,13 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
     theme: mergeTerminalTheme(undefined),
     disableStdin: true,
     macOptionIsMeta: true,
+    linkHandler: desktopTerminalLinks?.osc,
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
   terminal.loadAddon(new Unicode11Addon());
   terminal.unicode.activeVersion = '11';
-  terminal.loadAddon(new WebLinksAddon());
+  terminal.loadAddon(new WebLinksAddon(desktopTerminalLinks?.open));
   terminal.open(element);
   if (terminal.textarea) terminal.textarea.tabIndex = 0;
 

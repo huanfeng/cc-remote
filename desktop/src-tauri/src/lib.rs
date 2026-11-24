@@ -4,6 +4,7 @@
 // this computer (service.rs).
 mod about;
 mod history;
+mod links;
 mod net;
 mod paths;
 mod service;
@@ -37,7 +38,11 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(net::Net::new())
         .manage(ws::Sockets::default())
@@ -54,6 +59,7 @@ pub fn run() {
             tabs::window_event(window, event);
         })
         .invoke_handler(tauri::generate_handler![
+            links::desktop_window_open,
             tabs::desktop_tab_open,
             tabs::desktop_tab_activate,
             tabs::desktop_tab_close,

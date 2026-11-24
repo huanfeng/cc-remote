@@ -144,6 +144,8 @@ fn show_main_now(app: &tauri::AppHandle) -> Result<(), String> {
         tauri::WebviewWindowBuilder::from_config(app, config)
             .map_err(|e| e.to_string())?
             .title(format!("CC Remote v{}", app.package_info().version))
+            .on_navigation(crate::links::navigation(app))
+            .on_new_window(crate::links::popup(app))
             .build()
             .map_err(|e| e.to_string())?
             .as_ref()

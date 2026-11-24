@@ -43,6 +43,7 @@ test('terminal copies completed selections, preserves them on right-click and re
     '@xterm/addon-web-links': data('export class WebLinksAddon {}'),
     '@/domain/terminalPaths': data('export const filePathLinks=()=>({});'),
     '@/domain/clipboard': data('export const copyText=text=>globalThis.__selectionCopy(text);'),
+    '@/platform/desktop': data('export const desktopTerminalLinks=undefined;'),
     '@/terminal/terminalTheme': data('export const mergeTerminalTheme=()=>({});'),
     '@/lib/i18n': data('export const t=en=>en;'),
   };

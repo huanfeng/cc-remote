@@ -8,8 +8,9 @@ import { StandaloneHome } from '@/features/standalone/StandaloneHome';
 import { DesktopAboutDialog } from '@/features/settings/DesktopUpdate';
 import { HostGlyph } from '@/features/settings/parts';
 import { openDesktopAbout, subscribeDesktopUpdate, useDesktopUpdate } from '@/platform/desktopUpdate';
-import { activateDesktopTab, closeDesktopTab, desktopShortcut, newDesktopWindow, reconcileDesktopTabs, reorderDesktopTab, reopenDesktopTab, sendDesktopTabCommand, showDesktopHosts, showDesktopMenu, subscribeDesktopWorkspace, useDesktopWorkspace } from '@/platform/desktopWorkspace';
+import { activateDesktopTab, desktopShortcut, newDesktopWindow, reconcileDesktopTabs, reorderDesktopTab, reopenDesktopTab, requestDesktopTabClose, sendDesktopTabCommand, showDesktopHosts, showDesktopMenu, subscribeDesktopWorkspace, useDesktopWorkspace } from '@/platform/desktopWorkspace';
 import { WindowControls } from './WindowControls';
+import { DesktopTabClose } from './DesktopTabClose';
 import { installDesktopTitlebar } from '@/platform/desktopTitlebar';
 import { attentionTitle, stripAttentionTitle } from '@/domain/attention';
 import { aggregateDesktopAttention, createDesktopAttention } from '@/platform/desktopAttention';
@@ -106,7 +107,8 @@ export function DesktopWorkspace() {
           return <div key={tab.label} draggable onDragStart={event => { event.dataTransfer.setData('application/cc-remote-tab', tab.label); event.dataTransfer.effectAllowed = 'move'; }}
             onDragOver={event => { if (event.dataTransfer.types.includes('application/cc-remote-tab')) event.preventDefault(); }}
             onDrop={event => { const from = event.dataTransfer.getData('application/cc-remote-tab'); if (from) { event.preventDefault(); reorderDesktopTab(from, tab.label); } }}
-            onAuxClick={event => { if (event.button === 1) { event.preventDefault(); closeDesktopTab(tab.label); } }}
+            onMouseDown={event => { if (event.button === 1) event.preventDefault(); }}
+            onAuxClick={event => { if (event.button === 1) { event.preventDefault(); requestDesktopTabClose(tab.label); } }}
             className={cn('group flex h-8 w-44 min-w-24 max-w-48 shrink-0 items-center rounded-md border', current ? 'border-border/80 bg-card shadow-xs' : 'border-transparent hover:bg-surface-hover')}>
             <button id={`tab-${tab.label}`} type="button" role="tab" aria-selected={current} tabIndex={active === tab.label ? 0 : -1}
               title={[nameOf(tab.hostId), tab.error || (tab.phase === 'ready' ? t('Connected', '已连接') : tab.phase === 'connecting' ? t('Connecting…', '连接中…') : t('Disconnected', '未连接')), tab.waiting ? t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`) : '', tab.done ? t(`${tab.done} unread completions`, `${tab.done} 项完成待查看`) : ''].filter(Boolean).join(' · ')}
@@ -121,8 +123,7 @@ export function DesktopWorkspace() {
               {tab.waiting > 0 && <span className="rounded bg-warning/15 px-1 text-[10px] text-warning">{tab.waiting}</span>}
               {(tab.done ?? 0) > 0 && <span className="rounded bg-success/15 px-1 text-[10px] text-success">{tab.done}</span>}
             </button>
-            <button type="button" aria-label={t(`Close ${nameOf(tab.hostId)}`, `关闭 ${nameOf(tab.hostId)}`)} title={t('Close tab · Ctrl+W', '关闭标签页 · Ctrl+W')}
-              className="mx-1 flex size-5 shrink-0 items-center justify-center rounded text-foreground-subtlest hover:bg-surface-hover hover:text-foreground" onClick={() => closeDesktopTab(tab.label)}><X className="size-3" /></button>
+            <DesktopTabClose label={tab.label} name={nameOf(tab.hostId)} />
           </div>;
         })}
       </div>
@@ -146,7 +147,7 @@ export function DesktopWorkspace() {
           <div className="space-y-1"><h2 className="mb-2 text-ui-xs text-foreground-subtle">{t('Open tabs · Ctrl Tab to switch', '已打开的标签页 · Ctrl Tab 切换')}</h2>
             {tabs.map(tab => <button key={tab.label} onClick={() => activateDesktopTab(tab.label)} className="flex w-full items-center gap-3 rounded-lg border border-border/50 px-3 py-2 text-left hover:bg-surface-hover"><span className="min-w-0 flex-1 truncate text-ui-sm">{nameOf(tab.hostId)}</span>{tab.waiting > 0 && <span className="text-ui-xs text-warning">{t(`${tab.waiting} waiting`, `${tab.waiting} 项待处理`)}</span>}{(tab.done ?? 0) > 0 && <span className="text-ui-xs text-success">{t(`${tab.done} unread completions`, `${tab.done} 项完成待查看`)}</span>}{tab.label === active && <span className="text-ui-xs text-foreground-subtlest">{t('Current', '当前')}</span>}</button>)}
           </div>
-          <p className="text-ui-xs leading-5 text-foreground-subtlest">{t('Closing a tab leaves its host sessions running. Drag tabs to reorder; middle-click to close. The window close button keeps the main app in the system tray.', '关闭标签页后，宿主上的会话继续运行。拖动标签页可调整顺序，中键点击可关闭。主窗口关闭后保留在系统托盘。')}</p>
+          <p className="text-ui-xs leading-5 text-foreground-subtlest">{t('Closing a tab leaves its host sessions running. Drag tabs to reorder. The window close button keeps the main app in the system tray.', '关闭标签页后，宿主上的会话继续运行。拖动标签页可调整顺序。主窗口关闭后保留在系统托盘。')}</p>
         </div> : panel === 'hosts' || !selected ? <StandaloneHome choose /> : <div className="flex h-full items-center justify-center text-ui-sm text-foreground-subtlest">{t('Opening host…', '正在打开宿主…')}</div>}
     </main>
     <DesktopAboutDialog />

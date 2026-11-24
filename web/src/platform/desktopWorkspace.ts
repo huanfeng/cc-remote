@@ -3,7 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getAllWebviews } from '@tauri-apps/api/webview';
 import { emitTo, listen } from '@tauri-apps/api/event';
 import { create } from 'zustand';
-import { DESKTOP, DESKTOP_TAB } from './desktop';
+import { DESKTOP, DESKTOP_TAB, openDesktopWindow } from './desktop';
 import { loadHosts } from '@/lib/hosts';
 import { openDesktopAbout, useDesktopUpdate } from './desktopUpdate';
 import { addWorkspaceTab, closeWorkspaceTab, emptyWorkspace, moveWorkspaceTab, restoreWorkspace, savedWorkspace, type Workspace, type WorkspaceTab } from '@/domain/desktopWorkspace';
@@ -30,7 +30,8 @@ function initial(): Workspace {
 }
 function hasSavedWorkspace() { try { return windowLabel === 'main' && localStorage.getItem(KEY) !== null; } catch { return false; } }
 
-export const useDesktopWorkspace = create<Workspace & { panel: 'hosts' | 'menu' | null; error: string }>(() => ({ ...initial(), panel: null, error: '' }));
+type DesktopWorkspaceState = Workspace & { panel: 'hosts' | 'menu' | null; error: string; closingTab: string | null };
+export const useDesktopWorkspace = create<DesktopWorkspaceState>(() => ({ ...initial(), panel: null, error: '', closingTab: null }));
 const opened = new Set<string>();
 const ready = new Set<string>();
 const commands = new Map<string, DesktopTabCommand[]>();
@@ -72,8 +73,9 @@ export function reconcileDesktopTabs() {
   });
 }
 
-function change(patch: Partial<Workspace & { panel: 'hosts' | 'menu' | null; error: string }>, native = true) {
-  useDesktopWorkspace.setState(patch);
+function change(patch: Partial<DesktopWorkspaceState>, native = true) {
+  useDesktopWorkspace.setState(state => state.closingTab && patch.tabs && !patch.tabs.some(tab => tab.label === state.closingTab)
+    ? { ...patch, closingTab: null } : patch);
   if (windowLabel === 'main') { try { localStorage.setItem(KEY, savedWorkspace(useDesktopWorkspace.getState())); } catch { /* storage unavailable */ } }
   if (native) reconcileDesktopTabs();
 }
@@ -81,11 +83,19 @@ function change(patch: Partial<Workspace & { panel: 'hosts' | 'menu' | null; err
 export function activateDesktopTab(label: string) {
   if (!useDesktopWorkspace.getState().tabs.some(x => x.label === label)) return;
   useDesktopUpdate.setState({ aboutOpen: false });
-  change({ active: label, panel: null, error: '' });
+  change({ active: label, panel: null, error: '', closingTab: null });
 }
-export function showDesktopHosts() { useDesktopUpdate.setState({ aboutOpen: false }); change({ panel: 'hosts', error: '' }); }
-export function showDesktopMenu() { change({ panel: useDesktopWorkspace.getState().panel === 'menu' ? null : 'menu' }); }
-export function closeDesktopTab(label: string) { change(closeWorkspaceTab(useDesktopWorkspace.getState(), label)); }
+export function showDesktopHosts() { useDesktopUpdate.setState({ aboutOpen: false }); change({ panel: 'hosts', error: '', closingTab: null }); }
+export function showDesktopMenu() { change({ panel: useDesktopWorkspace.getState().panel === 'menu' ? null : 'menu', closingTab: null }); }
+export function requestDesktopTabClose(label: string) {
+  if (useDesktopWorkspace.getState().tabs.some(tab => tab.label === label)) useDesktopWorkspace.setState({ closingTab: label });
+}
+export function resolveDesktopTabClose(label: string, confirm = false) {
+  const state = useDesktopWorkspace.getState();
+  if (state.closingTab !== label) return;
+  if (confirm) change({ ...closeWorkspaceTab(state, label), closingTab: null });
+  else useDesktopWorkspace.setState({ closingTab: null });
+}
 export function reorderDesktopTab(from: string, to: string) { change(moveWorkspaceTab(useDesktopWorkspace.getState(), from, to)); }
 export function reopenDesktopTab() {
   const state = useDesktopWorkspace.getState();
@@ -133,14 +143,14 @@ export function newDesktopWindow() {
   url.searchParams.delete('desktop-tab');
   if (active) url.searchParams.set('host', active.hostId); else url.searchParams.delete('host');
   url.hash = active?.hash ?? '';
-  window.open(url.href);
+  openDesktopWindow(url);
 }
 export function desktopShortcut(action: DesktopShortcut['action']) {
   const state = useDesktopWorkspace.getState();
   if (action === 'new') showDesktopHosts();
   else if (action === 'new-window') newDesktopWindow();
   else if (action === 'reopen') reopenDesktopTab();
-  else if (action === 'close' && state.active) closeDesktopTab(state.active);
+  else if (action === 'close' && state.active) requestDesktopTabClose(state.active);
   else if ((action === 'next' || action === 'previous') && state.tabs.length) {
     const index = state.tabs.findIndex(x => x.label === state.active);
     const next = (index + (action === 'next' ? 1 : -1) + state.tabs.length) % state.tabs.length;

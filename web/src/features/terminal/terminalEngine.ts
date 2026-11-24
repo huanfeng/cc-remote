@@ -13,6 +13,7 @@ import type { FileRef } from '@/domain/filePaths';
 import { filePathLinks } from '@/domain/terminalPaths';
 import { copyText } from '@/domain/clipboard';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
+import { desktopTerminalLinks } from '@/platform/desktop';
 import { t } from '@/lib/i18n';
 import {
   BASE_FONT_DESKTOP, BASE_FONT_PHONE, MAX_ATTEMPTS, OPEN_TIMEOUT_MS, RESIZE_THROTTLE_MS, SentSizes,
@@ -99,12 +100,13 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
     disableStdin: mobile, // the soft keyboard types into the input bar
     macOptionIsMeta: true,
     cursorBlink: false,
+    linkHandler: desktopTerminalLinks?.osc,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = '11'; // CJK and emoji take two cells, as Claude Code draws them
-  term.loadAddon(new WebLinksAddon());
+  term.loadAddon(new WebLinksAddon(desktopTerminalLinks?.open));
   term.registerLinkProvider(filePathLinks(term, () => o.openFile));
   term.open(screen);
   if (mobile && term.textarea) {

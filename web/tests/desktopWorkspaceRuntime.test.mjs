@@ -5,7 +5,7 @@ import { registerHooks } from 'node:module';
 test('native tabs survive overlapping opens, wait for listeners, preserve focus and expose recovery', async () => {
   const values = new Map();
   const handlers = new Map(), storageHandlers = new Set(), native = new Set(['tab-main-stale']);
-  const calls = [], events = [];
+  const calls = [], events = [], windows = [];
   let releaseFirst, failHost = '';
   const firstCreation = new Promise(resolve => { releaseFirst = resolve; });
   const updateListeners = new Set();
@@ -24,6 +24,7 @@ test('native tabs survive overlapping opens, wait for listeners, preserve focus 
     views:async()=>[...native].map(label=>({label,window:{label:'main'}})),
     listen:async (name,callback)=> { handlers.set(name,callback); return ()=>handlers.delete(name); },
     emit:async (target,event,payload)=> { events.push({target,event,payload}); },
+    openWindow:url=> { windows.push(url); },
     hosts:()=>hostList,
     update:{ getState:()=>update, setState:patch=> {update={...update,...patch};for(const callback of updateListeners)callback(update);}, subscribe:callback=>{updateListeners.add(callback);return()=>updateListeners.delete(callback);} },
   };
@@ -38,7 +39,7 @@ test('native tabs survive overlapping opens, wait for listeners, preserve focus 
     '@tauri-apps/api/window':data('export const getCurrentWindow=()=>({label:"main"});'),
     '@tauri-apps/api/webview':data(prelude+'export const getAllWebviews=h.views;'),
     '@tauri-apps/api/event':data(prelude+'export const listen=h.listen,emitTo=h.emit;'),
-    './desktop':data('export const DESKTOP=true,DESKTOP_TAB=null;'),
+    './desktop':data(prelude+'export const DESKTOP=true,DESKTOP_TAB=null,openDesktopWindow=h.openWindow;'),
     '@/lib/hosts':data(prelude+'export const loadHosts=h.hosts;'),
     './desktopUpdate':data(prelude+'export const useDesktopUpdate=h.update;export const openDesktopAbout=()=>h.update.setState({aboutOpen:true});'),
     './desktopTabs':data('export const DESKTOP_OPEN_HOST="desktop-open-host",DESKTOP_TAB_STATE="desktop-tab-state",DESKTOP_TAB_COMMAND="desktop-tab-command",DESKTOP_SHORTCUT="desktop-shortcut",DESKTOP_ABOUT="desktop-open-about";'),
@@ -78,6 +79,31 @@ test('native tabs survive overlapping opens, wait for listeners, preserve focus 
     assert.equal(calls.filter(([name])=>name==='desktop_tab_activate').at(-1)[1].label,null);
     h.update.setState({aboutOpen:false});await settle();
     assert.equal(calls.filter(([name])=>name==='desktop_tab_activate').at(-1)[1].label,b.label);
+
+    handlers.get('desktop-shortcut')({payload:{action:'new-window'}});
+    assert.equal(windows.at(-1).searchParams.get('host'),'b');
+    assert.equal(windows.at(-1).hash,'#/s/b');
+
+    const inactive = workspace.useDesktopWorkspace.getState().tabs.find(tab=>tab.hostId==='a');
+    const closedBefore = calls.filter(([name])=>name==='desktop_tab_close').length;
+    handlers.get('desktop-shortcut')({payload:{action:'close'}});
+    await settle();
+    assert.equal(workspace.useDesktopWorkspace.getState().closingTab,b.label,'child Ctrl+W requests confirmation for the active tab');
+    assert.equal(calls.filter(([name])=>name==='desktop_tab_close').length,closedBefore,'requesting confirmation leaves native views alone');
+    workspace.resolveDesktopTabClose(inactive.label,true);
+    assert.equal(workspace.useDesktopWorkspace.getState().closingTab,b.label,'stale confirmation cannot close another tab');
+    workspace.resolveDesktopTabClose(b.label);
+    assert.equal(workspace.useDesktopWorkspace.getState().closingTab,null);
+    assert(native.has(b.label),'cancel keeps the native tab');
+
+    workspace.requestDesktopTabClose(inactive.label);
+    workspace.resolveDesktopTabClose(inactive.label,true);
+    await settle();
+    assert(!native.has(inactive.label),'confirm closes only the requested inactive tab');
+    assert.equal(workspace.useDesktopWorkspace.getState().active,b.label);
+    workspace.reopenDesktopTab();
+    await settle();
+    assert(workspace.useDesktopWorkspace.getState().tabs.some(tab=>tab.hostId==='a'),'confirmed closes can still be reopened');
 
     failHost='c';workspace.openDesktopHost({hostId:'c',hash:'',reload:false});await settle();
     assert.match(workspace.useDesktopWorkspace.getState().error,/test creation failure/);

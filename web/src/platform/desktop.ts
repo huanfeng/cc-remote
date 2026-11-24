@@ -12,7 +12,6 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { desktopWindowTitle } from '../domain/desktopTitle.ts';
 
 export type DesktopPlatform = 'windows' | 'linux' | 'mac';
@@ -155,26 +154,56 @@ export class DesktopSocket {
 
 // ---- Links and windows ----
 
-const openExternal = (url: string) => {
-  void invoke('plugin:opener|open_url', { url }).catch(() => {
+function parseLink(value: string | URL): URL | undefined {
+  if (typeof value === 'string' && !value.trim()) return undefined;
+  try { return new URL(value, location.href); } catch { return undefined; }
+}
+
+function sameAppOrigin(url: URL) {
+  // The tauri:// origin is opaque on macOS and Linux. In particular, a
+  // blob: URL must not be mistaken for an app page on any platform.
+  return url.protocol === location.protocol && url.host === location.host && !url.username && !url.password;
+}
+
+function appPage(url: URL) {
+  return sameAppOrigin(url) && ['', '/', '/index.html'].includes(url.pathname);
+}
+
+const externalLink = (url: URL) => /^(https?|mailto):$/.test(url.protocol);
+
+function openExternal(url: URL) {
+  void invoke('plugin:opener|open_url', { url: url.href }).catch(() => {
     window.alert(navigator.language.startsWith('zh')
       ? '无法在系统浏览器中打开链接，请检查默认浏览器设置后重试。'
       : 'Could not open the link. Check your default browser settings and try again.');
   });
-};
+}
 
-let nextWindow = 1;
+function openTerminalLink(_event: MouseEvent, href: string) {
+  const url = parseLink(href);
+  if (url && externalLink(url)) openExternal(url);
+}
+
+// Both xterm's autolinks and its OSC 8 default handler use window.open()
+// before assigning the destination. Give them the destination up front.
+export const desktopTerminalLinks = DESKTOP ? {
+  open: openTerminalLink,
+  osc: {
+    activate(event: MouseEvent, href: string) {
+      const message = navigator.language.startsWith('zh')
+        ? `要打开此终端链接吗？\n\n${href}`
+        : `Open this terminal link?\n\n${href}`;
+      if (window.confirm(message)) openTerminalLink(event, href);
+    },
+  },
+} : undefined;
+
 let appVersion: string | undefined;
 /** A page of this app in a second window (Ctrl+click on a host). */
-function openWindow(url: string) {
-  const label = `host-${Date.now().toString(36)}-${nextWindow++}`;
-  const target = new URL(url, location.href);
-  // A host link made inside a child inherits its query. A new top-level
-  // window owns a fresh workspace rather than masquerading as that child.
-  target.searchParams.delete('desktop-tab');
-  new WebviewWindow(label, {
-    url: target.pathname + target.search + target.hash, title: desktopWindowTitle('CC Remote', appVersion), width: 1200, height: 800, minWidth: 720, minHeight: 480,
-    decorations: platformOf() === 'mac', ...(platformOf() === 'mac' ? { titleBarStyle: 'overlay', hiddenTitle: true } : {}),
+export function openDesktopWindow(url: URL) {
+  if (!appPage(url)) return;
+  void invoke('desktop_window_open', { url: url.href }).catch(() => {
+    window.alert(navigator.language.startsWith('zh') ? '无法新建桌面窗口。' : 'Could not open a new desktop window.');
   });
 }
 
@@ -184,25 +213,32 @@ function installLinks() {
     if (e.defaultPrevented || (e.type === 'auxclick' ? e.button !== 1 : e.button !== 0)) return;
     const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
     if (!a || a.hasAttribute('download')) return;
-    const url = new URL(a.href, location.href);
-    if (url.origin === location.origin) {
-      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1 || a.target === '_blank') {
+    const url = parseLink(a.href);
+    if (!url) return;
+    if (sameAppOrigin(url)) {
+      const target = a.target.toLowerCase();
+      const newTarget = target && !['_self', '_parent', '_top'].includes(target);
+      // File previews and Markdown headings use local fragments but handle
+      // the click themselves, including when a modifier is down.
+      if (!newTarget && a.getAttribute('href')?.startsWith('#')) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1 || newTarget) {
         e.preventDefault();
-        openWindow(url.href);
+        openDesktopWindow(url);
       }
       return;
     }
-    if (!/^(https?|mailto):$/.test(url.protocol)) return;
+    if (!externalLink(url)) return;
     e.preventDefault();
-    openExternal(url.href);
+    openExternal(url);
   };
   document.addEventListener('click', followLink, true);
   document.addEventListener('auxclick', followLink, true);
   window.open = ((url?: string | URL) => {
     if (!url) return null;
-    const target = new URL(String(url), location.href);
-    if (target.origin === location.origin) openWindow(target.pathname + target.search + target.hash);
-    else if (/^(https?|mailto):$/.test(target.protocol)) openExternal(target.href);
+    const target = parseLink(url);
+    if (!target) return null;
+    if (sameAppOrigin(target)) openDesktopWindow(target);
+    else if (externalLink(target)) openExternal(target);
     return null;
   }) as typeof window.open;
 }

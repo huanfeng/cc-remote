@@ -89,11 +89,6 @@ pub async fn desktop_tab_open(
         return Ok(());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let app_url = window
-            .get_webview(window.label())
-            .ok_or("窗口页面不存在")?
-            .url()
-            .map_err(|e| e.to_string())?;
         let builder = WebviewBuilder::new(
             &label,
             WebviewUrl::App(page(&label, host_id.as_deref(), hash.as_deref()).into()),
@@ -108,15 +103,8 @@ pub async fn desktop_tab_open(
                 view.state::<crate::ws::Sockets>().close_view(view.label());
             }
         })
-        .on_navigation(move |url| {
-            // `tauri://` has an opaque URL origin on macOS; compare the local
-            // scheme/authority explicitly rather than opaque Origin identities.
-            url.scheme() == app_url.scheme()
-                && url.host_str() == app_url.host_str()
-                && url.port() == app_url.port()
-                && url.username().is_empty()
-                && url.password().is_none()
-        });
+        .on_navigation(crate::links::navigation(window.app_handle()))
+        .on_new_window(crate::links::popup(window.app_handle()));
         // Create offscreen: WebView2 has no initial visibility option for child views.
         let view = window
             .add_child(

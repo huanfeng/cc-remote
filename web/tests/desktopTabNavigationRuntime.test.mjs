@@ -65,7 +65,7 @@ test('tab route traversal keeps forward history despite synchronous store subscr
     assert.equal(closed,1);assert.equal(key.prevented,true);assert.equal(key.stopped,true);
     assert.ok(events.slice(before).every(event=>event.payload.action!=='close'),'dialog Ctrl+W must not emit native tab-close');
     listeners.get('keydown')(key);
-    assert.equal(events.at(-1).payload.action,'close','without dialog Ctrl+W still closes native tab');
+    assert.equal(events.at(-1).payload.action,'close','without dialog Ctrl+W requests the native tab close confirmation');
     remove=overlayHistory().add(()=>{closed++;remove();});
     command({payload:{action:'back'}});
     assert.equal(closed,2);assert.equal(location.hash,'#/s/a','native Back dismisses dialog before route journal');
