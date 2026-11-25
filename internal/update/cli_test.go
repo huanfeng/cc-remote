@@ -57,14 +57,21 @@ func TestCLINPMInstallationOwnership(t *testing.T) {
 	manifest := filepath.Join(pkg, "package.json")
 	writeCLIFile(t, manifest, `{"name":"@openai/codex","bin":{"codex":"bin/codex.js"}}`)
 	writeCLIFile(t, shim, `"%_prog%" "%dp0%\node_modules\@openai\codex\bin\codex.js" %*`)
-	if got := npmPackageEntry(root, spec); !samePath(got, entry, runtime.GOOS) {
-		t.Fatalf("entry = %q, want %q", got, entry)
+	// The Windows runner can provide TMP with an 8.3 path. EvalSymlinks
+	// expands it to the same spelling npmPackageEntry returns.
+	want, err := filepath.EvalSymlinks(entry)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !npmLauncher(shim, prefix, "codex", "windows") || !npmShimOwns(shim, entry, root, spec) {
+	entryPath := npmPackageEntry(root, spec)
+	if !samePath(entryPath, want, runtime.GOOS) {
+		t.Fatalf("entry = %q, want %q", entryPath, want)
+	}
+	if !npmLauncher(shim, prefix, "codex", "windows") || !npmShimOwns(shim, entryPath, root, spec) {
 		t.Fatal("npm package launcher not recognized")
 	}
 	writeCLIFile(t, shim, `"C:\another\codex.exe" %*`)
-	if npmShimOwns(shim, entry, root, spec) {
+	if npmShimOwns(shim, entryPath, root, spec) {
 		t.Fatal("accepted a launcher targeting another binary")
 	}
 	writeCLIFile(t, manifest, `{"name":"@openai/codex","bin":"../../unrelated.js"}`)
