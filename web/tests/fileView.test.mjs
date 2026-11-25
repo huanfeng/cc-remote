@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dirOf, formatBytes, looksBinary, shikiLang, splitLine, svgDataUrl, viewKind } from '../src/features/files/fileView.ts';
+import { dirOf, formatBytes, looksBinary, resolveProjectPath, shikiLang, splitLine, svgDataUrl, viewKind } from '../src/features/files/fileView.ts';
 
 test('a :line suffix is split off the path', () => {
   assert.deepEqual(splitLine('src/a.ts:12'), { path: 'src/a.ts', line: 12 });
@@ -21,6 +21,15 @@ test('files are shown by kind', () => {
   assert.equal(viewKind({ path: 'main.go', mime: 'text/plain', text: 'package main' }), 'code');
   assert.equal(viewKind({ path: 'a.bin', mime: 'application/octet-stream', text: 'ab\0cd' }), 'binary');
   assert.equal(viewKind({ path: 'big.log', mime: 'text/plain', tooLarge: true }), 'too-large');
+});
+
+test('project preview links resolve within the project on either path separator', () => {
+  assert.equal(resolveProjectPath('docs/readme.md', '../assets/a.png'), 'assets/a.png');
+  assert.equal(resolveProjectPath('docs/readme.md', '.\\设计.md'), 'docs/设计.md');
+  assert.equal(resolveProjectPath('README.md', 'src/a.ts#L12'), 'src/a.ts#L12');
+  for (const path of ['../../a.txt', '/etc/a.txt', 'C:/a.txt', 'C:a.txt', '//host/share/a.txt', '\\\\host\\share\\a.txt']) {
+    assert.equal(resolveProjectPath('docs/readme.md', path), undefined, path);
+  }
 });
 
 test('binary detection looks at the start only', () => {

@@ -15,6 +15,23 @@ export function splitLine(path: string): { path: string; line?: number } {
   return line > 0 ? { path: m[1], line } : { path: m[1] };
 }
 
+/** Resolves a link relative to a project's document, without leaving its root. */
+export function resolveProjectPath(documentPath: string, target: string): string | undefined {
+  const path = target.replace(/\\/g, '/');
+  if (!path || path.startsWith('/') || /^[^/]*:/.test(path)) return undefined;
+  const parts = documentPath.split('/').slice(0, -1);
+  for (const part of path.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (!parts.length) return undefined;
+      parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+  return parts.join('/') || undefined;
+}
+
 export type ViewKind = 'image' | 'markdown' | 'code' | 'binary' | 'too-large';
 
 /** How a loaded file is shown. */

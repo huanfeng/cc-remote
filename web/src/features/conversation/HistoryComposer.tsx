@@ -11,6 +11,7 @@ import { AttachmentStrip } from '@/features/composer/parts';
 import { isSendKey, sendContent } from '@/features/composer/composerLogic';
 import { useDrafts } from '@/features/composer/drafts';
 import { sendIds } from '@/features/composer/sendIds';
+import { appendFileReference, useFileReferenceTarget, type FileReferenceTarget } from '@/features/files/fileReference';
 import { t } from '@/lib/i18n';
 import { usePrefs } from '@/lib/prefs';
 import { hasFeature, openFork, selectionKey, useApp } from '@/store/app';
@@ -35,20 +36,20 @@ export function HistoryEditProvider({ children }: { children: ReactNode }) {
   return <HistoryEditContext.Provider value={{ draft, edit, busy, setBusy }}>{children}</HistoryEditContext.Provider>;
 }
 
-export function HistoryComposer({ session, native, mobile, children }: {
-  session: Session; native?: Provider; mobile: boolean; children: ReactNode;
+export function HistoryComposer({ session, native, mobile, children, referenceTarget }: {
+  session: Session; native?: Provider; mobile: boolean; children: ReactNode; referenceTarget?: FileReferenceTarget;
 }) {
   const editor = useHistoryEdit();
   return (
     <>
       <div className={editor?.draft ? 'hidden' : 'contents'}>{children}</div>
-      {editor?.draft && <BranchComposer key={editor.draft.token} session={session} native={native} mobile={mobile} draft={editor.draft} />}
+      {editor?.draft && <BranchComposer key={editor.draft.token} session={session} native={native} mobile={mobile} draft={editor.draft} referenceTarget={referenceTarget} />}
     </>
   );
 }
 
-function BranchComposer({ session, native, mobile, draft }: {
-  session: Session; native?: Provider; mobile: boolean; draft: HistoryDraft;
+function BranchComposer({ session, native, mobile, draft, referenceTarget }: {
+  session: Session; native?: Provider; mobile: boolean; draft: HistoryDraft; referenceTarget?: FileReferenceTarget;
 }) {
   const backend = useBackend();
   const editor = useHistoryEdit()!;
@@ -60,6 +61,16 @@ function BranchComposer({ session, native, mobile, draft }: {
   const [error, setError] = useState('');
   const [text, setText] = useState(draft.text);
   const [attachments, setAttachments] = useState(draft.attachments);
+  useFileReferenceTarget(referenceTarget, reference => {
+    if (editor.busy) return;
+    setText(value => appendFileReference(value, reference));
+    requestAnimationFrame(() => {
+      const input = box.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  });
   useEffect(() => {
     const el = box.current;
     if (!el) return;

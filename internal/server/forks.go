@@ -116,6 +116,11 @@ func (s *Server) fork(w http.ResponseWriter, r *http.Request, provider string) {
 		fail(w, 503, l.T("The host is shutting down", "宿主正在关闭"))
 		return
 	}
+	if s.updatingProvider != "" && s.updatingProvider == source.Provider {
+		s.mu.Unlock()
+		fail(w, 409, l.T("This provider is updating. Try again in a moment.", "该组件正在更新，请稍后重试。"))
+		return
+	}
 	if provider == "" && !canForkSession(source) || source.Mode == "terminal" && source.Provider == "codex" && s.terminals[source.ID] != nil {
 		s.mu.Unlock()
 		fail(w, 409, l.T("Open the saved native conversation to branch from this session", "请打开已保存的原生会话并从那里创建分支"))

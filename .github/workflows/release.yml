@@ -184,6 +184,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
       PRERELEASE: ${{ needs.meta.outputs.prerelease }}
       REPLACE: ${{ github.event_name == 'workflow_dispatch' && inputs.replace }}
     steps:
@@ -226,10 +227,16 @@ jobs:
             echo "Release $TAG exists; replacing assets (replace=true)"
             gh release upload "$TAG" out/* --clobber
           else
-            flags="--generate-notes --title $TAG --target $GITHUB_SHA"
-            if [ "$PRERELEASE" = true ]; then flags="$flags --prerelease"; fi
-            # shellcheck disable=SC2086
-            gh release create "$TAG" $flags out/*
+            notes="$RUNNER_TEMP/release-notes.md"
+            node scripts/desktop-updater.mjs notes "$notes" "$VERSION"
+            flags=(--title "$TAG" --target "$GITHUB_SHA")
+            if [ -s "$notes" ]; then
+              flags+=(--notes-file "$notes")
+            else
+              flags+=(--generate-notes)
+            fi
+            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+            gh release create "$TAG" "${flags[@]}" out/*
           fi
 
   # The standalone frontend on GitHub Pages follows the stable releases.

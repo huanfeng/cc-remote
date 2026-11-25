@@ -315,6 +315,13 @@ func (s *Server) requestedFile(w http.ResponseWriter, r *http.Request) (*os.File
 	if len(bases) > 16 {
 		bases = bases[:16]
 	}
+	return s.openScopedFile(w, r, sess, name, bases, r.URL.Query().Get("scope") == "project")
+}
+
+func (s *Server) openScopedFile(w http.ResponseWriter, r *http.Request, sess store.Session, name string, bases []string, project bool) (*os.File, string, os.FileInfo, bool) {
+	if project {
+		return s.projectFile(w, r, sess, name)
+	}
 	return s.sessionFile(w, r, sess, name, bases)
 }
 

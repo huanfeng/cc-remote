@@ -66,6 +66,25 @@ func findHost(cfg *Config) (url string, answering bool) {
 	return "", answering
 }
 
+// RunningInstallation returns the existing managed configuration only when
+// its executable is present and the host proves its identity on loopback.
+func RunningInstallation(dataDir, executable string) (*Config, error) {
+	cfg, err := LoadConfig(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil || !samePath(cfg.DataDir, dataDir) || !samePath(cfg.Exe, executable) {
+		return nil, i18n.Errorf("no matching managed service installation was found", "找不到匹配的服务安装")
+	}
+	if _, err := os.Stat(executable); err != nil {
+		return nil, err
+	}
+	if url, _ := findHost(cfg); url == "" {
+		return nil, i18n.Errorf("could not verify the running service on loopback", "无法在回环地址验证运行中的服务")
+	}
+	return cfg, nil
+}
+
 func waitReady(cfg *Config, timeout time.Duration) (string, bool) {
 	deadline := time.Now().Add(timeout)
 	for {

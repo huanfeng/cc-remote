@@ -1,8 +1,9 @@
 // Conversation header. Desktop: controls wrap below the title in narrow panes.
 // Phone: back/menu, title + status, and the usage orb; the rest moves into ⋯.
 import {
-  ChevronLeft, FolderOpen, GitBranch, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, Search, Square, SquareTerminal,
+  ChevronLeft, FolderOpen, GitBranch, ListTree, Menu, MessageSquare, MoreHorizontal, PanelLeftOpen, PanelRightClose, PanelRightOpen, Search, Square, SquareTerminal,
 } from 'lucide-react';
+import { useStore } from 'zustand';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -20,6 +21,7 @@ import { SessionStatusPopover } from '@/features/header/SessionStatusPopover';
 import { Chip, ModelChips } from '@/features/header/ModelChips';
 import { UsageMeter } from '@/features/header/UsageMeter';
 import { PathMenu } from '@/features/files/PathMenu';
+import { fileDockStore } from '@/features/files/fileDockState';
 import { useCompletionRead } from '@/store/completionRead';
 import { displaySession } from '@/domain/completionRead';
 import { hostKey } from '@/lib/hosts';
@@ -29,8 +31,11 @@ import { projectShellShortcutLabel } from '@/features/projectShell/projectShellK
 import { projectShellCounts } from '@/features/projectShell/projectShellStatus';
 import { useForkConversation } from '@/features/conversation/useForkConversation';
 
-export function SessionHeader({ session, mobile, terminalView, native }: { session: Session; mobile: boolean; terminalView?: boolean; native?: boolean }) {
+export function SessionHeader({ session, dockKey, mobile, terminalView, native }: { session: Session; dockKey: string; mobile: boolean; terminalView?: boolean; native?: boolean }) {
   const backend = useBackend();
+  const files = fileDockStore(backend);
+  const filesOpen = useStore(files, s => s.docks.get(dockKey)?.collapsed === false);
+  const filePanelLabel = filesOpen ? t('Close file panel', '关闭文件栏') : t('Open file panel', '打开文件栏');
   const open = useApp(s => s.open);
   const canSearch = useApp(s => hasFeature(s.info, 'message-search'));
   const setApp = useApp(s => s.set);
@@ -100,6 +105,16 @@ export function SessionHeader({ session, mobile, terminalView, native }: { sessi
 
       <div className={mobile ? 'contents' : 'ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1'}>
         {!native && !terminalOnly && <UsageMeter session={session} mobile={mobile} />}
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button type="button" variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={filePanelLabel} aria-expanded={filesOpen}
+              onClick={() => files.getState().collapse(dockKey, filesOpen)}>
+              {filesOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{filePanelLabel}</TooltipContent>
+        </Tooltip>
 
         {canSearch && (
           <Tooltip>

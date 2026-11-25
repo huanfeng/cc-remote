@@ -24,8 +24,11 @@ const DefaultRepo = "huanfeng/cc-remote"
 
 // Release is the subset of a GitHub release the updater needs.
 type Release struct {
-	Tag    string
-	Assets []Asset
+	Tag        string
+	Notes      string
+	Draft      bool
+	Prerelease bool
+	Assets     []Asset
 }
 
 // Asset is one downloadable file of a release.
@@ -63,9 +66,9 @@ The repository is private, so downloads need credentials. Either:
 
 // pickSource prefers an authenticated gh CLI, then a token from the
 // environment, then anonymous API access (works only for public repos).
-func pickSource(repo string) source {
+func pickSource(ctx context.Context, repo string) source {
 	if gh, err := exec.LookPath("gh"); err == nil {
-		if exec.Command(gh, "auth", "status", "--hostname", "github.com").Run() == nil {
+		if exec.CommandContext(ctx, gh, "auth", "status", "--hostname", "github.com").Run() == nil {
 			return &ghSource{bin: gh, repo: repo}
 		}
 	}
@@ -112,21 +115,24 @@ func (g *ghSource) release(ctx context.Context, tag string) (Release, error) {
 	if tag != "" {
 		args = append(args, tag)
 	}
-	args = append(args, "-R", g.repo, "--json", "tagName,assets")
+	args = append(args, "-R", g.repo, "--json", "tagName,body,isDraft,isPrerelease,assets")
 	out, err := g.run(ctx, args...)
 	if err != nil {
 		return Release{}, err
 	}
 	var data struct {
-		TagName string `json:"tagName"`
-		Assets  []struct {
+		Tag        string `json:"tagName"`
+		Notes      string `json:"body"`
+		Draft      bool   `json:"isDraft"`
+		Prerelease bool   `json:"isPrerelease"`
+		Assets     []struct {
 			Name string `json:"name"`
 		} `json:"assets"`
 	}
 	if err := json.Unmarshal(out, &data); err != nil {
 		return Release{}, i18n.Errorf("parse gh release view output: %w", "解析 gh release view 输出失败：%w", err)
 	}
-	rel := Release{Tag: data.TagName}
+	rel := Release{Tag: data.Tag, Notes: data.Notes, Draft: data.Draft, Prerelease: data.Prerelease}
 	for _, a := range data.Assets {
 		rel.Assets = append(rel.Assets, Asset{Name: a.Name})
 	}
@@ -216,8 +222,11 @@ func (s *apiSource) release(ctx context.Context, tag string) (Release, error) {
 	}
 	defer resp.Body.Close()
 	var data struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
+		Tag        string `json:"tag_name"`
+		Notes      string `json:"body"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+		Assets     []struct {
 			ID   int64  `json:"id"`
 			Name string `json:"name"`
 		} `json:"assets"`
@@ -225,7 +234,7 @@ func (s *apiSource) release(ctx context.Context, tag string) (Release, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return Release{}, i18n.Errorf("parse release JSON: %w", "解析版本 JSON 失败：%w", err)
 	}
-	rel := Release{Tag: data.TagName}
+	rel := Release{Tag: data.Tag, Notes: data.Notes, Draft: data.Draft, Prerelease: data.Prerelease}
 	for _, a := range data.Assets {
 		rel.Assets = append(rel.Assets, Asset{ID: a.ID, Name: a.Name})
 	}

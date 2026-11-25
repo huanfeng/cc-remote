@@ -11,18 +11,31 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"cc-remote/internal/i18n"
 	"cc-remote/internal/service"
 )
 
 const checksumsName = "checksums.txt"
+
+// Candidate describes a release discovered by an update check.
+type Candidate struct {
+	CurrentVersion string `json:"currentVersion"`
+	Version        string `json:"version"`
+	Comparable     bool   `json:"comparable"`
+	Available      bool   `json:"available"`
+	Notes          string `json:"notes,omitempty"`
+	NotesURL       string `json:"notesUrl,omitempty"`
+}
 
 type updater struct {
 	repo, current string
@@ -68,61 +81,161 @@ func Run(current string, args []string) error {
 	if err != nil {
 		return err
 	}
-	repo := os.Getenv("CC_REMOTE_REPO")
-	if repo == "" {
-		repo = DefaultRepo
-	}
-	u := &updater{
-		repo: repo, current: current, force: *force, checkJSON: *checkJSON,
-		goos: runtime.GOOS, goarch: runtime.GOARCH,
-		src: pickSource(repo), out: os.Stdout,
-		exePath: exe, installedPath: installed,
-		runCmd: func(name string, args ...string) error {
-			cmd := exec.Command(name, args...)
-			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-			return cmd.Run()
-		},
-	}
 	// Bounds metadata requests and downloads; the service reinstall runs
 	// outside this context.
 	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
 	defer cancel()
+	u := newUpdater(ctx, current, os.Stdout)
+	u.force, u.checkJSON = *force, *checkJSON
+	u.exePath, u.installedPath = exe, installed
+	u.runCmd = func(name string, args ...string) error {
+		cmd := exec.Command(name, args...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		return cmd.Run()
+	}
 	return u.run(ctx, *check, normalizeTag(*version), *yes)
 }
 
 // downloadTimeout caps the whole release lookup and download.
 const downloadTimeout = 10 * time.Minute
 
+func newUpdater(ctx context.Context, current string, out io.Writer) *updater {
+	repo := os.Getenv("CC_REMOTE_REPO")
+	if repo == "" {
+		repo = DefaultRepo
+	}
+	return &updater{
+		repo: repo, current: current, goos: runtime.GOOS, goarch: runtime.GOARCH,
+		src: pickSource(ctx, repo), out: out,
+	}
+}
+
+// Check looks for a published stable release that the managed service can install.
+func Check(ctx context.Context, current string) (Candidate, error) {
+	u := newUpdater(ctx, current, io.Discard)
+	rel, err := u.release(ctx, "")
+	if err != nil {
+		return Candidate{}, err
+	}
+	if !managedRelease(rel) {
+		return Candidate{}, i18n.Errorf("%s is not a supported stable service release", "%s 不是受支持的正式服务版本", rel.Tag)
+	}
+	return u.candidate(rel)
+}
+
+var stableTag = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
+const whenIdleSince = "v0.5.0"
+
+func managedRelease(rel Release) bool {
+	cmp, comparable := compareVersions(rel.Tag, whenIdleSince)
+	return comparable && cmp >= 0 && stableTag.MatchString(rel.Tag) && !rel.Draft && !rel.Prerelease
+}
+
+// InstallManaged installs the selected stable version for a specific service.
+// Once installation starts, allow it to finish even if the old host shuts down.
+func InstallManaged(ctx context.Context, current, version, dataDir string, out io.Writer) error {
+	if !filepath.IsAbs(dataDir) {
+		return i18n.Errorf("an absolute service data directory is required", "需要指定服务数据目录的绝对路径")
+	}
+	installed, err := service.InstalledExe()
+	if err != nil {
+		return err
+	}
+	u := newUpdater(ctx, current, out)
+	u.installedPath = installed
+	u.runCmd = func(name string, args ...string) error {
+		cmd := exec.Command(name, args...)
+		cmd.Stdout, cmd.Stderr = out, out
+		return cmd.Run()
+	}
+	return u.installManaged(ctx, version, dataDir)
+}
+
+func (u *updater) installManaged(ctx context.Context, version, dataDir string) error {
+	if !stableTag.MatchString(version) {
+		return i18n.Errorf("invalid stable release tag %q", "无效的正式版本标签 %q", version)
+	}
+	if cmp, comparable := compareVersions(version, u.current); !comparable || cmp <= 0 {
+		return i18n.Errorf("%s must be newer than the running version %s", "%s 必须比运行中的版本 %s 更新", version, u.current)
+	}
+	rel, err := u.release(ctx, version)
+	if err != nil {
+		return err
+	}
+	if rel.Tag != version || !managedRelease(rel) {
+		return i18n.Errorf("%s is not a supported stable service release", "%s 不是受支持的正式服务版本", version)
+	}
+	bin, cleanup, err := u.fetch(ctx, rel)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	cfg, err := service.RunningInstallation(dataDir, u.installedPath)
+	if err != nil {
+		return err
+	}
+	if cmp, comparable := compareVersions(version, cfg.Version); comparable && cmp <= 0 {
+		return i18n.Errorf("%s is already installed or superseded by %s", "%s 已安装或已被 %s 取代", version, cfg.Version)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return u.applyService(bin, version, "--data-dir", dataDir)
+}
+
+func (u *updater) release(ctx context.Context, tag string) (Release, error) {
+	rel, err := u.src.release(ctx, tag)
+	if errors.Is(err, errNotFound) {
+		if tag != "" {
+			return Release{}, i18n.Errorf("release %s not found in %s", "在 %[2]s 中找不到版本 %[1]s", tag, u.repo)
+		}
+		// GitHub's "latest" release never includes prereleases.
+		return Release{}, i18n.Errorf("no stable release found in %s (prereleases are skipped; pass --version <tag> to install one)", "%s 中没有正式版本（预发布版本会被跳过；用 --version <标签> 安装指定版本）", u.repo)
+	}
+	return rel, err
+}
+
+func (u *updater) candidate(rel Release) (Candidate, error) {
+	cmp, comparable := compareVersions(rel.Tag, u.current)
+	available := comparable && cmp > 0
+	if available {
+		if _, _, err := u.releaseAssets(rel); err != nil {
+			return Candidate{}, err
+		}
+	}
+	var notesURL string
+	if owner, repo, ok := strings.Cut(u.repo, "/"); ok {
+		notesURL = "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/releases/tag/" + url.PathEscape(rel.Tag)
+	}
+	notes := strings.TrimSpace(rel.Notes)
+	const maxNotes = 32 * 1024
+	if len(notes) > maxNotes {
+		end := maxNotes
+		for !utf8.RuneStart(notes[end]) {
+			end--
+		}
+		notes = notes[:end] + "…"
+	}
+	return Candidate{CurrentVersion: u.current, Version: rel.Tag, Comparable: comparable, Available: available, Notes: notes, NotesURL: notesURL}, nil
+}
+
 func (u *updater) run(ctx context.Context, check bool, tag string, yes bool) error {
 	if !check {
 		service.CleanupAside(u.exePath)
 	}
-	rel, err := u.src.release(ctx, tag)
-	if errors.Is(err, errNotFound) {
-		if tag != "" {
-			return i18n.Errorf("release %s not found in %s", "在 %[2]s 中找不到版本 %[1]s", tag, u.repo)
-		}
-		// GitHub's "latest" release never includes prereleases.
-		return i18n.Errorf("no stable release found in %s (prereleases are skipped; pass --version <tag> to install one)", "%s 中没有正式版本（预发布版本会被跳过；用 --version <标签> 安装指定版本）", u.repo)
-	}
+	rel, err := u.release(ctx, tag)
 	if err != nil {
 		return err
 	}
-	cmp, comparable := compareVersions(rel.Tag, u.current)
 	if check && u.checkJSON {
-		available := comparable && cmp > 0
-		if available {
-			if _, _, err := u.releaseAssets(rel); err != nil {
-				return err
-			}
+		result, err := u.candidate(rel)
+		if err != nil {
+			return err
 		}
-		return json.NewEncoder(u.out).Encode(struct {
-			CurrentVersion string `json:"currentVersion"`
-			Version        string `json:"version"`
-			Comparable     bool   `json:"comparable"`
-			Available      bool   `json:"available"`
-		}{u.current, rel.Tag, comparable, available})
+		return json.NewEncoder(u.out).Encode(result)
 	}
+	cmp, comparable := compareVersions(rel.Tag, u.current)
 	fmt.Fprint(u.out, i18n.F("current version: %s\nrelease version: %s (via %s)\n", "当前版本：%s\n发布版本：%s（通过 %s）\n", u.current, rel.Tag, u.src.name()))
 	if check {
 		switch {
@@ -231,18 +344,22 @@ func (u *updater) serviceInstalled() bool {
 // stable location and starts it again; otherwise the executable is swapped.
 func (u *updater) apply(bin, tag string) error {
 	if u.serviceInstalled() {
-		fmt.Fprint(u.out, i18n.F("service installation found at %s; running \"service install\" from %s\n", "在 %s 发现服务安装；运行 %s 的 \"service install\"\n", u.installedPath, tag))
-		args := append([]string{"service", "install"}, installFlags(tag, u.force)...)
-		if err := u.runCmd(bin, args...); err != nil {
-			return i18n.Errorf("service install with the new binary failed: %w", "用新版本执行 service install 失败：%w", err)
-		}
-		fmt.Fprint(u.out, i18n.F("updated to %s\n", "已更新到 %s\n", tag))
-		return nil
+		return u.applyService(bin, tag)
 	}
 	if err := replaceExecutable(u.exePath, bin, u.goos); err != nil {
 		return err
 	}
 	fmt.Fprint(u.out, i18n.F("updated %s to %s\n", "已把 %s 更新到 %s\n", u.exePath, tag))
+	return nil
+}
+
+func (u *updater) applyService(bin, tag string, options ...string) error {
+	fmt.Fprint(u.out, i18n.F("service installation found at %s; running \"service install\" from %s\n", "在 %s 发现服务安装；运行 %s 的 \"service install\"\n", u.installedPath, tag))
+	args := append([]string{"service", "install"}, installFlags(tag, u.force)...)
+	if err := u.runCmd(bin, append(args, options...)...); err != nil {
+		return i18n.Errorf("service install with the new binary failed: %w", "用新版本执行 service install 失败：%w", err)
+	}
+	fmt.Fprint(u.out, i18n.F("updated to %s\n", "已更新到 %s\n", tag))
 	return nil
 }
 
@@ -259,7 +376,7 @@ func installFlags(tag string, force bool) []string {
 	switch {
 	case force && since("v0.10.0"):
 		return []string{"--force"}
-	case !force && since("v0.5.0"):
+	case !force && since(whenIdleSince):
 		return []string{"--when-idle"}
 	}
 	return nil

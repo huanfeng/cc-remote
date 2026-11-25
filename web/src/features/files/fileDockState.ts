@@ -1,18 +1,20 @@
 import { createStore } from 'zustand/vanilla';
 import type { Backend } from '@/backend/backend';
-import type { Attachment } from '@/backend/types';
+import type { Attachment, FileScope } from '@/backend/types';
 import { splitLine } from './fileView.ts';
 
-export type FileEntry = { path: string; base?: string[] };
+export type FileEntry = { path: string; base?: string[]; scope?: FileScope; line?: number };
 export type DockEntry =
   | ({ kind: 'file'; source?: boolean } & FileEntry)
   | { kind: 'attachment'; attachment: Attachment };
 
-export const fileEntryKey = ({ path, base }: FileEntry) => JSON.stringify([path, base ?? []]);
+export const projectFilesTab = 'project-files';
+export const projectGitTab = 'project-git';
+export const fileEntryKey = ({ path, base, scope, line }: FileEntry) => JSON.stringify([path, base ?? [], scope, line]);
 
 function tabId(entry: DockEntry): string {
   return encodeURIComponent(entry.kind === 'file'
-    ? `file:${fileEntryKey({ path: splitLine(entry.path).path, base: entry.base })}`
+    ? `file:${fileEntryKey({ path: entry.scope ? entry.path : splitLine(entry.path).path, base: entry.base, scope: entry.scope })}`
     : `attachment:${entry.attachment.id}:${entry.attachment.url}`);
 }
 
@@ -50,16 +52,18 @@ function createFileDock() {
           collapsed: false,
         };
       }),
-      select: (key, id) => update(key, dock => dock?.tabs.some(tab => tab.id === id) ? { ...dock, active: id, collapsed: false } : dock),
+      select: (key, id) => update(key, dock => dock && (id === projectFilesTab || id === projectGitTab || dock.tabs.some(tab => tab.id === id)) ? { ...dock, active: id, collapsed: false } : dock),
       close: (key, id) => update(key, dock => {
         const index = dock?.tabs.findIndex(tab => tab.id === id) ?? -1;
         if (!dock || index < 0) return dock;
         const tabs = dock.tabs.filter(tab => tab.id !== id);
-        if (tabs.length === 0) return undefined;
-        const active = dock.active === id ? (tabs[index] ?? tabs[index - 1]).id : dock.active;
+        const active = dock.active === id ? (tabs[index] ?? tabs[index - 1])?.id ?? projectFilesTab : dock.active;
         return { ...dock, tabs, active };
       }),
-      collapse: (key, collapsed) => update(key, dock => dock ? { ...dock, collapsed } : undefined),
+      collapse: (key, collapsed) => update(key, dock => {
+        if (!dock) return collapsed ? undefined : { tabs: [], active: projectFilesTab, collapsed };
+        return dock.collapsed === collapsed ? dock : { ...dock, collapsed };
+      }),
     };
   });
 }

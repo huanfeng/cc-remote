@@ -1,6 +1,6 @@
 // The main pane for a selected session: header, conversation or terminal, and
 // the composer. Shared by the desktop and mobile shells.
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useBackend } from '@/backend/backend';
 import type { Provider, Session } from '@/backend/types';
 import { selectionKey, useApp } from '@/store/app';
@@ -13,6 +13,7 @@ import { ConversationView } from '@/features/conversation/ConversationView';
 import { HistoryComposer, HistoryEditProvider } from '@/features/conversation/HistoryComposer';
 import { Composer } from '@/features/composer/Composer';
 import { FileDockLayout } from '@/features/files/FileDock';
+import type { FileReference } from '@/features/files/fileReference';
 import { NativeFooter } from './NativeFooter';
 import { TerminalView } from '@/features/terminal/TerminalView';
 
@@ -39,6 +40,8 @@ function ManagedWorkspace({ session, mobile }: { session: Session; mobile: boole
   const transcript = useTranscript(key, session.id);
   const preferTerminal = usePrefs(s => !!s.terminalView[session.id]);
   const terminalView = session.mode === 'terminal' && (session.provider === 'codex' || preferTerminal);
+  const referenceTarget = useRef<((reference: FileReference) => void) | null>(null);
+  const referenceFile = useCallback((reference: FileReference) => referenceTarget.current?.(reference), []);
   const running = session.status === 'running';
   const stop = useCallback(() => { void backend.stop(session.id); }, [backend, session.id]);
   useUnclaimedEscape(running && !terminalView ? stop : undefined);
@@ -46,10 +49,10 @@ function ManagedWorkspace({ session, mobile }: { session: Session; mobile: boole
   return (
     <HistoryEditProvider>
       <div className="flex h-full min-h-0 flex-col">
-        <SessionHeader session={session} mobile={mobile} terminalView={terminalView} />
-        <FileDockLayout dockKey={session.id} mobile={mobile} footer={!terminalView && (
-          <HistoryComposer session={session} mobile={mobile}>
-            <Composer session={session} transcript={transcript} mobile={mobile} />
+        <SessionHeader session={session} dockKey={session.id} mobile={mobile} terminalView={terminalView} />
+        <FileDockLayout dockKey={session.id} projectCwd={session.cwd} mobile={mobile} onReference={terminalView ? undefined : referenceFile} footer={!terminalView && (
+          <HistoryComposer session={session} mobile={mobile} referenceTarget={referenceTarget}>
+            <Composer session={session} transcript={transcript} mobile={mobile} referenceTarget={referenceTarget} />
           </HistoryComposer>
         )}>
           {terminalView ? (
@@ -70,7 +73,7 @@ function NativeWorkspace({ id, provider, mobile }: { id: string; provider: Provi
   return (
     <HistoryEditProvider>
       <div className="flex h-full min-h-0 flex-col">
-        <SessionHeader session={session} mobile={mobile} native />
+        <SessionHeader session={session} dockKey={key} mobile={mobile} native />
         <FileDockLayout dockKey={key} mobile={mobile} footer={(
           <HistoryComposer session={session} native={provider} mobile={mobile}>
             <NativeFooter id={id} provider={provider} cwd={session.cwd} profileId={session.profileId} loaded={!!transcript.session} />

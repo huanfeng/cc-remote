@@ -13,6 +13,7 @@ import { NewSessionDialog } from './NewSessionDialog';
 import { DeleteSessionSurface } from './DeleteSessionDialog';
 import { AttachDialog } from './AttachDialog';
 import { FileSurface } from './FileSurface';
+import { QuickOpenProjectFile } from '@/features/files/QuickOpenProjectFile';
 import { RunningTerminals } from '@/features/terminal/RunningTerminals';
 import { useNotifications } from './notifications';
 
@@ -20,7 +21,7 @@ const EXIT_MS = 220;
 
 const surfaceKey = (s: NonNullable<Surface>) => {
   switch (s.type) {
-    case 'session-details': case 'delete-session': case 'tasks': case 'attach': return `${s.type}:${s.id}`;
+    case 'session-details': case 'delete-session': case 'tasks': case 'attach': case 'project-file-search': return `${s.type}:${s.id}`;
     case 'session-search': return `session-search:${s.native ?? ''}:${s.id}`;
     // Same key for another file of the session: FileViewer keeps its back stack.
     case 'file': return `file:${s.sessionId}`;
@@ -60,6 +61,7 @@ export function Surfaces() {
     case 'session-details': return <SessionDetails key={key} {...common} id={current.id} />;
     case 'tasks': return <TaskPanel key={key} {...common} id={current.id} />;
     case 'file': return <FileSurface key={key} {...common} sessionId={current.sessionId} path={current.path} base={current.base} />;
+    case 'project-file-search': return <QuickOpenProjectFile key={key} {...common} id={current.id} />;
     case 'palette': return <CommandPalette key={key} {...common} />;
     case 'session-search': return <CommandPalette key={key} {...common} sessionId={current.id} native={current.native} />;
     case 'attach': return <AttachDialog key={key} {...common} id={current.id} />;

@@ -11,12 +11,13 @@ import type {
 import { BackendError } from '../errors.ts';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from '../supplierConfig.ts';
 import type {
-  Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
+  Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
-  ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
+  ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
   UsageReply, UsageMonitor, MonitorHistory,
   MessageSearchQuery, MessageSearchPage, MessageSearchHit, MessageSearchContext,
+  ServerUpdateSnapshot, UpdateComponentId,
 } from '../types.ts';
 import { HttpClient, defined, providerQuery, withQuery, type Lang } from './client.ts';
 import { poll, type Poller } from './poll.ts';
@@ -45,6 +46,7 @@ export interface HttpBackendOptions {
 const enc = encodeURIComponent;
 const EMPTY: PendingRequest[] = [];
 const CODEX_ACCOUNTS = '/api/profiles/codex-accounts';
+const COMPONENT_UPDATES = '/api/component-updates';
 
 type Native = Provider | undefined;
 
@@ -53,6 +55,8 @@ export class HttpBackend implements Backend {
   private readonly client: HttpClient;
   private readonly o: HttpBackendOptions;
   private readonly intervals: { sessions: number; transcript: number; usage: number; projectShells: number };
+  private componentUpdateWatchers = new Set<Unsubscribe>();
+  private componentUpdateRevision = 0;
   private disposed = false;
   private infoValue?: HostInfo;
   private infoLoad?: Promise<HostInfo>;
@@ -90,6 +94,7 @@ export class HttpBackend implements Backend {
     for (const p of this.usagePollers) p.stop();
     this.usagePollers.clear();
     for (const stop of this.codexLoginWatchers) stop();
+    for (const stop of this.componentUpdateWatchers) stop();
     for (const stop of this.projectShellWatchers.keys()) stop();
     for (const s of this.streams) s.close();
     this.streams.clear();
@@ -169,6 +174,43 @@ export class HttpBackend implements Backend {
     const info = await this.get<HostInfo>('/api/info');
     this.infoValue = info;
     return info;
+  }
+
+  readonly componentUpdates: NonNullable<Backend['componentUpdates']> = {
+    watch: (onChange, onError) => {
+      if (this.disposed) return () => {};
+      const controller = new AbortController();
+      const watcher = poll(async () => {
+        const revision = this.componentUpdateRevision;
+        try {
+          const snapshot = await this.get<ServerUpdateSnapshot>(COMPONENT_UPDATES, controller.signal);
+          if (!controller.signal.aborted && revision === this.componentUpdateRevision)
+            onChange(Array.isArray(snapshot?.components) && Array.isArray(snapshot?.history) ? snapshot : null);
+        } catch (e) {
+          if (controller.signal.aborted || revision !== this.componentUpdateRevision) return;
+          if (e instanceof SyntaxError || e instanceof BackendError && [404, 405, 501].includes(e.status)) onChange(null);
+          else onError(e);
+        }
+      }, this.intervals.sessions, { pauseHidden: true });
+      const stop = () => {
+        controller.abort();
+        watcher.stop();
+        this.componentUpdateWatchers.delete(stop);
+      };
+      this.componentUpdateWatchers.add(stop);
+      return stop;
+    },
+    check: id => this.changeComponentUpdate(id, 'check'),
+    install: (id, version) => this.changeComponentUpdate(id, 'install', defined({ version })),
+  };
+
+  private async changeComponentUpdate(id: UpdateComponentId, action: 'check' | 'install', body?: { version?: string }) {
+    this.componentUpdateRevision++;
+    try {
+      return await this.call<ServerUpdateSnapshot>('POST', `${COMPONENT_UPDATES}/${enc(id)}/${action}`, body);
+    } finally {
+      this.componentUpdateRevision++;
+    }
   }
 
   // ---------- sessions ----------
@@ -491,14 +533,32 @@ export class HttpBackend implements Backend {
   }
   stats(id: string) { return this.get<SessionStats>(`${this.session(id)}/stats`); }
 
-  private fileQuery(path: string, base?: string[]) {
+  projectFiles(id: string, path: string, signal?: AbortSignal) {
+    const query = new URLSearchParams({ path });
+    return this.get<ProjectFileListing>(`${this.session(id)}/project-files?${query}`, signal);
+  }
+
+  searchProjectFiles(id: string, q: string, signal?: AbortSignal) {
+    return this.get<ProjectFileListing>(`${this.session(id)}/project-files/search?${new URLSearchParams({ q })}`, signal);
+  }
+
+  projectGitChanges(id: string, signal?: AbortSignal) {
+    return this.get<ProjectGitChanges>(`${this.session(id)}/project-git`, signal);
+  }
+
+  projectGitDiff(id: string, path: string, stage: ProjectGitStage, signal?: AbortSignal) {
+    return this.get<ProjectGitDiff>(`${this.session(id)}/project-git/diff?${new URLSearchParams({ path, stage })}`, signal);
+  }
+
+  private fileQuery(path: string, base?: string[], scope?: FileScope) {
     const q = new URLSearchParams({ path });
-    for (const b of base ?? []) q.append('base', b);
+    if (scope) q.set('scope', scope);
+    else for (const b of base ?? []) q.append('base', b);
     return q.toString();
   }
 
-  async readFile(id: string, path: string, base?: string[]): Promise<FileContent> {
-    const response = await this.client.raw(`${this.session(id)}/file?${this.fileQuery(path, base)}`, { okStatuses: [413] });
+  async readFile(id: string, path: string, base?: string[], scope?: FileScope): Promise<FileContent> {
+    const response = await this.client.raw(`${this.session(id)}/file?${this.fileQuery(path, base, scope)}`, { okStatuses: [413] });
     if (response.status === 413) return { path, mime: '', size: 0, tooLarge: true };
     let shown = path;
     try { shown = decodeURIComponent(response.headers.get('X-CC-Path') || '') || path; } catch { /* keep the requested path */ }
@@ -514,8 +574,8 @@ export class HttpBackend implements Backend {
     return { path: shown, mime, size: blob.size, text: new TextDecoder().decode(bytes) };
   }
 
-  async fileLink(id: string, path: string, base?: string[]) {
-    const r = await this.call<{ url: string; name: string; size: number }>('POST', `${this.session(id)}/file/link?${this.fileQuery(path, base)}`);
+  async fileLink(id: string, path: string, base?: string[], scope?: FileScope) {
+    const r = await this.call<{ url: string; name: string; size: number }>('POST', `${this.session(id)}/file/link?${this.fileQuery(path, base, scope)}`);
     // The ticket in the path is the credential: the browser downloads it without the token.
     return { ...r, url: this.client.url(r.url) };
   }

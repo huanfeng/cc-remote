@@ -27,7 +27,7 @@ const SECTIONS: { key: SettingsSection; icon: LucideIcon; title: () => string; h
   { key: 'suppliers', icon: KeyRound, title: () => t('Suppliers', '供应商'), hint: () => t('Official OAuth, API connections and imports', '官方 OAuth、API 连接与导入配置') },
   { key: 'claude', icon: SlidersHorizontal, title: () => 'Claude Code', hint: () => t('Defaults, native settings and status line', '会话默认、原生配置与状态栏') },
   { key: 'codex', icon: SlidersHorizontal, title: () => 'Codex', hint: () => t('Supplier, model, effort and permissions', '供应商、模型、思考强度与权限') },
-  { key: 'host', icon: Monitor, title: () => t('Server', '服务器'), hint: () => t('Versions, name, colour and icon', '版本、名称、颜色与图标') },
+  { key: 'host', icon: Monitor, title: () => t('Server', '服务器'), hint: () => t('Component updates and server identity', '组件更新与服务器标识') },
   { key: 'browser', icon: Globe2, title: () => t('Appearance & interaction', '外观与交互'), hint: () => t('Language, theme, send key, notifications', '语言、主题、发送键、通知') },
   ...(DESKTOP ? [{ key: 'computer' as const, icon: HardDrive, title: () => t('This computer', '本机服务'), hint: () => t('The cc-remote service here', '本机的 cc-remote 服务') }] : []),
   ...(DESKTOP ? [{ key: 'about' as const, icon: Info, title: () => t('About & updates', '关于与更新'), hint: () => t('Desktop version, updates and release notes', '桌面端版本、更新与发布说明') }] : []),

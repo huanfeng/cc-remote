@@ -21,6 +21,8 @@ import { providerName, providerOf } from '@/domain/providers';
 import { contextReading } from '@/domain/contextReading';
 import { mentionAt } from '@/domain/mentions';
 import { isHiddenUser } from '@/features/conversation/fold';
+import { useHistoryEdit } from '@/features/conversation/HistoryComposer';
+import { appendFileReference, useFileReferenceTarget, type FileReferenceTarget } from '@/features/files/fileReference';
 import { PermissionPicker } from '@/features/pickers/Pickers';
 import { QuickSwitch, patchOverride, useModelSwitchConfirm, type QuickKind } from '@/features/pickers/QuickSwitch';
 import {
@@ -35,6 +37,7 @@ export interface ComposerProps {
   session: Session;
   transcript: TranscriptState;
   mobile: boolean;
+  referenceTarget?: FileReferenceTarget;
 }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -45,7 +48,7 @@ interface HistoryRecall {
   text: string;
 }
 
-export function Composer({ session, transcript, mobile }: ComposerProps) {
+export function Composer({ session, transcript, mobile, referenceTarget }: ComposerProps) {
   const backend = useBackend();
   const info = useApp(s => s.info);
   const openSurface = useApp(s => s.open);
@@ -53,6 +56,7 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
   const id = session.id;
   const provider = providerOf(session);
   const draft = useDraft(id);
+  const historyEdit = useHistoryEdit();
   const { setText, setAttachments, clear } = useDrafts.getState();
   // Recalling a message must never overwrite the persisted draft.
   const [recall, setRecall] = useState<HistoryRecall>();
@@ -152,6 +156,12 @@ export function Composer({ session, transcript, mobile }: ComposerProps) {
       el.setSelectionRange(at, at);
     });
   }
+
+  useFileReferenceTarget(historyEdit?.draft ? undefined : referenceTarget, reference => {
+    const next = appendFileReference(recall ? text : useDrafts.getState().drafts[id]?.text ?? '', reference);
+    setDraftText(next);
+    focusAt(next.length);
+  });
 
   // ---------- auto-grow ----------
   useLayoutEffect(() => {

@@ -35,7 +35,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'project-shell-pane-layout' | 'message-search' | 'session-fork';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'project-shell-pane-layout' | 'message-search' | 'session-fork' | 'project-files' | 'project-file-search' | 'project-git';
 
 export interface MessageSearchQuery {
   q: string;
@@ -87,6 +87,34 @@ export interface HostInfo {
   color?: string;
   icon?: string;
   features?: HostFeature[];
+}
+
+export type UpdateComponentId = 'core' | 'claude' | 'codex';
+
+export interface ServerComponentUpdate {
+  id: UpdateComponentId;
+  phase: 'idle' | 'checking' | 'available' | 'current' | 'ready' | 'installing' | 'waiting' | 'updated' | 'error' | 'unavailable';
+  currentVersion?: string;
+  version?: string;
+  notes?: string;
+  notesUrl?: string;
+  message?: string;
+}
+
+export interface ServerUpdateHistoryEntry {
+  id: string;
+  component: UpdateComponentId;
+  from?: string;
+  version?: string;
+  status: 'updated' | 'current' | 'error';
+  at: string;
+  message?: string;
+  notesUrl?: string;
+}
+
+export interface ServerUpdateSnapshot {
+  components: ServerComponentUpdate[];
+  history: ServerUpdateHistoryEntry[];
 }
 
 export interface LiveStatus {
@@ -472,6 +500,33 @@ export interface Transcript {
   session: Session;
   events: SessionEvent[];
   hasMore: boolean;
+}
+
+export type FileScope = 'project';
+
+export interface ProjectFileListing {
+  entries: { name: string; path: string; kind: 'directory' | 'file' }[];
+  truncated?: boolean;
+}
+
+export type ProjectGitStage = 'working' | 'staged' | 'untracked';
+
+export interface ProjectGitChange {
+  path: string;
+  originalPath?: string;
+  stage: ProjectGitStage;
+  status: string;
+}
+
+export interface ProjectGitChanges {
+  repository: boolean;
+  entries: ProjectGitChange[];
+  truncated?: boolean;
+}
+
+export interface ProjectGitDiff {
+  text: string;
+  truncated?: boolean;
 }
 
 export interface FileContent {

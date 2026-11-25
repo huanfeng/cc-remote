@@ -6,7 +6,7 @@ import { nanoid } from 'nanoid';
 import { BackendError, type Backend, type ClaudeSettings, type StatuslineOptions, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
   Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
-  ProjectShell, ProjectShellStream,
+  ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellStream,
   Session, SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
   MessageSearchQuery, MessageSearchHit,
 } from '../types';
@@ -446,6 +446,48 @@ export class MockBackend implements Backend {
       sessionId: id, turns: 14, results: 14, costUSD: s.live?.costUSD ?? 0, costKnown: true, inputTokens: 412_000, outputTokens: 38_100,
       cacheReadTokens: 1_820_000, cacheCreationTokens: 96_000, durationMs: s.live?.durationMs ?? 0, toolCalls: 63, errors: 2, lastActivityAt: s.updatedAt,
     };
+  }
+
+  async projectFiles(id: string, path: string, signal?: AbortSignal): Promise<ProjectFileListing> {
+    this.session(id);
+    await latency();
+    signal?.throwIfAborted();
+    if (!path) return { entries: [
+      { name: 'docs', path: 'docs', kind: 'directory' },
+      { name: 'src', path: 'src', kind: 'directory' },
+      { name: 'README.md', path: 'README.md', kind: 'file' },
+    ] };
+    const name = path === 'docs' ? 'guide.md' : 'index.ts';
+    return { entries: [{ name, path: `${path}/${name}`, kind: 'file' }] };
+  }
+
+  async searchProjectFiles(id: string, query: string, signal?: AbortSignal): Promise<ProjectFileListing> {
+    this.session(id);
+    await latency();
+    signal?.throwIfAborted();
+    const q = query.trim().toLowerCase();
+    return { entries: ['README.md', 'docs/guide.md', 'src/index.ts'].filter(path => path.toLowerCase().includes(q))
+      .map(path => ({ path, name: path.split('/').at(-1)!, kind: 'file' })) };
+  }
+
+  async projectGitChanges(id: string, signal?: AbortSignal): Promise<ProjectGitChanges> {
+    this.session(id);
+    await latency();
+    signal?.throwIfAborted();
+    return { repository: true, entries: [
+      { path: 'src/index.ts', stage: 'working', status: 'modified' },
+      { path: 'README.md', stage: 'staged', status: 'modified' },
+      { path: 'docs/guide.md', stage: 'untracked', status: 'untracked' },
+    ] };
+  }
+
+  async projectGitDiff(id: string, path: string, stage: ProjectGitStage, signal?: AbortSignal): Promise<ProjectGitDiff> {
+    this.session(id);
+    await latency();
+    signal?.throwIfAborted();
+    const body = stage === 'untracked' ? '@@ -0,0 +1,2 @@\n+# Project guide\n+Setup instructions' : '@@ -1,2 +1,2 @@\n-old value\n+new value\n unchanged';
+    const from = stage === 'untracked' ? '/dev/null' : `a/${path}`;
+    return { text: `diff --git a/${path} b/${path}\n--- ${from}\n+++ b/${path}\n${body}\n` };
   }
 
   async readFile(_id: string, path: string): Promise<FileContent> {

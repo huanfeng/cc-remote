@@ -3,9 +3,9 @@
 // source, code highlighted with line numbers and the `:line` marked, anything
 // else as a download. Links inside a document open further files on a back
 // stack; a new `path` from the surface store is pushed onto it as well.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { ArrowLeft, Download, FileCode2, FileImage, FileText, FileWarning, PanelRightOpen, X } from 'lucide-react';
+import { ArrowLeft, Download, FileCode2, FileImage, FileText, FileWarning, MessageSquarePlus, PanelRightOpen, X } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import type { FileContent } from '@/backend/types';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -22,7 +22,8 @@ import { ImageView } from './ImageView';
 import { PathMenu } from './PathMenu';
 import { ViewerIconButton } from './ViewerIconButton';
 import { fileDockStore, fileEntryKey, type FileEntry } from './fileDockState';
-import { MAX_RENDER_BYTES, dirOf, formatBytes, shikiLang, splitLine, svgDataUrl, viewKind } from './fileView';
+import { fileLineReference, type FileReference } from './fileReference';
+import { MAX_RENDER_BYTES, dirOf, formatBytes, resolveProjectPath, shikiLang, splitLine, svgDataUrl, viewKind } from './fileView';
 
 export function FileViewer({ sessionId, path, base, onClose }: { sessionId: string; path: string; base?: string[]; onClose: () => void }) {
   const backend = useBackend();
@@ -71,12 +72,13 @@ export function FileViewer({ sessionId, path, base, onClose }: { sessionId: stri
 
 type Loaded = { file: FileContent; src?: string };
 
-export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOpen, onDock }: {
+export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOpen, onDock, onReference }: {
   sessionId: string; entry: FileEntry; mobile: boolean; initialSource?: boolean;
   onBack?: () => void; onOpen: (entry: FileEntry) => void; onDock?: (entry: FileEntry, source: boolean) => void;
+  onReference?: (reference: FileReference) => void;
 }) {
   const backend = useBackend();
-  const { path: requested, line } = useMemo(() => splitLine(entry.path), [entry.path]);
+  const { path: requested, line } = entry.scope === 'project' ? entry : splitLine(entry.path);
   const [loaded, setLoaded] = useState<Loaded>();
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -90,7 +92,7 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
     const release = (url?: string) => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
     setLoaded(undefined);
     setError('');
-    backend.readFile(sessionId, requested, entry.base).then(async file => {
+    backend.readFile(sessionId, requested, entry.base, entry.scope).then(async file => {
       try {
         const src = viewKind(file) === 'image' ? await imageSource(file) : undefined;
         if (live) {
@@ -105,10 +107,11 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
     }, err => { if (live) setError(err instanceof Error ? err.message : String(err)); });
     return () => { live = false; release(held); };
   }, [backend, sessionId, requested, entry, attempt]);
-  const images = useImageResolver(sessionId);
+  const images = useImageResolver(sessionId, entry.scope === 'project' ? entry.path : undefined);
 
   const file = loaded?.file;
   const shownPath = file?.path || requested;
+  const referencePath = entry.scope === 'project' ? requested : shownPath;
   const name = basename(shownPath);
   const kind = file ? viewKind(file) : undefined;
   const large = !!file?.text && Math.max(file.size, file.text.length) > MAX_RENDER_BYTES;
@@ -121,20 +124,25 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
     if (file.url || file.text !== undefined) { save(file, name); return; }
     setSaving(true);
     try {
-      const link = await backend.fileLink(sessionId, requested, entry.base);
+      const link = await backend.fileLink(sessionId, requested, entry.base, entry.scope);
       saveUrl(link.url, link.name || name);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
-  }, [file, saving, name, backend, sessionId, requested, entry.base]);
+  }, [file, saving, name, backend, sessionId, requested, entry.base, entry.scope]);
 
   // Links in a document resolve against its directory first, then the directories it was opened with.
   const openLink = useCallback((ref: FileRef, bases: string[]) => {
+    if (entry.scope === 'project') {
+      const path = resolveProjectPath(entry.path, ref.path);
+      if (path) onOpen({ path, line: ref.line, scope: 'project' });
+      return;
+    }
     const dirs = [...new Set([dirname(shownPath), ...bases, ...(entry.base ?? [])].filter(Boolean))];
     onOpen({ path: ref.line ? `${ref.path}:${ref.line}` : ref.path, base: dirs });
-  }, [shownPath, entry.base, onOpen]);
+  }, [shownPath, entry, onOpen]);
 
   let body: ReactNode;
   if (error) {
@@ -172,7 +180,8 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
       </div>
     );
   } else {
-    body = <CodeView code={file.text ?? ''} lang={large ? '' : kind === 'markdown' ? 'markdown' : shikiLang(shownPath)} line={line} />;
+    body = <CodeView code={file.text ?? ''} lang={large ? '' : kind === 'markdown' ? 'markdown' : shikiLang(shownPath)} line={line}
+      onReference={onReference ? (lines, first, last) => onReference(fileLineReference(referencePath, lines, first, last)) : undefined} />;
   }
 
   return (
@@ -205,6 +214,8 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
           </div>
         )}
         <PathMenu path={shownPath} />
+        {onReference && file && <ViewerIconButton label={t('Reference file path in chat', '引用文件路径到对话')} className={iconClass}
+          onClick={() => onReference({ path: referencePath })}><MessageSquarePlus aria-hidden /></ViewerIconButton>}
         {file && <ViewerIconButton label={t('Download', '下载')} className={iconClass} disabled={saving} onClick={() => void download()}>{saving ? <Spinner /> : <Download />}</ViewerIconButton>}
         {onDock && <>
           <ViewerIconButton label={t('Move to the file panel', '移到文件栏')} className={iconClass} onClick={() => {

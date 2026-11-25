@@ -121,6 +121,9 @@ func (s *Server) terminalLocked(x store.Session) (*terminalSession, error) {
 	if s.closing {
 		return nil, i18n.Errorf("The host is shutting down", "宿主正在关闭")
 	}
+	if s.updatingProvider == "claude" {
+		return nil, i18n.Errorf("Claude Code is updating. Try again in a moment.", "Claude Code 正在更新，请稍后重试。")
+	}
 	if _, err := validateCwd(i18n.Current(), x.Cwd); err != nil {
 		return nil, err
 	}

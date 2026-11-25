@@ -3,7 +3,7 @@ import { hasFeature, useApp } from '@/store/app';
 import { usePrefs } from '@/lib/prefs';
 import { dismissOverlayShortcut, overlayHistory } from '@/lib/overlayHistory';
 
-/** Ctrl/⌘+K palette, Ctrl/⌘+N new session, Ctrl/⌘+B toggle sidebar, Ctrl/⌘+, settings. */
+/** Application shortcuts shared by the browser and desktop renderer. */
 export function useGlobalShortcuts() {
   useEffect(() => {
     overlayHistory();
@@ -13,6 +13,14 @@ export function useGlobalShortcuts() {
       const k = e.key.toLowerCase();
       const app = useApp.getState();
       if (k === 'k') { e.preventDefault(); app.open(app.surface?.type === 'palette' ? null : { type: 'palette' }); }
+      else if (k === 'p' && !e.shiftKey && !e.defaultPrevented && hasFeature(app.info, 'project-file-search') && app.selection?.kind === 'session' &&
+        ((!app.surface && !overlayHistory().hasOpen) || app.surface?.type === 'project-file-search')) {
+        const id = app.selection.id;
+        if (!app.sessions.some(session => session.id === id && session.cwd)) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (!app.surface) app.open({ type: 'project-file-search', id });
+      }
       else if (k === 'f' && !e.shiftKey && app.selection && hasFeature(app.info, 'message-search') &&
         (!app.surface || app.surface.type === 'session-search') && !(e.target instanceof Element && e.target.closest('[data-terminal]'))) {
         e.preventDefault();

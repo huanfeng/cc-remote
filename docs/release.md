@@ -4,6 +4,15 @@
 
 ## 发布新版本
 
+### v0.45.0 更新内容
+
+- 会话顶栏可以直接打开或关闭文件侧栏。在侧栏浏览服务器项目文件，或用 `Ctrl+P` / `⌘P` 按文件名和相对路径快速打开。搜索跳过有缓存标记的构建目录。
+- 文件侧栏显示 Git 的已暂存、未暂存和未跟踪改动，可以查看对应的 diff。
+- 从文件预览引用路径或选中的代码行，也可以从 diff 引用新增行和删除前的原始行。引用会插入当前对话草稿。
+- Windows 桌面端的「关于与更新」按组件显示版本和更新日志。目标服务器可独立检查和更新 CC Remote Core、Claude Code 和 Codex，并查看更新结果。更新 Core 时桌面客户端保持打开。
+
+使用新版桌面端连接旧版 Core 时，项目文件搜索和 Git 改动入口需要升级目标服务器上的 Core 后才会出现。
+
 ### v0.44.0 更新内容
 
 - 会话图片和文件可从预览对话框移到多标签文件栏，查看内容时可以继续撰写回复。
@@ -168,13 +177,14 @@ git push origin v0.2.0
 - 版本号必须是语义化版本：`vX.Y.Z` 或预发布 `vX.Y.Z-rc.1`。带 `-` 的标签自动标记为 prerelease；prerelease 不会被「最新版本」安装/更新选中，需要显式指定 `--version`。
 - 也可以在 Actions 页手动运行 **Release** 工作流（workflow_dispatch），输入 `v0.2.0`；只允许在标签或 `main` 上运行，标签不存在时会在所选提交上创建。
 - 同名 Release 已存在时工作流**直接失败**，不会覆盖已发布的附件（安装脚本据此校验）。确需重传附件时，手动运行并勾选 `replace`。
+- 发布前在本文添加对应的 `### v版本号 更新内容` 小节。工作流把该小节用于 GitHub Release 和桌面更新日志。没有对应小节时，GitHub 自动生成发行说明，桌面端提供发行页面链接。
 
 ## 工作流
 
 | 工作流 | 触发 | 内容 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | push / PR 到 `main` | ubuntu + windows：在 `web/` 安装锁定依赖、类型检查、构建前端、`go vet ./...`、`go test -race ./...`；另在 ubuntu 上 `CGO_ENABLED=0` 交叉编译 darwin/arm64；`govulncheck ./...` 发现可达漏洞（含标准库）即失败 |
-| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 6 个平台后台、独立网页、Windows x64 内置托盘的 Tauri 客户端 → 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ `gh release create --generate-notes` |
+| `.github/workflows/release.yml` | 推送 `v*` 标签、手动（仅标签或 `main`） | 6 个平台后台、独立网页、Windows x64 内置托盘的 Tauri 客户端 → 打包 → `checksums.txt` → 构建来源证明（attestation，仅公开仓库）→ 发布 GitHub Release |
 | `.github/workflows/native-windows.yml` | 由 CI / Release 调用 | 统一原生版本、Rust 测试、Tauri NSIS 安装包、包含后台和桌面客户端的便携 ZIP |
 
 Go 版本取自 `go.mod`：`go` 指令是最低语言版本，`toolchain` 指令固定实际编译用的补丁版本（含标准库安全修复）；`actions/setup-go` 使用 `go-version-file: go.mod` + `check-latest: true` 读取它。升级工具链时修改 `toolchain` 一行即可。
@@ -335,6 +345,18 @@ curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.
 | `GITHUB_TOKEN` / `GH_TOKEN` | 未登录 gh 时使用的令牌 |
 | `CC_REMOTE_REPO` | 覆盖仓库，默认 `huanfeng/cc-remote` |
 | `CC_REMOTE_API_URL` | 覆盖 API 地址（脚本测试/GHE 用），默认 `https://api.github.com` |
+
+## 从界面更新组件
+
+Windows 桌面端的「关于与更新」显示客户端和本机 Core 的版本及更新日志。更新桌面客户端时会重新打开客户端。更新本机 Core 时，客户端保持打开。
+
+连接目标服务器后，打开「设置 → 服务器 → 组件更新」。CC Remote Core、Claude Code 和 Codex 可以分别检查并更新。Core 会在会话空闲后重启，桌面客户端保持打开。宿主会保存最近 30 次更新结果和可用的发布说明链接。
+
+- **CC Remote Core** 需要通过 CC Remote 注册为服务。安装前会校验发布包的 SHA-256。
+- **Claude Code 和 Codex** 支持官方独立安装和可识别的 npm 全局安装。独立安装使用各自的更新器。npm 安装使用检查得到的具体版本。通过系统包管理器或自定义路径安装时，仍由原安装方式处理。
+- 更新 Claude Code 或 Codex 会等该组件的活动轮次和打开的终端会话结束。更新完成后，新轮次使用新版 CLI。
+
+旧版宿主需要先使用安装脚本或命令行更新一次，之后才能在此界面检查和更新组件。
 
 ## 用 cc-remote 自身更新
 

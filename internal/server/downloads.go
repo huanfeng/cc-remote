@@ -28,6 +28,7 @@ const (
 
 type downloadTicket struct {
 	session, path string
+	project       bool // path is relative to the project when true
 	expires       time.Time
 	deadline      time.Time // zero: none (the terminal's stream tickets)
 	active        int       // downloads running on the ticket
@@ -117,7 +118,11 @@ func (s *Server) fileLink(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Close()
 	now := time.Now()
-	ticket := s.downloads.add(downloadTicket{session: r.PathValue("id"), path: path, expires: now.Add(downloadTTL), deadline: now.Add(downloadMaxLife)})
+	target := downloadTicket{session: r.PathValue("id"), path: path, expires: now.Add(downloadTTL), deadline: now.Add(downloadMaxLife)}
+	if r.URL.Query().Get("scope") == "project" {
+		target.project, target.path = true, r.URL.Query().Get("path")
+	}
+	ticket := s.downloads.add(target)
 	respond(w, 200, map[string]any{"url": "/api/download/" + ticket, "name": filepath.Base(path), "size": info.Size()})
 }
 
@@ -136,7 +141,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 		return
 	}
-	f, path, info, ok := s.sessionFile(w, r, sess, t.path, nil)
+	f, path, info, ok := s.openScopedFile(w, r, sess, t.path, nil, t.project)
 	if !ok {
 		return
 	}

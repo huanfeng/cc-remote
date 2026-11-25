@@ -43,6 +43,8 @@ pub struct View {
     phase: Phase,
     version: Option<String>,
     error: Option<String>,
+    notes: Option<String>,
+    notes_url: Option<String>,
 }
 
 #[derive(Default)]
@@ -207,6 +209,22 @@ struct Candidate {
     version: String,
     comparable: bool,
     available: bool,
+    notes: Option<String>,
+    notes_url: Option<String>,
+}
+
+fn legacy_notes_url(version: &str) -> Option<String> {
+    let repository =
+        std::env::var("CC_REMOTE_REPO").unwrap_or_else(|_| "huanfeng/cc-remote".into());
+    let (owner, repo) = repository.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() || repo.contains('/') {
+        return None;
+    }
+    let mut url = reqwest::Url::parse("https://github.com").ok()?;
+    url.path_segments_mut()
+        .ok()?
+        .extend([owner, repo, "releases", "tag", version]);
+    Some(url.to_string())
 }
 
 // Releases before --check --json used these fixed English lines. Keep this
@@ -229,6 +247,8 @@ fn legacy_candidate(output: &str) -> Option<Candidate> {
         version: version.into(),
         comparable,
         available,
+        notes: None,
+        notes_url: legacy_notes_url(version),
     })
 }
 
@@ -236,7 +256,12 @@ async fn candidate(exe: &PathBuf, lang: &str) -> Result<Candidate, String> {
     let timeout = Duration::from_secs(45);
     let out = service::cc_remote(exe, &["update", "--check", "--json"], lang, timeout).await?;
     if out.code == Some(0) {
-        return serde_json::from_str(&out.stdout).map_err(|error| error.to_string());
+        let mut candidate: Candidate =
+            serde_json::from_str(&out.stdout).map_err(|error| error.to_string())?;
+        if candidate.notes_url.is_none() {
+            candidate.notes_url = legacy_notes_url(&candidate.version);
+        }
+        return Ok(candidate);
     }
     if !out
         .stderr
@@ -353,6 +378,8 @@ pub async fn core_update_status(app: AppHandle, lang: String) -> View {
                     view.phase = Phase::Idle;
                     view.version = None;
                     view.error = None;
+                    view.notes = None;
+                    view.notes_url = None;
                 }
                 local.record(view);
             })
@@ -375,6 +402,8 @@ pub async fn core_update_check(app: AppHandle, lang: String) -> View {
         view.phase = Phase::Checking;
         view.version = None;
         view.error = None;
+        view.notes = None;
+        view.notes_url = None;
     });
     let (exe, local) = match discover(&lang).await {
         Ok(Discovery::Managed(exe, local)) => (exe, local),
@@ -385,6 +414,8 @@ pub async fn core_update_check(app: AppHandle, lang: String) -> View {
         Ok(result) if result.comparable => change(&app, |view| {
             local.record(view);
             view.installed_version = Some(result.current_version);
+            view.notes = result.notes;
+            view.notes_url = result.notes_url;
             if result.available {
                 view.phase = Phase::Available;
                 view.version = Some(result.version);
@@ -483,6 +514,33 @@ mod tests {
         assert_eq!(result.version, "v0.43.0");
         assert!(result.comparable && result.available);
         assert!(legacy_candidate("release lookup failed").is_none());
+    }
+
+    #[test]
+    fn candidate_notes_are_optional_in_core_checks() {
+        let mut result = serde_json::json!({
+            "currentVersion": "0.43.0",
+            "version": "v0.44.0",
+            "comparable": true,
+            "available": true
+        });
+        let old: Candidate = serde_json::from_value(result.clone()).unwrap();
+        assert!(old.notes.is_none() && old.notes_url.is_none());
+
+        result["notes"] = "- 更新内容".into();
+        result["notesUrl"] = "https://github.com/huanfeng/cc-remote/releases/tag/v0.44.0".into();
+        let current: Candidate = serde_json::from_value(result).unwrap();
+        let view = serde_json::to_value(View {
+            notes: current.notes,
+            notes_url: current.notes_url,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(view["notes"], "- 更新内容");
+        assert_eq!(
+            view["notesUrl"],
+            "https://github.com/huanfeng/cc-remote/releases/tag/v0.44.0"
+        );
     }
 
     #[test]

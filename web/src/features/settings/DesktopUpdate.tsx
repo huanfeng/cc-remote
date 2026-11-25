@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { GroupCard, Row, SurfaceShell } from '@/features/dialogs/SurfaceShell';
+import { GroupCard, SurfaceShell } from '@/features/dialogs/SurfaceShell';
 import { ConfirmDialog } from '@/features/dialogs/common';
 import { t } from '@/lib/i18n';
 import { DESKTOP, DESKTOP_TAB } from '@/platform/desktop';
@@ -10,35 +10,10 @@ import {
 } from '@/platform/desktopUpdate';
 import { GroupTitle, HostGlyph } from './parts';
 import { useIsMobile } from '@/lib/hooks';
+import { ComponentUpdateRow, displayVersion, type ComponentUpdate } from './ComponentUpdateRow';
 
-interface ComponentUpdate {
-  id: string;
-  name: string;
-  current?: string | null;
-  message: string;
-  notes?: string | null;
-  busy: boolean;
-  checkLabel?: string;
-  check(): void;
-  install?: { label: string; run(): void };
-}
-
-function displayVersion(version: string): string {
-  return /^\d/.test(version) ? `v${version}` : version;
-}
-
-function ComponentUpdateRow({ component, installing }: { component: ComponentUpdate; installing: boolean }) {
-  return <Row label={component.name} stack description={component.current && <span className="select-text tabular-nums">{displayVersion(component.current)}</span>}>
-    <div className="space-y-2.5">
-      <p className="break-words text-ui-sm text-muted-foreground" role="status">{component.message}</p>
-      {component.notes && <p className="max-h-40 overflow-auto whitespace-pre-wrap text-ui-sm">{component.notes}</p>}
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" disabled={component.busy} onClick={component.check}>{component.checkLabel ?? t('Check for updates', '检查更新')}</Button>
-        {component.install && <Button size="sm" disabled={component.busy || installing} onClick={component.install.run}>{component.install.label}</Button>}
-      </div>
-    </div>
-  </Row>;
-}
+const releases = 'https://github.com/huanfeng/cc-remote/releases';
+const releaseUrl = (version?: string | null) => version ? `${releases}/tag/${encodeURIComponent(displayVersion(version))}` : releases;
 
 export function DesktopAboutContent() {
   const { status, connectionError } = useDesktopUpdate();
@@ -69,7 +44,7 @@ export function DesktopAboutContent() {
     installing: t('Downloading, verifying and installing Core…', '正在下载、校验并安装 Core…'),
     waiting: t('Installed. Core will restart when sessions are idle.', '已安装，Core 将在会话空闲后重启。'),
     restarting: t('Waiting for the updated Core service to come online…', '正在等待新版 Core 服务恢复连接…'),
-    updated: coreChanged ? t('The latest version is installed and takes effect when Core restarts.', '已安装最新版本，Core 重启后生效。')
+    updated: coreChanged ? t(`${installedCore} is installed and takes effect when Core restarts.`, `已安装 ${installedCore}，Core 重启后生效。`)
       : t('Local Core is up to date.', '本机 Core 已是最新版本。'),
     error: t('Could not update local Core.', '本机 Core 更新失败。'),
   };
@@ -77,14 +52,15 @@ export function DesktopAboutContent() {
   const components: ComponentUpdate[] = [
     {
       id: 'desktop', name: t('Desktop app and built-in tray', '桌面客户端与内置托盘'),
-      current: status?.currentVersion, notes: status?.notes, message: connectionError || status?.error || desktopMessage,
+      current: status?.currentVersion, notes: status?.notes, notesUrl: releaseUrl(status?.version || status?.currentVersion),
+      message: connectionError || status?.error || desktopMessage,
       busy: desktopInstalling || status?.phase === 'checking', check: () => { void checkDesktopUpdate(); },
       install: status?.version ? { label: t('Download and install', '下载并安装'), run: () => setConfirm(true) } : undefined,
     },
     {
       id: 'core', name: t('Local Core', '本机 Core'), current: core?.currentVersion ?? core?.installedVersion,
       message: coreConnectionError || core?.error || (core ? coreMessages[core.phase] : t('Detecting the local Core service…', '正在检测本机 Core 服务…')),
-      notes: coreChanged ? t(`Installed version ${installedCore}`, `已安装版本 ${installedCore}`) : undefined,
+      notes: core?.notes, notesUrl: core?.notesUrl,
       busy: (!core && !coreConnectionError) || coreInstalling || core?.phase === 'checking' || core?.phase === 'waiting' || core?.phase === 'restarting',
       checkLabel: detectCore ? t('Detect Core', '检测 Core') : undefined,
       check: () => { void (detectCore ? refreshCoreUpdate() : checkCoreUpdate()); },
@@ -94,7 +70,6 @@ export function DesktopAboutContent() {
     },
   ];
 
-  const release = status?.version ?? status?.currentVersion;
   return <div>
     <div className="mb-5 flex items-center gap-4">
       <HostGlyph icon="logo" color="#293c2e" className="size-14 rounded-xl" />
@@ -106,7 +81,6 @@ export function DesktopAboutContent() {
       {components.map(component => <ComponentUpdateRow key={component.id} component={component} installing={desktopInstalling || coreInstalling} />)}
     </GroupCard>
     <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-ui-sm">
-      <a className="text-primary underline underline-offset-4" href={release ? `https://github.com/huanfeng/cc-remote/releases/tag/v${encodeURIComponent(release)}` : 'https://github.com/huanfeng/cc-remote/releases'} target="_blank" rel="noreferrer">{status?.version ? t('New version release notes', '新版本发布说明') : t('Release notes', '版本发布说明')}</a>
       <a className="text-primary underline underline-offset-4" href="https://github.com/huanfeng/cc-remote" target="_blank" rel="noreferrer">{t('GitHub project', 'GitHub 项目')}</a>
     </div>
     <ConfirmDialog open={confirm} onOpenChange={setConfirm} title={t('Install desktop update?', '安装桌面端更新？')}

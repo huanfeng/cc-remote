@@ -139,6 +139,8 @@ type Server struct {
 	channels          map[string]*channelConnection
 	modelCache        modelsCache
 	statusCache       statusCache
+	updates           componentUpdates
+	updatingProvider  string // guarded by mu; blocks launches during a CLI installation
 	usageCache        usageCache
 	accountUsage      accountUsage
 	codexAccounts     codexAccountRegistry
@@ -157,6 +159,7 @@ func New(st *store.Store, cfg Config) *Server {
 		start = defaultProcessStarter(cfg)
 	}
 	s := &Server{switching: map[string]bool{}, store: st, cfg: cfg, runs: map[string]*execution{}, procs: map[string]*sessionRuntime{}, sent: sends{}, terminals: map[string]*terminalSession{}, startProcess: start, stopReaper: make(chan struct{}), listen: cfg.Listen, idleTimeout: processIdleTimeout, requests: map[string]*pending{}, channels: map[string]*channelConnection{}}
+	s.initComponentUpdates()
 	go s.reapIdle(s.stopReaper, time.Minute)
 	if cfg.DataDir != "" {
 		s.monitorDone = make(chan struct{})
@@ -196,6 +199,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/identity", s.identityAPI)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/status/summary", s.statusSummary)
+	mux.HandleFunc("GET /api/component-updates", s.componentUpdatesAPI)
+	mux.HandleFunc("POST /api/component-updates/{id}/check", s.checkComponentUpdateAPI)
+	mux.HandleFunc("POST /api/component-updates/{id}/install", s.installComponentUpdateAPI)
 	mux.HandleFunc("GET /api/usage", s.usage)
 	mux.HandleFunc("GET /api/profiles/usage", s.profileUsageAPI)
 	mux.HandleFunc("GET /api/usage/history", s.usageHistory)
@@ -245,6 +251,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{uploadID}", s.uploadGet)
 	mux.HandleFunc("GET /api/sessions/{id}/file", s.file)
 	mux.HandleFunc("POST /api/sessions/{id}/file/link", s.fileLink)
+	mux.HandleFunc("GET /api/sessions/{id}/project-files", s.projectFiles)
+	mux.HandleFunc("GET /api/sessions/{id}/project-files/search", s.projectFileSearch)
+	mux.HandleFunc("GET /api/sessions/{id}/project-git", s.projectGitChanges)
+	mux.HandleFunc("GET /api/sessions/{id}/project-git/diff", s.projectGitDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/mentions", s.mentions)
 	mux.HandleFunc("GET /api/download/{ticket}", s.download)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.commands)
@@ -856,6 +866,11 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		s.mu.Unlock()
 		fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
+		return
+	}
+	if s.updatingProvider != "" && s.updatingProvider == x.Provider {
+		s.mu.Unlock()
+		fail(w, 409, s.lang(r).T("This provider is updating. Try again in a moment.", "该组件正在更新，请稍后重试。"))
 		return
 	}
 	if x.Mode == "terminal" {

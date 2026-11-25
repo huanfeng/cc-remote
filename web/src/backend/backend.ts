@@ -7,12 +7,13 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { BackendError } from './errors';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from './supplierConfig';
 import type {
-  Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
+  Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
-  ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
+  ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
   UsageHistory, UsageReply, UsageMonitor, MonitorHistory,
   MessageSearchQuery, MessageSearchPage, MessageSearchHit, MessageSearchContext,
+  ServerUpdateSnapshot, UpdateComponentId,
 } from './types';
 
 export type Unsubscribe = () => void;
@@ -74,6 +75,11 @@ export interface Backend {
   readonly kind: 'mock' | 'http';
 
   info(): Promise<HostInfo>;
+  componentUpdates?: {
+    watch(onChange: (snapshot: ServerUpdateSnapshot | null) => void, onError: (e: unknown) => void): Unsubscribe;
+    check(id: UpdateComponentId): Promise<ServerUpdateSnapshot>;
+    install(id: UpdateComponentId, version?: string): Promise<ServerUpdateSnapshot>;
+  };
 
   // Sessions
   /**
@@ -122,9 +128,13 @@ export interface Backend {
   // Details
   tasks(id: string): Promise<TaskInfo[]>;
   stats(id: string): Promise<SessionStats>;
-  readFile(id: string, path: string, base?: string[]): Promise<FileContent>;
+  projectFiles(id: string, path: string, signal?: AbortSignal): Promise<ProjectFileListing>;
+  searchProjectFiles(id: string, query: string, signal?: AbortSignal): Promise<ProjectFileListing>;
+  projectGitChanges(id: string, signal?: AbortSignal): Promise<ProjectGitChanges>;
+  projectGitDiff(id: string, path: string, stage: ProjectGitStage, signal?: AbortSignal): Promise<ProjectGitDiff>;
+  readFile(id: string, path: string, base?: string[], scope?: FileScope): Promise<FileContent>;
   /** A one-time download URL for a file too large to read inline (POST /file/link). */
-  fileLink(id: string, path: string, base?: string[]): Promise<{ url: string; name: string; size: number }>;
+  fileLink(id: string, path: string, base?: string[], scope?: FileScope): Promise<{ url: string; name: string; size: number }>;
 
   // Native history
   nativeSessions(provider: Provider): Promise<NativeSession[]>;

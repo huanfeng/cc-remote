@@ -306,6 +306,9 @@ func (s *Server) startCodexTerminalLocked(id, cwd, nativeID, prompt, accountID s
 	if s.switching[id] {
 		return fmt.Errorf("正在切换配置")
 	}
+	if s.updatingProvider == "codex" {
+		return i18n.Errorf("Codex is updating. Try again in a moment.", "Codex 正在更新，请稍后重试。")
+	}
 	var args []string
 	if nativeID != "" {
 		args = append(args, "resume")

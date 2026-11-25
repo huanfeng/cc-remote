@@ -14,6 +14,7 @@ import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { ErrorText, errorMessage } from '@/features/dialogs/common';
 import { GroupTitle, HOST_ICONS, HostGlyph, SectionHeader, useReportDirty } from './parts';
 import { SignOutRow } from '@/features/auth/SignOut';
+import { ServerUpdates } from './ServerUpdates';
 
 type Look = { name: string; color: string; icon: string };
 const MAX_ICON = 3;
@@ -57,22 +58,18 @@ export function HostSection({ mobile }: { mobile: boolean }) {
     ?? identity?.palette[0]?.hex
     ?? '#293c2e';
   const shownColor = draft?.color || autoColor;
-  const versions: { name: string; value: string }[] = [
-    { name: 'CC Remote', value: info?.version ? `v${info.version}` : t('Not reported', '未报告') },
-    { name: 'Claude Code', value: info?.claudeAvailable === false ? t('Unavailable', '不可用') : info?.claudeVersion || t('Installed', '已安装') },
-    ...(info?.codexAvailable !== undefined ? [{ name: 'Codex', value: info.codexAvailable ? info.codexVersion || t('Installed', '已安装') : t('Unavailable', '不可用') }] : []),
-  ];
 
   return (
     <div>
       {!mobile && <SectionHeader title={t('Server', '服务器')} description={t('Identity and components of the server you are connected to. Changes apply to all clients connected to it.', '当前所连接服务器的标识与运行组件。修改对连接此服务器的所有客户端生效。')} />}
 
-      <GroupTitle>{t('Versions', '版本')}</GroupTitle>
+      <ServerUpdates info={info} />
+
+      <GroupTitle>{t('Host', '宿主')}</GroupTitle>
       <GroupCard>
-        {versions.map(v => <Row key={v.name} label={v.name} control={<span className="text-ui-sm tabular-nums text-foreground-subtle">{v.value}</span>} className="py-2.5" />)}
         {info?.restartPending && <Row label={t('Restart pending', '等待重启')} description={t('An update is installed and applies when the host restarts.', '更新已安装，宿主重启后生效。')} />}
         <button type="button" onClick={() => useApp.getState().open({ type: 'status' })}
-          className="flex w-full items-center gap-2 border-t border-border/60 px-4 py-3 text-left text-ui-base hover:bg-surface-hover">
+          className="flex w-full items-center gap-2 border-t border-border/60 px-4 py-3 text-left text-ui-base first:border-t-0 hover:bg-surface-hover">
           <Activity className="size-4 text-foreground-subtle" />
           <span className="flex-1">{t('Host status', '宿主状态')}<span className="ml-2 text-ui-sm text-foreground-subtlest">{t('Service, diagnostics and usage', '服务、诊断与用量')}</span></span>
           <ChevronRight className="size-4 text-foreground-subtlest" />

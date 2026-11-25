@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"cc-remote/internal/hostauth"
 	"cc-remote/internal/service"
 )
 
@@ -242,7 +244,7 @@ func fakeGitHub(t *testing.T, tag string, files map[string][]byte, token string)
 		for i, n := range names {
 			as = append(as, asset{int64(i + 1), n})
 		}
-		json.NewEncoder(w).Encode(map[string]any{"tag_name": tag, "assets": as})
+		json.NewEncoder(w).Encode(map[string]any{"tag_name": tag, "body": "- 修复更新检查", "assets": as})
 	}
 	mux.HandleFunc("/repos/o/r/releases/latest", release)
 	mux.HandleFunc("/repos/o/r/releases/tags/"+tag, release)
@@ -329,20 +331,83 @@ func TestUpdateJSONCheck(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var check struct {
-				CurrentVersion string
-				Version        string
-				Available      bool
-				Comparable     bool
-			}
+			var check Candidate
 			if err := json.Unmarshal(out.Bytes(), &check); err != nil {
 				t.Fatal(err)
 			}
-			if check.CurrentVersion != tc.current || check.Version != "v0.3.0" ||
+			if check.CurrentVersion != tc.current || check.Version != "v0.3.0" || check.Notes != "- 修复更新检查" ||
+				check.NotesURL != "https://github.com/o/r/releases/tag/v0.3.0" ||
 				check.Available != tc.available || check.Comparable != tc.comparable || len(*ran) != 0 {
 				t.Fatalf("unexpected check result %+v or install commands %v", check, *ran)
 			}
 		})
+	}
+}
+
+func TestManagedUpdateUsesSelectedReleaseAndServiceDataDir(t *testing.T) {
+	const target = "v0.6.0"
+	const hostToken = "test-host-token"
+	t.Setenv("CC_REMOTE_TOKEN", hostToken)
+	srv := fakeGitHub(t, target, releaseFiles(t, "0.6.0", false), "tok")
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != hostauth.Path {
+			http.NotFound(w, r)
+			return
+		}
+		addr := r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
+		json.NewEncoder(w).Encode(map[string]string{"proof": hostauth.Proof(hostToken, r.URL.Query().Get("nonce"), addr)})
+	}))
+	defer host.Close()
+	u, _, ran := newTestUpdater(t, srv, "tok", "v0.5.0")
+	dataDir := t.TempDir()
+	if err := os.WriteFile(u.installedPath, []byte("installed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig := func(exe, version string, listen []string) {
+		t.Helper()
+		b, err := json.Marshal(service.Config{Exe: exe, DataDir: dataDir, Version: version, Listen: listen})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dataDir, "service.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listen := []string{strings.TrimPrefix(host.URL, "http://")}
+	for _, tc := range []struct{ exe, installed, selected string }{
+		{u.exePath, "v0.5.0", target},
+		{u.installedPath, "v0.7.0", target},
+		{u.installedPath, "v0.5.0", "v0.5.0"},
+		{u.installedPath, "v0.5.0", "v0.6.0-rc.1"},
+		{u.installedPath, "v0.5.0", "v0.6.1"},
+	} {
+		writeConfig(tc.exe, tc.installed, listen)
+		if err := u.installManaged(context.Background(), tc.selected, dataDir); err == nil || len(*ran) != 0 {
+			t.Fatalf("managed install accepted %+v, error %v, commands %v", tc, err, *ran)
+		}
+	}
+	writeConfig(u.installedPath, "v0.5.0", listen)
+	t.Setenv("CC_REMOTE_TOKEN", "wrong-token")
+	if err := u.installManaged(context.Background(), target, dataDir); err == nil || len(*ran) != 0 {
+		t.Fatalf("managed install without verified host: %v, commands %v", err, *ran)
+	}
+	t.Setenv("CC_REMOTE_TOKEN", hostToken)
+	if err := u.installManaged(context.Background(), target, dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if want := "cc-remote service install --when-idle --data-dir " + dataDir; len(*ran) != 1 || (*ran)[0] != want {
+		t.Fatalf("ran = %v, want %q", *ran, want)
+	}
+}
+
+func TestManagedUpdateRejectsUnpublishedAndUnsupportedReleases(t *testing.T) {
+	for _, rel := range []Release{
+		{Tag: "v0.6.0", Draft: true}, {Tag: "v0.6.0", Prerelease: true},
+		{Tag: "v0.6.0-beta.1"}, {Tag: "v0.06.0"}, {Tag: "v0.4.0"},
+	} {
+		if managedRelease(rel) {
+			t.Errorf("accepted %+v", rel)
+		}
 	}
 }
 

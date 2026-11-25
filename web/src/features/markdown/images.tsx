@@ -4,10 +4,10 @@
 // are cached per session and path, so re-renders while a reply streams do not
 // fetch again. External http(s) and data: images are left to the browser.
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { useBackend } from '@/backend/backend';
+import { useBackend, type Backend } from '@/backend/backend';
 import type { FileRef } from '@/domain/filePaths';
 import { basename } from '@/domain/filePaths';
-import { svgDataUrl } from '@/features/files/fileView';
+import { resolveProjectPath, svgDataUrl } from '@/features/files/fileView';
 import { t } from '@/lib/i18n';
 
 /** Resolves a host image path (relative to bases) to a URL an <img> can show. */
@@ -16,8 +16,16 @@ export const MarkdownImages = createContext<ResolveImage | null>(null);
 
 const MAX_CACHED = 100;
 const cache = new Map<string, Promise<string>>();
+const backendIds = new WeakMap<Backend, number>();
+let nextBackendId = 0;
 
-function remember(key: string, load: () => Promise<string>) {
+function remember(backend: Backend, sessionId: string, path: string, bases: string[], project: boolean, load: () => Promise<string>) {
+  let id = backendIds.get(backend);
+  if (id === undefined) {
+    id = nextBackendId++;
+    backendIds.set(backend, id);
+  }
+  const key = JSON.stringify([id, sessionId, project, path, bases]);
   let p = cache.get(key);
   if (p) { cache.delete(key); cache.set(key, p); return p; }
   p = load();
@@ -32,15 +40,21 @@ function remember(key: string, load: () => Promise<string>) {
 }
 
 /** The resolver for a session's Markdown (undefined id: native history, no file access). */
-export function useImageResolver(sessionId: string | undefined): ResolveImage | null {
+export function useImageResolver(sessionId: string | undefined, projectDocument?: string): ResolveImage | null {
   const backend = useBackend();
-  const resolve = useCallback<ResolveImage>((path, bases) => remember(`${backend.kind}\n${sessionId}\n${path}\n${bases.join('\n')}`, async () => {
-    const file = await backend.readFile(sessionId!, path, bases);
-    if (file.tooLarge) throw new Error('too large');
-    if (file.text !== undefined && (file.mime === 'image/svg+xml' || /\.svg$/i.test(file.path))) return svgDataUrl(file.text);
-    if (!file.url) throw new Error('not an image');
-    return file.url;
-  }), [backend, sessionId]);
+  const resolve = useCallback<ResolveImage>(async (path, bases) => {
+    const project = projectDocument !== undefined;
+    const target = project ? resolveProjectPath(projectDocument, path) : path;
+    if (!target || !sessionId) throw new Error('no image path');
+    const searchDirs = project ? [] : bases;
+    return remember(backend, sessionId, target, searchDirs, project, async () => {
+      const file = await backend.readFile(sessionId, target, searchDirs, project ? 'project' : undefined);
+      if (file.tooLarge) throw new Error('too large');
+      if (file.text !== undefined && (file.mime === 'image/svg+xml' || /\.svg$/i.test(file.path))) return svgDataUrl(file.text);
+      if (!file.url) throw new Error('not an image');
+      return file.url;
+    });
+  }, [backend, sessionId, projectDocument]);
   return sessionId ? resolve : null;
 }
 

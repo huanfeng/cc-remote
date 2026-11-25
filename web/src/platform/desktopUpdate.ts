@@ -25,6 +25,8 @@ interface CoreUpdateStatus {
   running: boolean;
   phase: 'idle' | 'unavailable' | 'unmanaged' | 'checking' | 'available' | 'installing' | 'waiting' | 'restarting' | 'updated' | 'error';
   version: string | null;
+  notes?: string | null;
+  notesUrl?: string | null;
   error: string | null;
 }
 
