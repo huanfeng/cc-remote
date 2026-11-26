@@ -43,9 +43,9 @@
 :root {
   --ui-font-size: 14px;
   --shadow-composer-soft: 0 0 #0000;
-  /* Height of the visual viewport, kept current by lib/viewport.ts so the
-   * soft keyboard never covers the composer on phones. */
+  /* Kept current by domain/viewport.ts so controls stay above the phone keyboard. */
   --app-height: 100dvh;
+  --app-top: 0px;
   /* Preflight applies --font-sans (above). No antialiased smoothing: it only
    * thins text on macOS. */
 }
@@ -70,7 +70,7 @@ body {
 #root {
   position: fixed;
   inset-inline: 0;
-  top: var(--app-top, 0px);
+  top: var(--app-top);
   height: var(--app-height);
   overflow: hidden;
 }

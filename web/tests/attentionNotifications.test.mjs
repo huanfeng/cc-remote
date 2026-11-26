@@ -29,7 +29,9 @@ test('notification bridge updates unread attention on viewing without another se
   };
   const hook = registerHooks({ resolve(specifier, context, next) {
     if (context.parentURL?.endsWith('/notifications.ts') && mocks[specifier]) return { url: data(mocks[specifier]), shortCircuit: true };
-    if (specifier === '@/domain/attention') return { url: new URL('../src/domain/attention.ts', import.meta.url).href, shortCircuit: true };
+    if (specifier === '@/domain/attention' || specifier === '@/domain/completionRead') {
+      return { url: new URL(`../src/${specifier.slice(2)}.ts`, import.meta.url).href, shortCircuit: true };
+    }
     return next(specifier, context);
   } });
   try {
@@ -44,6 +46,10 @@ test('notification bridge updates unread attention on viewing without another se
     records = { 'host:done': { completedAt: at, viewedAt: '' } };
     render(); assert.equal(latest.total, 2);
     records = { 'host:done': { completedAt: at, viewedAt: at } };
+    render(); assert.deepEqual(latest, { waiting: 1, done: 0, total: 1 });
+    app.sessions = [app.sessions[0], { ...app.sessions[1], completionReadAt: '' }];
+    render(); assert.equal(latest.total, 2);
+    app.sessions = [app.sessions[0], { ...app.sessions[1], completionReadAt: at }];
     render(); assert.deepEqual(latest, { waiting: 1, done: 0, total: 1 });
     app.sessions = []; render(); assert.equal(latest.total, 0);
   } finally {

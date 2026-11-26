@@ -5,12 +5,13 @@ import { forwardRef, useState, type ComponentProps, type ReactNode } from 'react
 import { ChevronDown, Shield, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/lib/utils';
-import type { Provider } from '@/backend/types';
+import type { ModelContext, Provider } from '@/backend/types';
 import { t } from '@/lib/i18n';
 import { dangerousPermission } from '@/domain/providers';
-import { dangerDetail, permissionLabel, permissionOptions, shortModel } from './options';
+import { aliasTarget, dangerDetail, permissionLabel, permissionOptions, shortModel, withTarget } from './options';
 import { PickerGroup, PickerItem, PickerList, PickerSurface } from './PickerSurface';
 import { EffortList, ModelList } from './lists';
+import { useModels } from './useModels';
 
 export type PickerVariant = 'field' | 'chip' | 'icon';
 
@@ -54,21 +55,27 @@ const PickerTrigger = forwardRef<HTMLButtonElement, ComponentProps<'button'> & {
   },
 );
 
-export function ModelPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, sessionId, codexAccountId }: PickerProps & { sessionId?: string; codexAccountId?: string }) {
+export function ModelPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, sessionId, profileId, cwd, mode }: PickerProps & ModelContext) {
   const [open, setOpen] = useState(false);
-  const label = value ? shortModel(value) : inheritLabel || t('Default model', '默认模型');
+  const preview = !!sessionId || profileId !== undefined;
+  const catalog = useModels(provider, { sessionId, profileId, cwd, mode }, open || preview);
+  const fallback = preview ? catalog.list?.defaultModel || '' : '';
+  const target = aliasTarget(value || fallback, catalog.list?.aliasModels);
+  const label = value
+    ? withTarget(shortModel(value), target)
+    : withTarget(inheritLabel || t('Default model', '默认模型'), target ?? fallback);
   return (
     <PickerSurface
       open={open} onOpenChange={setOpen} mobile={mobile} title={t('Model', '模型')} className="w-80"
-      trigger={<PickerTrigger variant={variant} label={label} mobile={mobile} disabled={disabled} className={className} />}
+      trigger={<PickerTrigger variant={variant} label={label} title={label} mobile={mobile} disabled={disabled} className={className} />}
     >
-      <ModelList provider={provider} sessionId={sessionId} codexAccountId={codexAccountId} value={value} inheritLabel={inheritLabel} mobile={mobile}
+      <ModelList catalog={catalog} value={value} inheritLabel={inheritLabel} mobile={mobile}
         onPick={v => { setOpen(false); onChange(v); }} />
     </PickerSurface>
   );
 }
 
-export function EffortPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, model, sessionId, codexAccountId }: PickerProps & { model?: string; sessionId?: string; codexAccountId?: string }) {
+export function EffortPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, model, sessionId, profileId, cwd, mode }: PickerProps & ModelContext & { model?: string }) {
   const [open, setOpen] = useState(false);
   const label = value || inheritLabel || t('Default effort', '默认强度');
   return (
@@ -76,7 +83,7 @@ export function EffortPicker({ value, onChange, provider, inheritLabel, variant 
       open={open} onOpenChange={setOpen} mobile={mobile} title={t('Reasoning effort', '推理强度')} className="w-64"
       trigger={<PickerTrigger variant={variant} label={label} mobile={mobile} disabled={disabled} className={className} />}
     >
-      <EffortList provider={provider} sessionId={sessionId} codexAccountId={codexAccountId} model={model} value={value} inheritLabel={inheritLabel} mobile={mobile}
+      <EffortList provider={provider} context={{ sessionId, profileId, cwd, mode }} model={model} value={value} inheritLabel={inheritLabel} mobile={mobile}
         onPick={v => { setOpen(false); onChange(v); }} />
     </PickerSurface>
   );
@@ -87,12 +94,14 @@ export function EffortPicker({ value, onChange, provider, inheritLabel, variant 
  * place before onChange; the caller then sends confirmDangerous.
  * `effective` is what '' resolves to, for the trigger label and the warning.
  */
-export function PermissionPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, effective }: PickerProps & { effective?: string }) {
+export function PermissionPicker({ value, onChange, provider, inheritLabel, variant = 'field', mobile, disabled, className, effective, reported }: PickerProps & { effective?: string; reported?: string }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
-  const shown = value || effective || '';
+  const shown = value || reported || effective || '';
   const danger = dangerousPermission(shown, provider);
-  const label = value ? permissionLabel(value, provider) : inheritLabel || (effective ? permissionLabel(effective, provider) : t('Default permissions', '默认权限'));
+  const inheritedLabel = effective ? permissionLabel(effective, provider) : undefined;
+  const label = value ? permissionLabel(value, provider)
+    : withTarget(inheritLabel || t('Default permissions', '默认权限'), reported ? permissionLabel(reported, provider) : inheritedLabel);
   const Icon = danger ? ShieldAlert : Shield;
 
   const pick = (v: string) => {
@@ -123,7 +132,7 @@ export function PermissionPicker({ value, onChange, provider, inheritLabel, vari
           <PickerList label={t('Permission mode', '权限模式')}>
             {inheritLabel !== undefined && (
               <PickerGroup>
-                <PickerItem mobile={mobile} option={{ value: '', label: inheritLabel || t('Use default', '跟随默认'), description: effective ? permissionLabel(effective, provider) : undefined }} selected={value === ''} onSelect={pick} />
+                <PickerItem mobile={mobile} option={{ value: '', label: withTarget(inheritLabel || t('Use default', '跟随默认'), inheritedLabel) }} selected={value === ''} onSelect={pick} />
               </PickerGroup>
             )}
             <PickerGroup>

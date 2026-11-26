@@ -70,9 +70,11 @@ function FullFrame({ open, onOpenChange, title, description, bodyClassName, foot
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
+        {/* Install Radix's scroll lock for this surface when it opens over another modal. */}
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50" />
         <DialogPrimitive.Content
           {...(description ? {} : { 'aria-describedby': undefined })}
-          className="fixed inset-0 z-50 flex flex-col bg-background pt-safe text-foreground outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-bottom-6 data-closed:animate-out data-closed:fade-out-0 data-closed:slide-out-to-bottom-6"
+          className="fixed inset-x-0 top-(--app-top) z-50 flex h-(--app-height) flex-col overflow-hidden bg-background pt-safe text-foreground outline-none transition-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-bottom-6 data-closed:animate-out data-closed:fade-out-0 data-closed:slide-out-to-bottom-6"
         >
           <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border/60 px-1">
             {onBack ? (
@@ -91,7 +93,7 @@ function FullFrame({ open, onOpenChange, title, description, bodyClassName, foot
           </div>
           {description && <DialogPrimitive.Description className="sr-only">{description}</DialogPrimitive.Description>}
           {/* Phones: every button and select in the body is at least 36 px. */}
-          <div className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3', TOUCH, !footer && 'pb-[max(1.5rem,env(safe-area-inset-bottom))]', bodyClassName)}>{children}</div>
+          <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-6 pt-3', TOUCH, !footer && 'pb-[max(1.5rem,env(safe-area-inset-bottom))]', bodyClassName)}>{children}</div>
           {footer && (
             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)] [&_[data-slot=button]]:h-10 [&_[data-slot=button]]:px-4">
               {footer}
@@ -114,7 +116,7 @@ function SheetFrame({ open, onOpenChange, title, description, bodyClassName, foo
           </div>
           {actions}
         </div>
-        <div className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-3', TOUCH, bodyClassName)}>{children}</div>
+        <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3', TOUCH, bodyClassName)}>{children}</div>
         {footer && (
           <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-4 pt-3 [&_[data-slot=button]]:h-10 [&_[data-slot=button]]:px-4">
             {footer}

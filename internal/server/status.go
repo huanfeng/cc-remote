@@ -350,6 +350,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 			totals.LastActivityAt = st.LastActivityAt
 		}
 	}
+	totals.CostReported = totals.CostKnown
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastActivityAt > rows[j].LastActivityAt })
 	logFile := s.logPath()
 	light := s.statusLight(r, sessions, counts, pendingRequests, activeRuns)

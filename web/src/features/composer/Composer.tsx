@@ -24,6 +24,7 @@ import { isHiddenUser } from '@/features/conversation/fold';
 import { useHistoryEdit } from '@/features/conversation/HistoryComposer';
 import { appendFileReference, useFileReferenceTarget, type FileReferenceTarget } from '@/features/files/fileReference';
 import { PermissionPicker } from '@/features/pickers/Pickers';
+import { useModels } from '@/features/pickers/useModels';
 import { QuickSwitch, patchOverride, useModelSwitchConfirm, type QuickKind } from '@/features/pickers/QuickSwitch';
 import {
   MAX_ATTACHMENTS, admitFiles, canSteer, commandName, filterCommands, historyDirection, isCommand, isSendKey, modelArgument,
@@ -55,6 +56,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
   const sendKey = usePrefs(s => s.sendKey);
   const id = session.id;
   const provider = providerOf(session);
+  const { list: modelList } = useModels(provider, { sessionId: session.id });
   const draft = useDraft(id);
   const historyEdit = useHistoryEdit();
   const { setText, setAttachments, clear } = useDrafts.getState();
@@ -536,7 +538,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
           </ToolButton>
         )}
         <PermissionPicker
-          provider={provider} value={session.permissionMode ?? ''} effective={session.live?.permissionMode}
+          provider={provider} value={session.permissionMode ?? ''} effective={modelList?.defaultPermission} reported={session.live?.permissionMode}
           inheritLabel="" variant={mobile ? 'icon' : 'chip'} mobile={mobile} disabled={busy}
           onChange={v => void onPermission(v)}
         />

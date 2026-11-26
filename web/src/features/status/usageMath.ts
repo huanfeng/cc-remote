@@ -99,7 +99,18 @@ export function compactNumber(n: number): string {
   return String(Math.round(n));
 }
 
-export const costText = (usd: number) => (Number.isFinite(usd) ? `$${usd >= 100 ? usd.toFixed(0) : usd.toFixed(2)}` : '—');
+type CostReading = { costUSD: number; costReported?: boolean };
+
+export function hasRecordedCost({ costUSD, costReported }: CostReading): boolean {
+  // Older hosts used zero as the default, even when costKnown was true.
+  return Number.isFinite(costUSD) && costUSD >= 0 && (costReported ?? costUSD > 0);
+}
+
+export function costText(reading: CostReading): string {
+  if (!hasRecordedCost(reading)) return t('No cost data', '暂无费用数据');
+  const usd = reading.costUSD;
+  return `$${usd.toFixed(usd >= 100 ? 0 : 2)}`;
+}
 
 export interface QuotaWindow { key: string; label: string; title: string; window?: UsageWindow }
 

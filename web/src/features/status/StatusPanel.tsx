@@ -14,7 +14,7 @@ import { t } from '@/lib/i18n';
 import { hostProviders, providerName } from '@/domain/providers';
 import { SurfaceShell, Section } from '@/features/dialogs/SurfaceShell';
 import { CopyButton, ErrorText, errorMessage } from '@/features/dialogs/common';
-import { compactNumber, costText, durationText } from './usageMath';
+import { compactNumber, costText, durationText, hasRecordedCost } from './usageMath';
 import { Legend, UsageDetails, useUsage } from './UsageDetails';
 import { DailyChart } from './charts';
 import { UsageMonitor } from './UsageMonitor';
@@ -44,6 +44,7 @@ export function StatusPanel({ open, onOpenChange, mobile }: { open: boolean; onO
     return () => { live = false; window.clearInterval(timer); };
   }, [backend, tick]);
 
+  const showDailyCost = status?.daily?.some(hasRecordedCost) ?? false;
   const actions = (
     <span className="flex items-center gap-1.5 text-ui-xs text-foreground-subtlest">
       {!mobile && <span>{t('Refreshes every 5 s', '每 5 秒刷新')}</span>}
@@ -75,9 +76,14 @@ export function StatusPanel({ open, onOpenChange, mobile }: { open: boolean; onO
           {status.daily && status.daily.length > 0 && (
             <Section
               title={t('Last 14 days (UTC)', '近 14 天（UTC）')}
-              actions={<span className="flex gap-3 text-ui-xs text-foreground-subtle"><Legend className="bg-usage-chart-1" label={t('Turns', '轮次')} /><Legend className="bg-usage-chart-2" label={t('Cost', '费用')} /></span>}
+              actions={
+                <span className="flex gap-3 text-ui-xs text-foreground-subtle">
+                  <Legend className="bg-usage-chart-1" label={t('Turns', '轮次')} />
+                  {showDailyCost && <Legend className="bg-usage-chart-2" label={t('Cost', '费用')} />}
+                </span>
+              }
             >
-              <div className="rounded-xl border border-border/70 bg-card p-3"><DailyChart daily={status.daily} /></div>
+              <div className="rounded-xl border border-border/70 bg-card p-3"><DailyChart daily={status.daily} showCost={showDailyCost} /></div>
             </Section>
           )}
           <LogTail lines={status.logTail} />
@@ -177,8 +183,8 @@ function Counts({ status: s }: { status: HostStatus }) {
         <Section title={t('Totals', '累计')} description={t('Recorded by CC Remote from managed sessions; cost is an API-price estimate.', '由 CC Remote 从托管会话记录；费用按 API 价格估算。')}>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
             <Stat label={t('Turns', '轮次')} value={compactNumber(totals.turns)} />
-            <Stat label={t('Cost', '费用')} value={costText(totals.costUSD)} />
-            <Stat label="Tokens" value={totals.costKnown ? compactNumber(totals.inputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheCreationTokens) : '—'} />
+            <Stat label={t('Cost', '费用')} value={hasRecordedCost(totals) ? costText(totals) : <span className="text-ui-sm font-normal tracking-normal text-foreground-subtle">{costText(totals)}</span>} />
+            <Stat label="Tokens" value={totals.results > 0 ? compactNumber(totals.inputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheCreationTokens) : '—'} />
             <Stat label={t('Run time', '执行耗时')} value={durationText(totals.durationMs / 1000)} />
             <Stat label={t('Tool calls', '工具调用')} value={compactNumber(totals.toolCalls)} />
             <Stat label={t('Errors', '错误')} value={compactNumber(totals.errors)} />

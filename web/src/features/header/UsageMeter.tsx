@@ -110,9 +110,9 @@ function MeterOrb({ windows, stale, title, summary, details, openStatus }: {
       </Button>
       <BottomSheet open={open} onOpenChange={setOpen}>
         <BottomSheetContent aria-describedby={undefined} className="max-w-none">
-          <div className="px-4 pb-2 pt-3"><BottomSheetTitle>{title}</BottomSheetTitle></div>
-          <div className={cn('px-4 pb-2', TOUCH)}>{details}</div>
-          <div className="border-t border-border/60 px-4 pt-3">
+          <div className="shrink-0 px-4 pb-2 pt-3"><BottomSheetTitle>{title}</BottomSheetTitle></div>
+          <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-2', TOUCH)}>{details}</div>
+          <div className="shrink-0 border-t border-border/60 px-4 pt-3">
             <Button variant="outline" className="h-10 w-full" onClick={() => { setOpen(false); openStatus(); }}>
               <Activity className="size-4" /> {t('Host status and history', '宿主状态与历史')}
             </Button>

@@ -5,6 +5,7 @@ import { useBackend } from '@/backend/backend';
 import type { SupplierConfig, SupplierConfigs } from '@/backend/supplierConfig';
 import type { CodexAccount, Provider, SupplierProfile } from '@/backend/types';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Spinner } from '@/components/ui/spinner';
 import { GroupCard } from '@/features/dialogs/SurfaceShell';
@@ -43,6 +44,9 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [switchWarning, setSwitchWarning] = useState<boolean>();
+  const [savingSwitchWarning, setSavingSwitchWarning] = useState(false);
+  const [switchWarningError, setSwitchWarningError] = useState('');
   const [previewOrder, setPreviewOrder] = useState<string[] | null>(null);
   const pendingOrder = useRef<string[] | null>(null);
   const finishReorder = (cancelled: boolean) => {
@@ -67,6 +71,7 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
     let live = true;
     (backend.supplierConfigs?.() ?? Promise.resolve(null)).then(v => { if (live) setCollection(v); }, e => { if (live) setError(errorMessage(e)); });
     backend.oauthProfiles().then(v => { if (live) setOAuth(v); }, e => { if (!live) return; if ([404, 405, 501].includes(errorStatus(e) ?? 0)) { setOAuthUnsupported(true); setOAuth([]); } else setError(errorMessage(e)); });
+    backend.supplierSwitchWarning().then(v => { if (live) setSwitchWarning(v); }, e => { if (live) setSwitchWarningError(errorMessage(e)); });
     return () => { live = false; };
   }, [backend]);
   useEffect(() => {
@@ -114,6 +119,17 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
     try { setCollection(await backend.setCCSwitchVisibility(hidden, collection.revision)); reloadCatalog(); }
     catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   };
+  const saveSwitchWarning = async (enabled: boolean) => {
+    setSavingSwitchWarning(true); setSwitchWarningError('');
+    try {
+      await backend.setSupplierSwitchWarning(enabled);
+      setSwitchWarning(enabled);
+    } catch (e) {
+      setSwitchWarningError(errorMessage(e));
+    } finally {
+      setSavingSwitchWarning(false);
+    }
+  };
 
   // Independent stores keep their entries visible when an older host lacks another API.
   const availableAccounts = codexAPI ? codexAccounts ?? [] : [];
@@ -125,6 +141,11 @@ export function SuppliersSection({ mobile }: { mobile: boolean }) {
 
   return <div>
     {!mobile && <SectionHeader title={t('Suppliers', '供应商')} />}
+    {switchWarning !== undefined && <label className="mb-3 flex min-h-9 cursor-pointer items-center gap-2 text-ui-sm max-md:min-h-11">
+      <Checkbox checked={switchWarning} disabled={savingSwitchWarning} onCheckedChange={value => void saveSwitchWarning(value === true)} />
+      {t('Warn about cache costs before switching suppliers', '切换供应商前提示缓存与费用影响')}
+    </label>}
+    <ErrorText>{switchWarningError}</ErrorText>
     <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
       <Tabs value={app} onValueChange={v => { finishReorder(true); setApp(v as Provider); }}>
         <TabsList><TabsTrigger value="claude">Claude</TabsTrigger><TabsTrigger value="codex">Codex</TabsTrigger></TabsList>

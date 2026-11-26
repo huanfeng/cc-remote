@@ -16,6 +16,7 @@ import { t } from '@/lib/i18n';
 import { dangerousPermission, providerOf } from '@/domain/providers';
 import { PickerSurface } from './PickerSurface';
 import { EffortList, ModelList } from './lists';
+import { useModels } from './useModels';
 
 export type QuickKind = 'model' | 'effort';
 
@@ -109,6 +110,7 @@ export interface QuickSwitchProps {
 export function QuickSwitch({ session, kind, open, onOpenChange, trigger, anchor, side, mobile }: QuickSwitchProps) {
   const { apply, dialog } = useQuickSwitchApply(session);
   const provider = providerOf(session);
+  const catalog = useModels(provider, { sessionId: session.id }, kind === 'model' && open);
   const terminal = session.mode === 'terminal';
   // A terminal session reports what it runs; a managed one has an override ('' = inherit).
   const value = kind === 'model'
@@ -124,8 +126,8 @@ export function QuickSwitch({ session, kind, open, onOpenChange, trigger, anchor
         trigger={trigger} anchor={anchor} className={kind === 'model' ? 'w-80' : 'w-64'}
       >
         {kind === 'model'
-          ? <ModelList provider={provider} sessionId={session.id} value={value} inheritLabel={inheritLabel} mobile={mobile} onPick={pick} />
-          : <EffortList provider={provider} sessionId={session.id} model={session.model || session.live?.modelId} value={value} inheritLabel={inheritLabel} mobile={mobile} onPick={pick} />}
+          ? <ModelList catalog={catalog} value={value} inheritLabel={inheritLabel} mobile={mobile} onPick={pick} />
+          : <EffortList provider={provider} context={{ sessionId: session.id }} model={session.model || session.live?.modelId} value={value} inheritLabel={inheritLabel} mobile={mobile} onPick={pick} />}
       </PickerSurface>
       {dialog}
     </>

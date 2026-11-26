@@ -18,17 +18,46 @@ type Model struct {
 
 // Models reads the native catalog without starting a thread or inference turn.
 func Models(ctx context.Context, o claude.Options) ([]Model, error) {
+	models, _, err := ModelCatalog(ctx, o)
+	return models, err
+}
+
+type ModelDefaults struct {
+	Model, Sandbox string
+}
+
+// ModelCatalog reads the picker and the effective native configuration in one app-server process.
+func ModelCatalog(ctx context.Context, o claude.Options) ([]Model, ModelDefaults, error) {
 	ctx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 	r, err := startRPC(o.Executable, o.ConfigDir, o.Cwd, nil, nil, o)
 	if err != nil {
-		return nil, err
+		return nil, ModelDefaults{}, err
 	}
 	defer r.close()
 	if err = r.initialize(ctx); err != nil {
-		return nil, err
+		return nil, ModelDefaults{}, err
 	}
-	return readModels(ctx, r)
+	models, err := readModels(ctx, r)
+	if err != nil {
+		return nil, ModelDefaults{}, err
+	}
+	var native struct {
+		Config struct {
+			Model   string `json:"model"`
+			Sandbox string `json:"sandbox_mode"`
+		} `json:"config"`
+	}
+	var defaults ModelDefaults
+	if err := r.call(ctx, "config/read", map[string]any{"includeLayers": false, "cwd": o.Cwd}, &native); err == nil {
+		defaults = ModelDefaults{Model: native.Config.Model, Sandbox: native.Config.Sandbox}
+		for _, model := range models {
+			if defaults.Model == "" && model.IsDefault {
+				defaults.Model = model.ID
+			}
+		}
+	}
+	return models, defaults, nil
 }
 
 func readModels(ctx context.Context, r *rpcClient) ([]Model, error) {

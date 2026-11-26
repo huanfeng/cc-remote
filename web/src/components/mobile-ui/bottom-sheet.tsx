@@ -33,7 +33,7 @@ function BottomSheetContent({ className, children, ...props }: BottomSheetConten
       <DialogPrimitive.Content
         data-slot="bottom-sheet-content"
         className={cn(
-          "fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[85dvh] w-full max-w-md flex-col rounded-t-2xl border-t border-popover-border bg-popover pb-[calc(env(safe-area-inset-bottom)+12px)] text-foreground shadow-2xl outline-none duration-200 data-open:animate-in data-open:slide-in-from-bottom data-closed:animate-out data-closed:slide-out-to-bottom",
+          "fixed inset-x-0 bottom-[max(0px,calc(100%_-_var(--app-top)_-_var(--app-height)))] z-50 mx-auto flex max-h-[calc(var(--app-height)*0.85)] w-full max-w-md flex-col rounded-t-2xl border-t border-popover-border bg-popover pb-[calc(env(safe-area-inset-bottom)+12px)] text-foreground shadow-2xl outline-none transition-none duration-200 data-open:animate-in data-open:slide-in-from-bottom data-closed:animate-out data-closed:slide-out-to-bottom",
           className,
         )}
         {...props}
@@ -50,7 +50,7 @@ function BottomSheetContent({ className, children, ...props }: BottomSheetConten
 
 function BottomSheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <div data-slot="bottom-sheet-header" className={cn("px-4 pb-2 pt-3", className)} {...props} />
+    <div data-slot="bottom-sheet-header" className={cn("shrink-0 px-4 pb-2 pt-3", className)} {...props} />
   );
 }
 

@@ -143,6 +143,16 @@ function Connected({ backend }: { backend: Backend }) {
     }
     const stop = backend.watchSessions(s => {
       useCompletionRead.getState().observe(s);
+      // Retry confirmed views saved before a disconnect or reload.
+      if (backend.markCompletionRead) {
+        const { records } = useCompletionRead.getState();
+        for (const session of s) {
+          if (typeof session.completionReadAt === 'string' && session.completedAt &&
+              session.completionReadAt !== session.completedAt && records[hostKey(session.id)]?.confirmedAt === session.completedAt) {
+            backend.markCompletionRead(session.id, session.completedAt);
+          }
+        }
+      }
       useApp.getState().setSessions(s);
       useConnection.setState({ offline: '' });
       // Sessions gone from the host (deleted here or elsewhere) release their cache and draft.

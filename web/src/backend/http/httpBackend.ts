@@ -11,7 +11,7 @@ import type {
 import { BackendError } from '../errors.ts';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from '../supplierConfig.ts';
 import type {
-  Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostFeature, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
+  Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostFeature, HostIdentity, HostInfo, HostStatus, ModelContext, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
@@ -47,8 +47,10 @@ const enc = encodeURIComponent;
 const EMPTY: PendingRequest[] = [];
 const CODEX_ACCOUNTS = '/api/profiles/codex-accounts';
 const COMPONENT_UPDATES = '/api/component-updates';
+const SUPPLIER_SWITCH_WARNING = '/api/profiles/switch-warning';
 
 type Native = Provider | undefined;
+type CompletionReceipt = { completedAt: string; state: 'queued' | 'sending' | 'sent' };
 
 export class HttpBackend implements Backend {
   readonly kind = 'http' as const;
@@ -65,6 +67,8 @@ export class HttpBackend implements Backend {
   private listPoller?: Poller;
   private listWatchers = new Set<{ onChange: (s: Session[]) => void; onError?: (e: BackendError) => void }>();
   private list?: Session[];
+  private completionReads = new Map<string, CompletionReceipt>();
+  private completionReadsUnsupported = false;
   /** Watched transcripts, told when a new list arrives so their session record follows at once. */
   private listFollowers = new Set<() => void>();
   /** Watched transcripts, for a poll right after an action on their session. */
@@ -89,6 +93,7 @@ export class HttpBackend implements Backend {
     this.listPoller = undefined;
     this.listWatchers.clear();
     this.listFollowers.clear();
+    this.completionReads.clear();
     for (const set of this.transcriptPollers.values()) for (const p of set) p.stop();
     this.transcriptPollers.clear();
     for (const p of this.usagePollers) p.stop();
@@ -234,10 +239,12 @@ export class HttpBackend implements Backend {
     this.listPoller = poll(async () => {
       const next = await this.get<Session[]>('/api/sessions');
       if (this.disposed || !Array.isArray(next)) return;
-      if (next === this.list) return; // 304: nothing changed
-      this.list = next;
-      for (const w of [...this.listWatchers]) w.onChange(next);
-      for (const f of [...this.listFollowers]) f();
+      if (next !== this.list) {
+        this.list = next;
+        for (const w of [...this.listWatchers]) w.onChange(next);
+        for (const f of [...this.listFollowers]) f();
+      }
+      this.syncCompletionReads(next);
     }, this.intervals.sessions, {
       onError: e => { for (const w of [...this.listWatchers]) w.onError?.(asBackendError(e)); },
     });
@@ -247,6 +254,44 @@ export class HttpBackend implements Backend {
     this.listUsers = 0;
     this.listPoller?.stop();
     this.listPoller = undefined;
+  }
+
+  markCompletionRead(id: string, completedAt: string) {
+    if (this.disposed || this.completionReadsUnsupported || this.completionReads.get(id)?.completedAt === completedAt) return;
+    const receipt: CompletionReceipt = { completedAt, state: 'queued' };
+    this.completionReads.set(id, receipt);
+    this.sendCompletionRead(id, receipt);
+  }
+
+  private syncCompletionReads(sessions: Session[]) {
+    if (!this.completionReads.size) return;
+    const byID = new Map(sessions.map(session => [session.id, session]));
+    for (const [id, receipt] of this.completionReads) {
+      const session = byID.get(id);
+      if (!session || session.completedAt !== receipt.completedAt || session.completionReadAt === receipt.completedAt) {
+        this.completionReads.delete(id);
+      } else if (receipt.state === 'queued') {
+        this.sendCompletionRead(id, receipt);
+      }
+    }
+  }
+
+  private sendCompletionRead(id: string, receipt: CompletionReceipt) {
+    receipt.state = 'sending';
+    void this.client.json<void>(`${this.session(id)}/completion-read`, {
+      method: 'PUT', body: { completedAt: receipt.completedAt }, signal: AbortSignal.timeout(10_000),
+    }).then(() => {
+      receipt.state = 'sent';
+      this.listPoller?.now();
+    }, (error: unknown) => {
+      if (error instanceof SyntaxError || error instanceof BackendError && [404, 405, 501].includes(error.status)) {
+        this.completionReadsUnsupported = true;
+        this.completionReads.clear();
+      } else {
+        // The next successful list poll retries the receipt without blocking browsing.
+        receipt.state = 'queued';
+      }
+    });
   }
 
   async createSession(body: NewSessionRequest): Promise<Session> {
@@ -694,15 +739,35 @@ export class HttpBackend implements Backend {
   }
 
   // ---------- configuration ----------
-  models(opts: { provider: Provider; sessionId?: string; codexAccountId?: string; refresh?: boolean }) {
+  models(opts: ModelContext & { provider: Provider; refresh?: boolean }) {
     const q = new URLSearchParams();
     if (opts.sessionId) q.set('sessionId', opts.sessionId);
-    else if (opts.codexAccountId) q.set('codexAccountId', opts.codexAccountId);
+    else {
+      if (opts.profileId !== undefined) q.set('profileId', opts.profileId);
+      if (opts.cwd) q.set('cwd', opts.cwd);
+      if (opts.mode) q.set('mode', opts.mode);
+    }
     if (opts.refresh) q.set('refresh', '1');
     return this.get<ModelList>(providerQuery(withQuery('/api/models', q.toString()), opts.provider));
   }
 
   profiles() { return this.get<ProfileCatalog>('/api/profiles'); }
+
+  async supplierSwitchWarning() {
+    try {
+      const reply = await this.get<{ enabled: boolean }>(SUPPLIER_SWITCH_WARNING, AbortSignal.timeout(5_000));
+      return typeof reply?.enabled === 'boolean' ? reply.enabled : undefined;
+    } catch (e) {
+      if (e instanceof SyntaxError || e instanceof BackendError && [404, 405, 501].includes(e.status)) return undefined;
+      throw e;
+    }
+  }
+
+  setSupplierSwitchWarning(enabled: boolean) {
+    return this.client.json<void>(SUPPLIER_SWITCH_WARNING, {
+      method: 'PUT', body: { enabled }, signal: AbortSignal.timeout(5_000),
+    });
+  }
 
   async setDefaultProfile(app: Provider, profileId: string) {
     await this.call('PUT', '/api/profiles/default', { app, profileId });

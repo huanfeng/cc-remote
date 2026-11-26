@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { currentSupplierValue, hasLockedCodexAccount, supplierOptions, supplierSwitchOptions, defaultSupplierLabel, profilesFor, switchSupplier } from '../src/features/pickers/supplierSwitch.ts';
+import { changesSupplier, currentSupplierValue, hasLockedCodexAccount, supplierOptions, supplierSwitchOptions, defaultSupplierLabel, profilesFor, switchSupplier } from '../src/features/pickers/supplierSwitch.ts';
 import { BackendError } from '../src/backend/errors.ts';
 
 const catalog = {
@@ -115,4 +115,12 @@ test('native session selection differs from requesting the host default supplier
     assert.equal(result.session.profileId, 'c', 'the host resolves its configured default');
   }
   assert.equal(currentSupplierValue({ profileId: 'c' }), 'c');
+});
+
+test('the warning compares resolved suppliers rather than the selected alias', () => {
+  assert.equal(changesSupplier({ profileId: 'c' }, catalog.defaultProfiles.claude), false);
+  assert.equal(changesSupplier({}, catalog.defaultProfiles.codex), false);
+  assert.equal(changesSupplier({}, ''), false);
+  assert.equal(changesSupplier({}, catalog.defaultProfiles.claude), true);
+  assert.equal(changesSupplier({ profileId: 'c' }, '@native'), true);
 });

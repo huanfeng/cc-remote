@@ -35,10 +35,13 @@ type modelOption struct {
 }
 
 type modelList struct {
-	Models     []modelOption `json:"models"`
-	FetchedAt  string        `json:"fetchedAt"`
-	Restricted bool          `json:"restricted"`
-	Warnings   []string      `json:"warnings,omitempty"`
+	Models            []modelOption     `json:"models"`
+	FetchedAt         string            `json:"fetchedAt"`
+	Restricted        bool              `json:"restricted"`
+	Warnings          []string          `json:"warnings,omitempty"`
+	DefaultModel      string            `json:"defaultModel,omitempty"`
+	DefaultPermission string            `json:"defaultPermission,omitempty"`
+	AliasModels       map[string]string `json:"aliasModels,omitempty"`
 }
 
 // modelsCache never holds mu while collecting; concurrent callers for the same
@@ -66,14 +69,14 @@ type cachedModels struct {
 
 const modelsTTL = 10 * time.Minute
 
-// Aliases documented at https://code.claude.com/docs/en/model-config (checked against Claude Code 2.1.300).
+// Aliases documented at https://code.claude.com/docs/en/model-config.
 func modelAliases(l i18n.Lang) []modelOption {
 	return []modelOption{
-		{ID: "default", Label: "default", Source: "alias", Description: l.T("Claude Code's default alias: the recommended model for your account type", "Claude Code 的 default 别名：按账户类型使用推荐模型")},
-		{ID: "best", Label: "best", Source: "alias", Description: l.T("Fable when available, otherwise the same as opus", "可用时使用 Fable，否则与 opus 相同")},
+		{ID: "default", Label: "default", Source: "alias", Description: l.T("Claude Code's runtime default for this account and provider", "由 Claude Code 按当前账户和供应商决定")},
+		{ID: "best", Label: "best", Source: "alias", Description: l.T("Same as opus since Claude Code 2.1.321; earlier versions use Fable where available", "Claude Code 2.1.321 起等同于 opus；更早版本在 Fable 可用时使用 Fable")},
 		{ID: "fable", Label: "fable", Source: "alias", Description: l.T("The hardest, longest tasks", "最难、最长的任务")},
-		{ID: "opus", Label: "opus", Source: "alias", Description: l.T("Latest Opus, complex reasoning", "最新 Opus，复杂推理")},
-		{ID: "sonnet", Label: "sonnet", Source: "alias", Description: l.T("Latest Sonnet, everyday coding", "最新 Sonnet，日常编码")},
+		{ID: "opus", Label: "opus", Source: "alias", Description: l.T("Opus for this provider, for complex reasoning", "当前供应商的 Opus，适合复杂推理")},
+		{ID: "sonnet", Label: "sonnet", Source: "alias", Description: l.T("Sonnet for this provider, for everyday coding", "当前供应商的 Sonnet，适合日常编码")},
 		{ID: "haiku", Label: "haiku", Source: "alias", Description: l.T("Fast and efficient for simple tasks", "快速高效的简单任务")},
 		{ID: "opus[1m]", Label: "opus[1m]", Source: "alias", Description: l.T("Opus with a 1M-token context", "Opus 100 万 token 上下文")},
 		{ID: "sonnet[1m]", Label: "sonnet[1m]", Source: "alias", Description: l.T("Sonnet with a 1M-token context", "Sonnet 100 万 token 上下文")},
@@ -95,9 +98,15 @@ var managedSettingsPath = func() string {
 }
 
 type modelSettings struct {
-	Model           string                     `json:"model"`
-	AvailableModels *[]string                  `json:"availableModels"`
-	Env             map[string]json.RawMessage `json:"env"`
+	Model                  string                     `json:"model"`
+	AvailableModels        *[]string                  `json:"availableModels"`
+	EnforceAvailableModels bool                       `json:"enforceAvailableModels"`
+	Env                    map[string]json.RawMessage `json:"env"`
+	Permissions            struct {
+		DefaultMode                  string `json:"defaultMode"`
+		DisableAutoMode              string `json:"disableAutoMode"`
+		DisableBypassPermissionsMode string `json:"disableBypassPermissionsMode"`
+	} `json:"permissions"`
 }
 
 func readModelSettings(l i18n.Lang, path string) (modelSettings, bool, error) {
@@ -126,23 +135,65 @@ func (m modelSettings) envString(key string) string {
 	return x
 }
 
+func (s *Server) modelSettingsLayers(l i18n.Lang, cwd string) (modelSettings, []modelSettings, []string) {
+	managed, _, err := readModelSettings(l, managedSettingsPath())
+	var warnings []string
+	if err != nil {
+		warnings = append(warnings, l.T("Could not read the organization's managed settings: ", "无法读取组织托管设置：")+err.Error())
+	}
+	paths := []string{filepath.Join(s.cfg.ClaudeConfigDir, "settings.json")}
+	if cwd != "" {
+		paths = append(paths, filepath.Join(cwd, ".claude", "settings.json"), filepath.Join(cwd, ".claude", "settings.local.json"))
+	}
+	layers := make([]modelSettings, len(paths))
+	for i, path := range paths {
+		v, _, err := readModelSettings(l, path)
+		if err != nil {
+			warnings = append(warnings, err.Error())
+		}
+		layers[i] = v
+	}
+	return managed, layers, warnings
+}
+
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	provider, ok := requestProvider(w, r)
 	if !ok {
 		return
 	}
+	q := r.URL.Query()
 	x := store.Session{Provider: provider}
-	if id := r.URL.Query().Get("sessionId"); id != "" {
+	preview := q.Has("profileId") || q.Has("sessionId")
+	if id := q.Get("sessionId"); id != "" {
 		var err error
 		x, err = s.store.Get(id)
 		if err != nil {
 			fail(w, 404, s.lang(r).T("Session not found", "会话不存在"))
 			return
 		}
-	} else if account := r.URL.Query().Get("codexAccountId"); provider == "codex" && isCodexAccountID(account) {
+	} else if q.Has("profileId") {
+		p, err := s.selectProfile(provider, q.Get("profileId"))
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		x.ProfileID, x.ProfileJSON = p.ID, p.snapshot()
+		x.Mode = q.Get("mode")
+	} else if account := q.Get("codexAccountId"); provider == "codex" && isCodexAccountID(account) {
 		x.ProfileID = account
 	}
-	respond(w, 200, s.providerModels(s.lang(r), x, r.URL.Query().Get("refresh") == "1"))
+	if x.ID == "" && q.Get("cwd") != "" {
+		// The new-session form may still be editing the directory. Keep the
+		// host catalog usable while the input does not name a project.
+		if cwd, err := validateCwd(s.lang(r), q.Get("cwd")); err == nil {
+			x.Cwd = cwd
+		}
+	}
+	list := s.providerModels(s.lang(r), x, q.Get("refresh") == "1")
+	if preview {
+		s.previewModelDefaults(s.lang(r), x, &list)
+	}
+	respond(w, 200, list)
 }
 
 // modelList must not be called with s.mu held: collection reads files and may call the API.
@@ -166,6 +217,12 @@ func (s *Server) providerModels(l i18n.Lang, x store.Session, refresh bool) mode
 		defer release()
 		s.configureCodexAccount(&o, x.ProfileID)
 		key.accountID = x.ProfileID
+	} else if x.Provider == "codex" && x.ProfileJSON != "" {
+		if err := s.profileOptions(x, &o); err != nil {
+			return modelList{Models: []modelOption{}, Warnings: []string{err.Error()}}
+		}
+		config, _ := json.Marshal(o.ConfigOverrides)
+		key.accountID = x.ProfileID + tokenFingerprint(o.ProfileEnv["OPENAI_API_KEY"]+string(config), nil)
 	}
 	c := &s.modelCache
 	c.mu.Lock()
@@ -207,7 +264,7 @@ func collectCodexModels(l i18n.Lang, o claude.Options) modelList {
 	list := modelList{Models: []modelOption{}, FetchedAt: time.Now().UTC().Format(time.RFC3339)}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	models, err := codex.Models(ctx, o)
+	models, defaults, err := codex.ModelCatalog(ctx, o)
 	if err != nil {
 		warning := l.T("Could not read Codex models", "无法读取 Codex 模型")
 		if !o.CodexAccount {
@@ -216,6 +273,10 @@ func collectCodexModels(l i18n.Lang, o claude.Options) modelList {
 		list.Warnings = []string{warning}
 		return list
 	}
+	if prefs.ValidModel(defaults.Model) {
+		list.DefaultModel = defaults.Model
+	}
+	list.DefaultPermission = permissionDefault("codex", defaults.Sandbox)
 	for _, m := range models {
 		if prefs.ValidModel(m.ID) && m.ID != "" {
 			list.Models = append(list.Models, modelOption{ID: m.ID, Label: m.Label, Description: m.Description, Source: "codex", Efforts: m.Efforts, DefaultEffort: m.DefaultEffort, IsDefault: m.IsDefault})
@@ -243,28 +304,8 @@ func (s *Server) collectModels(lang i18n.Lang, cwd string) (modelList, bool) {
 	}
 
 	// Managed policy wins outright; otherwise user/project/local lists are combined.
-	managed, _, err := readModelSettings(lang, managedSettingsPath())
-	if err != nil {
-		result.Warnings = append(result.Warnings, lang.T("Could not read the organization's managed settings: ", "无法读取组织托管设置：")+err.Error())
-	}
-	paths := []string{filepath.Join(s.cfg.ClaudeConfigDir, "settings.json")}
-	if cwd != "" {
-		paths = append(paths, filepath.Join(cwd, ".claude", "settings.json"), filepath.Join(cwd, ".claude", "settings.local.json"))
-	}
-	var layers []modelSettings
-	var user modelSettings
-	for i, path := range paths {
-		v, ok, err := readModelSettings(lang, path)
-		if err != nil {
-			result.Warnings = append(result.Warnings, err.Error())
-		}
-		if ok {
-			layers = append(layers, v)
-		}
-		if i == 0 {
-			user = v
-		}
-	}
+	managed, layers, warnings := s.modelSettingsLayers(lang, cwd)
+	result.Warnings = warnings
 	if managed.AvailableModels != nil {
 		allowed = managed.AvailableModels
 	} else {
@@ -315,7 +356,7 @@ func (s *Server) collectModels(lang i18n.Lang, cwd string) (modelList, bool) {
 		}
 		add(id, "recent", lang.T("Recently used by native sessions on this host", "本机原生会话最近使用"))
 	}
-	api, attempted, err := fetchAPIModels(lang, user)
+	api, attempted, err := fetchAPIModels(lang, layers[0])
 	cacheable := true
 	if err != nil {
 		result.Warnings = append(result.Warnings, lang.T("Could not fetch the model list from the API: ", "无法从 API 获取模型列表：")+err.Error())

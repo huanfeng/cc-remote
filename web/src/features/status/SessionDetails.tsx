@@ -6,13 +6,15 @@ import { RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/components/lib/utils';
-import { BackendError, useBackend } from '@/backend/backend';
+import { useBackend } from '@/backend/backend';
 import type { Preferences, Session, SessionStats } from '@/backend/types';
 import { useApp } from '@/store/app';
 import { t, lang, locale } from '@/lib/i18n';
 import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
-import { currentSupplierValue, hasLockedCodexAccount, supplierSwitchOptions } from '@/features/pickers/supplierSwitch';
+import { changesSupplier, currentSupplierValue, hasLockedCodexAccount, supplierSwitchOptions, switchSupplier } from '@/features/pickers/supplierSwitch';
+import { useSupplierSwitchConfirmation } from '@/features/pickers/useSupplierSwitchConfirmation';
 import { dangerousPermission, providerName, providerOf } from '@/domain/providers';
+import { useModels } from '@/features/pickers/useModels';
 import { conversationTime } from '@/domain/conversationTime';
 import { modeLabel, sessionStatusLabel, statusTone, tonePill } from '@/features/session/status';
 import { permissionLabel } from '@/features/pickers';
@@ -23,7 +25,7 @@ import {
 import { EffortField, ModelField, PermissionField } from '@/features/dialogs/pickers';
 import { DeleteSessionDialog } from '@/features/dialogs/DeleteSessionDialog';
 import { PathMenu } from '@/features/files/PathMenu';
-import { compactNumber, costText, durationText, agoText } from './usageMath';
+import { compactNumber, costText, durationText, agoText, hasRecordedCost } from './usageMath';
 
 type Overrides = { model: string; effort: string; permissionMode: string };
 const overridesOf = (s: Session): Overrides => ({ model: s.model ?? '', effort: s.effort ?? '', permissionMode: s.permissionMode ?? '' });
@@ -153,9 +155,7 @@ function SupplierSection({ session: s }: { session: Session }) {
   const currentValue = currentSupplierValue(s);
   const accountLocked = hasLockedCodexAccount(s);
   const [chosen, setChosen] = useState(currentValue);
-  const [busy, setBusy] = useState(false);
-  const [force, setForce] = useState(false);
-  const [error, setError] = useState('');
+  const { start, busy, error, clearError, dialog } = useSupplierSwitchConfirmation();
   const [notice, setNotice] = useState('');
   useEffect(() => { setChosen(currentValue); }, [currentValue]);
 
@@ -166,19 +166,21 @@ function SupplierSection({ session: s }: { session: Session }) {
   const selected = options.some(option => option.value === chosen);
   const canSwitch = !!catalog && selected && chosen !== currentValue;
 
-  const run = async (withForce = false) => {
+  const run = () => {
     if (!canSwitch) return;
-    setBusy(true); setError(''); setNotice('');
-    try {
-      await backend.switchProfile(s.id, chosen, withForce);
-      setForce(false);
-      setNotice(t('Supplier switched. Interrupted requests are not resent; continue when ready.', '供应商已切换。被中断的请求不会自动重发，准备好后可继续对话。'));
-    } catch (e) {
-      if (e instanceof BackendError && e.status === 409 && !withForce) setForce(true);
-      else { setForce(false); setError(errorMessage(e)); }
-    } finally {
-      setBusy(false);
-    }
+    setNotice('');
+    start({
+      label: options.find(option => option.value === chosen)?.label ?? chosen,
+      apply: async force => {
+        const result = await switchSupplier(backend, s, chosen, force);
+        if (result.status === 'confirmation') return result;
+        return { status: 'switched', finish: () => {
+          const app = useApp.getState();
+          app.setSessions(app.sessions.map(session => session.id === result.session.id ? { ...session, ...result.session } : session));
+          setNotice(t('Supplier switched. Interrupted requests are not resent; continue when ready.', '供应商已切换。被中断的请求不会自动重发，准备好后可继续对话。'));
+        } };
+      },
+    }, changesSupplier(s, chosen || catalog?.defaultProfiles[provider] || ''));
   };
 
   return (
@@ -188,8 +190,8 @@ function SupplierSection({ session: s }: { session: Session }) {
       <GroupCard>
         <InfoRow label={t('Current', '当前')}>{s.profileName || (current && profileLabel(current)) || s.profileId || t('Native configuration', '原生配置')}</InfoRow>
         {!accountLocked && <div className="flex flex-wrap items-center gap-2 border-t border-border/60 px-4 py-3">
-          <SimpleSelect value={selected ? chosen : null} onChange={v => { setChosen(v); setError(''); setNotice(''); }} options={options} disabled={!catalog || busy || !options.length} placeholder={options.length ? t('Choose supplier', '选择供应商') : t('No suppliers available', '暂无可用供应商')} className="min-w-0 flex-1 sm:w-auto" ariaLabel={t('Supplier', '供应商')} />
-          <Button variant="outline" size="lg" disabled={busy || !canSwitch} onClick={() => void run()}>
+          <SimpleSelect value={selected ? chosen : null} onChange={v => { setChosen(v); clearError(); setNotice(''); }} options={options} disabled={!catalog || busy || !options.length} placeholder={options.length ? t('Choose supplier', '选择供应商') : t('No suppliers available', '暂无可用供应商')} className="min-w-0 flex-1 sm:w-auto" ariaLabel={t('Supplier', '供应商')} />
+          <Button variant="outline" size="lg" disabled={busy || !canSwitch} onClick={run}>
             {busy && <Spinner className="size-3.5" />}
             {t('Switch', '切换')}
           </Button>
@@ -197,16 +199,7 @@ function SupplierSection({ session: s }: { session: Session }) {
       </GroupCard>
       <ErrorText>{error}</ErrorText>
       {notice && <p role="status" className="text-ui-sm text-success">{notice}</p>}
-      <ConfirmDialog
-        open={force}
-        onOpenChange={setForce}
-        title={t('Interrupt and switch supplier?', '中断并切换供应商？')}
-        description={t('This session is busy. Switching now stops the current work and background tasks, keeps the saved context and does not replay the interrupted request. Finished actions cannot be undone.', '此会话正在运行。立即切换将停止当前执行及后台任务，保留已保存的上下文，不会自动重发被中断的请求。已经完成的操作无法撤销。')}
-        confirmLabel={t('Interrupt and switch', '中断并切换')}
-        destructive
-        busy={busy}
-        onConfirm={() => void run(true)}
-      />
+      {dialog}
     </Section>
   );
 }
@@ -214,6 +207,7 @@ function SupplierSection({ session: s }: { session: Session }) {
 function ConfigSection({ session: s, prefs, onDirty }: { session: Session; prefs?: Preferences; onDirty: (d: boolean) => void }) {
   const backend = useBackend();
   const provider = providerOf(s);
+  const { list } = useModels(provider, { sessionId: s.id });
   const saved = useMemo(() => overridesOf(s), [s.model, s.effort, s.permissionMode]);
   const [draft, setDraft] = useState(saved);
   const [base, setBase] = useState(saved);
@@ -289,7 +283,7 @@ function ConfigSection({ session: s, prefs, onDirty }: { session: Session; prefs
           <EffortField provider={provider} sessionId={s.id} model={draft.model} value={draft.effort} onChange={effort => setDraft(d => ({ ...d, effort }))} inheritLabel={t('Inherit', '继承默认')} />
         </OverrideRow>
         <OverrideRow label={provider === 'codex' ? t('Sandbox', '沙箱权限') : t('Permission mode', '权限模式')}>
-          <PermissionField provider={provider} value={draft.permissionMode} effective={prefs?.permissionMode} onChange={permissionMode => setDraft(d => ({ ...d, permissionMode }))} inheritLabel={t('Inherit', '继承默认')} />
+          <PermissionField provider={provider} value={draft.permissionMode} effective={list?.defaultPermission} onChange={permissionMode => setDraft(d => ({ ...d, permissionMode }))} inheritLabel={t('Inherit', '继承默认')} />
         </OverrideRow>
         <ErrorText>{error}</ErrorText>
         {notice && !dirty && <p role="status" className="text-ui-sm text-success">{notice}</p>}
@@ -328,7 +322,7 @@ function StatsSection({ stats, session: s }: { stats?: SessionStats | null; sess
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Tile label={t('Turns', '轮次')} value={compactNumber(stats.turns)} />
-          <Tile label={t('Cost (est.)', '费用（估算）')} value={stats.costKnown ? costText(stats.costUSD) : '—'} />
+          <Tile label={t('Cost (est.)', '费用（估算）')} value={hasRecordedCost(stats) ? costText(stats) : <span className="text-ui-sm font-normal text-foreground-subtle">{costText(stats)}</span>} />
           <Tile label={t('Run time', '执行耗时')} value={durationText(stats.durationMs / 1000)} />
           <Tile label={t('Tool calls', '工具调用')} value={compactNumber(stats.toolCalls)} />
           <Tile label={t('Input tokens', '输入 tokens')} value={compactNumber(stats.inputTokens)} />

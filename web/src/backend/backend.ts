@@ -7,7 +7,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { BackendError } from './errors';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from './supplierConfig';
 import type {
-  Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostIdentity, HostInfo, HostStatus, ModelList, NativeSession,
+  Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostIdentity, HostInfo, HostStatus, ModelContext, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
@@ -87,6 +87,8 @@ export interface Backend {
    * unchanged poll is not delivered). onError reports a failed poll; the watch keeps going.
    */
   watchSessions(onChange: (sessions: Session[]) => void, onError?: (e: BackendError) => void): Unsubscribe;
+  /** Queue the acknowledgment of a specific completion on a host that reports completionReadAt. */
+  markCompletionRead?(id: string, completedAt: string): void;
   createSession(body: NewSessionRequest): Promise<Session>;
   forkSession(id: string, body: SessionForkRequest, native?: Provider): Promise<SessionForkReply>;
   patchSession(id: string, patch: SessionPatch): Promise<Session>;
@@ -152,8 +154,11 @@ export interface Backend {
   openProjectShell(shellId: string, runId: string, after: number, handlers: ProjectShellHandlers): ProjectShellStream;
 
   // Configuration
-  models(opts: { provider: Provider; sessionId?: string; codexAccountId?: string; refresh?: boolean }): Promise<ModelList>;
+  models(opts: ModelContext & { provider: Provider; refresh?: boolean }): Promise<ModelList>;
   profiles(): Promise<ProfileCatalog>;
+  /** Undefined if the host cannot store a preference for this warning. */
+  supplierSwitchWarning(): Promise<boolean | undefined>;
+  setSupplierSwitchWarning(enabled: boolean): Promise<void>;
   profileUsage?(provider: Provider): Promise<ProfileUsageReply | null>;
   setDefaultProfile(app: Provider, profileId: string): Promise<void>;
   preferences(provider: Provider): Promise<Preferences>;

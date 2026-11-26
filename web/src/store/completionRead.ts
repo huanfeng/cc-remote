@@ -9,8 +9,9 @@ function read(): Saved {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || '{}');
     const records = Object.fromEntries(Object.entries(raw?.records ?? {}).filter(([, v]) => {
-      const value = v as { completedAt?: unknown; viewedAt?: unknown } | null;
-      return value && typeof value.completedAt === 'string' && typeof value.viewedAt === 'string';
+      const value = v as { completedAt?: unknown; viewedAt?: unknown; confirmedAt?: unknown } | null;
+      return value && typeof value.completedAt === 'string' && typeof value.viewedAt === 'string' &&
+        (value.confirmedAt === undefined || typeof value.confirmedAt === 'string');
     })) as CompletionRecords;
     const initializedHosts = Object.fromEntries(Object.entries(raw?.initializedHosts ?? {}).filter(([, v]) => v === true)) as Record<string, true>;
     return { records, initializedHosts };
@@ -24,7 +25,7 @@ export const useCompletionRead = create<{
   records: CompletionRecords;
   initializedHosts: Record<string, true>;
   observe(sessions: Session[]): void;
-  markViewed(session: Session): void;
+  markViewed(session: Session): boolean;
 }>()((set, get) => ({
   ...read(),
   observe: sessions => {
@@ -49,7 +50,12 @@ export const useCompletionRead = create<{
     const records = mergeCompletionRecords(get().records, saved.records);
     const initializedHosts = { ...get().initializedHosts, ...saved.initializedHosts };
     const next = viewCompletion(session, records[key]);
-    if (next && next !== records[key]) { records[key] = next; const state = { records, initializedHosts }; save(state); set(state); }
+    if (!next || next === records[key]) return false;
+    records[key] = next;
+    const state = { records, initializedHosts };
+    save(state);
+    set(state);
+    return true;
   },
 }));
 
@@ -60,7 +66,8 @@ if (typeof window !== 'undefined') window.addEventListener('storage', event => {
   const state = { records, initializedHosts: { ...current.initializedHosts, ...saved.initializedHosts } };
   useCompletionRead.setState(state);
   // Repair a concurrently overwritten older snapshot, without echoing equal writes.
-  const differs = Object.keys(records).some(key => records[key].completedAt !== saved.records[key]?.completedAt || records[key].viewedAt !== saved.records[key]?.viewedAt) ||
+  const differs = Object.keys(records).some(key => records[key].completedAt !== saved.records[key]?.completedAt ||
+    records[key].viewedAt !== saved.records[key]?.viewedAt || records[key].confirmedAt !== saved.records[key]?.confirmedAt) ||
     Object.keys(state.initializedHosts).some(key => !saved.initializedHosts[key]);
   if (event.key === KEY && event.newValue !== null && differs) save(state);
 });

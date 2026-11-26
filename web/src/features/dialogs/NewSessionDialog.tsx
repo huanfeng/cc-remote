@@ -1,4 +1,4 @@
-// New session: engine, supplier, Claude's terminal/managed choice, the project
+// New session: engine, supplier, terminal/managed choice, the project
 // directory (with recent projects), a name and optional overrides. The resume
 // variant continues a session from the terminal history, as a terminal session
 // (Claude) or by importing it as a managed one.
@@ -11,17 +11,19 @@ import { Spinner } from '@/components/ui/spinner';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/components/lib/utils';
 import { BackendError, useBackend } from '@/backend/backend';
-import type { NativeSession, NewSessionRequest, Provider } from '@/backend/types';
+import type { NativeSession, Provider, SessionMode } from '@/backend/types';
 import { select, useApp } from '@/store/app';
 import { usePrefs } from '@/lib/prefs';
 import { t } from '@/lib/i18n';
-import { hostProviders, newSessionBody, providerName } from '@/domain/providers';
+import { codexTerminalSupport, hostProviders, newSessionBody, providerName } from '@/domain/providers';
 import { matchProjects, projectKey, projectName, recentProjects } from '@/domain/recentProjects';
 import { shortPath } from '@/features/session/status';
 import { SurfaceShell } from './SurfaceShell';
 import { ErrorText, SimpleSelect, errorMessage, supplierOptions, useProfileCatalog } from './common';
 import { useSupplierUsage } from '@/features/pickers/useSupplierUsage';
-import { isCodexAccount } from '@/features/pickers/supplierSwitch';
+import { changesSupplier, isCodexAccount } from '@/features/pickers/supplierSwitch';
+import { useSupplierSwitchConfirmation } from '@/features/pickers/useSupplierSwitchConfirmation';
+import { useModels } from '@/features/pickers/useModels';
 import { EffortField, ModelField, PermissionField } from './pickers';
 
 type Resume = { id: string; provider: Provider; cwd: string; profileId?: string };
@@ -74,7 +76,13 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
     const preferred = initialProvider ?? selected?.provider;
     return preferred === 'codex' && providers.includes('codex') ? 'codex' : 'claude';
   });
-  const [mode, setMode] = useState<'terminal' | 'managed'>(() => usePrefs.getState().newSessionMode);
+  const [claudeMode, setClaudeMode] = useState(() => usePrefs.getState().newSessionMode);
+  const [codexMode, setCodexMode] = useState<SessionMode>('managed');
+  const codexTerminal = codexTerminalSupport(info);
+  const mode = provider === 'claude' ? claudeMode : codexTerminal ? codexMode : 'managed';
+  const setMode = provider === 'claude' ? setClaudeMode : setCodexMode;
+  const showAdvanced = provider !== 'codex' || mode !== 'terminal';
+  const showSupplier = showAdvanced || codexTerminal === 'suppliers';
   const [profileId, setProfileId] = useState('');
   const [cwd, setCwd] = useState(initialCwd ?? '');
   // A directory handed in by the caller is a choice: never overwritten by the latest-project default.
@@ -89,8 +97,8 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const { catalog } = useProfileCatalog();
-  const selectedSupplier = profileId || catalog?.defaultProfiles[provider];
-  const codexAccountId = provider === 'codex' && isCodexAccount(selectedSupplier) ? selectedSupplier : undefined;
+  const modelContext = { profileId: profileId || catalog?.defaultProfiles[provider] || '', cwd: absolute(cwd) ? cwd.trim() : undefined, mode };
+  const { list: modelList } = useModels(provider, modelContext, open && showAdvanced && advanced);
   const supplierUsage = useSupplierUsage(provider, open);
   const recent = useRecentProjects();
 
@@ -100,7 +108,7 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
     if (!cwdTouched && !cwd && recent[0]) setCwd(recent[0].path);
   }, [recent, cwd, cwdTouched]);
 
-  const terminal = provider === 'claude' && mode === 'terminal';
+  const claudeTerminal = provider === 'claude' && mode === 'terminal';
   const available = provider === 'codex' ? info?.codexAvailable !== false : info?.claudeAvailable !== false;
   const valid = absolute(cwd) && available;
   const chips = matchProjects(recent, cwd);
@@ -116,13 +124,13 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
     if (!valid || busy) return;
     setBusy(true); setError('');
     try {
-      const body = newSessionBody(provider, title, cwd, overrides, mode, trust, profileId) as NewSessionRequest;
+      const body = newSessionBody(provider, title, cwd, overrides, mode, trust, showSupplier ? profileId : '');
       const session = await backend.createSession(body);
       if (provider === 'claude') setPrefs({ newSessionMode: mode });
       onOpenChange(false);
       openCreated(session.id);
     } catch (err) {
-      if (err instanceof BackendError && (err.status === 428 || err.code === 'trust-required')) {
+      if (claudeTerminal && err instanceof BackendError && (err.status === 428 || err.code === 'trust-required')) {
         setTrustNeeded(true);
         setError(t('Claude Code has not trusted this folder yet. Tick "Trust this folder" and create again.', 'Claude Code 尚未信任此文件夹。请勾选「信任此文件夹」后重新创建。'));
         trustRef.current?.focus();
@@ -163,18 +171,18 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
                 active={provider === p}
                 onClick={() => chooseProvider(p)}
                 title={providerName(p)}
-                description={p === 'codex' ? t('Managed sessions · sandbox permissions', '托管会话 · 沙箱权限') : t('Terminal or managed sessions', '终端或托管会话')}
+                description={p === 'codex' && !codexTerminal ? t('Managed sessions · sandbox permissions', '托管会话 · 沙箱权限') : t('Terminal or managed sessions', '终端或托管会话')}
                 badge={(p === 'codex' ? info?.codexAvailable === false : info?.claudeAvailable === false) ? t('Unavailable', '不可用') : undefined}
               />
             ))}
           </div>
         )}
 
-        {provider === 'claude' && (
+        {(provider === 'claude' || codexTerminal) && (
           <Field label={t('Session type', '会话类型')}>
             <div role="radiogroup" aria-label={t('Session type', '会话类型')} className="grid grid-cols-2 gap-1 rounded-xl bg-surface p-1">
               <Segment active={mode === 'terminal'} onClick={() => setMode('terminal')} icon={<SquareTerminal className="size-4" />}
-                title={t('Terminal session', '终端会话')} description={t('A local terminal can attach any time', '本地终端可随时接入')} />
+                title={t('Terminal session', '终端会话')} description={provider === 'codex' ? t('Use the interactive Codex CLI', '使用交互式 Codex CLI') : t('A local terminal can attach any time', '本地终端可随时接入')} />
               <Segment active={mode === 'managed'} onClick={() => setMode('managed')} icon={<MessageSquare className="size-4" />}
                 title={t('Managed session', '托管会话')} description={t('Runs in the background, web only', '后台运行，仅网页使用')} />
             </div>
@@ -232,12 +240,14 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
           />
         </Field>
 
-        <Field label={t('Supplier', '供应商')} hint={t('Kept for this session when the default changes.', '默认项改变后，此会话仍保留所选配置。')}>
-          <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, provider, false, supplierUsage)} disabled={!catalog} className="w-full" ariaLabel={t('Supplier', '供应商')} />
-          {catalog?.found === false && <p className="text-ui-sm text-foreground-subtlest">{t('CC-Switch database not found on this host.', '此宿主未找到 CC-Switch 数据库。')}</p>}
-        </Field>
+        {showSupplier && (
+          <Field label={t('Supplier', '供应商')} hint={t('Kept for this session when the default changes.', '默认项改变后，此会话仍保留所选配置。')}>
+            <SimpleSelect value={profileId} onChange={setProfileId} options={supplierOptions(catalog, provider, false, supplierUsage)} disabled={!catalog} className="w-full" ariaLabel={t('Supplier', '供应商')} />
+            {catalog?.found === false && <p className="text-ui-sm text-foreground-subtlest">{t('CC-Switch database not found on this host.', '此宿主未找到 CC-Switch 数据库。')}</p>}
+          </Field>
+        )}
 
-        {terminal && (
+        {claudeTerminal && (
           <label className={cn(
             'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
             trustNeeded && !trust ? 'border-warning bg-warning-surface ring-2 ring-warning/30' : 'border-border/70 bg-surface',
@@ -251,7 +261,7 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
           </label>
         )}
 
-        <Collapsible open={advanced} onOpenChange={setAdvanced}>
+        <Collapsible open={showAdvanced && advanced} onOpenChange={setAdvanced} hidden={!showAdvanced}>
           <CollapsibleTrigger asChild>
             <button type="button" className="flex items-center gap-1 text-ui-sm font-medium text-foreground-subtle hover:text-foreground max-md:min-h-9">
               <ChevronRight className={cn('size-3.5 transition-transform', advanced && 'rotate-90')} />
@@ -262,15 +272,14 @@ function CreateDialog({ open, onOpenChange, mobile, initialCwd, initialProvider 
           <CollapsibleContent>
             <div className="mt-3 flex flex-col gap-3 rounded-xl border border-border/70 p-3">
               <InlineField label={provider === 'codex' ? t('Sandbox', '沙箱权限') : t('Permission mode', '权限模式')}>
-                <PermissionField provider={provider} value={overrides.permissionMode} onChange={permissionMode => setOverrides(o => ({ ...o, permissionMode }))} />
+                <PermissionField provider={provider} value={overrides.permissionMode} effective={modelList?.defaultPermission} onChange={permissionMode => setOverrides(o => ({ ...o, permissionMode }))} />
               </InlineField>
               <InlineField label={t('Model', '模型')}>
-                <ModelField key={provider} provider={provider} codexAccountId={codexAccountId} value={overrides.model} onChange={model => setOverrides(o => ({ ...o, model }))} />
+                <ModelField key={provider} provider={provider} {...modelContext} value={overrides.model} onChange={model => setOverrides(o => ({ ...o, model }))} />
               </InlineField>
               <InlineField label={t('Effort', '推理强度')}>
-                <EffortField provider={provider} codexAccountId={codexAccountId} model={overrides.model} value={overrides.effort} onChange={effort => setOverrides(o => ({ ...o, effort }))} />
+                <EffortField provider={provider} {...modelContext} model={overrides.model} value={overrides.effort} onChange={effort => setOverrides(o => ({ ...o, effort }))} />
               </InlineField>
-              <p className="text-ui-xs text-foreground-subtlest">{t('Empty choices follow the CC Remote defaults in Settings.', '未选择的项跟随设置中的 CC Remote 默认值。')}</p>
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -286,8 +295,8 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
   const backend = useBackend();
   const [stopped, setStopped] = useState(false);
   const [profileId, setProfileId] = useState('');
-  const [busy, setBusy] = useState<'' | 'terminal' | 'import'>('');
-  const [error, setError] = useState('');
+  const [action, setAction] = useState<'terminal' | 'import'>();
+  const { start, busy, error, clearError, dialog } = useSupplierSwitchConfirmation();
   const { catalog } = useProfileCatalog();
   const supplierUsage = useSupplierUsage(resume.provider, open);
   const claude = resume.provider !== 'codex';
@@ -297,32 +306,33 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
   const choices = supplierOptions(catalog, resume.provider, true, supplierUsage);
   const importChoices = claude ? choices : choices.filter(option => !option.value.startsWith('codex-account:'));
 
-  const run = async (kind: 'terminal' | 'import') => {
+  const run = (kind: 'terminal' | 'import') => {
     if (!stopped || busy) return;
-    setBusy(kind); setError('');
-    try {
-      const session = kind === 'terminal'
-        ? await backend.createSession({ mode: 'terminal', trustFolder: true, resume: resume.id, cwd: resume.cwd, title: '', ...(profileId ? { profileId } : {}) })
-        : await backend.importNative(resume.id, resume.provider, originalAccount ? undefined : profileId || undefined);
-      onOpenChange(false);
-      openCreated(session.id);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy('');
-    }
+    setAction(kind);
+    start({
+      label: importChoices.find(option => option.value === profileId)?.label ?? profileId,
+      apply: async () => {
+        const session = kind === 'terminal'
+          ? await backend.createSession({ mode: 'terminal', trustFolder: true, resume: resume.id, cwd: resume.cwd, title: '', ...(profileId ? { profileId } : {}) })
+          : await backend.importNative(resume.id, resume.provider, originalAccount ? undefined : profileId || undefined);
+        return { status: 'switched', finish: () => {
+          onOpenChange(false);
+          openCreated(session.id);
+        } };
+      },
+    }, !originalAccount && !!profileId && changesSupplier(resume, profileId));
   };
 
   const footer = (
     <>
       {!mobile && <Button variant="ghost" size="lg" onClick={() => onOpenChange(false)}>{t('Cancel', '取消')}</Button>}
-      <Button variant={claude ? 'outline' : 'default'} size="lg" disabled={!stopped || !!busy} onClick={() => void run('import')} className={cn(mobile && 'flex-1')}>
-        {busy === 'import' && <Spinner className="size-3.5" />}
+      <Button variant={claude ? 'outline' : 'default'} size="lg" disabled={!stopped || busy} onClick={() => run('import')} className={cn(mobile && 'flex-1')}>
+        {busy && action === 'import' && <Spinner className="size-3.5" />}
         {t('Import as managed session', '导入为托管会话')}
       </Button>
       {claude && (
-        <Button size="lg" disabled={!stopped || !!busy} onClick={() => void run('terminal')} className={cn(mobile && 'flex-1')}>
-          {busy === 'terminal' && <Spinner className="size-3.5" />}
+        <Button size="lg" disabled={!stopped || busy} onClick={() => run('terminal')} className={cn(mobile && 'flex-1')}>
+          {busy && action === 'terminal' && <Spinner className="size-3.5" />}
           {t('Continue as terminal session', '以终端会话继续')}
         </Button>
       )}
@@ -330,7 +340,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
   );
 
   return (
-    <SurfaceShell
+    <><SurfaceShell
       open={open}
       onOpenChange={onOpenChange}
       mobile={mobile}
@@ -351,7 +361,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
           </Field>
         ) : canPick && (
           <Field label={t('Supplier', '供应商')}>
-            <SimpleSelect value={profileId} onChange={setProfileId} options={importChoices} className="w-full" ariaLabel={t('Supplier', '供应商')} />
+            <SimpleSelect value={profileId} onChange={v => { setProfileId(v); clearError(); }} disabled={busy} options={importChoices} className="w-full" ariaLabel={t('Supplier', '供应商')} />
           </Field>
         )}
         <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border/70 px-3 py-2.5 max-md:min-h-11">
@@ -365,7 +375,7 @@ function ResumeDialog({ open, onOpenChange, mobile, resume }: { open: boolean; o
         )}
         <ErrorText>{error}</ErrorText>
       </div>
-    </SurfaceShell>
+    </SurfaceShell>{dialog}</>
   );
 }
 

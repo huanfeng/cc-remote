@@ -81,7 +81,55 @@ func TestSessionStats(t *testing.T) {
 		t.Fatal(err)
 	}
 	today := daily[len(daily)-1]
-	if len(daily) != 14 || today.Date != time.Now().UTC().Format("2006-01-02") || today.Turns != 7 || math.Abs(today.CostUSD-0.85) > 1e-9 || today.Tokens != 600 || daily[0].Turns != 0 {
+	if len(daily) != 14 || today.Date != time.Now().UTC().Format("2006-01-02") || today.Turns != 7 || !today.CostKnown || math.Abs(today.CostUSD-0.85) > 1e-9 || today.Tokens != 600 || daily[0].Turns != 0 || daily[0].CostKnown {
 		t.Fatalf("daily: %+v", daily)
+	}
+}
+
+func TestCostAvailability(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "stats.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	project := t.TempDir()
+	start := time.Date(2026, time.November, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, kind, payload string
+		results             int
+		known               bool
+		cost                float64
+	}{
+		{name: "no result", kind: "user"},
+		{name: "missing amount", kind: "result", payload: `{"type":"result"}`, results: 1},
+		{name: "null amount", kind: "result", payload: `{"type":"result","total_cost_usd":null}`, results: 1},
+		{name: "text amount", kind: "result", payload: `{"type":"result","total_cost_usd":"1.25"}`, results: 1},
+		{name: "negative amount", kind: "result", payload: `{"type":"result","total_cost_usd":-1}`, results: 1},
+		{name: "zeroed error", kind: "error", payload: `{"type":"result","is_error":true,"total_cost_usd":0}`, results: 1},
+		{name: "reported zero", kind: "result", payload: `{"type":"result","total_cost_usd":0}`, results: 1, known: true},
+		{name: "reported spend", kind: "result", payload: `{"type":"result","total_cost_usd":1.25}`, results: 1, known: true, cost: 1.25},
+	}
+	for i, tc := range cases {
+		x, err := st.Create(tc.name, project, ID(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := start.AddDate(0, 0, i).Format(time.RFC3339)
+		if _, err := st.AppendAt(x.ID, tc.kind, "", json.RawMessage(tc.payload), at); err != nil {
+			t.Fatal(err)
+		}
+		stats, err := st.SessionStatsFor(x.ID)
+		if err != nil || stats.Results != tc.results || stats.CostKnown != tc.known || stats.CostReported != tc.known || stats.CostUSD != tc.cost {
+			t.Errorf("%s session: %+v, %v", tc.name, stats, err)
+		}
+	}
+	daily, err := st.DailyStats(len(cases), start.AddDate(0, 0, len(cases)-1))
+	if err != nil || len(daily) != len(cases) {
+		t.Fatalf("daily: %+v, %v", daily, err)
+	}
+	for i, tc := range cases {
+		if d := daily[i]; d.CostKnown != tc.known || d.CostUSD != tc.cost {
+			t.Errorf("%s day: %+v", tc.name, d)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import { setTitleAttention } from '@/lib/identity';
 import { useCompletionRead } from '@/store/completionRead';
 import { hostKey } from '@/lib/hosts';
 import { attentionCounts } from '@/domain/attention';
+import { isCompletionPending } from '@/domain/completionRead';
 
 type Seen = Parameters<typeof sessionChanges>[0];
 
@@ -25,9 +26,14 @@ export function useNotifications() {
     const prefs = usePrefs.getState().notify;
     if (!changes.length || !prefs.on || !notifySupported() || Notification.permission !== 'granted') return;
     const { selection, info } = useApp.getState();
+    const latestReads = useCompletionRead.getState().records;
     const looking = document.visibilityState === 'visible' && document.hasFocus();
     for (const change of changes) {
       if (!prefs[change.event]) continue;
+      if (change.event === 'done') {
+        const session = sessions.find(s => s.id === change.id);
+        if (session && typeof session.completionReadAt === 'string' && !isCompletionPending(session, latestReads[hostKey(session.id)])) continue;
+      }
       if (looking && selection?.kind === 'session' && selection.id === change.id) continue;
       const target = { kind: 'session' as const, id: change.id };
       // Absolute: the service worker matches it against its clients' URLs.

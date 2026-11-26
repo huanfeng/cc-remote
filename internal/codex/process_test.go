@@ -96,7 +96,7 @@ func fakeAppServer() {
 			if !ack {
 				fail("configuration before handshake")
 			}
-			reply(map[string]any{"config": map[string]any{"model": "model-a", "model_reasoning_effort": "medium", "model_provider": os.Getenv("CODEX_ADAPTER_TEST_PROVIDER")}})
+			reply(map[string]any{"config": map[string]any{"model": "model-a", "model_reasoning_effort": "medium", "sandbox_mode": "read-only", "model_provider": os.Getenv("CODEX_ADAPTER_TEST_PROVIDER")}})
 		case "account/read":
 			kind := os.Getenv("CODEX_ADAPTER_TEST_ACCOUNT")
 			if kind == "none" {
@@ -513,12 +513,15 @@ func TestAdapterBridgeFailureDeclines(t *testing.T) {
 func TestAdapterModelsAndTimeout(t *testing.T) {
 	o := fakeOptions(t)
 	t.Setenv("CODEX_ADAPTER_TEST_MODE", "models")
-	models, err := Models(context.Background(), o)
+	models, defaults, err := ModelCatalog(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(models) != 2 || models[0].ID != "model-a" || models[0].Label != "Model A" || models[1].ID != "model-b" {
 		t.Fatal(models)
+	}
+	if defaults.Model != "model-a" || defaults.Sandbox != "read-only" {
+		t.Fatal(defaults)
 	}
 	t.Setenv("CODEX_ADAPTER_TEST_MODE", "stall")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

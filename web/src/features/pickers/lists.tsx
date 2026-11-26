@@ -5,22 +5,23 @@ import { Command as CommandPrimitive } from 'cmdk';
 import { RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/lib/utils';
-import type { Provider } from '@/backend/types';
+import type { ModelContext, Provider } from '@/backend/types';
 import { t } from '@/lib/i18n';
 import { providerName } from '@/domain/providers';
-import { EFFORT_NOTES, groupModels, modelEfforts, type PickerOption } from './options';
+import { aliasTarget, EFFORT_NOTES, groupModels, modelEfforts, withTarget, type PickerOption } from './options';
 import { PickerGroup, PickerItem, PickerList } from './PickerSurface';
 import { useModels } from './useModels';
 
 const SEARCH_AT = 8;
 
-export function ModelList({ provider, sessionId, codexAccountId, value, onPick, inheritLabel, mobile }: {
-  provider: Provider; sessionId?: string; codexAccountId?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
+export function ModelList({ catalog, value, onPick, inheritLabel, mobile }: {
+  catalog: ReturnType<typeof useModels>; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
 }) {
-  const { list, loading, error, refresh } = useModels(provider, sessionId, true, codexAccountId);
+  const { list, loading, error, refresh } = catalog;
   const [query, setQuery] = useState('');
   const models = list?.models ?? [];
-  const groups = groupModels(models, query);
+  const groups = groupModels(models, query, list?.aliasModels);
+  const defaultModel = list?.defaultModel || '';
   const known = models.some(m => m.id === value);
   const searchable = models.length > SEARCH_AT;
   const trimmed = query.trim();
@@ -52,13 +53,13 @@ export function ModelList({ provider, sessionId, codexAccountId, value, onPick, 
       >
         {inheritLabel !== undefined && !trimmed && (
           <PickerGroup>
-            <PickerItem mobile={mobile} option={{ value: '', label: inheritLabel || t(`Use default (${providerName(provider)} settings)`, `跟随默认（${providerName(provider)} 配置）`) }} selected={value === ''} onSelect={onPick} />
+            <PickerItem mobile={mobile} option={{ value: '', label: withTarget(inheritLabel || t('Use default', '跟随默认'), aliasTarget(defaultModel, list?.aliasModels) ?? defaultModel) }} selected={value === ''} onSelect={onPick} />
           </PickerGroup>
         )}
         {groups.map(g => (
           <PickerGroup key={g.key} heading={g.label}>
             {g.items.map(m => (
-              <PickerItem key={`${g.key}:${m.id}`} id={`${g.key}:${m.id}`} mobile={mobile} option={{ value: m.id, label: m.label, description: m.description ?? (m.label !== m.id ? m.id : undefined) }} selected={m.id === value} onSelect={onPick} />
+              <PickerItem key={`${g.key}:${m.id}`} id={`${g.key}:${m.id}`} mobile={mobile} option={{ value: m.id, label: withTarget(m.label, aliasTarget(m.id, list?.aliasModels)), description: m.description ?? (m.label !== m.id ? m.id : undefined) }} selected={m.id === value} onSelect={onPick} />
             ))}
           </PickerGroup>
         ))}
@@ -80,12 +81,12 @@ export function ModelList({ provider, sessionId, codexAccountId, value, onPick, 
   );
 }
 
-export function EffortList({ provider, sessionId, codexAccountId, model, value, onPick, inheritLabel, mobile }: {
-  provider: Provider; sessionId?: string; codexAccountId?: string; model?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
+export function EffortList({ provider, context, model, value, onPick, inheritLabel, mobile }: {
+  provider: Provider; context?: ModelContext; model?: string; value: string; onPick(value: string): void; inheritLabel?: string; mobile?: boolean;
 }) {
   // Codex models advertise their own efforts; Claude uses the generic list.
-  const { list } = useModels(provider, sessionId, provider === 'codex', codexAccountId);
-  const levels = modelEfforts(list?.models, model ?? '', provider);
+  const { list } = useModels(provider, context, provider === 'codex');
+  const levels = modelEfforts(list?.models, model || list?.defaultModel || '', provider);
   const options: PickerOption[] = levels.map(l => ({ value: l, label: l, description: EFFORT_NOTES[l] }));
   if (value && !levels.includes(value)) options.push({ value, label: value });
   return (

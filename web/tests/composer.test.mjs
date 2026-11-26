@@ -4,7 +4,7 @@ import {
   SendIds, admitFiles, canSteer, commandName, filterCommands, historyDirection, isSendKey, modelArgument, needsSteerConfirmation,
   pruneDrafts, quickSwitchCommand, sendContent, slashQuery, DRAFT_TTL_MS, MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES,
 } from '../src/features/composer/composerLogic.ts';
-import { groupModels, modelEfforts, permissionOptions, shortModel } from '../src/features/pickers/options.ts';
+import { aliasTarget, groupModels, modelEfforts, permissionOptions, shortModel, withTarget } from '../src/features/pickers/options.ts';
 
 test('slash query only at the start and before any whitespace', () => {
   assert.equal(slashQuery('/'), '');
@@ -117,6 +117,11 @@ test('models group by source and filter by query', () => {
   ];
   assert.deepEqual(groupModels(models).map(g => g.key), ['alias', 'recent', 'api', 'settings']);
   assert.deepEqual(groupModels(models, 'opus').map(g => [g.key, g.items.length]), [['alias', 1], ['api', 1]]);
+  const aliases = { opus: 'vendor/deep-20261001' };
+  assert.deepEqual(groupModels(models, 'deep-20261001', aliases).flatMap(g => g.items.map(m => m.id)), ['opus']);
+  assert.equal(aliasTarget('constructor', aliases), undefined);
+  assert.match(withTarget('opus', aliases.opus), /^opus ?[（(]vendor\/deep-20261001[）)]$/);
+  assert.equal(withTarget('default'), 'default');
 });
 
 test('efforts: Codex models advertise their own, Claude uses the provider list', () => {

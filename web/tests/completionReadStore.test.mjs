@@ -32,12 +32,14 @@ test('read tracking persists per host, follows other views and tolerates unavail
     globalThis.__completionHost = 'two';
     reloaded.getState().observe([done]);
     assert.equal(isCompletionPending(done, reloaded.getState().records['same-id@two']), false);
+    assert.equal(reloaded.getState().records['same-id@two'].confirmedAt, undefined, 'the initial local baseline is not a confirmed view');
     assert.equal(isCompletionPending(done, reloaded.getState().records['same-id@one']), true);
 
     globalThis.__completionHost = 'one';
     reloaded.getState().markViewed(done);
     for (const callback of listeners) callback({ key: 'ccr-completion-read-v1' });
     assert.equal(isCompletionPending(done, store.getState().records['same-id@one']), false);
+    assert.equal(store.getState().records['same-id@one'].confirmedAt, done.completedAt);
 
     const staleDisk = JSON.parse(values.get('ccr-completion-read-v1'));
     staleDisk.records['same-id@one'].viewedAt = '';

@@ -42,6 +42,8 @@ func fakeCodexModelCatalog() {
 			reply["result"] = struct{}{}
 		case "initialized":
 			continue
+		case "config/read":
+			reply["result"] = map[string]any{"config": map[string]string{"sandbox_mode": "workspace-write"}}
 		case "model/list":
 			if string(model) == "error" {
 				reply["error"] = map[string]any{"code": -1, "message": "private model RPC detail"}
@@ -96,7 +98,8 @@ func TestCodexAccountModelCatalogIsolation(t *testing.T) {
 		code, raw := request(t, f.http, http.MethodGet, path, nil, testToken)
 		var list modelList
 		if code != http.StatusOK || json.Unmarshal(raw, &list) != nil || len(list.Warnings) != 0 ||
-			len(list.Models) != 1 || list.Models[0].ID != want || !list.Models[0].IsDefault {
+			len(list.Models) != 1 || list.Models[0].ID != want || !list.Models[0].IsDefault ||
+			list.DefaultModel != want || list.DefaultPermission != "workspace-write" {
 			t.Fatalf("model catalog for %s: want %s, got %d %s", path, want, code, raw)
 		}
 	}
@@ -105,6 +108,7 @@ func TestCodexAccountModelCatalogIsolation(t *testing.T) {
 	check(api(work), "work-model")
 	check(api(personal), "personal-model")
 	check("/api/models?provider=codex&codexAccountId="+f.private.ID, "personal-model")
+	check("/api/models?provider=codex&profileId="+f.work.ID, "work-model")
 	check(api(work)+"&codexAccountId="+f.private.ID, "work-model")
 	writeModel(workHome, "work-model-refreshed")
 	check(api(work), "work-model")

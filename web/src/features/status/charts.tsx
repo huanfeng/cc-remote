@@ -5,7 +5,7 @@ import { cn } from '@/components/lib/utils';
 import type { HostStatus, UsageHistory } from '@/backend/types';
 import { Spinner } from '@/components/ui/spinner';
 import { t, locale } from '@/lib/i18n';
-import { barLayout, costText, historyTicks, lineRuns, type ChartBox } from './usageMath';
+import { barLayout, costText, hasRecordedCost, historyTicks, lineRuns, type ChartBox } from './usageMath';
 
 function useWidth<T extends HTMLElement>(fallback = 520) {
   const ref = useRef<T>(null);
@@ -107,27 +107,27 @@ function Lines({ runs, className }: { runs: [number, number][][]; className: str
 }
 
 /** Turns (bars) and cost (thinner bars beside them) per day, each on its own scale. */
-export function DailyChart({ daily }: { daily: NonNullable<HostStatus['daily']> }) {
+export function DailyChart({ daily, showCost }: { daily: NonNullable<HostStatus['daily']>; showCost: boolean }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const height = 140;
   const box: ChartBox = { width, height, padLeft: 8, padRight: 8, padTop: 10, padBottom: 20 };
   const turns = barLayout(daily.map(d => d.turns), box, 0.3);
-  const cost = barLayout(daily.map(d => d.costUSD), box, 0.3);
+  const cost = showCost ? barLayout(daily.map(d => hasRecordedCost(d) ? d.costUSD : 0), box, 0.3) : undefined;
   const label = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(locale, { month: 'numeric', day: 'numeric', timeZone: 'UTC' });
   const active = hover === null ? undefined : daily[hover];
   return (
     <div ref={ref} className="relative w-full">
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={t('Turns and cost over the last 14 days', '近 14 天轮次与费用')} className="block">
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={showCost ? t('Turns and cost over the last 14 days', '近 14 天轮次与费用') : t('Turns over the last 14 days', '近 14 天轮次')} className="block">
         <line x1={box.padLeft} x2={width - box.padRight} y1={height - box.padBottom} y2={height - box.padBottom} className="stroke-border" />
         {daily.map((d, i) => {
-          const tb = turns.bars[i], cb = cost.bars[i];
-          const half = tb.width / 2;
+          const tb = turns.bars[i], cb = cost?.bars[i];
+          const barWidth = showCost ? tb.width / 2 : tb.width;
           return (
             <g key={d.date} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(h => (h === i ? null : h))}>
               <rect x={box.padLeft + i * turns.slot} y={box.padTop} width={turns.slot} height={height - box.padTop - box.padBottom} className={cn('fill-transparent', hover === i && 'fill-surface-hover')} rx={4} />
-              <rect x={tb.x} y={tb.y} width={Math.max(1, half - 1)} height={tb.height} rx={2} className="fill-usage-chart-1" />
-              <rect x={tb.x + half} y={cb.y} width={Math.max(1, half - 1)} height={cb.height} rx={2} className="fill-usage-chart-2" />
+              <rect x={tb.x} y={tb.y} width={Math.max(1, barWidth - 1)} height={tb.height} rx={2} className="fill-usage-chart-1" />
+              {cb && hasRecordedCost(d) && <rect x={tb.x + barWidth} y={cb.y} width={Math.max(1, barWidth - 1)} height={cb.height} rx={2} className="fill-usage-chart-2" />}
               {(width > 480 || i % 2 === daily.length % 2) && (
                 <text x={tb.x + tb.width / 2} y={height - 5} textAnchor="middle" className={axisText}>{label(d.date)}</text>
               )}
@@ -143,7 +143,7 @@ export function DailyChart({ daily }: { daily: NonNullable<HostStatus['daily']> 
           <div className="text-foreground-subtlest">{label(active.date)}</div>
           <div className="flex gap-2 tabular-nums">
             <span>{t(`${active.turns} turns`, `${active.turns} 轮`)}</span>
-            <span>{costText(active.costUSD)}</span>
+            {hasRecordedCost(active) && <span>{costText(active)}</span>}
           </div>
         </div>
       )}

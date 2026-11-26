@@ -111,7 +111,7 @@ export function PickerItem({ option, selected, onSelect, mobile, id, disabled }:
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-1.5">
-          <span className="truncate">{option.label}</span>
+          <span className="truncate" title={option.label}>{option.label}</span>
           {option.tag && (
             <span className={cn(
               'rounded px-1 text-ui-xs leading-4',

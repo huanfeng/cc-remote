@@ -9,12 +9,20 @@ import { SupplierQuickSwitch } from '@/features/pickers/SupplierQuickSwitch';
 import { useIsMobile } from '@/lib/hooks';
 import { t } from '@/lib/i18n';
 import { QuickSwitch, type QuickKind } from '@/features/pickers/QuickSwitch';
-import { shortModel } from '@/features/pickers/options';
+import { aliasTarget, shortModel, withTarget } from '@/features/pickers/options';
+import { useModels } from '@/features/pickers/useModels';
+import { providerOf } from '@/domain/providers';
 
 export function ModelChips({ session }: { session: Session }) {
   const [open, setOpen] = useState<QuickKind | 'supplier' | null>(null);
   const mobile = useIsMobile();
-  const model = session.live?.model || shortModel(session.model) || t('Default model', '默认模型');
+  const reportedModel = session.live?.model || shortModel(session.live?.modelId);
+  const { list } = useModels(providerOf(session), { sessionId: session.id }, !reportedModel);
+  const configured = session.model || list?.defaultModel || '';
+  const alias = aliasTarget(configured, list?.aliasModels);
+  const model = reportedModel || (session.model
+    ? withTarget(shortModel(configured), alias)
+    : withTarget(t('Default model', '默认模型'), alias ?? configured));
   const effort = session.live?.effort || session.effort;
   // Always shown: which supplier a session runs on matters as much as its model.
   const supplier = session.profileName || session.profileId || t('Host configuration', '宿主原生配置');

@@ -53,6 +53,10 @@ export function supplierSwitchOptions(catalog: ProfileCatalog | undefined, app: 
 /** A session stores its resolved supplier; an empty ID means native, not a default request. */
 export const currentSupplierValue = (session: Pick<Session, 'profileId'>): string => session.profileId || '@native';
 
+export function changesSupplier(session: Pick<Session, 'profileId'>, resolvedTarget: string): boolean {
+  return currentSupplierValue(session) !== (resolvedTarget || '@native');
+}
+
 /** A conflict requires explicit confirmation; never retry or replay work here. */
 export async function switchSupplier(backend: Pick<Backend, 'switchProfile'>, session: Pick<Session, 'id'>, profileId: string, force = false) {
   try {

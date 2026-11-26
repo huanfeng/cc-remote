@@ -1,11 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  barLayout, compactNumber, fullest, ringLevel, countdown, durationText, fetchedText, historyTicks, lineRuns, meterVisible, niceMax, quotaResetSegments, quotaWindows, usageLevel, validWindow,
+  barLayout, compactNumber, costText, fullest, hasRecordedCost, ringLevel, countdown, durationText, fetchedText, historyTicks, lineRuns, meterVisible, niceMax, quotaResetSegments, quotaWindows, usageLevel, validWindow,
 } from '../src/features/status/usageMath.ts';
 
 const NOW = Date.parse('2026-11-07T12:00:00Z');
 const at = ms => new Date(NOW + ms).toISOString();
+
+test('cost display distinguishes missing data from a reported zero', () => {
+  for (const reading of [{ costUSD: 0, costReported: false }, { costUSD: 0, costKnown: true }, { costUSD: 0 }, { costUSD: NaN, costReported: true }]) {
+    assert.equal(hasRecordedCost(reading), false);
+    assert.equal(costText(reading), 'No cost data');
+  }
+  assert.equal(hasRecordedCost({ costUSD: 0, costReported: true }), true);
+  assert.equal(costText({ costUSD: 0, costReported: true }), '$0.00');
+  assert.equal(costText({ costUSD: 1.25 }), '$1.25');
+});
 
 test('fetch age stays relative and missing or invalid timestamps never appear fresh', () => {
   assert.equal(fetchedText(at(-30_000), NOW), 'Fetched just now');

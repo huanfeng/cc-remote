@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { HttpBackend } from '../src/backend/http/httpBackend.ts';
 import { HttpClient } from '../src/backend/http/client.ts';
 import { BackendError } from '../src/backend/errors.ts';
+import { codexTerminalSupport, newSessionBody } from '../src/domain/providers.ts';
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 async function until(check, ms = 1000) {
@@ -38,6 +39,26 @@ function fakeHost(routes) {
 const FEATURES = ['sendId', 'mentions', 'codex', 'codexSteer', 'queueControls'];
 const info = (features = FEATURES) => ({ version: '1', cwd: '/', claudeAvailable: true, features });
 
+test('supplier switch warnings use the host preference and degrade on older hosts', async () => {
+  let enabled = true;
+  const host = fakeHost((method, path, body) => {
+    if (path !== '/api/profiles/switch-warning') return;
+    if (method === 'GET') return { enabled };
+    enabled = body.enabled;
+    return { status: 204 };
+  });
+  const options = { baseUrl: 'http://host.test', token: 'test' };
+  const one = new HttpBackend({ ...options, fetch: host.fetch });
+  const two = new HttpBackend({ ...options, fetch: host.fetch });
+  assert.equal(await one.supplierSwitchWarning(), true);
+  await one.setSupplierSwitchWarning(false);
+  assert.equal(await two.supplierSwitchWarning(), false);
+  await two.setSupplierSwitchWarning(true);
+  assert.equal(await one.supplierSwitchWarning(), true);
+  const old = new HttpBackend({ ...options, fetch: fakeHost(() => undefined).fetch });
+  assert.equal(await old.supplierSwitchWarning(), undefined);
+});
+
 test('OAuth editing keeps the original id and omits an unchanged token on existing hosts', async () => {
   const host = fakeHost((method, path) => {
     if (method === 'PATCH' && path === '/api/profiles/oauth/stable-id') return { id: 'oauth:stable-id', name: 'Renamed' };
@@ -62,6 +83,90 @@ const session = (id, extra = {}) => ({ id, title: id, cwd: '/w', updatedAt: '202
 const ev = (seq, kind = 'assistant') => ({ seq, kind, text: `e${seq}`, createdAt: '2026-11-07T00:00:00Z' });
 const fast = { sessions: 15, transcript: 15, usage: 15 };
 const make = (host, extra = {}) => new HttpBackend({ baseUrl: '', token: 'tok', lang: 'en', fetch: host.fetch, intervals: fast, ...extra });
+
+test('completion read receipts retry after an unchanged session poll and refresh the list', async () => {
+  const at = '2026-11-26T00:00:00Z';
+  let viewed = '';
+  let attempts = 0;
+  const host = fakeHost((method, path, body, headers) => {
+    if (method === 'PUT' && path === '/api/sessions/s1/completion-read') {
+      assert.deepEqual(body, { completedAt: at });
+      if (++attempts === 1) return { status: 503, body: { error: 'Try again' } };
+      viewed = at;
+      return { status: 204 };
+    }
+    if (path === '/api/sessions') {
+      const etag = viewed ? '"read"' : '"unread"';
+      return headers['If-None-Match'] === etag
+        ? { status: 304 }
+        : { status: 200, etag, body: [session('s1', { status: 'completed', completedAt: at, completionReadAt: viewed })] };
+    }
+  });
+  const b = make(host);
+  const seen = [];
+  const stop = b.watchSessions(sessions => seen.push(sessions[0].completionReadAt));
+  try {
+    await until(() => seen.length > 0);
+    b.markCompletionRead('s1', at);
+    b.markCompletionRead('s1', at);
+    await until(() => seen.at(-1) === at);
+    assert.deepEqual(seen, ['', at]);
+    assert.equal(attempts, 2);
+    const [first, revalidate, retry] = host.log.slice(1);
+    assert.equal(first.method, 'PUT');
+    assert.equal(revalidate.headers['If-None-Match'], '"unread"');
+    assert.equal(retry.method, 'PUT');
+  } finally {
+    stop();
+    b.dispose();
+  }
+});
+
+test('unsupported completion receipts fall back without interrupting session polls', async () => {
+  const at = '2026-11-26T00:00:00Z';
+  const host = fakeHost(method => method === 'PUT' ? { status: 405 } : [session('s1', { completedAt: at, completionReadAt: '' })]);
+  const b = make(host);
+  let lists = 0;
+  const stop = b.watchSessions(() => { lists++; });
+  try {
+    b.markCompletionRead('s1', at);
+    await until(() => lists > 1);
+    b.markCompletionRead('s1', at);
+    await until(() => lists > 2);
+    assert.equal(host.log.filter(entry => entry.method === 'PUT').length, 1);
+  } finally {
+    stop();
+    b.dispose();
+  }
+});
+
+test('Codex terminal support distinguishes released hosts and explicit capabilities', () => {
+  assert.equal(codexTerminalSupport({ version: 'v0.40.0', features: ['codex'] }), undefined);
+  assert.equal(codexTerminalSupport({ version: 'v0.41.0' }), 'native');
+  assert.equal(codexTerminalSupport({ version: '0.42.0' }), 'native');
+  assert.equal(codexTerminalSupport({ version: 'v0.43.1' }), 'suppliers');
+  assert.equal(codexTerminalSupport({ version: 'v0.45.0' }), 'suppliers');
+  assert.equal(codexTerminalSupport({ version: 'v0.46.0-rc.1' }), undefined);
+  assert.equal(codexTerminalSupport({ version: 'dev', features: ['codex-terminal'] }), 'suppliers');
+});
+
+test('createSession sends Codex terminal mode with its supplier and omits managed settings', async () => {
+  const host = fakeHost(() => session('new'));
+  const backend = make(host);
+  const overrides = { model: ' gpt-5 ', permissionMode: 'danger-full-access', effort: 'high' };
+  try {
+    await backend.createSession(newSessionBody('codex', ' Example ', ' /w ', overrides, 'terminal', true, 'local:work'));
+    await backend.createSession(newSessionBody('codex', ' Example ', ' /w ', overrides, 'managed', false, 'local:work'));
+    await backend.createSession(newSessionBody('claude', ' Example ', ' /w ', overrides, 'terminal', true));
+    assert.deepEqual(host.log.map(entry => entry.body), [
+      { provider: 'codex', mode: 'terminal', title: 'Example', cwd: '/w', profileId: 'local:work' },
+      { provider: 'codex', mode: 'managed', title: 'Example', cwd: '/w', profileId: 'local:work', model: 'gpt-5', permissionMode: 'danger-full-access', effort: 'high', confirmDangerous: true },
+      { mode: 'terminal', trustFolder: true, title: 'Example', cwd: '/w', model: 'gpt-5', permissionMode: 'danger-full-access', effort: 'high', confirmDangerous: false },
+    ]);
+  } finally {
+    backend.dispose();
+  }
+});
 
 test('statusline: older hosts return unsupported without blocking settings or sessions', async () => {
   for (const reply of [

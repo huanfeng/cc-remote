@@ -106,16 +106,6 @@ export function SessionHeader({ session, dockKey, mobile, terminalView, native }
       <div className={mobile ? 'contents' : 'ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1'}>
         {!native && !terminalOnly && <UsageMeter session={session} mobile={mobile} />}
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button type="button" variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={filePanelLabel} aria-expanded={filesOpen}
-              onClick={() => files.getState().collapse(dockKey, filesOpen)}>
-              {filesOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{filePanelLabel}</TooltipContent>
-        </Tooltip>
-
         {canSearch && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -177,39 +167,51 @@ export function SessionHeader({ session, dockKey, mobile, terminalView, native }
           </Tooltip>
         )}
 
-        {(!native || branch.enabled) && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={t('More', '更多')}>
-                {branch.busy ? <Spinner className="size-4" /> : <MoreHorizontal className="size-4" />}
+        <div className="flex shrink-0 items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={filePanelLabel} aria-expanded={filesOpen}
+                onClick={() => files.getState().collapse(dockKey, filesOpen)}>
+                {filesOpen ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              {branch.enabled && <DropdownMenuItem disabled={branch.busy || branch.unavailable} onSelect={() => void branch.fork()}>
-                <GitBranch /> {t('Branch conversation', '分支会话')}
-              </DropdownMenuItem>}
-              {!native && (
-                <>
-                  {mobile && isTerminal && !terminalOnly && (
-                    <DropdownMenuItem onSelect={toggleView}>
-                      {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
-                    </DropdownMenuItem>
-                  )}
-                  {mobile && <DropdownMenuItem onSelect={() => open({ type: 'tasks', id: session.id })}><ListTree /> {t('Tasks', '任务')}</DropdownMenuItem>}
-                  <DropdownMenuItem onSelect={() => open({ type: 'session-details', id: session.id })}>{t('Session details', '会话详情')}</DropdownMenuItem>
-                  {isTerminal && <DropdownMenuItem onSelect={() => open({ type: 'attach', id: session.id })}>{t('Attach from a local terminal', '从本地终端接入')}</DropdownMenuItem>}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem checked={toolsExpanded} onCheckedChange={v => setPrefs({ toolsExpanded: !!v })}>
-                    {t('Expand tool calls', '展开工具调用')}
-                  </DropdownMenuCheckboxItem>
-                  <DropdownMenuCheckboxItem checked={sendKey === 'mod-enter'} onCheckedChange={v => setPrefs({ sendKey: v ? 'mod-enter' : 'enter' })}>
-                    {t('Send with Ctrl+Enter', '用 Ctrl+Enter 发送')}
-                  </DropdownMenuCheckboxItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+            </TooltipTrigger>
+            <TooltipContent>{filePanelLabel}</TooltipContent>
+          </Tooltip>
+
+          {(!native || branch.enabled) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size={mobile ? 'icon-lg' : 'icon-md'} aria-label={t('More', '更多')}>
+                  {branch.busy ? <Spinner className="size-4" /> : <MoreHorizontal className="size-4" />}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {branch.enabled && <DropdownMenuItem disabled={branch.busy || branch.unavailable} onSelect={() => void branch.fork()}>
+                  <GitBranch /> {t('Branch conversation', '分支会话')}
+                </DropdownMenuItem>}
+                {!native && (
+                  <>
+                    {mobile && isTerminal && !terminalOnly && (
+                      <DropdownMenuItem onSelect={toggleView}>
+                        {terminalView ? <MessageSquare /> : <SquareTerminal />} {terminalView ? t('Show chat', '显示对话') : t('Show terminal', '显示终端')}
+                      </DropdownMenuItem>
+                    )}
+                    {mobile && <DropdownMenuItem onSelect={() => open({ type: 'tasks', id: session.id })}><ListTree /> {t('Tasks', '任务')}</DropdownMenuItem>}
+                    <DropdownMenuItem onSelect={() => open({ type: 'session-details', id: session.id })}>{t('Session details', '会话详情')}</DropdownMenuItem>
+                    {isTerminal && <DropdownMenuItem onSelect={() => open({ type: 'attach', id: session.id })}>{t('Attach from a local terminal', '从本地终端接入')}</DropdownMenuItem>}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuCheckboxItem checked={toolsExpanded} onCheckedChange={v => setPrefs({ toolsExpanded: !!v })}>
+                      {t('Expand tool calls', '展开工具调用')}
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem checked={sendKey === 'mod-enter'} onCheckedChange={v => setPrefs({ sendKey: v ? 'mod-enter' : 'enter' })}>
+                      {t('Send with Ctrl+Enter', '用 Ctrl+Enter 发送')}
+                    </DropdownMenuCheckboxItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       </div>
     </header>
   );

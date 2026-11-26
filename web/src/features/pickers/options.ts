@@ -18,6 +18,14 @@ export interface PickerOption {
 
 type Model = { id: string; label: string; source: string; description?: string; efforts?: string[]; isDefault?: boolean };
 
+export function withTarget(label: string, target?: string): string {
+  return target ? t(`${label} (${target})`, `${label}（${target}）`) : label;
+}
+
+export function aliasTarget(model: string, aliases?: Record<string, string>): string | undefined {
+  return aliases && Object.hasOwn(aliases, model) ? aliases[model] : undefined;
+}
+
 export const EFFORT_NOTES: Record<string, string> = {
   none: t('No reasoning', '不启用推理'),
   minimal: t('Minimal reasoning', '最少推理'),
@@ -38,9 +46,9 @@ export const MODEL_GROUPS: { key: string; label: string; sources: string[] }[] =
   { key: 'settings', label: t('Settings / environment', '设置 / 环境'), sources: ['settings', 'env'] },
 ];
 
-export function groupModels<M extends Model>(models: readonly M[], query = ''): { key: string; label: string; items: M[] }[] {
+export function groupModels<M extends Model>(models: readonly M[], query = '', aliases?: Record<string, string>): { key: string; label: string; items: M[] }[] {
   const q = query.trim().toLowerCase();
-  const match = (m: M) => !q || m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q);
+  const match = (m: M) => !q || m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q) || (aliasTarget(m.id, aliases)?.toLowerCase().includes(q) ?? false);
   return MODEL_GROUPS
     .map(g => ({ key: g.key, label: g.label, items: models.filter(m => g.sources.includes(m.source) && match(m)) }))
     .filter(g => g.items.length > 0);
@@ -53,7 +61,7 @@ export function modelEfforts(models: readonly Model[] | undefined, model: string
 }
 
 const CLAUDE_MODES: [string, string, string][] = [
-  ['default', t('Default', '默认审批'), t('Ask for each approval', '每次都询问')],
+  ['default', t('Manual', '手动审批'), t('Ask before most edits, shell commands and network requests', '多数编辑、命令执行和网络请求需要批准')],
   ['plan', t('Plan', '规划模式'), t('Plan only, no changes', '只规划不修改')],
   ['acceptEdits', t('Accept edits', '自动接受编辑'), t('Auto-accept file edits', '自动接受文件修改')],
   ['auto', t('Automatic', '自动审批'), t('Claude decides which calls to approve', 'Claude 自行判断并批准部分调用')],

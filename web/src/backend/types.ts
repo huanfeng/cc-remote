@@ -35,7 +35,7 @@ export type SessionStatus =
   | 'running' | 'waiting' | 'idle' | 'completed' | 'interrupted' | 'failed' | 'stopped' | 'error';
 
 /** Features a host declares in /api/info; request bodies may only use fields a host declares. */
-export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'project-shell-pane-layout' | 'message-search' | 'session-fork' | 'project-files' | 'project-file-search' | 'project-git';
+export type HostFeature = 'sendId' | 'mentions' | 'codex' | 'codexSteer' | 'queueControls' | 'archive' | 'project-shell' | 'project-shell-tabs' | 'project-shell-pane-groups' | 'project-shell-pane-layout' | 'message-search' | 'session-fork' | 'project-files' | 'project-file-search' | 'project-git' | 'codex-terminal';
 
 export interface MessageSearchQuery {
   q: string;
@@ -172,6 +172,8 @@ export interface Session {
   /** Identity and transcript watermark of the latest successful completion. */
   completedAt?: string;
   completionEventSeq?: number;
+  /** The host's acknowledged completedAt. Empty means unread, absent means a legacy host. */
+  completionReadAt?: string;
   mode?: SessionMode;
   online?: boolean;
   attached?: number;
@@ -294,6 +296,16 @@ export interface ModelList {
   fetchedAt: string;
   restricted: boolean;
   warnings?: string[];
+  defaultModel?: string;
+  defaultPermission?: string;
+  aliasModels?: Record<string, string>;
+}
+
+export interface ModelContext {
+  sessionId?: string;
+  profileId?: string;
+  cwd?: string;
+  mode?: 'terminal' | 'managed';
 }
 
 export interface SupplierProfile {
@@ -381,6 +393,7 @@ export interface SessionStats {
   results: number;
   costUSD: number;
   costKnown: boolean;
+  costReported?: boolean;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -423,7 +436,7 @@ export interface HostStatus {
   storage?: { databaseBytes: number; logBytes: number; uploadsBytes?: number };
   /** Sums of every session's statistics (GET /api/status only, not /summary). */
   totals?: SessionStats;
-  daily?: { date: string; turns: number; costUSD: number; tokens: number }[];
+  daily?: { date: string; turns: number; costUSD: number; costReported?: boolean; tokens: number }[];
   sessionStats?: SessionStatusRow[];
   logTail?: string[];
 }

@@ -14,6 +14,19 @@ test('historical completion establishes a read baseline without flooding Done', 
   assert.equal(s.status, 'completed', 'execution result is preserved');
 });
 
+test('a shared unread completion is pending on a new device and clears when the host reports it read', () => {
+  const s = session({ completionReadAt: '' });
+  const oldLocalBaseline = { completedAt: s.completedAt, viewedAt: s.completedAt };
+  assert.equal(isCompletionPending(s, observeCompletion(s)), true);
+  assert.equal(isCompletionPending(s, observeCompletion(s, oldLocalBaseline)), true);
+  const otherDeviceRead = { ...s, completionReadAt: s.completedAt };
+  assert.equal(displaySession(otherDeviceRead, oldLocalBaseline).status, 'idle');
+  const localView = viewCompletion(s, observeCompletion(s));
+  assert.equal(localView.confirmedAt, s.completedAt);
+  assert.equal(isCompletionPending(s, localView), false);
+  assert.equal(isCompletionPending(session({ completedAt: 'turn-2', completionReadAt: '' }), localView), true);
+});
+
 test('a running task completes unread, survives reload and becomes idle only when viewed', () => {
   const running = session({ status: 'running', completedAt: undefined });
   const baseline = observeCompletion(running);

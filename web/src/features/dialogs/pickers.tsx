@@ -2,7 +2,7 @@
 // settings defaults and session details: the pickers package's choosers in
 // their 'field' form. '' means "inherit" (inheritLabel). PermissionPicker
 // confirms a dangerous mode itself before onChange.
-import type { Provider } from '@/backend/types';
+import type { ModelContext, Provider } from '@/backend/types';
 import { EffortPicker, ModelPicker, PermissionPicker } from '@/features/pickers';
 import { t } from '@/lib/i18n';
 import { useIsMobile } from '@/lib/hooks';
@@ -24,12 +24,12 @@ export function PermissionField({ inheritLabel, className, ...p }: FieldProps & 
   return <PermissionPicker {...p} mobile={mobile} variant="field" inheritLabel={inheritLabel ?? t('Use default', '跟随默认')} className={cn(width, className)} />;
 }
 
-export function ModelField({ inheritLabel, className, ...p }: FieldProps & { sessionId?: string; codexAccountId?: string }) {
+export function ModelField({ inheritLabel, className, ...p }: FieldProps & ModelContext) {
   const mobile = useIsMobile();
   return <ModelPicker {...p} mobile={mobile} variant="field" inheritLabel={inheritLabel ?? t('Use default', '跟随默认')} className={cn(width, className)} />;
 }
 
-export function EffortField({ inheritLabel, className, ...p }: FieldProps & { model?: string; sessionId?: string; codexAccountId?: string }) {
+export function EffortField({ inheritLabel, className, ...p }: FieldProps & ModelContext & { model?: string }) {
   const mobile = useIsMobile();
   return <EffortPicker {...p} mobile={mobile} variant="field" inheritLabel={inheritLabel ?? t('Use default', '跟随默认')} className={cn(width, className)} />;
 }

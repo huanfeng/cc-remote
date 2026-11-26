@@ -28,6 +28,7 @@ type Session struct {
 	UpdatedAt                 string `json:"updatedAt"`
 	CompletedAt               string `json:"completedAt,omitempty"`
 	CompletionEventSeq        int64  `json:"completionEventSeq"`
+	CompletionReadAt          string `json:"completionReadAt"`
 	LastConversationAt        string `json:"lastConversationAt,omitempty"`
 	ConversationTimeEstimated bool   `json:"conversationTimeEstimated,omitempty"`
 	Resume                    bool   `json:"-"`
@@ -158,6 +159,7 @@ func Open(path string) (*Store, error) {
 	s := &Store{db: db}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS sessions(` + sessionSchema + `);
+CREATE TABLE IF NOT EXISTS host_preferences(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,text TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id,seq);
 CREATE INDEX IF NOT EXISTS events_tasks ON events(session_id,seq) WHERE kind='status' AND text LIKE 'task_%';
@@ -200,7 +202,7 @@ CREATE INDEX IF NOT EXISTS interactions_session ON interactions(session_id,statu
 		db.Close()
 		return nil, err
 	}
-	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS session_completion(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,completed_at TEXT NOT NULL,event_seq INTEGER NOT NULL)`); err != nil {
+	if err = migrateCompletionRead(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -320,12 +322,12 @@ func (s *Store) createProvider(x Session) (Session, error) {
 // added before it runs, so it is always there.
 const sessionColumns = `id,title,cwd,claude_id,status,created_at,updated_at,resume,mode,permission_mode,model,effort,claude_args,provider,profile_id,profile_json,archived_at,forked_from_id`
 
-const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0),COALESCE((SELECT completed_at FROM session_completion WHERE session_id=sessions.id),''),COALESCE((SELECT event_seq FROM session_completion WHERE session_id=sessions.id),0)`
+const sessionReadColumns = sessionColumns + `,COALESCE((SELECT last_at FROM session_activity WHERE session_id=sessions.id),''),COALESCE((SELECT estimated FROM session_activity WHERE session_id=sessions.id),0),COALESCE((SELECT completed_at FROM session_completion WHERE session_id=sessions.id),''),COALESCE((SELECT event_seq FROM session_completion WHERE session_id=sessions.id),0),COALESCE((SELECT read_completed_at FROM session_completion WHERE session_id=sessions.id),'')`
 
 func scanSession(r interface{ Scan(...any) error }) (Session, error) {
 	var x Session
 	var args string
-	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.ForkedFromID, &x.LastConversationAt, &x.ConversationTimeEstimated, &x.CompletedAt, &x.CompletionEventSeq)
+	err := r.Scan(&x.ID, &x.Title, &x.Cwd, &x.ClaudeSessionID, &x.Status, &x.CreatedAt, &x.UpdatedAt, &x.Resume, &x.Mode, &x.PermissionMode, &x.Model, &x.Effort, &args, &x.Provider, &x.ProfileID, &x.ProfileJSON, &x.ArchivedAt, &x.ForkedFromID, &x.LastConversationAt, &x.ConversationTimeEstimated, &x.CompletedAt, &x.CompletionEventSeq, &x.CompletionReadAt)
 	if err == nil {
 		x.Archived = archived(x)
 		_ = json.Unmarshal([]byte(args), &x.ClaudeArgs)
@@ -384,7 +386,7 @@ func (s *Store) SetStatus(id, status string) error {
 	_, err = tx.Exec(`INSERT INTO session_completion(session_id,completed_at,event_seq)
 SELECT id,?,COALESCE((SELECT MAX(seq) FROM events WHERE session_id=sessions.id),0)
 FROM sessions WHERE id=? AND status!='completed'
-ON CONFLICT(session_id) DO UPDATE SET completed_at=excluded.completed_at,event_seq=excluded.event_seq`, at, id)
+ON CONFLICT(session_id) DO UPDATE SET completed_at=excluded.completed_at,event_seq=excluded.event_seq,read_completed_at=''`, at, id)
 	if err != nil {
 		return err
 	}

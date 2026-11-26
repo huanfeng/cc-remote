@@ -5,7 +5,7 @@
 import { nanoid } from 'nanoid';
 import { BackendError, type Backend, type ClaudeSettings, type StatuslineOptions, type StatuslineSettings, type StatuslineStyle, type TranscriptUpdate, type Unsubscribe, type UploadOptions } from '../backend';
 import type {
-  Attachment, FileContent, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
+  Attachment, FileContent, ModelContext, NewSessionRequest, PendingRequest, Preferences, Provider, RequestAnswer, SendRequest,
   ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellStream,
   Session, SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, TerminalHandlers, TerminalStream, UsageReply, ProfileUsageReply,
   MessageSearchQuery, MessageSearchHit,
@@ -153,7 +153,7 @@ export class MockBackend implements Backend {
 
   async createSession(body: NewSessionRequest): Promise<Session> {
     await latency();
-    if (body.mode === 'terminal' && !body.trustFolder) {
+    if (body.mode === 'terminal' && body.provider !== 'codex' && !body.trustFolder) {
       throw new BackendError('该文件夹尚未被 Claude Code 信任，请勾选「信任此文件夹」。', 428, 'trust-required');
     }
     const id = nanoid(8);
@@ -443,7 +443,8 @@ export class MockBackend implements Backend {
     await latency();
     const s = this.session(id);
     return {
-      sessionId: id, turns: 14, results: 14, costUSD: s.live?.costUSD ?? 0, costKnown: true, inputTokens: 412_000, outputTokens: 38_100,
+      sessionId: id, turns: 14, results: 14, costUSD: s.live?.costUSD ?? 0, costKnown: s.live?.costUSD != null,
+      costReported: s.live?.costUSD != null, inputTokens: 412_000, outputTokens: 38_100,
       cacheReadTokens: 1_820_000, cacheCreationTokens: 96_000, durationMs: s.live?.durationMs ?? 0, toolCalls: 63, errors: 2, lastActivityAt: s.updatedAt,
     };
   }
@@ -528,8 +529,25 @@ export class MockBackend implements Backend {
   async dismissProjectShell(): Promise<void> { throw new BackendError('演示宿主未启用项目终端。', 403); }
   openProjectShell(): ProjectShellStream { throw new BackendError('演示宿主未启用项目终端。', 403); }
 
-  async models({ provider }: { provider: Provider }) { await latency(); return clone(fx.models[provider]); }
+  async models({ provider, sessionId, profileId }: ModelContext & { provider: Provider }) {
+    await latency();
+    const list = clone(fx.models[provider]);
+    if (!sessionId && profileId === undefined) return list;
+    const selected = sessionId ? this.session(sessionId).profileId : profileId || fx.profiles.defaultProfiles[provider];
+    const supplier = this.suppliers.profiles.find(p => p.id === selected);
+    const prefs = this.prefs[provider];
+    return {
+      ...list,
+      defaultModel: supplier?.model || (!supplier ? prefs.model : '') ||
+        (provider === 'claude' ? this.claude.model : list.models.find(m => m.isDefault)?.id),
+      defaultPermission: prefs.permissionMode || (provider === 'claude' ? this.claude.permissionMode : undefined),
+      aliasModels: supplier?.modelMappings,
+    };
+  }
   async profiles() { await latency(); const catalog = clone(fx.profiles); catalog.profiles = [...catalog.profiles.filter(p => !this.suppliers.ccSwitchHidden || !p.id.startsWith('ccswitch:')), ...this.suppliers.profiles]; return catalog; }
+  private warnBeforeSupplierSwitch = true;
+  async supplierSwitchWarning() { return this.warnBeforeSupplierSwitch; }
+  async setSupplierSwitchWarning(enabled: boolean) { this.warnBeforeSupplierSwitch = enabled; }
   async supplierConfigs() { await latency(); return clone(this.suppliers); }
   async setCCSwitchVisibility(hidden: boolean) { await latency(); this.suppliers.ccSwitchHidden = hidden; return clone(this.suppliers); }
   async importCCSwitch(id: string, app: Provider) {
