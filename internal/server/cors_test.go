@@ -32,7 +32,7 @@ func TestStandaloneFrontendCORS(t *testing.T) {
 		t.Fatalf("allowed preflight: %d %v", resp.StatusCode, resp.Header)
 	}
 	resp = do(http.MethodGet, "https://ccr.example.com", testToken, nil)
-	if resp.StatusCode != http.StatusOK || resp.Header.Get("Access-Control-Allow-Origin") != "https://ccr.example.com" || resp.Header.Get("Access-Control-Expose-Headers") != "ETag, X-CC-Path" {
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Access-Control-Allow-Origin") != "https://ccr.example.com" || resp.Header.Get("Access-Control-Expose-Headers") != "ETag, X-CC-Path, X-CC-File-Size" {
 		t.Fatalf("allowed request: %d %v", resp.StatusCode, resp.Header)
 	}
 	if resp = do(http.MethodGet, "https://ccr.example.com", "wrong-token-wrong-token", nil); resp.StatusCode != http.StatusUnauthorized {

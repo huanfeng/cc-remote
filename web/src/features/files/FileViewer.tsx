@@ -5,11 +5,15 @@
 // stack; a new `path` from the surface store is pushed onto it as well.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
-import { ArrowLeft, Download, FileCode2, FileImage, FileText, FileWarning, MessageSquarePlus, PanelRightOpen, X } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, FileCode2, FileImage, FileText, FileWarning, MessageSquarePlus, PanelRightOpen, X } from 'lucide-react';
 import { useBackend } from '@/backend/backend';
 import type { FileContent } from '@/backend/types';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
+import { ConfirmDialog } from '@/features/dialogs/common';
+import { apiBase } from '@/lib/hosts';
+import { canUseLocalPaths, isAbsoluteLocalPath, openLocalPath } from '@/platform/pathActions';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/components/lib/utils';
 import { basename, dirname, type FileRef } from '@/domain/filePaths';
@@ -114,11 +118,27 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
   const referencePath = entry.scope === 'project' ? requested : shownPath;
   const name = basename(shownPath);
   const kind = file ? viewKind(file) : undefined;
-  const large = !!file?.text && Math.max(file.size, file.text.length) > MAX_RENDER_BYTES;
+  const fileSize = file?.size === undefined ? undefined : formatBytes(file.size);
+  const large = !!file?.text && Math.max(file.size ?? 0, file.text.length) > MAX_RENDER_BYTES;
   const Title = onDock ? DialogTitle : 'h2';
   const iconClass = mobile ? 'size-9' : undefined;
   // The file in hand downloads at once; one sent without content (too large, or a binary) through a host link.
   const [saving, setSaving] = useState(false);
+  const [confirmPath, setConfirmPath] = useState<string>();
+  const [opening, setOpening] = useState(false);
+  const canOpenFile = !!file && canUseLocalPaths(apiBase) && isAbsoluteLocalPath(file.path);
+  const openFile = async () => {
+    if (opening || !canOpenFile || !confirmPath || confirmPath !== file.path) return;
+    setOpening(true);
+    try {
+      await openLocalPath(apiBase, confirmPath, 'open-file');
+    } catch (error) {
+      toast(t(`Could not open the file: ${String(error)}`, `无法打开文件：${String(error)}`), { variant: 'warning' });
+    } finally {
+      setOpening(false);
+      setConfirmPath(undefined);
+    }
+  };
   const download = useCallback(async () => {
     if (!file || saving) return;
     if (file.url || file.text !== undefined) { save(file, name); return; }
@@ -144,6 +164,11 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
     onOpen({ path: ref.line ? `${ref.path}:${ref.line}` : ref.path, base: dirs });
   }, [shownPath, entry, onOpen]);
 
+  const fileActions = <div className="flex flex-wrap justify-center gap-2">
+    {canOpenFile && <Button size="lg" onClick={() => setConfirmPath(shownPath)}><ExternalLink />{t('Open on this computer', '在本机打开')}</Button>}
+    <DownloadButton saving={saving} onClick={() => void download()} />
+  </div>;
+
   let body: ReactNode;
   if (error) {
     body = (
@@ -155,16 +180,16 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
     body = <div className="flex h-full items-center justify-center gap-2 text-ui-sm text-foreground-subtle"><Spinner className="size-3.5" />{t('Loading…', '加载中…')}</div>;
   } else if (kind === 'too-large') {
     body = (
-      <Notice icon={<FileWarning />} title={t('File too large', '文件过大')} detail={t(`${formatBytes(file.size)} is over the preview limit.`, `${formatBytes(file.size)}，超过预览上限。`)}>
-        <DownloadButton saving={saving} onClick={() => void download()} />
+      <Notice icon={<FileWarning />} title={t('File too large', '文件过大')} detail={fileSize ? t(`${fileSize} is over the preview limit.`, `${fileSize}，超过预览上限。`) : t('This file exceeds the preview limit.', '此文件超过预览上限。')}>
+        {fileActions}
       </Notice>
     );
   } else if (kind === 'image' && loaded?.src) {
     body = <ImageView src={loaded.src} alt={name} />;
   } else if (kind === 'binary' || kind === 'image') {
     body = (
-      <Notice icon={<FileText />} title={t('This file cannot be previewed', '此文件无法预览')} detail={`${file.mime || t('binary', '二进制')} · ${formatBytes(file.size)}`}>
-        <DownloadButton saving={saving} onClick={() => void download()} />
+      <Notice icon={<FileText />} title={t('This file cannot be previewed', '此文件无法预览')} detail={[file.mime || t('Binary file', '二进制文件'), fileSize].filter(Boolean).join(' · ')}>
+        {fileActions}
       </Notice>
     );
   } else if (kind === 'markdown' && !source && !large) {
@@ -213,7 +238,7 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
             ))}
           </div>
         )}
-        <PathMenu path={shownPath} />
+        <PathMenu path={shownPath} onOpenFile={canOpenFile ? () => setConfirmPath(shownPath) : undefined} />
         {onReference && file && <ViewerIconButton label={t('Reference file path in chat', '引用文件路径到对话')} className={iconClass}
           onClick={() => onReference({ path: referencePath })}><MessageSquarePlus aria-hidden /></ViewerIconButton>}
         {file && <ViewerIconButton label={t('Download', '下载')} className={iconClass} disabled={saving} onClick={() => void download()}>{saving ? <Spinner /> : <Download />}</ViewerIconButton>}
@@ -228,10 +253,17 @@ export function FilePane({ sessionId, entry, mobile, initialSource, onBack, onOp
         </>}
       </header>
       <div className="relative min-h-0 flex-1">{body}</div>
+      <ConfirmDialog open={canOpenFile && confirmPath === shownPath} busy={opening}
+        onOpenChange={open => { if (!open && !opening) setConfirmPath(undefined); }}
+        title={t('Open this file on your computer?', '在本机打开此文件？')}
+        description={t('The system will open the file using its default action. Executable files may start a program.', '系统将按默认方式打开文件。可执行文件可能启动程序。')}
+        confirmLabel={t('Open', '打开')} onConfirm={() => void openFile()}>
+        <p className="select-text break-all font-mono text-ui-xs text-foreground-subtle">{confirmPath}</p>
+      </ConfirmDialog>
       {!mobile && file && (kind === 'code' || (kind === 'markdown' && (source || large))) && (
         <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-border/60 px-4 text-ui-xs text-foreground-subtlest tabular-nums">
           <span>{t(`${countLines(file.text ?? '')} lines`, `${countLines(file.text ?? '')} 行`)}</span>
-          <span>{formatBytes(file.size)}</span>
+          {fileSize && <span>{fileSize}</span>}
           {large && <span>{t('Shown as plain text (over 2 MiB)', '超过 2 MiB，按纯文本显示')}</span>}
           <span className="ml-auto">{large ? 'text' : kind === 'markdown' ? 'markdown' : shikiLang(shownPath) || 'text'}</span>
         </footer>

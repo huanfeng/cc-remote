@@ -17,6 +17,16 @@ export interface ProjectGroup {
 
 export const projectKey = (cwd: string) => cwd.replace(/\\/g, '/').toLowerCase();
 
+/** Pinned projects stay visible regardless of how many newer sessions exist. */
+export function projectSessionPage(ordered: Session[], limit: number, isPinned: (key: string) => boolean) {
+  const pinned: Session[] = [];
+  const regular: Session[] = [];
+  for (const session of ordered) {
+    (isPinned(projectKey(session.cwd)) ? pinned : regular).push(session);
+  }
+  return { visible: [...pinned, ...regular.slice(0, limit)], remaining: Math.max(0, regular.length - limit) };
+}
+
 export const busy = (s: Session) => s.status === 'running' || s.status === 'waiting' || (s.activeTasks ?? 0) > 0;
 
 /** A virtual shortcut group; keep project membership and the caller's search/order.

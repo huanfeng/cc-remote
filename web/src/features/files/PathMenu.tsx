@@ -1,5 +1,5 @@
 import { useState, type ReactElement } from 'react';
-import { ChevronDown, Copy, FileText, FolderInput, FolderOpen, LoaderCircle, LocateFixed, SquareTerminal } from 'lucide-react';
+import { ChevronDown, Copy, ExternalLink, FileText, FolderInput, FolderOpen, LoaderCircle, LocateFixed, SquareTerminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -12,7 +12,7 @@ import { t } from '@/lib/i18n';
 import { canUseLocalPaths, isAbsoluteLocalPath, openLocalPath, type PathAction } from '@/platform/pathActions';
 
 /** Host paths stay useful in browsers; native actions are explicitly local. */
-export function PathMenu({ path, kind = 'file', children }: { path: string; kind?: 'file' | 'directory'; children?: ReactElement }) {
+export function PathMenu({ path, kind = 'file', children, onOpenFile }: { path: string; kind?: 'file' | 'directory'; children?: ReactElement; onOpenFile?: () => void }) {
   const [pending, setPending] = useState<PathAction | null>(null);
   const parent = dirname(path.replace(/[\\/]+$/, '')) || dirname(path);
   const local = canUseLocalPaths(apiBase) && isAbsoluteLocalPath(path);
@@ -54,6 +54,7 @@ export function PathMenu({ path, kind = 'file', children }: { path: string; kind
         {parent && parent !== path && <DropdownMenuItem onSelect={() => void copy(parent)}><FolderInput />{t('Copy parent directory', '复制上级目录')}</DropdownMenuItem>}
         {local && <>
           <DropdownMenuSeparator />
+          {kind === 'file' && onOpenFile && <DropdownMenuItem onSelect={onOpenFile}><ExternalLink />{t('Open on this computer', '在本机打开')}</DropdownMenuItem>}
           <DropdownMenuItem disabled={!!pending} onSelect={() => void act('open')}><FolderOpen />{t('Open folder on this computer', '在本机打开目录')}</DropdownMenuItem>
           <DropdownMenuItem disabled={!!pending} onSelect={() => void act('reveal')}><LocateFixed />{t('Reveal in file manager', '在文件管理器中定位')}</DropdownMenuItem>
           <DropdownMenuItem disabled={!!pending} onSelect={() => void act('terminal')}><SquareTerminal />{t('Open terminal here', '在此目录打开终端')}</DropdownMenuItem>

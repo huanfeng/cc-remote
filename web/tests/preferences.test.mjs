@@ -4,7 +4,7 @@ import { decodePreferences, mergePreferencePatch } from '../src/domain/preferenc
 
 const defaults = {
   theme:'system', palette:'graphite', terminalPalette:'dark', sendKey:'enter', sidebarCollapsed:false, sidebarWidth:272,
-  collapsedProjects:{}, toolsExpanded:false, terminalView:{}, terminalZoom:1, terminalFit:false,
+  collapsedProjects:{}, pinnedProjects:{}, toolsExpanded:false, terminalView:{}, terminalZoom:1, terminalFit:false,
   newSessionMode:'terminal', hiddenRecaps:[], notify:{on:false,waiting:true,done:true,failed:true},
 };
 
@@ -37,6 +37,7 @@ test('dismissed recaps merge; existing envelopes migrate and corrupted settings 
   const migrated = decodePreferences(JSON.stringify({version:1,state:{theme:'dark',hiddenRecaps:['old:1']}}), defaults);
   assert.equal(migrated.theme,'dark'); assert.deepEqual(migrated.hiddenRecaps,[]);
   assert.equal(migrated.terminalPalette,'dark');
+  assert.deepEqual(migrated.pinnedProjects, {});
   const invalid = decodePreferences(JSON.stringify({version:2,state:{theme:'bad',terminalPalette:'bad',sidebarWidth:'huge',terminalView:null,notify:{on:true}}}), defaults);
   assert.equal(invalid.theme, 'system'); assert.equal(invalid.sidebarWidth,272);
   assert.equal(invalid.terminalPalette,'dark');
@@ -70,6 +71,14 @@ test('two stores synchronize without echo writes and stale layout edits cannot r
     for (const listener of listeners) listener({key:'ccn-prefs'});
     assert.equal(a.getState().palette,'default');
     assert.equal(a.getState().sidebarWidth,400);
+
+    a.getState().set({pinnedProjects:{'/repo@host-a':true}});
+    b.getState().set({pinnedProjects:{'/repo@host-b':true}});
+    for (const listener of listeners) listener({key:'ccn-prefs'});
+    assert.deepEqual(a.getState().pinnedProjects, {'/repo@host-a':true,'/repo@host-b':true});
+    a.getState().set({pinnedProjects:{'/repo@host-b':true}});
+    const {usePrefs:reloaded} = await import('../src/lib/prefs.ts?view=reloaded');
+    assert.deepEqual(reloaded.getState().pinnedProjects, {'/repo@host-b':true});
   } finally {
     for (const [key,value] of Object.entries(original)) {
       if (value === undefined) delete globalThis[key]; else globalThis[key]=value;

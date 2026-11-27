@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isAbsoluteLocalPath, isLoopbackHost } from '../domain/localPaths.ts';
 
 export { isAbsoluteLocalPath } from '../domain/localPaths.ts';
-export type PathAction = 'open' | 'reveal' | 'terminal';
+export type PathAction = 'open' | 'open-file' | 'reveal' | 'terminal';
 
 export function canUseLocalPaths(hostUrl: string): boolean {
   return typeof window !== 'undefined' && isTauri() && isLoopbackHost(hostUrl);

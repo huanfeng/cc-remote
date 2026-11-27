@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"cc-remote/internal/store"
@@ -191,5 +192,51 @@ func TestSessionFileJunction(t *testing.T) {
 	}
 	if status, body, _ := getFile(t, ts.URL, sess.ID, `linked\README.md`); status != 200 || body != "# pkg" {
 		t.Fatalf("through a junction: %d %q", status, body)
+	}
+}
+
+func TestFilePreviewReportsMetadataWithoutReadingBinary(t *testing.T) {
+	_, ts, st := setup(t, nil)
+	cwd := filepath.Join(t.TempDir(), "test", "project")
+	sess, err := st.Create("s", cwd, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		size   int64
+		status int
+	}{
+		{"Small.EXE", 4, http.StatusUnsupportedMediaType},
+		{"Large.exe", maxViewBytes + 1, http.StatusUnsupportedMediaType},
+		{"Large.log", maxViewBytes + 1, http.StatusRequestEntityTooLarge},
+		{"Empty.zip", 0, http.StatusUnsupportedMediaType},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(cwd, tc.name)
+			writeFile(t, path, "")
+			if err := os.Truncate(path, tc.size); err != nil {
+				t.Fatal(err)
+			}
+			query := url.Values{"path": {tc.name}, "downloadOnly": {"1"}}
+			req, err := http.NewRequest("GET", ts.URL+"/api/sessions/"+sess.ID+"/file?"+query.Encode(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+testToken)
+			resp, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var result map[string]string
+			shown, _ := url.PathUnescape(resp.Header.Get("X-CC-Path"))
+			if resp.StatusCode != tc.status || shown != path || resp.Header.Get("X-CC-File-Size") != strconv.FormatInt(tc.size, 10) || json.NewDecoder(resp.Body).Decode(&result) != nil || result["error"] == "" {
+				t.Fatalf("preview: %d %v %v", resp.StatusCode, resp.Header, result)
+			}
+		})
+	}
+	if status, body, _ := getFile(t, ts.URL, sess.ID, "Small.EXE"); status != 200 || len(body) != 4 {
+		t.Fatalf("legacy preview client: %d, %d bytes", status, len(body))
 	}
 }

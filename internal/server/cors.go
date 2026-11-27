@@ -39,7 +39,7 @@ func (s *Server) cors(w http.ResponseWriter, r *http.Request) bool {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", origin)
 	h.Add("Vary", "Origin")
-	h.Set("Access-Control-Expose-Headers", "ETag, X-CC-Path")
+	h.Set("Access-Control-Expose-Headers", "ETag, X-CC-Path, X-CC-File-Size")
 	if r.Method != http.MethodOptions || r.Header.Get("Access-Control-Request-Method") == "" {
 		return false
 	}

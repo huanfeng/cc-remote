@@ -27,7 +27,12 @@ test('native path actions require desktop and forward exact structured arguments
     await assert.rejects(openLocalPath('http://localhost:8787', './relative', 'open'));
     const path = "C:/空 格 & '$folder";
     await openLocalPath('http://localhost:8787', path, 'terminal');
-    assert.deepEqual(calls, [['open_local_path', { hostUrl: 'http://localhost:8787', path, action: 'terminal' }, undefined]]);
+    await assert.rejects(openLocalPath('http://192.168.1.2:8787', `${path}.exe`, 'open-file'));
+    await openLocalPath('http://localhost:8787', `${path}.exe`, 'open-file');
+    assert.deepEqual(calls, [
+      ['open_local_path', { hostUrl: 'http://localhost:8787', path, action: 'terminal' }, undefined],
+      ['open_local_path', { hostUrl: 'http://localhost:8787', path: `${path}.exe`, action: 'open-file' }, undefined],
+    ]);
   } finally {
     if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow); else delete globalThis.window;
     if (originalTauri) Object.defineProperty(globalThis, 'isTauri', originalTauri); else delete globalThis.isTauri;

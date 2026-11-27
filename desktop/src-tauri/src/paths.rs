@@ -6,6 +6,8 @@ use std::process::Command;
 #[serde(rename_all = "lowercase")]
 pub enum PathAction {
     Open,
+    #[serde(rename = "open-file")]
+    OpenFile,
     Reveal,
     Terminal,
 }
@@ -98,6 +100,9 @@ fn target(value: &str, action: PathAction) -> Result<PathBuf, String> {
     if action == PathAction::Open && !metadata.is_dir() {
         return Err("打开文件夹需要目录路径；文件请使用在文件管理器中显示".into());
     }
+    if action == PathAction::OpenFile && !metadata.is_file() {
+        return Err("打开文件需要普通文件路径".into());
+    }
     // Windows shell tools expect a normal drive path, not Rust's canonical \\?\ form.
     #[cfg(windows)]
     let canonical = {
@@ -164,6 +169,8 @@ fn perform(host_url: &str, path: &str, action: PathAction) -> Result<(), String>
     match action {
         PathAction::Open => tauri_plugin_opener::open_path(path, None::<&str>)
             .map_err(|error| format!("无法打开文件夹：{error}")),
+        PathAction::OpenFile => tauri_plugin_opener::open_path(path, None::<&str>)
+            .map_err(|error| format!("无法打开文件：{error}")),
         PathAction::Reveal => tauri_plugin_opener::reveal_item_in_dir(path)
             .map_err(|error| format!("无法在文件管理器中显示：{error}")),
         PathAction::Terminal => terminal_command(&path)?
@@ -244,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_file_is_revealed_but_only_its_parent_is_opened_in_terminal() {
+    fn local_path_actions_validate_file_and_directory_targets() {
         let directory =
             std::env::temp_dir().join(format!("cc-path-action-{}-空 格 & '$", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
@@ -252,6 +259,9 @@ mod tests {
         std::fs::write(&file, "data").unwrap();
         let value = file.to_str().unwrap();
         assert!(target(value, PathAction::Open).is_err());
+        assert!(target(value, PathAction::OpenFile).unwrap().is_file());
+        assert!(target(directory.to_str().unwrap(), PathAction::OpenFile).is_err());
+        assert!(perform("https://remote.example", value, PathAction::OpenFile).is_err());
         assert!(target(value, PathAction::Reveal).unwrap().is_file());
         assert!(target(value, PathAction::Terminal).unwrap().is_dir());
         assert!(target(

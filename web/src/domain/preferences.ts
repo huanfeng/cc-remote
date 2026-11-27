@@ -15,6 +15,7 @@ export interface PreferenceValues {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   collapsedProjects: Record<string, boolean>;
+  pinnedProjects: Record<string, boolean>;
   toolsExpanded: boolean;
   terminalView: Record<string, boolean>;
   terminalZoom: number;
@@ -38,7 +39,7 @@ function mapChanges<T>(before: Record<string, T>, after: Record<string, T>, late
 /** Shared preferences follow storage; each open view keeps its sidebar layout. */
 export function mergePreferencePatch(local: PreferenceValues, latest: PreferenceValues, patch: Partial<PreferenceValues>): PreferenceValues {
   const merged = { ...latest, sidebarCollapsed: local.sidebarCollapsed, sidebarWidth: local.sidebarWidth, ...patch };
-  for (const key of ['collapsedProjects', 'terminalView', 'notify'] as const) {
+  for (const key of ['collapsedProjects', 'pinnedProjects', 'terminalView', 'notify'] as const) {
     if (patch[key]) Object.assign(merged, { [key]: mapChanges(local[key], patch[key], latest[key]) });
   }
   if (patch.hiddenRecaps) {

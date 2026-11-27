@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -351,6 +352,16 @@ func (s *Server) sessionFile(w http.ResponseWriter, r *http.Request, sess store.
 	return f, path, info, true
 }
 
+// Known binary formats can be offered for download without reading their bytes.
+func downloadOnlyFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".exe", ".dll", ".msi", ".sys", ".so", ".dylib", ".zip", ".7z", ".rar", ".tar", ".gz":
+		return true
+	default:
+		return false
+	}
+}
+
 // file is GET /api/sessions/{id}/file?path=…&base=…: a file the session
 // named, for the web viewer. Only files under the session's directories (see
 // fileRoots) open.
@@ -361,12 +372,18 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	l := s.lang(r)
+	w.Header().Set("X-CC-Path", url.PathEscape(path))
+	w.Header().Set("X-CC-File-Size", strconv.FormatInt(info.Size(), 10))
+	// Older clients do not handle 415 as a downloadable file.
+	if r.URL.Query().Get("downloadOnly") == "1" && downloadOnlyFile(path) {
+		fail(w, http.StatusUnsupportedMediaType, l.T("This file type cannot be previewed", "此文件类型无法预览"))
+		return
+	}
 	if info.Size() > maxViewBytes {
 		fail(w, 413, l.T("The file is larger than 20 MiB", "文件超过 20 MiB"))
 		return
 	}
 	w.Header().Set("Content-Type", viewType(path))
 	w.Header().Set("Content-Disposition", "inline")
-	w.Header().Set("X-CC-Path", url.PathEscape(path))
 	http.ServeContent(w, r, "", info.ModTime(), f)
 }

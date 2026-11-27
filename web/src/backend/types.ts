@@ -545,7 +545,8 @@ export interface ProjectGitDiff {
 export interface FileContent {
   path: string;
   mime: string;
-  size: number;
+  /** Missing when an older host refused the preview without reporting file size. */
+  size?: number;
   /** Text files only. */
   text?: string;
   /** Images and other binaries, as an object URL or data: URL. */

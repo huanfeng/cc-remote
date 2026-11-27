@@ -577,13 +577,22 @@ test('upload: multipart with the token, progress, and mapped errors', async () =
   await assert.rejects(b.upload('s1', new File(['x'], 'x.bin')), e => e instanceof BackendError && e.status === 400 && /20 MiB/.test(e.message));
 });
 
-test('readFile: 413 is tooLarge; text and the host path come back', async () => {
+test('readFile distinguishes download-only files, oversized files, and legacy missing sizes', async () => {
   const fetch = async url => {
-    if (url.includes('big')) return new Response(JSON.stringify({ error: 'too big' }), { status: 413 });
+    const query = new URL(url, 'http://host.test').searchParams;
+    assert.equal(query.get('downloadOnly'), '1');
+    const name = query.get('path');
+    if (name === 'legacy.log') return new Response('', { status: 413 });
+    if (name === 'big.log' || name === 'BouncyBells.exe') return new Response('{"error":"no preview"}', {
+      status: name.endsWith('.exe') ? 415 : 413,
+      headers: { 'X-CC-File-Size': '120270264', 'X-CC-Path': encodeURIComponent(`/w/${name}`) },
+    });
     return new Response('hello', { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-CC-Path': encodeURIComponent('/w/a.txt') } });
   };
   const b = new HttpBackend({ baseUrl: '', token: 't', lang: 'en', fetch });
-  assert.deepEqual(await b.readFile('s1', 'big.bin'), { path: 'big.bin', mime: '', size: 0, tooLarge: true });
+  assert.deepEqual(await b.readFile('s1', 'legacy.log'), { path: 'legacy.log', mime: '', tooLarge: true });
+  assert.deepEqual(await b.readFile('s1', 'big.log'), { path: '/w/big.log', mime: '', size: 120270264, tooLarge: true });
+  assert.deepEqual(await b.readFile('s1', 'BouncyBells.exe'), { path: '/w/BouncyBells.exe', mime: '', size: 120270264 });
   const f = await b.readFile('s1', 'a.txt', ['/w']);
   assert.equal(f.text, 'hello');
   assert.equal(f.path, '/w/a.txt');

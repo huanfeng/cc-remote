@@ -626,10 +626,14 @@ export class HttpBackend implements Backend {
   }
 
   async readFile(id: string, path: string, base?: string[], scope?: FileScope): Promise<FileContent> {
-    const response = await this.client.raw(`${this.session(id)}/file?${this.fileQuery(path, base, scope)}`, { okStatuses: [413] });
-    if (response.status === 413) return { path, mime: '', size: 0, tooLarge: true };
+    const response = await this.client.raw(`${this.session(id)}/file?${this.fileQuery(path, base, scope)}&downloadOnly=1`, { okStatuses: [413, 415] });
     let shown = path;
     try { shown = decodeURIComponent(response.headers.get('X-CC-Path') || '') || path; } catch { /* keep the requested path */ }
+    if (response.status === 413 || response.status === 415) {
+      const rawSize = response.headers.get('X-CC-File-Size');
+      const size = rawSize && /^\d+$/.test(rawSize) ? Number(rawSize) : undefined;
+      return { path: shown, mime: '', ...(Number.isSafeInteger(size) ? { size } : {}), ...(response.status === 413 ? { tooLarge: true } : {}) };
+    }
     const mime = (response.headers.get('Content-Type') || 'application/octet-stream').split(';')[0].trim().toLowerCase();
     const blob = await response.blob();
     const svg = mime === 'image/svg+xml' || /\.svg$/i.test(shown);

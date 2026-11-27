@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FOLD_KEEP, busy, idleSessions, inProgressSessions, projectGroups } from '../src/features/sidebar/projectGroups.ts';
+import { FOLD_KEEP, busy, idleSessions, inProgressSessions, projectGroups, projectSessionPage } from '../src/features/sidebar/projectGroups.ts';
 import { isCompletionPending } from '../src/domain/completionRead.ts';
 
 const NOW = Date.UTC(2026, 10, 8);
@@ -58,6 +58,25 @@ test('folders differing only in case and slashes are one project', () => {
   const groups = projectGroups([session('x', 'C:\\Repo', 1), session('y', 'c:/repo', 2)], NOW);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].cwd, 'C:\\Repo');
+});
+
+test('pinned projects stay above recent projects even when their sessions fall past the page limit', () => {
+  const list = [
+    session('newest', '/recent', 0),
+    session('second', '/other', 1),
+    session('old pinned', 'C:\\Repo', 20),
+    session('another pin', '/pinned', 21),
+    session('older pinned', 'c:/repo', 22),
+  ];
+  const page = projectSessionPage(list, 1, key => ['c:/repo', '/pinned'].includes(key));
+  const groups = projectGroups(page.visible, NOW);
+  assert.deepEqual(groups.map(g => g.key), ['c:/repo', '/pinned', '/recent']);
+  assert.deepEqual(ids(groups[0].shown), ['old pinned', 'older pinned']);
+  assert.equal(page.remaining, 1);
+
+  const unpinned = projectSessionPage(list, 2, () => false);
+  assert.deepEqual(ids(unpinned.visible), ['newest', 'second']);
+  assert.equal(unpinned.remaining, 3);
 });
 
 test('in-progress shortcuts retain order and project membership for running, waiting and background work', () => {

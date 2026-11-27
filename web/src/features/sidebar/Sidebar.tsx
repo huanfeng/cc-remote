@@ -2,7 +2,7 @@
 // component is the home page (and the drawer over a conversation).
 import { useMemo, useRef, useState } from 'react';
 import {
-  Activity, Archive, ArchiveRestore, ChevronDown, History, MoreHorizontal, Palette, PanelLeftClose, Plus, Search, Settings, SquareTerminal, Trash2, X,
+  Activity, Archive, ArchiveRestore, ChevronDown, History, MoreHorizontal, Palette, PanelLeftClose, Pin, PinOff, Plus, Search, Settings, SquareTerminal, Trash2, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -24,7 +24,7 @@ import { hostProviders, providerName } from '@/domain/providers';
 import { folderName, sessionMeta, shortPath, sessionStatusLabel, statusTone, toneDot } from '@/features/session/status';
 import { HostSwitcher } from './HostSwitcher';
 import { useNativeSessions } from './useNativeSessions';
-import { busy, idleSessions, inProgressSessions, projectGroups, type ProjectGroup } from './projectGroups';
+import { busy, idleSessions, inProgressSessions, projectGroups, projectSessionPage, type ProjectGroup } from './projectGroups';
 import { useCompletionRead } from '@/store/completionRead';
 import { displaySession, isCompletionPending } from '@/domain/completionRead';
 import { useProjectShellWorkspace } from '@/features/projectShell/ProjectShellWorkspace';
@@ -194,6 +194,7 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   const canArchive = useApp(s => hasFeature(s.info, 'archive'));
   const openSurface = useApp(s => s.open);
   const collapsed = usePrefs(s => s.collapsedProjects);
+  const pinned = usePrefs(s => s.pinnedProjects);
   const setPrefs = usePrefs(s => s.set);
   const clocks = useRef(new Map<string, number>());
   const [limit, setLimit] = useState(PAGE);
@@ -216,9 +217,14 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
   const inProgress = useMemo(() => inProgressSessions(ordered), [ordered]);
   const done = useMemo(() => ordered.filter(s => !s.archived && isCompletionPending(s, records[hostKey(s.id)])), [ordered, records]);
   const isProgressCollapsed = !query && progressCollapsed;
+  const hostScope = hostKey('');
+  const page = useMemo(
+    () => projectSessionPage(ordered, limit, key => !!key && pinned[key + hostScope] === true),
+    [ordered, limit, pinned, hostScope],
+  );
   const groups = useMemo(
-    () => projectGroups(ordered.slice(0, limit), now, s => currentKey === `session:${s.id}`, !query),
-    [ordered, limit, now, currentKey, query],
+    () => projectGroups(page.visible, now, s => currentKey === `session:${s.id}`, !query),
+    [page, now, currentKey, query],
   );
   const shellOnlyProjects = new Map<string, string>();
   if (terminal.enabled) {
@@ -240,6 +246,12 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
     const next = { ...collapsed };
     if (on) next[key] = true; else delete next[key];
     setPrefs({ collapsedProjects: next });
+  };
+  const togglePin = (key: string) => {
+    const prefs = usePrefs.getState();
+    const next = { ...prefs.pinnedProjects };
+    if (next[key]) delete next[key]; else next[key] = true;
+    prefs.set({ pinnedProjects: next });
   };
   return (
     <div className="flex flex-col gap-2">
@@ -274,6 +286,7 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
         // Collapsed state is kept per host; a search opens every group.
         const stored = hostKey(g.key);
         const isCollapsed = !query && !!collapsed[stored];
+        const isPinned = !!g.key && pinned[stored] === true;
         const idle = idleSessions([...g.shown, ...g.folded], s => isCompletionPending(s, records[hostKey(s.id)]));
         const open = !!unfolded[g.key];
         return (
@@ -287,6 +300,7 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
                 className={cn('flex min-w-0 flex-1 items-center gap-1 rounded-md px-2 text-left text-ui-sm font-semibold text-foreground-subtle hover:text-foreground', mobile ? 'h-8' : 'h-7', 'pr-12')}
               >
                 <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', isCollapsed && '-rotate-90')} />
+                {isPinned && <Pin className="size-3 shrink-0 text-foreground-subtlest" role="img" aria-label={t('Pinned project', '已置顶项目')} />}
                 <span className="truncate">{folderName(g.cwd)}</span>
                 <span className={cn('ml-auto', !mobile && 'opacity-0 group-hover/head:opacity-100')}>{g.shown.length + g.folded.length}</span>
               </button>
@@ -317,6 +331,12 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {!!g.key && (
+                    <DropdownMenuItem onSelect={() => togglePin(stored)}>
+                      {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                      {isPinned ? t('Unpin project', '取消置顶') : t('Pin project', '置顶项目')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onSelect={() => newSessionIn(openSurface, g)}>
                     <Plus className="size-3.5" /> {t('New session in this project', '在此项目新建会话')}
                   </DropdownMenuItem>
@@ -362,9 +382,9 @@ function SessionList({ query, mobile }: { query: string; mobile: boolean }) {
           <span className="ml-auto shrink-0 text-ui-xs text-foreground-subtlest">{t('Terminal', '终端')}</span>
         </button>
       ))}
-      {ordered.length > limit && (
+      {page.remaining > 0 && (
         <Button variant="ghost" size="sm" className="self-center" onClick={() => setLimit(l => l + PAGE)}>
-          {t(`Show more (${ordered.length - limit})`, `显示更多（${ordered.length - limit}）`)}
+          {t(`Show more (${page.remaining})`, `显示更多（${page.remaining}）`)}
         </Button>
       )}
       {archived.length > 0 && (
