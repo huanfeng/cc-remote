@@ -11,7 +11,7 @@ import { BackendError } from '@/backend/errors';
 import { HttpBackend } from '@/backend/http/httpBackend';
 import { useApp } from '@/store/app';
 import { useCompletionRead } from '@/store/completionRead';
-import { releaseMissing } from '@/store/transcripts';
+import { releaseMissing, releaseTranscriptWatches } from '@/store/transcripts';
 import { STANDALONE, apiBase, connectError, hostKey, relocateHost, useHosts } from '@/lib/hosts';
 import { applyIdentity } from '@/lib/identity';
 import { useApplyTheme } from '@/lib/theme';
@@ -164,7 +164,7 @@ function Connected({ backend }: { backend: Backend }) {
       if (!STANDALONE || e.status) return;
       void relocateHost().then(moved => { if (live && typeof moved === 'string') toast(moved); });
     });
-    return () => { live = false; stop(); };
+    return () => { live = false; stop(); releaseTranscriptWatches(backend); };
   }, [backend]);
 
   // The host's name, colour and icon: tab title, favicon, --host-color.

@@ -1,9 +1,9 @@
 // Transcripts of open sessions, cached per selection key so switching back to
 // a session is instant (the old client's "tabs"). The watch subscription is
-// held while the session is shown; the cache outlives it.
+// retained with the managed session cache; selection only changes viewing state.
 import { useEffect } from 'react';
 import { create } from 'zustand';
-import { useBackend } from '@/backend/backend';
+import { useBackend, type Backend } from '@/backend/backend';
 import type { PendingRequest, Provider, Session, SessionEvent } from '@/backend/types';
 import { useDrafts } from '@/features/composer/drafts';
 import { useRequestDrafts } from '@/features/requests/drafts';
@@ -52,18 +52,27 @@ export function mergeEvents(prev: SessionEvent[], next: SessionEvent[]): Session
   return [...map.values()].sort((a, b) => a.seq - b.seq);
 }
 
-export function useTranscript(key: string, id: string | undefined, native?: Provider): TranscriptState {
-  const backend = useBackend();
-  const state = useTranscripts(s => s.byKey[key]) ?? empty;
-  useEffect(() => {
-    if (!id) return;
+interface TranscriptWatch {
+  viewers: number;
+  stop: () => void;
+}
+const watches = new Map<Backend, Map<string, TranscriptWatch>>();
+
+/** One subscription per cached session, including while another session is selected. */
+export function acquireTranscript(backend: Backend, key: string, id: string, native?: Provider) {
+  let entries = watches.get(backend);
+  if (!entries) watches.set(backend, entries = new Map());
+  let entry = entries.get(key);
+  if (!entry) {
+    entry = { viewers: 1, stop: () => {} };
+    entries.set(key, entry);
+    const current = entry;
     const { patch } = useTranscripts.getState();
-    return backend.watchTranscript(id, u => {
-      // Card drafts of requests the session no longer lists are done with.
+    patch(key, {});
+    entry.stop = backend.watchTranscript(id, u => {
+      if (entries.get(key) !== current) return;
       if (!native) useRequestDrafts.getState().prune(id, new Set(u.requests.map(r => r.id)));
       patch(key, cur => {
-        // The first update of a watch carries the tail; treat it as a reset even
-        // if a backend leaves the flag off, so hasMore is never lost.
         const reset = u.reset || !cur.loaded;
         return {
           session: u.session,
@@ -73,7 +82,50 @@ export function useTranscript(key: string, id: string | undefined, native?: Prov
           loaded: true,
         };
       });
-    }, native ? { native } : undefined);
+    }, { native, isViewing: () => current.viewers > 0 });
+  } else {
+    entry.viewers++;
+  }
+  const current = entry;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    current.viewers--;
+    // Native history has no managed lifecycle/status list; keep its old lifetime.
+    if (native && !current.viewers && entries.get(key) === current) {
+      entries.delete(key);
+      current.stop();
+    }
+  };
+}
+
+export function releaseTranscriptWatches(backend: Backend) {
+  const entries = watches.get(backend);
+  if (!entries) return;
+  watches.delete(backend);
+  const pending = [...entries.values()];
+  entries.clear();
+  for (const entry of pending) entry.stop();
+}
+
+// Cache eviction, session deletion and sign-out must also stop background work.
+useTranscripts.subscribe((state, previous) => {
+  for (const key of Object.keys(previous.byKey)) {
+    if (key in state.byKey) continue;
+    for (const entries of watches.values()) {
+      const entry = entries.get(key);
+      entries.delete(key);
+      entry?.stop();
+    }
+  }
+});
+
+export function useTranscript(key: string, id: string | undefined, native?: Provider): TranscriptState {
+  const backend = useBackend();
+  const state = useTranscripts(s => s.byKey[key]) ?? empty;
+  useEffect(() => {
+    if (id) return acquireTranscript(backend, key, id, native);
   }, [backend, key, id, native]);
   return state;
 }

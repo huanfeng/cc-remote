@@ -336,12 +336,12 @@ export class HttpBackend implements Backend {
     return native ? `/api/native/sessions/${enc(id)}` : this.session(id);
   }
 
-  watchTranscript(id: string, onUpdate: (u: TranscriptUpdate) => void, opts?: { native?: Provider }): Unsubscribe {
+  watchTranscript(id: string, onUpdate: (u: TranscriptUpdate) => void, opts?: { native?: Provider; isViewing?: () => boolean }): Unsubscribe {
     const native = opts?.native;
     const base = this.transcriptBase(id, native);
     const q = (path: string) => providerQuery(path, native);
     // The page on screen tells the host someone is looking (terminal sessions: focus for recaps).
-    const viewing = () => (typeof document === 'undefined' || !document.hidden ? '&viewing=1' : '');
+    const viewing = () => ((opts?.isViewing?.() ?? true) && (typeof document === 'undefined' || !document.hidden) ? '&viewing=1' : '');
     let closed = false;
     let loaded = false;
     let lastSeq = 0;
@@ -350,6 +350,9 @@ export class HttpBackend implements Backend {
     let requests: PendingRequest[] = EMPTY;
     let refreshAnchors = false;
     let latestPrompt: SessionEvent | undefined;
+    let supersededList: Session | undefined;
+    let backgroundRevision = 0;
+    let settledRevision = -1;
 
     const listed = () => (native ? undefined : this.list?.find(s => s.id === id));
     const active = (s?: Session) => s?.status === 'running' || s?.status === 'waiting';
@@ -363,8 +366,14 @@ export class HttpBackend implements Backend {
       session = next;
     };
     const load = async (reset = true) => {
-      const data = await this.get<{ session: Session; events: SessionEvent[]; hasMore?: boolean }>(q(`${base}?tail=${PAGE}&compact=1${viewing()}`));
-      const pending = native ? EMPTY : await this.pending(id);
+      let listAtDetail: Session | undefined;
+      const [data, pending] = await Promise.all([
+        this.get<{ session: Session; events: SessionEvent[]; hasMore?: boolean }>(q(`${base}?tail=${PAGE}&compact=1${viewing()}`)).then(data => {
+          listAtDetail = listed();
+          return data;
+        }),
+        native ? Promise.resolve(EMPTY) : this.pending(id),
+      ]);
       if (closed) return;
       const events = [...(data.events ?? [])];
       if (reset) latestPrompt = undefined;
@@ -379,26 +388,36 @@ export class HttpBackend implements Backend {
         if (full?.branchAnchor && full.kind === lastPrompt.kind && full.createdAt === lastPrompt.createdAt) events.unshift(full);
       }
       rememberPrompt(events);
-      session = native ? { ...data.session, provider: data.session.provider ?? native } : listed() ?? data.session;
+      // Detail supersedes the list cached when it arrived, but a list update
+      // received while waiting for pending requests must still win.
+      supersededList = listAtDetail;
+      session = native ? { ...data.session, provider: data.session.provider ?? native }
+        : (listed() !== listAtDetail ? listed() : undefined) ?? data.session;
       requests = pending;
       onUpdate({ session, events, reset, hasMore, requests });
     };
     const tick = async () => {
       if (!loaded) { await load(); return; }
+      // Fetch the final events after a status change before pausing an idle cache.
+      if (!native && opts?.isViewing && !opts.isViewing() && !active(session) && settledRevision === backgroundRevision) return;
+      const revision = backgroundRevision;
       let events: SessionEvent[];
+      let pending: PendingRequest[];
       try {
-        events = await this.get<SessionEvent[]>(q(`${base}/events?after=${lastSeq}&compact=1${viewing()}`));
+        [events, pending] = await Promise.all([
+          this.get<SessionEvent[]>(q(`${base}/events?after=${lastSeq}&compact=1${viewing()}`)),
+          native ? Promise.resolve(EMPTY) : this.pending(id),
+        ]);
       } catch (e) {
         // 409: the transcript was rewritten and renumbered; load it again from the end.
         if (e instanceof BackendError && e.status === 409) { loaded = false; if (!closed) await load(); return; }
         throw e;
       }
-      const pending = native ? EMPTY : await this.pending(id);
       if (closed) return;
       const fresh = (Array.isArray(events) ? events : []).filter(e => e.seq > lastSeq);
       if (fresh.length) lastSeq = fresh[fresh.length - 1].seq;
       rememberPrompt(fresh);
-      const nextSession = listed() ?? session!;
+      const nextSession = (listed() !== supersededList ? listed() : undefined) ?? session!;
       // Unchanged replies keep their identity (ETag), so a quiet tick delivers nothing.
       // The session record (status, queue, live) comes with the list: when the
       // transcript moves, poll the list now instead of up to 3 s later.
@@ -412,19 +431,22 @@ export class HttpBackend implements Backend {
         refreshAnchors = false;
         try { await load(false); } catch (error) { refreshAnchors = true; throw error; }
       }
+      settledRevision = revision;
     };
     // A new list delivers the refreshed session record right away.
     const follow = () => {
       if (closed || !loaded) return;
       const next = listed();
-      if (!next || next === session) return;
+      if (!next || next === session || next === supersededList) return;
+      const changed = next.status !== session?.status || next.updatedAt !== session?.updatedAt || next.completedAt !== session?.completedAt;
+      if (changed) backgroundRevision++;
       setSession(next);
       onUpdate({ session: next, events: [], hasMore, requests });
-      if (refreshAnchors) poller.now();
+      if (changed || refreshAnchors) poller.now();
     };
     if (!native) this.listFollowers.add(follow);
 
-    if (!native) this.ensureList();
+    if (!native) { this.ensureList(); this.listPoller?.now(); }
     const poller = poll(tick, this.intervals.transcript, { pauseHidden: true });
     let set = this.transcriptPollers.get(id);
     if (!set) this.transcriptPollers.set(id, (set = new Set()));

@@ -98,7 +98,7 @@ export interface Backend {
   switchProfile(id: string, profileId: string, force?: boolean): Promise<Session>;
 
   // Transcript
-  watchTranscript(id: string, onUpdate: (u: TranscriptUpdate) => void, opts?: { native?: Provider }): Unsubscribe;
+  watchTranscript(id: string, onUpdate: (u: TranscriptUpdate) => void, opts?: { native?: Provider; isViewing?: () => boolean }): Unsubscribe;
   loadOlder(id: string, beforeSeq: number, opts?: { native?: Provider }): Promise<{ events: SessionEvent[]; hasMore: boolean }>;
   fullEvent(id: string, seq: number, opts?: { native?: Provider }): Promise<SessionEvent>;
   searchMessages(query: MessageSearchQuery, signal?: AbortSignal): Promise<MessageSearchPage>;

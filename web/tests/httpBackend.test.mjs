@@ -616,3 +616,94 @@ test('new transcript events poll the list at once; the refreshed session record 
   stop();
   b.dispose();
 });
+
+test('opening a transcript fetches pending requests concurrently and preserves fresh detail status', async () => {
+  let releaseDetail;
+  const gate = new Promise(resolve => { releaseDetail = resolve; });
+  let pendingStarted = false;
+  const host = fakeHost(async (_method, path, _body, headers) => {
+    if (path === '/api/sessions') return headers['If-None-Match'] ? { status: 304 } : { status: 200, etag: '"stale"', body: [session('a', { status: 'running' })] };
+    if (path.startsWith('/api/sessions/a?')) {
+      await gate;
+      return { session: session('a', { status: 'completed' }), events: [ev(1)] };
+    }
+    if (path.startsWith('/api/requests?')) { pendingStarted = true; return headers['If-None-Match'] ? { status: 304 } : { status: 200, etag: '"empty"', body: [] }; }
+    if (path.startsWith('/api/sessions/a/events?')) return [];
+  });
+  const b = make(host, { intervals: { sessions: 60_000, transcript: 15 } });
+  const updates = [];
+  const stop = b.watchTranscript('a', u => updates.push(u));
+  try {
+    await until(() => pendingStarted);
+    assert.equal(updates.length, 0);
+    releaseDetail();
+    await until(() => updates.length > 0);
+    assert.equal(updates[0].session.status, 'completed');
+    await wait(45);
+    assert.ok(updates.every(u => u.session.status === 'completed'), 'incremental ticks do not restore the superseded list snapshot');
+  } finally { releaseDetail(); stop(); b.dispose(); }
+});
+
+test('background running and waiting sessions sync without viewing, fetch completion then pause until active again', async () => {
+  let status = 'running', seq = 1, viewing = false;
+  const host = fakeHost((_method, path, _body, headers) => {
+    if (path === '/api/sessions') {
+      const etag = `"${status}-${seq}"`;
+      return headers['If-None-Match'] === etag ? { status: 304 } : { status: 200, etag, body: [session('a', { status, updatedAt: String(seq) })] };
+    }
+    if (path.startsWith('/api/sessions/a?')) return { session: session('a', { status, updatedAt: String(seq) }), events: [ev(1)] };
+    if (path.startsWith('/api/sessions/a/events?')) {
+      const after = Number(new URL(path, 'http://h').searchParams.get('after'));
+      return Array.from({ length: Math.max(0, seq - after) }, (_, i) => ev(after + i + 1));
+    }
+    if (path.startsWith('/api/requests?')) return status === 'waiting' ? [{ id: 'approval', status: 'pending' }] : [];
+  });
+  const b = make(host);
+  const updates = [];
+  const stop = b.watchTranscript('a', u => updates.push(u), { isViewing: () => viewing });
+  const eventRequests = () => host.log.filter(x => x.path.includes('/events?')).length;
+  try {
+    await until(() => updates.length > 0);
+    status = 'waiting'; seq = 2;
+    await until(() => updates.some(u => u.requests.length && u.events.some(e => e.seq === 2)));
+    status = 'completed'; seq = 3;
+    await until(() => updates.some(u => u.events.some(e => e.seq === 3)) && updates.at(-1).session.status === 'completed');
+    await wait(60);
+    const settled = eventRequests();
+    await wait(60);
+    assert.equal(eventRequests(), settled, 'idle background transcript stops network polling');
+    assert.ok(host.log.every(x => !x.path.includes('viewing=1')));
+    status = 'running'; seq = 4;
+    await until(() => updates.some(u => u.events.some(e => e.seq === 4)));
+    viewing = true;
+    await until(() => host.log.some(x => x.path.includes('/events?') && x.path.includes('viewing=1')));
+  } finally { stop(); b.dispose(); }
+});
+
+test('a list update received while pending requests are in flight wins over older detail', async () => {
+  let status = 'running';
+  let detailReturned = false;
+  let releasePending;
+  const gate = new Promise(resolve => { releasePending = resolve; });
+  const host = fakeHost(async (_method, path) => {
+    if (path === '/api/sessions') return [session('a', { status })];
+    if (path.startsWith('/api/sessions/a?')) {
+      detailReturned = true;
+      return { session: session('a', { status: 'running' }), events: [ev(1)] };
+    }
+    if (path.startsWith('/api/requests?')) { await gate; return []; }
+    if (path.startsWith('/api/sessions/a/events?')) return [];
+  });
+  const b = make(host);
+  const updates = [], lists = [];
+  const stopList = b.watchSessions(s => lists.push(s));
+  const stop = b.watchTranscript('a', u => updates.push(u));
+  try {
+    await until(() => detailReturned);
+    status = 'completed';
+    await until(() => lists.at(-1)?.[0].status === 'completed');
+    releasePending();
+    await until(() => updates.length > 0);
+    assert.equal(updates[0].session.status, 'completed');
+  } finally { releasePending(); stop(); stopList(); b.dispose(); }
+});
