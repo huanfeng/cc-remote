@@ -78,10 +78,10 @@ export function canSteer(
 }
 
 /** Splits picked files into the ones that fit the limits and the reasons the rest were refused. */
-export function admitFiles<F extends { name: string; size: number }>(files: readonly F[], existing: number): { accepted: F[]; tooLarge: F[]; overLimit: F[] } {
+export function admitFiles<F extends { name: string; size: number }>(files: readonly F[], existing: number, limitBytes = MAX_ATTACHMENT_BYTES): { accepted: F[]; tooLarge: F[]; overLimit: F[] } {
   const accepted: F[] = [], tooLarge: F[] = [], overLimit: F[] = [];
   for (const f of files) {
-    if (f.size > MAX_ATTACHMENT_BYTES) tooLarge.push(f);
+    if (f.size > limitBytes) tooLarge.push(f);
     else if (existing + accepted.length >= MAX_ATTACHMENTS) overLimit.push(f);
     else accepted.push(f);
   }

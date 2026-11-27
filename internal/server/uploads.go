@@ -1,7 +1,7 @@
 package server
 
 import (
-	"bytes"
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +24,9 @@ import (
 )
 
 const (
-	maxUploadBytes     = 20 << 20
+	defaultUploadMiB   = 20
+	maxUploadMiB       = 256
+	maxUploadBytes     = maxUploadMiB << 20
 	maxAttachments     = 8
 	maxUploadNameBytes = 120
 )
@@ -106,13 +108,25 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, err.Error())
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(1<<20))
+	limitMiB, err := s.store.UploadLimitMiB(defaultUploadMiB)
+	if err != nil || limitMiB < 1 || limitMiB > maxUploadMiB {
+		fail(w, 500, s.lang(r).T("Could not read the upload limit", "无法读取上传上限"))
+		return
+	}
+	limitBytes := int64(limitMiB) << 20
+	tooLarge := s.lang(r).F("A file cannot be larger than %d MiB", "单个文件不能超过 %d MiB", limitMiB)
+	r.Body = http.MaxBytesReader(w, r.Body, limitBytes+(1<<20))
 	defer r.Body.Close()
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		if r.MultipartForm != nil {
 			_ = r.MultipartForm.RemoveAll()
 		}
-		fail(w, 400, s.lang(r).T("Invalid upload or larger than 20 MiB", "上传无效或超过 20 MiB"))
+		var overflow *http.MaxBytesError
+		if errors.As(err, &overflow) {
+			fail(w, 400, tooLarge)
+		} else {
+			fail(w, 400, s.lang(r).T("Invalid upload", "上传无效"))
+		}
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
@@ -121,27 +135,40 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, s.lang(r).T("Choose one file at a time", "每次请选择一个文件"))
 		return
 	}
-	f, err := files[0].Open()
+	file := files[0]
+	if file.Size > limitBytes {
+		fail(w, 400, tooLarge)
+		return
+	}
+	f, err := file.Open()
 	if err != nil {
 		fail(w, 400, s.lang(r).T("Could not read the file", "无法读取文件"))
 		return
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxUploadBytes+1))
-	if err != nil || len(b) > maxUploadBytes {
-		fail(w, 400, s.lang(r).T("A file cannot be larger than 20 MiB", "单个文件不能超过 20 MiB"))
+	header, err := bufio.NewReader(f).Peek(512)
+	if err != nil && !errors.Is(err, io.EOF) {
+		fail(w, 400, s.lang(r).T("Could not read the file", "无法读取文件"))
 		return
 	}
-	name := sanitizeUploadName(files[0].Filename)
-	a := attachment{ID: id, Kind: "file", Name: name, Size: len(b), URL: fmt.Sprintf("/api/sessions/%s/uploads/%s", sessionID, id)}
-	sniffed := http.DetectContentType(b)
+	name := sanitizeUploadName(file.Filename)
+	a := attachment{ID: id, Kind: "file", Name: name, Size: int(file.Size), URL: fmt.Sprintf("/api/sessions/%s/uploads/%s", sessionID, id)}
+	sniffed := http.DetectContentType(header)
 	if format := imageMIMEs[sniffed]; format != "" {
-		cfg, decoded, err := image.DecodeConfig(bytes.NewReader(b))
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			fail(w, 400, s.lang(r).T("Could not read the file", "无法读取文件"))
+			return
+		}
+		cfg, decoded, err := image.DecodeConfig(f)
 		if err != nil || decoded != format || cfg.Width < 1 || cfg.Height < 1 || int64(cfg.Width)*int64(cfg.Height) > 25_000_000 {
 			fail(w, 400, s.lang(r).T("Invalid image: only valid PNG, JPEG and GIF images up to 25 megapixels are supported", "图片无效：仅支持有效的 PNG、JPEG、GIF，最多 2500 万像素"))
 			return
 		}
-		if _, _, err = image.Decode(bytes.NewReader(b)); err != nil {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			fail(w, 400, s.lang(r).T("Could not read the file", "无法读取文件"))
+			return
+		}
+		if _, _, err = image.Decode(f); err != nil {
 			fail(w, 400, s.lang(r).T("The image is corrupt", "图片内容损坏"))
 			return
 		}
@@ -159,7 +186,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	meta, _ := json.Marshal(a)
 	if err = os.MkdirAll(filepath.Dir(path), 0700); err == nil {
-		err = os.WriteFile(path, b, 0600)
+		err = saveUpload(path, f)
 	}
 	if err == nil {
 		err = os.WriteFile(metaPath, meta, 0600)
@@ -171,6 +198,19 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 201, a)
+}
+
+// Multipart payloads larger than the in-memory threshold are copied from disk.
+func saveUpload(path string, source io.ReadSeeker) error {
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(file, source)
+	return errors.Join(copyErr, file.Close())
 }
 
 func (s *Server) loadAttachment(l i18n.Lang, sessionID, id string) (attachment, string, error) {

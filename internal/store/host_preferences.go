@@ -14,3 +14,17 @@ func (s *Store) SetSupplierSwitchWarning(enabled bool) error {
 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, supplierSwitchWarning, enabled)
 	return err
 }
+
+const uploadLimitMiB = "upload_limit_mib"
+
+func (s *Store) UploadLimitMiB(defaultMiB int) (int, error) {
+	var limit int
+	err := s.db.QueryRow("SELECT COALESCE((SELECT value FROM host_preferences WHERE key=?),?)", uploadLimitMiB, defaultMiB).Scan(&limit)
+	return limit, err
+}
+
+func (s *Store) SetUploadLimitMiB(limit int) error {
+	_, err := s.db.Exec(`INSERT INTO host_preferences(key,value) VALUES(?,?)
+ON CONFLICT(key) DO UPDATE SET value=excluded.value`, uploadLimitMiB, limit)
+	return err
+}

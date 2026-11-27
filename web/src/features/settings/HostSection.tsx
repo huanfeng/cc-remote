@@ -15,6 +15,7 @@ import { ErrorText, errorMessage } from '@/features/dialogs/common';
 import { GroupTitle, HOST_ICONS, HostGlyph, SectionHeader, useReportDirty } from './parts';
 import { SignOutRow } from '@/features/auth/SignOut';
 import { ServerUpdates } from './ServerUpdates';
+import { UploadLimitSetting } from './UploadLimitSetting';
 
 type Look = { name: string; color: string; icon: string };
 const MAX_ICON = 3;
@@ -64,6 +65,7 @@ export function HostSection({ mobile }: { mobile: boolean }) {
       {!mobile && <SectionHeader title={t('Server', '服务器')} description={t('Identity and components of the server you are connected to. Changes apply to all clients connected to it.', '当前所连接服务器的标识与运行组件。修改对连接此服务器的所有客户端生效。')} />}
 
       <ServerUpdates info={info} />
+      <UploadLimitSetting />
 
       <GroupTitle>{t('Host', '宿主')}</GroupTitle>
       <GroupCard>

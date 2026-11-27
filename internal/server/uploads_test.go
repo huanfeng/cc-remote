@@ -67,7 +67,7 @@ func TestImageUploadsAreAuthenticatedValidatedAndSessionScoped(t *testing.T) {
 	if c, _ := uploadImage(t, ts, a.ID, "", pngBytes); c != 401 {
 		t.Fatalf("anonymous upload %d", c)
 	}
-	for _, bad := range [][]byte{append(pngBytes[:20:20], []byte("broken")...), make([]byte, maxUploadBytes+1)} {
+	for _, bad := range [][]byte{append(pngBytes[:20:20], []byte("broken")...), make([]byte, (defaultUploadMiB<<20)+1)} {
 		if c, _ := uploadImage(t, ts, a.ID, testToken, bad); c != 400 {
 			t.Fatalf("invalid image accepted: %d", c)
 		}
@@ -196,7 +196,7 @@ func TestFileUploadsAreStoredAsIsAndDownloaded(t *testing.T) {
 			t.Fatalf("%s served as %v", name, res.Header)
 		}
 	}
-	if c, _ = uploadFile(t, ts, a.ID, testToken, "big.bin", make([]byte, maxUploadBytes+1)); c != 400 {
+	if c, _ = uploadFile(t, ts, a.ID, testToken, "big.bin", make([]byte, (defaultUploadMiB<<20)+1)); c != 400 {
 		t.Fatalf("oversized file accepted: %d", c)
 	}
 	if c, b = request(t, ts, "POST", "/api/sessions/"+a.ID+"/messages", map[string]any{"text": "read it", "attachmentIds": []string{txt.ID}}, testToken); c != 202 {
@@ -234,5 +234,62 @@ func TestAttachmentCountLimit(t *testing.T) {
 	}
 	if _, _, err := s.messageAttachments(i18n.EN, a.ID, "", ids[:maxAttachments]); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUploadLimitAppliesImmediately(t *testing.T) {
+	s, ts, _ := setup(t, noRun)
+	s.cfg.UploadDir = t.TempDir()
+	a := createSession(t, ts)
+	const path = "/api/settings/upload-limit"
+	check := func(want int) {
+		t.Helper()
+		code, body := request(t, ts, http.MethodGet, path, nil, testToken)
+		var setting uploadLimitSetting
+		if code != 200 || json.Unmarshal(body, &setting) != nil || setting.LimitMiB != want || setting.MaxMiB != maxUploadMiB {
+			t.Fatalf("upload limit: %d %s, want %d MiB", code, body, want)
+		}
+	}
+	check(defaultUploadMiB)
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		if code, _ := request(t, ts, method, path, map[string]int{"limitMiB": 2}, ""); code != 401 {
+			t.Fatalf("unauthenticated %s: %d", method, code)
+		}
+	}
+	for _, invalid := range []any{map[string]int{}, map[string]int{"limitMiB": 0}, map[string]int{"limitMiB": maxUploadMiB + 1}, map[string]float64{"limitMiB": 1.5}} {
+		if code, _ := request(t, ts, http.MethodPut, path, invalid, testToken); code != 400 {
+			t.Fatalf("accepted invalid setting %+v: %d", invalid, code)
+		}
+	}
+	check(defaultUploadMiB)
+	set := func(limit int) {
+		t.Helper()
+		if code, body := request(t, ts, http.MethodPut, path, map[string]int{"limitMiB": limit}, testToken); code != 200 {
+			t.Fatalf("set upload limit: %d %s", code, body)
+		}
+		check(limit)
+	}
+	set(defaultUploadMiB + 1)
+	large := make([]byte, (defaultUploadMiB<<20)+1)
+	code, body := uploadFile(t, ts, a.ID, testToken, "large.bin", large)
+	var uploaded attachment
+	if code != 201 || json.Unmarshal(body, &uploaded) != nil || uploaded.Size != len(large) {
+		t.Fatalf("raised limit rejected upload: %d %s", code, body)
+	}
+	set(1)
+	if code, body := uploadFile(t, ts, a.ID, testToken, "too-big.bin", make([]byte, (1<<20)+1)); code != 400 || !strings.Contains(string(body), "1 MiB") {
+		t.Fatalf("lowered limit: %d %s", code, body)
+	}
+	if code, body := uploadFile(t, ts, a.ID, testToken, "exact.bin", make([]byte, 1<<20)); code != 201 {
+		t.Fatalf("exact limit: %d %s", code, body)
+	}
+	transfer := forkUploadTransfer{s: s, lang: i18n.EN, source: a.ID, child: createSession(t, ts).ID, copied: map[string]attachment{}}
+	defer transfer.cleanup()
+	if err := transfer.prepare([]string{uploaded.ID}); err != nil {
+		t.Fatalf("copy attachment accepted before limit was lowered: %v", err)
+	}
+	spec := transfer.copied[uploaded.ID]
+	if code, data := request(t, ts, http.MethodGet, spec.URL, nil, testToken); code != 200 || !bytes.Equal(data, large) {
+		t.Fatalf("copied attachment: %d, %d bytes", code, len(data))
 	}
 }

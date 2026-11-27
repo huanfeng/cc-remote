@@ -7,7 +7,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { BackendError } from './errors';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from './supplierConfig';
 import type {
-  Attachment, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostIdentity, HostInfo, HostStatus, ModelContext, ModelList, NativeSession,
+  Attachment, UploadLimit, CodexAccount, CodexAccountLogin, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostIdentity, HostInfo, HostStatus, ModelContext, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream,
@@ -169,6 +169,8 @@ export interface Backend {
   saveStatusline?(v: { style: StatuslineStyle; revision: string; options?: StatuslineOptions }): Promise<StatuslineSettings>;
   removeStatusline?(v: { revision: string }): Promise<StatuslineSettings>;
   saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }): Promise<ClaudeSettings>;
+  uploadLimit(): Promise<UploadLimit | undefined>;
+  setUploadLimit(limitMiB: number): Promise<UploadLimit>;
   identity(): Promise<HostIdentity>;
   saveIdentity(v: { name: string; color: string; icon: string }): Promise<HostIdentity>;
   oauthProfiles(): Promise<{ id: string; name: string; notes?: string }[]>;

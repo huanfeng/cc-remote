@@ -149,3 +149,11 @@ test('short model names for chips', () => {
   assert.equal(shortModel('gpt-5.5-codex'), 'gpt-5.5-codex');
   assert.equal(shortModel(undefined), '');
 });
+
+test('attachment admission uses the host limit above and below the legacy default', () => {
+  const large = { name: 'large.bin', size: MAX_ATTACHMENT_BYTES + 1 };
+  assert.deepEqual(admitFiles([large], 0, large.size).accepted, [large]);
+  assert.deepEqual(admitFiles([large], 0).tooLarge, [large]);
+  const small = { name: 'small.bin', size: 1024 * 1024 + 1 };
+  assert.deepEqual(admitFiles([small], 0, 1024 * 1024).tooLarge, [small]);
+});

@@ -11,7 +11,7 @@ import type {
 import { BackendError } from '../errors.ts';
 import type { SupplierConfigs, SupplierConfigWrite, SupplierProbe, SupplierProbeResult } from '../supplierConfig.ts';
 import type {
-  Attachment, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostFeature, HostIdentity, HostInfo, HostStatus, ModelContext, ModelList, NativeSession,
+  Attachment, UploadLimit, CodexAccount, CodexAccountLoginStatus, CommandReply, FileContent, FileScope, HostFeature, HostIdentity, HostInfo, HostStatus, ModelContext, ModelList, NativeSession,
   NewSessionRequest, PendingRequest, Preferences, ProfileCatalog, ProfileUsageReply, Provider, RequestAnswer, SendRequest, Session,
   ProjectFileListing, ProjectGitChanges, ProjectGitDiff, ProjectGitStage, ProjectShell, ProjectShellHandlers, ProjectShellStart, ProjectShellStream,
   SessionEvent, SessionForkReply, SessionForkRequest, SessionPatch, SessionStats, SlashCommand, TaskInfo, TerminalHandlers, TerminalStream, UsageHistory,
@@ -47,6 +47,7 @@ const enc = encodeURIComponent;
 const EMPTY: PendingRequest[] = [];
 const CODEX_ACCOUNTS = '/api/profiles/codex-accounts';
 const COMPONENT_UPDATES = '/api/component-updates';
+const UPLOAD_LIMIT = '/api/settings/upload-limit';
 const SUPPLIER_SWITCH_WARNING = '/api/profiles/switch-warning';
 
 type Native = Provider | undefined;
@@ -829,6 +830,20 @@ export class HttpBackend implements Backend {
   async saveClaudeSettings(v: Omit<ClaudeSettings, 'path'> & { confirmDangerous?: boolean }): Promise<ClaudeSettings> {
     const { model, effortLevel, permissionMode, revision, confirmDangerous, document, editDocument } = v;
     return withPath(await this.call<ClaudeSettings>('PUT', '/api/claude/settings', defined({ model, effortLevel, permissionMode, revision, confirmDangerous, document, editDocument })));
+  }
+
+  async uploadLimit(): Promise<UploadLimit | undefined> {
+    try {
+      const limit = await this.get<UploadLimit>(UPLOAD_LIMIT, AbortSignal.timeout(5_000));
+      return Number.isInteger(limit?.limitMiB) && Number.isInteger(limit?.maxMiB) && limit.limitMiB >= 1 && limit.limitMiB <= limit.maxMiB ? limit : undefined;
+    } catch (e) {
+      if (e instanceof SyntaxError || e instanceof BackendError && [404, 405, 501].includes(e.status)) return undefined;
+      throw e;
+    }
+  }
+
+  setUploadLimit(limitMiB: number) {
+    return this.client.json<UploadLimit>(UPLOAD_LIMIT, { method: 'PUT', body: { limitMiB }, signal: AbortSignal.timeout(5_000) });
   }
 
   async identity() { return withIdentity(await this.get<HostIdentity>('/api/identity')); }

@@ -640,3 +640,5 @@ export interface ProjectShellHandlers {
   onReset(seq: number): void;
   onState(state: 'connecting' | 'exited' | 'unavailable' | 'failed', detail?: string, opts?: { retry?: boolean }): void;
 }
+
+export interface UploadLimit { limitMiB: number; maxMiB: number }

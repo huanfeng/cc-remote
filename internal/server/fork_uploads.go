@@ -80,6 +80,10 @@ func (t *forkUploadTransfer) rewrite(events []store.Event) error {
 
 func (t *forkUploadTransfer) copy(a attachment, path string) (attachment, error) {
 	id := a.ID
+	// Copy only the recorded size, including attachments saved before a limit change.
+	if a.Size < 0 || a.Size > maxUploadBytes {
+		return attachment{}, fmt.Errorf("invalid attachment size: %s", id)
+	}
 	base, metadata, err := t.s.uploadPaths(t.lang, t.child, id)
 	if err != nil {
 		return attachment{}, err
@@ -105,14 +109,14 @@ func (t *forkUploadTransfer) copy(a attachment, path string) (attachment, error)
 		return attachment{}, err
 	}
 	t.created = append(t.created, file)
-	written, copyErr := io.Copy(destination, io.LimitReader(source, maxUploadBytes+1))
+	written, copyErr := io.Copy(destination, io.LimitReader(source, int64(a.Size)+1))
 	if closeErr := destination.Close(); copyErr == nil {
 		copyErr = closeErr
 	}
 	if copyErr != nil {
 		return attachment{}, copyErr
 	}
-	if written != int64(a.Size) || written > maxUploadBytes {
+	if written != int64(a.Size) {
 		return attachment{}, fmt.Errorf("attachment changed during branch: %s", id)
 	}
 	a.URL = fmt.Sprintf("/api/sessions/%s/uploads/%s", t.child, id)

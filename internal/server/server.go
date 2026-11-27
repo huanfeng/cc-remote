@@ -175,6 +175,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+hostauth.Path, s.hello)
 	mux.HandleFunc("GET /api/info", s.info)
 	mux.HandleFunc("GET /api/profiles", s.profilesAPI)
+	mux.HandleFunc("GET /api/settings/upload-limit", s.uploadLimit)
+	mux.HandleFunc("PUT /api/settings/upload-limit", s.uploadLimit)
 	mux.HandleFunc("GET /api/profiles/switch-warning", s.supplierSwitchWarning)
 	mux.HandleFunc("PUT /api/profiles/switch-warning", s.supplierSwitchWarning)
 	mux.HandleFunc("GET /api/profiles/codex-accounts", s.listCodexAccountsAPI)

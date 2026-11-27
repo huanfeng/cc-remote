@@ -707,3 +707,20 @@ test('a list update received while pending requests are in flight wins over olde
     assert.equal(updates[0].session.status, 'completed');
   } finally { releasePending(); stop(); stopList(); b.dispose(); }
 });
+
+test('host upload limit can be updated, re-read, and omitted by older servers', async () => {
+  let limitMiB = 20;
+  const path = '/api/settings/upload-limit';
+  const host = fakeHost((method, url, body) => {
+    if (url !== path) return;
+    if (method === 'PUT') limitMiB = body.limitMiB;
+    return { limitMiB, maxMiB: 256 };
+  });
+  const one = make(host), two = make(host), legacy = make(fakeHost(() => undefined));
+  assert.equal((await one.uploadLimit()).limitMiB, 20);
+  assert.equal((await two.setUploadLimit(64)).limitMiB, 64);
+  assert.equal((await one.uploadLimit()).limitMiB, 64);
+  assert.equal(await legacy.uploadLimit(), undefined);
+  assert.deepEqual(host.log.find(x => x.method === 'PUT').body, { limitMiB: 64 });
+  one.dispose(); two.dispose(); legacy.dispose();
+});

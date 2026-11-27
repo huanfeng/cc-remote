@@ -375,6 +375,7 @@ export class MockBackend implements Backend {
 
   private uploads = new Map<string, Attachment>();
   async upload(_id: string, file: File, opts?: UploadOptions): Promise<Attachment> {
+    if (file.size > this.uploadLimitMiB * 1024 * 1024) throw new BackendError(`A file cannot be larger than ${this.uploadLimitMiB} MiB`, 400);
     for (const f of [0.25, 0.5, 0.75, 1]) {
       if (opts?.signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
       await wait(150);
@@ -599,6 +600,13 @@ export class MockBackend implements Backend {
     this.claude = { ...this.claude, model: v.model, effortLevel: v.effortLevel, permissionMode: v.permissionMode, revision: `r${Number(v.revision.slice(1)) + 1}` };
     return clone(this.claude);
   }
+  private uploadLimitMiB = 20;
+  async uploadLimit() { return { limitMiB: this.uploadLimitMiB, maxMiB: 256 }; }
+  async setUploadLimit(limitMiB: number) {
+    this.uploadLimitMiB = limitMiB;
+    return this.uploadLimit();
+  }
+
   async identity() { await latency(); return clone(this.identityValue); }
   async saveIdentity(v: { name: string; color: string; icon: string }) {
     await latency();

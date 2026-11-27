@@ -27,7 +27,7 @@ import { PermissionPicker } from '@/features/pickers/Pickers';
 import { useModels } from '@/features/pickers/useModels';
 import { QuickSwitch, patchOverride, useModelSwitchConfirm, type QuickKind } from '@/features/pickers/QuickSwitch';
 import {
-  MAX_ATTACHMENTS, admitFiles, canSteer, commandName, filterCommands, historyDirection, isCommand, isSendKey, modelArgument,
+  MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, admitFiles, canSteer, commandName, filterCommands, historyDirection, isCommand, isSendKey, modelArgument,
   needsSteerConfirmation, quickSwitchCommand, sendContent, slashQuery,
 } from './composerLogic';
 import { sendIds } from './sendIds';
@@ -72,6 +72,8 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
   const composing = useRef(false);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState<Uploading[]>([]);
+  const [checkingFiles, setCheckingFiles] = useState(0);
+  const attaching = checkingFiles > 0 || uploading.length > 0;
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -91,7 +93,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
   const steerConfirming = needsSteerConfirmation(sendIds.get(steerKey), text);
   const steerable = canSteer(features, session) && !transcript.requests.length;
   const empty = !trimmed && !attachments.length;
-  const showStop = running && empty && !uploading.length;
+  const showStop = running && empty && !attaching;
 
   const setDraftText = (value: string) => {
     if (recall) setRecall({ ...recall, text: value });
@@ -185,8 +187,17 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
   const cancelUpload = (key: string) => { uploadAborts.current.get(key)?.abort(); };
   const addFiles = async (files: File[]) => {
     if (!files.length) return;
-    const { accepted, tooLarge, overLimit } = admitFiles(files, attachments.length + uploading.length);
-    if (tooLarge.length) toast(t(`Over 20 MiB, not attached: ${tooLarge.map(f => f.name).join(', ')}`, `超过 20 MiB，未添加：${tooLarge.map(f => f.name).join('、')}`), { variant: 'warning', position: 'bottom-center' });
+    // Read the current limit for every selection. On a connection error, let
+    // the upload endpoint validate rather than reject using a stale limit.
+    setCheckingFiles(n => n + 1);
+    const limitBytes = await backend.uploadLimit().then(
+      limit => limit ? limit.limitMiB * 1024 * 1024 : MAX_ATTACHMENT_BYTES,
+      () => Infinity,
+    ).finally(() => setCheckingFiles(n => n - 1));
+    const limitMiB = limitBytes / (1024 * 1024);
+    const attached = useDrafts.getState().drafts[id]?.attachments.length ?? 0;
+    const { accepted, tooLarge, overLimit } = admitFiles(files, attached + uploadAborts.current.size, limitBytes);
+    if (tooLarge.length) toast(t(`Over ${limitMiB} MiB, not attached: ${tooLarge.map(f => f.name).join(', ')}`, `超过 ${limitMiB} MiB，未添加：${tooLarge.map(f => f.name).join('、')}`), { variant: 'warning', position: 'bottom-center' });
     if (overLimit.length) toast(t(`Up to ${MAX_ATTACHMENTS} attachments per message`, `每条消息最多 ${MAX_ATTACHMENTS} 个附件`), { variant: 'warning', position: 'bottom-center' });
     await Promise.all(accepted.map(async file => {
       const key = `${file.name}:${file.size}:${Math.random().toString(36).slice(2)}`;
@@ -238,7 +249,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
     if (busy) return;
     const body = text.trim();
     const confirming = needsSteerConfirmation(sendIds.get(steerKey), body);
-    if (!confirming && (!steerable || uploading.length || attachments.length || !body || isCommand(body))) return;
+    if (!confirming && (!steerable || attaching || attachments.length || !body || isCommand(body))) return;
     setBusy(true); setError('');
     try {
       const sendId = sendIds.idFor(steerKey, body);
@@ -274,7 +285,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
   async function submit() {
     if (steerConfirming) { await steer(); return; }
     const body = text.trim();
-    if ((!body && !attachments.length) || busy || uploading.length) return;
+    if ((!body && !attachments.length) || busy || attaching) return;
     const kind = quickSwitchCommand(body);
     if (kind) {
       if (recall) setRecall(undefined);
@@ -446,7 +457,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
   const placeholder = running
     ? t('The message is sent after the current task', '消息会在当前任务完成后发送')
     : t(`Ask ${providerName(provider)} anything, @ for files, / for commands`, `向 ${providerName(provider)} 提问，@ 引用文件，/ 使用命令`);
-  const sendDisabled = busy || !!uploading.length || empty || (!isCommand(trimmed) && !available);
+  const sendDisabled = busy || attaching || empty || (!isCommand(trimmed) && !available);
   const sendLabel = running ? t('Queue after the current task', '当前任务完成后发送') : t('Send', '发送');
   const keyHint = sendKey === 'enter' ? t('Enter to send · Shift+Enter for a new line', 'Enter 发送 · Shift+Enter 换行') : t('Ctrl+Enter to send', 'Ctrl+Enter 发送');
   const iconSize = mobile ? 'icon-lg' : 'icon-md';
@@ -464,7 +475,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
       {dragging && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-background/70 backdrop-blur-[2px]">
           <span className="flex items-center gap-2 rounded-full border border-border bg-popover px-4 py-2 text-ui-base shadow-sm">
-            <Hand className="size-4" />{t('Drop to attach (≤ 20 MiB each, up to 8)', '松开以添加附件（单个 ≤ 20 MiB，最多 8 个）')}
+            <Hand className="size-4" />{t('Drop to attach (up to 8 files)', '松开以添加附件（最多 8 个）')}
           </span>
         </div>
       )}
@@ -549,7 +560,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
             <TooltipTrigger asChild>
               <Button
                 variant="secondary" size={mobile ? 'lg' : 'default'} className="ml-1 rounded-full px-3"
-                disabled={busy || (!steerConfirming && (!!uploading.length || !!attachments.length || !trimmed || isCommand(trimmed)))}
+                disabled={busy || (!steerConfirming && (attaching || !!attachments.length || !trimmed || isCommand(trimmed)))}
                 onClick={() => void steer()}
               >
                 <CornerDownRight className="size-3.5" />
@@ -587,7 +598,7 @@ export function Composer({ session, transcript, mobile, referenceTarget }: Compo
                     mobile ? 'size-9' : 'size-8',
                   )}
                 >
-                  {busy || uploading.length ? <Spinner className="size-4" /> : <ArrowUp className="size-4" strokeWidth={2.25} />}
+                  {busy || attaching ? <Spinner className="size-4" /> : <ArrowUp className="size-4" strokeWidth={2.25} />}
                 </button>
               </span>
             </TooltipTrigger>
