@@ -1,7 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultProjectShellBindings, projectShellActionForKey, projectShellBindingLabel } from '../src/features/projectShell/projectShellKeys.ts';
+import { defaultProjectShellBindings, matchesProjectShellShortcut, projectShellActionForKey, projectShellBindingLabel, projectShellShortcutLabel } from '../src/features/projectShell/projectShellKeys.ts';
 import { projectShellCounts } from '../src/features/projectShell/projectShellStatus.ts';
+
+test('Web falls back from a saved Alt+F shortcut while desktop still accepts it', () => {
+  const altF = { key: 'f', code: 'KeyF', altKey: true, ctrlKey: false };
+  const ctrlBackquote = { key: 'Dead', code: 'Backquote', altKey: false, ctrlKey: true };
+  assert.equal(projectShellShortcutLabel('alt-f', false), 'Ctrl+`');
+  assert.equal(matchesProjectShellShortcut(altF, 'alt-f', false), false);
+  assert.equal(matchesProjectShellShortcut(ctrlBackquote, 'alt-f', false), true);
+  assert.equal(matchesProjectShellShortcut(ctrlBackquote, 'default', false), true);
+  assert.equal(projectShellShortcutLabel('alt-f', true), 'Alt+F');
+  assert.equal(matchesProjectShellShortcut(altF, 'alt-f', true), true);
+  assert.equal(matchesProjectShellShortcut(ctrlBackquote, 'disabled', false), false);
+});
 
 test('the project badge counts open panes by project and distinguishes running PTYs from saved panes', () => {
   const project = { cwd: 'D:/Work/Repo', projectKey: 'project', state: 'running' };

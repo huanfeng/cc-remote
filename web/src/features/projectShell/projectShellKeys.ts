@@ -35,6 +35,7 @@ export function projectShellBindingLabel(binding: ProjectShellBinding | null, ar
 }
 
 export function projectShellShortcut(value: ProjectShellShortcut, desktop: boolean) {
+  if (value === 'alt-f' && !desktop) return 'ctrl-backquote';
   return value === 'default' ? (desktop ? 'alt-f' : 'ctrl-backquote') : value;
 }
 

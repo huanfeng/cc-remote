@@ -20,6 +20,7 @@ export interface PreferenceValues {
   terminalView: Record<string, boolean>;
   terminalZoom: number;
   terminalFit: boolean;
+  terminalCopyOnSelect: boolean;
   newSessionMode: 'terminal' | 'managed';
   hiddenRecaps: string[];
   notify: { on: boolean; waiting: boolean; done: boolean; failed: boolean };

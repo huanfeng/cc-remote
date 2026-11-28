@@ -9,7 +9,7 @@ test('terminal read readiness waits for each completion redraw and ignores stale
     unicode = {};
     buffer = { active: { viewportY: 1, baseY: 1 } };
     constructor() { globalThis.__completionTerminal = this; }
-    loadAddon() {} registerLinkProvider() {} open() {} onData() {} onSelectionChange() {}
+    loadAddon() {} registerLinkProvider() {} open() {} onData() {} onSelectionChange() { return { dispose() {} }; }
     attachCustomKeyEventHandler() {} focus() {} reset() {} dispose() {}
     write(_chunk, done) { callbacks.push(done); }
   }
@@ -20,7 +20,7 @@ test('terminal read readiness waits for each completion redraw and ignores stale
   globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' });
   globalThis.requestAnimationFrame = () => 1;
   globalThis.cancelAnimationFrame = () => {};
-  globalThis.window = { setTimeout };
+  globalThis.window = { setTimeout, addEventListener() {}, removeEventListener() {} };
   globalThis.document = { hidden: false, documentElement: {}, addEventListener() {}, removeEventListener() {} };
   const data = source => 'data:text/javascript,' + encodeURIComponent(source);
   const mocks = {
@@ -46,7 +46,7 @@ test('terminal read readiness waits for each completion redraw and ignores stale
     engine = createTerminalEngine({
       backend: { openTerminal: (_id, h) => { handlers = h; return { close() {}, redraw() { redraws++; } }; } },
       sessionId: 'task', mobile: false, box: { clientWidth: 500, clientHeight: 500 }, screen: { toggleAttribute() {}, addEventListener() {}, removeEventListener() {} },
-      zoom: () => 1, fitDevice: () => false, onUi() {}, openFile() {},
+      zoom: () => 1, fitDevice: () => false, copyOnSelect: () => true, onUi() {}, openFile() {},
     });
     handlers.onState('open');
     handlers.onData('old output'); callbacks.shift()();

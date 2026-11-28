@@ -48,6 +48,7 @@ export function TerminalView({ session, mobile }: { session: Session; mobile: bo
       backend, sessionId, mobile, box: box.current, screen: screen.current,
       zoom: () => zoomRef.current,
       fitDevice: () => fitRef.current,
+      copyOnSelect: () => usePrefs.getState().terminalCopyOnSelect,
       openFile: ref => useApp.getState().open({ type: 'file', sessionId, path: ref.line ? `${ref.path}:${ref.line}` : ref.path }),
       onUi: patch => setUi(old => ({ ...old, ...patch })),
     });

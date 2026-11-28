@@ -17,7 +17,7 @@ const defaults: PreferenceValues = {
   theme: 'system', palette: 'graphite', terminalPalette: 'dark', sendKey: 'enter', projectShellShortcut: 'default',
   sidebarCollapsed: false, sidebarWidth: SIDEBAR_DEFAULT,
   collapsedProjects: {}, pinnedProjects: {}, toolsExpanded: false, terminalView: {},
-  terminalZoom: 1, terminalFit: false, newSessionMode: 'terminal',
+  terminalZoom: 1, terminalFit: false, terminalCopyOnSelect: true, newSessionMode: 'terminal',
   hiddenRecaps: [], notify: { on: false, waiting: true, done: true, failed: true },
 };
 function read() {

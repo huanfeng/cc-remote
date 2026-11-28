@@ -15,6 +15,7 @@ import { copyText } from '@/domain/clipboard';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
 import { desktopTerminalLinks } from '@/platform/desktop';
 import { t } from '@/lib/i18n';
+import { watchTerminalSelection } from './terminalSelection.ts';
 import {
   BASE_FONT_DESKTOP, BASE_FONT_PHONE, MAX_ATTEMPTS, OPEN_TIMEOUT_MS, RESIZE_THROTTLE_MS, SentSizes,
   backoffDelay, followFontSize, initialControl, keepsControl, sizeKey, throttleLatest, typingTakesControl, usableDims,
@@ -59,6 +60,7 @@ export interface EngineOptions {
   screen: HTMLDivElement;
   zoom: () => number;
   fitDevice: () => boolean;
+  copyOnSelect: () => boolean;
   openFile: (ref: FileRef) => void;
   onUi: (patch: Partial<TerminalUi>) => void;
 }
@@ -254,7 +256,7 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   };
 
   term.onData(data => { take(); send(data); });
-  let selectionVersion = 0, gestureVersion = 0, selecting = false, copyVersion = 0;
+  let selectionVersion = 0, copyVersion = 0;
   let shiftSelectionVersion = 0, shiftSelecting = false;
   term.onSelectionChange(() => {
     if (disposed) return;
@@ -270,20 +272,10 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
       if (!disposed && version === copyVersion) o.onUi({ copyError: t('Could not copy the selection. It is still selected; try the copy button or your system copy shortcut.', '无法复制选中内容。选区已保留，请尝试复制按钮或系统复制快捷键。') });
     });
   };
-  // Copy after xterm finishes the gesture, not every partial selection while
-  // dragging. The document listener also covers releasing outside the screen.
-  const startSelection = (event: MouseEvent | TouchEvent) => {
-    if ('button' in event && event.button !== 0) return;
-    selecting = true;
-    gestureVersion = selectionVersion;
-  };
-  const finishSelection = () => {
-    if (!selecting) return;
-    selecting = false;
-    const before = gestureVersion;
-    queueMicrotask(() => { if (!disposed && selectionVersion !== before) copySelection(); });
-  };
-  const cancelSelection = () => { selecting = false; };
+  const stopCopyOnSelect = watchTerminalSelection(screen, term, o.copyOnSelect, () => {
+    shiftSelectionVersion = selectionVersion;
+    copySelection();
+  });
   const protectSelection = (event: MouseEvent | PointerEvent) => {
     if (!term.hasSelection() || event.type !== 'contextmenu' && event.button !== 2) return;
     // Claude's terminal mouse reporting otherwise receives the right button
@@ -296,16 +288,11 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
   screen.addEventListener('mousedown', protectSelection, true);
   screen.addEventListener('mouseup', protectSelection, true);
   screen.addEventListener('contextmenu', protectSelection, true);
-  screen.addEventListener('mousedown', startSelection, true);
-  screen.addEventListener('touchstart', startSelection, { capture: true, passive: true });
-  document.addEventListener('mouseup', finishSelection, true);
-  document.addEventListener('touchend', finishSelection, true);
-  document.addEventListener('touchcancel', cancelSelection, true);
   term.attachCustomKeyEventHandler(event => {
     if (event.key === 'Shift') {
       if (event.type === 'keydown' && !shiftSelecting) { shiftSelecting = true; shiftSelectionVersion = selectionVersion; }
       if (event.type === 'keyup') {
-        if (shiftSelecting && selectionVersion !== shiftSelectionVersion) copySelection();
+        if (shiftSelecting && selectionVersion !== shiftSelectionVersion && o.copyOnSelect()) copySelection();
         shiftSelecting = false;
       }
     }
@@ -372,11 +359,7 @@ export function createTerminalEngine(o: EngineOptions): TerminalEngine {
       screen.removeEventListener('mousedown', protectSelection, true);
       screen.removeEventListener('mouseup', protectSelection, true);
       screen.removeEventListener('contextmenu', protectSelection, true);
-      screen.removeEventListener('mousedown', startSelection, true);
-      screen.removeEventListener('touchstart', startSelection, true);
-      document.removeEventListener('mouseup', finishSelection, true);
-      document.removeEventListener('touchend', finishSelection, true);
-      document.removeEventListener('touchcancel', cancelSelection, true);
+      stopCopyOnSelect();
       term.dispose();
     },
   };

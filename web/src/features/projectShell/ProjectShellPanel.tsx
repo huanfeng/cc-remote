@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
-import { copyText } from '@/domain/clipboard';
 import { currentHost } from '@/lib/hosts';
+import { usePrefs } from '@/lib/prefs';
 import { t } from '@/lib/i18n';
 import { hasFeature, useApp } from '@/store/app';
 import { createProjectShellTerminal, initialShellTerminalState } from './projectShellTerminal';
@@ -481,7 +481,12 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, searching, 
   }, [active, visible]);
   useEffect(() => {
     if (!element.current) return;
-    const engine = createProjectShellTerminal({ backend, shellId, runId, element: element.current, mobile, visible: visibility.current, onState: setUi });
+    const engine = createProjectShellTerminal({
+      backend, shellId, runId, element: element.current, mobile, visible: visibility.current,
+      copyOnSelect: () => usePrefs.getState().terminalCopyOnSelect,
+      onCopyError: () => toast(t('Could not copy the selection.', '无法复制选中内容。'), { variant: 'warning' }),
+      onState: setUi,
+    });
     terminal.current = engine;
     if (visibility.current && activePane.current) engine.focus();
     return () => {
@@ -520,10 +525,7 @@ function ProjectShellPane({ shellId, runId, mobile, visible, active, searching, 
           event.preventDefault();
           element.current?.closest('[data-shell-pane]')?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
         }}>
-          <ContextMenuItem disabled={!hasSelection} onSelect={() => {
-            const selected = terminal.current?.selection();
-            if (selected) void copyText(selected).catch(() => toast(t('Could not copy the selection.', '无法复制选中内容。'), { variant: 'warning' }));
-          }}><Copy />{t('Copy selection', '复制选中内容')}</ContextMenuItem>
+          <ContextMenuItem disabled={!hasSelection} onSelect={() => terminal.current?.copySelection()}><Copy />{t('Copy selection', '复制选中内容')}</ContextMenuItem>
           <ContextMenuItem onSelect={() => {
             searchFromMenu.current = true;
             onSearch(true);

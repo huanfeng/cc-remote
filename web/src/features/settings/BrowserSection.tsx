@@ -13,7 +13,7 @@ import { GroupCard, Row } from '@/features/dialogs/SurfaceShell';
 import { SimpleSelect } from '@/features/dialogs/common';
 import { GroupTitle, SectionHeader } from './parts';
 import { DESKTOP } from '@/platform/desktop';
-import { projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
+import { projectShellShortcut, projectShellShortcutLabel } from '@/features/projectShell/projectShellKeys';
 import { appPalettes, appPaletteLabels, appThemes, appThemeLabels, terminalPaletteLabels } from './appearanceOptions';
 
 export function BrowserSection({ mobile }: { mobile: boolean }) {
@@ -23,6 +23,7 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
   const terminalPalette = usePrefs(s => s.terminalPalette);
   const sendKey = usePrefs(s => s.sendKey);
   const shellShortcut = usePrefs(s => s.projectShellShortcut);
+  const copyOnSelect = usePrefs(s => s.terminalCopyOnSelect);
   const [language] = useState(langOverride());
   return (
     <div>
@@ -79,15 +80,21 @@ export function BrowserSection({ mobile }: { mobile: boolean }) {
         />
         <Row
           label={t('Project terminal shortcut', '项目终端快捷键')}
-          control={<SimpleSelect value={shellShortcut} onChange={v => set({ projectShellShortcut: v as ProjectShellShortcut })}
+          description={DESKTOP ? undefined : t('Alt+F is reserved by some browsers. Use Ctrl+` or choose another shortcut.', '部分浏览器会保留 Alt+F。请使用 Ctrl+` 或选择其他快捷键。')}
+          control={<SimpleSelect value={shellShortcut === 'alt-f' ? projectShellShortcut(shellShortcut, DESKTOP) : shellShortcut} onChange={v => set({ projectShellShortcut: v as ProjectShellShortcut })}
             ariaLabel={t('Project terminal shortcut', '项目终端快捷键')}
             options={([
               { value: 'default', label: `${t('Default', '默认')} (${projectShellShortcutLabel('default', DESKTOP)})` },
               { value: 'ctrl-backquote', label: 'Ctrl+`' },
-              { value: 'alt-f', label: 'Alt+F' },
+              ...(DESKTOP ? [{ value: 'alt-f', label: 'Alt+F' } as const] : []),
               { value: 'ctrl-shift-f12', label: 'Ctrl+Shift+F12' },
               { value: 'disabled', label: t('Disabled', '禁用') },
             ] satisfies { value: ProjectShellShortcut; label: string }[])} />}
+        />
+        <Row
+          label={t('Copy terminal selection automatically', '终端选中后自动复制')}
+          description={t('Copies selected text when you release the mouse in a project or session terminal.', '在项目终端或会话终端用鼠标选中文字后，松开即复制。')}
+          control={<Switch checked={copyOnSelect} onCheckedChange={value => set({ terminalCopyOnSelect: value })} aria-label={t('Copy terminal selection automatically', '终端选中后自动复制')} />}
         />
       </GroupCard>
 

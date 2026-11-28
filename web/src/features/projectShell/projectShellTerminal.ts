@@ -4,6 +4,8 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import type { Backend } from '@/backend/backend';
 import type { ProjectShellStream } from '@/backend/types';
+import { copyText } from '@/domain/clipboard';
+import { watchTerminalSelection } from '@/features/terminal/terminalSelection';
 import { BASE_FONT_DESKTOP, BASE_FONT_PHONE, backoffDelay, MAX_ATTEMPTS, RESIZE_THROTTLE_MS, throttleLatest, usableDims } from '@/features/terminal/terminalSize';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
 import { desktopTerminalLinks } from '@/platform/desktop';
@@ -21,9 +23,11 @@ export const initialShellTerminalState: ShellTerminalState = { status: 'connecti
 
 const shellSymbolFonts = '"Symbols Nerd Font Mono", "CaskaydiaCove Nerd Font Mono", "Cascadia Mono NF", "Cascadia Code NF", "JetBrainsMono Nerd Font Mono", "MesloLGS NF"';
 
-export function createProjectShellTerminal({ backend, shellId, runId, element, mobile, visible = true, onState }: {
+export function createProjectShellTerminal({ backend, shellId, runId, element, mobile, visible = true, copyOnSelect, onCopyError, onState }: {
   backend: Backend; shellId: string; runId: string; element: HTMLDivElement; mobile: boolean;
   visible?: boolean;
+  copyOnSelect(): boolean;
+  onCopyError(): void;
   onState(state: ShellTerminalState): void;
 }) {
   const monoFont = getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim();
@@ -45,6 +49,11 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   terminal.loadAddon(new WebLinksAddon(desktopTerminalLinks?.open));
   terminal.open(element);
   if (terminal.textarea) terminal.textarea.tabIndex = 0;
+  const copySelection = () => {
+    const selected = terminal.getSelection();
+    if (selected) void copyText(selected).catch(onCopyError);
+  };
+  const stopCopyOnSelect = watchTerminalSelection(element, terminal, copyOnSelect, copySelection);
 
   let state = initialShellTerminalState;
   let stream: ProjectShellStream | undefined;
@@ -184,6 +193,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
   return {
     focus: () => { if (visible) terminal.focus(); },
     selection: () => terminal.getSelection(),
+    copySelection,
     search(query: string, direction: ShellSearchDirection) {
       const anchor = query === searchQuery ? terminal.getSelectionPosition()?.start : undefined;
       searchQuery = query;
@@ -231,6 +241,7 @@ export function createProjectShellTerminal({ backend, shellId, runId, element, m
       resize.cancel();
       data.dispose();
       binary.dispose();
+      stopCopyOnSelect();
       terminal.dispose();
     },
   };
